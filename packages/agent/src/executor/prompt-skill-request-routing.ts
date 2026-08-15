@@ -29,13 +29,13 @@ const CONVERSATION_HISTORY_RECALL_PATTERN =
 const WEB_EVIDENCE_EXCLUSION_PATTERN =
   /\b(?:(?:do\s+not|don't|never)\s+(?:(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch))|(?:[\p{L}\p{N}_'-]+\s+){1,8}(?:or|nor)\s+(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch)))|without\s+(?:using\s+)?(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|no\s+(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch))\b/iu;
 const DELEGATED_CHILD_ASSIGNMENT_PATTERN =
-  /(?<!-)\b(?:(?:delegate|use|start|spawn|launch)\b(?=[^\n]{0,240}\b(?:sub-?agents?|child|children|coordinator|leaf)\b)|(?:ask|tell|instruct|require)\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf)\b)/iu;
+  /(?<!-)\b(?:(?:delegate|use|start|spawn|launch)\b(?=[^\n]{0,240}\b(?:sub-?agents?|child|children|coordinator|leaf)\b)|(?:ask|tell|instruct|require)\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf)\b|give\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf)\b[^.!?\n]{0,80}\btask\b|(?:call|invoke|use)\s+sessions_spawn\b[^.!?\n]{0,160}\btask\b)/iu;
 const EXPLICIT_DELEGATION_PATTERN =
   /\b(?:sessions_spawn|sub-?agents?|child|children|coordinator|leaf)\b/iu;
 const DELEGATED_CHILD_CONTINUATION_PATTERN =
-  /\b(?:have\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf|it|them)\b|(?:sub-?agents?|child|children|coordinator|leaf|it|they)\s+(?:must|should)\b|require\b[^.!?\n]{0,160}\b(?:sub-?agents?|child|children|coordinator|leaf)\b)/iu;
+  /\b(?:have\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf|it|them)\b|(?:sub-?agents?|child|children|coordinator|leaf|it|they)\s+(?:must|should)\b|require\b[^.!?\n]{0,160}\b(?:sub-?agents?|child|children|coordinator|leaf)\b|after\b[^.!?\n]{0,160}\b(?:succeeds?|completes?|finishes?)\b[^.!?\n]{0,160}\b(?:return|reply|respond)\b(?!\s+to\b)(?=[^.!?\n]{0,80}\b(?:child|exactly|file|leaf|marker|no_reply|output|result|value)\b))/iu;
 const DELEGATED_TOOL_BINDING_PATTERN =
-  /\b(?:expected_outputs|max_steps|required_tools|token_budget|tool_groups|worktree)\b/iu;
+  /\b(?:expected_outputs|max_steps|required_tools|token_budget|tool_groups|worktree|task\s+(?:argument|body|parameter))\b/iu;
 const DELEGATED_DELIVERY_COORDINATION_PATTERN =
   /\bafter\s+(?:the\s+)?(?:completion|launch|run)\b[^.!?\n]{0,200}\b(?:deliver|notify|report)\b/iu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
@@ -357,8 +357,7 @@ export function applyPromptSkillRequestRouting(
   }
   deferral.requestRelevantToolNames = [...new Set([
     ...deferral.requestRelevantToolNames,
-    "read",
-    ...workflowToolNames,
+    ...(workflowEnforceable ? ["read", ...workflowToolNames] : []),
   ])];
   return selected;
 }

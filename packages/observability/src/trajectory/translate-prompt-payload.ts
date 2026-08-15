@@ -78,6 +78,9 @@ export function translatePromptPayload(
   const requestRelevantToolNames = boundedToolNames(
     payload.requestRelevantToolNames,
   );
+  const requestRelevantPromptSkillNames = boundedToolNames(
+    payload.requestRelevantPromptSkillNames,
+  );
   const requestRelevanceHistory = boundedRequestRelevanceHistory(
     payload.requestRelevanceHistory,
   );
@@ -99,6 +102,9 @@ export function translatePromptPayload(
       : {}),
     ...(requestRelevantToolNames !== undefined
       ? { requestRelevantToolNames }
+      : {}),
+    ...(requestRelevantPromptSkillNames !== undefined
+      ? { requestRelevantPromptSkillNames }
       : {}),
     ...(requestRelevanceHistory !== undefined
       ? { requestRelevanceHistory }

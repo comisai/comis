@@ -1127,7 +1127,7 @@ describe("obs-explain-heuristics", () => {
   });
 
   it("ranks a tool invocation stall above an incidental recall miss", () => {
-    const r = rootCause(makeSignals({
+    const signals = makeSignals({
       endReason: "tool_invocation_stall",
       degraded: true,
       recall: allMissRecall,
@@ -1140,10 +1140,14 @@ describe("obs-explain-heuristics", () => {
       breakerOpenedTool: "skills_manage",
       hasDoNotRetrySignal: true,
       repeatedFailureCount: { skills_manage: 0 },
-    }));
+    });
+    (signals as unknown as { requestRelevantPromptSkillNames?: string[] })
+      .requestRelevantPromptSkillNames = ["deep-research"];
+    const r = rootCause(signals);
 
     expect(r?.code).toBe("tool_invocation_stall");
     expect(r?.detail).toContain("mcp__test-service--account_summary");
+    expect(r?.detail).toContain("selected prompt skills [deep-research]");
     expect(r?.detail).toMatch(/request_tool_nudge|recovery/iu);
   });
 

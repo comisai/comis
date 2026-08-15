@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Output-size escalation policy and success-path response processing. */
-import { classifyToolInvocationMutation, formatSessionKey, toSafeErrorLogString } from "@comis/core";
+import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { withPromptTimeout } from "../prompt-timeout.js";
@@ -8,8 +8,6 @@ import { runContinuationTurn } from "../continuation-turn.js";
 import { scanWithOutputGuard, recoverEmptyFinalResponse, extractExecutionPlan, surfaceDiscardedPreToolUrl } from "../executor-response-filter.js";
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
-import { countDistinctSuccessfulWebFetchUrls, countDistinctSuccessfulWebSearchQueries, isRecoveryEvidenceToolName, runRequestToolNudge } from "../request-tool-nudge.js";
-import { isReadOnlyTool } from "../tool-parallelism.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -20,6 +18,12 @@ import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js
 import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery-reconciliation.js";
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
 import { runBudgetContinuation } from "./budget-continuation.js";
+import { hasAcceptedDelegation } from "./accepted-delegation.js";
+import {
+  hasEnforcedPromptSkillRoute,
+  runRequestToolNudgeStep,
+} from "./request-tool-nudge-step.js";
+
 /** Runs output escalation and final success or failure response processing. */
 export async function escalateOutput(
   params: RunPromptParams,
@@ -35,6 +39,7 @@ export async function escalateOutput(
   let escalationAttempted = false;
   let ghostCost: PromptRunResult["ghostCost"];
   const bridgeResult = params.bridge.getResult();
+  const acceptedDelegation = hasAcceptedDelegation(bridgeResult.toolExecResults);
 
   // A safety abort is terminal and must not start generic silent recovery.
   if (bridgeResult.abortResponse !== undefined) {
@@ -49,7 +54,13 @@ export async function escalateOutput(
     return { promptSucceeded, promptError, escalationAttempted, ghostCost };
   }
 
-  if (promptSucceeded && !skipPrompt && !escalationAttempted && !budgetTracker) {
+  if (
+    promptSucceeded
+    && !skipPrompt
+    && !escalationAttempted
+    && !budgetTracker
+    && !acceptedDelegation
+  ) {
     const escalation = await maybeEscalateOutput(
       params,
       messageText,
@@ -69,7 +80,13 @@ export async function escalateOutput(
   }
 
   if (promptSucceeded && !skipPrompt) {
-    await processSuccessPath(params, budgetTracker, budgetCapped, requestedBudget);
+    await processSuccessPath(
+      params,
+      budgetTracker,
+      budgetCapped,
+      requestedBudget,
+      acceptedDelegation,
+    );
   } else if (!promptSucceeded) {
     // Directive-only commands set skipPrompt and bypass this failure path.
     const failureOutcome = await processFailurePath(
@@ -183,6 +200,7 @@ async function processSuccessPath(
   budgetTracker: TurnBudgetTracker | undefined,
   budgetCapped: boolean,
   requestedBudget: number | undefined,
+  acceptedDelegation: boolean,
 ): Promise<void> {
   const {
     msg, session, config, sessionKey, agentId, result,
@@ -218,7 +236,11 @@ async function processSuccessPath(
   result.response = extractedResponse;
 
   // Nudge once if all intermediate text was thinking-only.
-  if (result.response === "" && (bridge.getResult().stepsExecuted ?? 0) > 0) {
+  if (
+    !acceptedDelegation
+    && result.response === ""
+    && (bridge.getResult().stepsExecuted ?? 0) > 0
+  ) {
     const lateResult = bridge.getResult();
     if (lateResult.finishReason === "stop") {
       deps.logger.info(
@@ -290,24 +312,31 @@ async function processSuccessPath(
   // shot retry. Falls through to L3 synthesis (recoverEmptyFinalResponse) on
   // exhaustion. SEP plan extraction + step counting remain intact for
   // observability — see pi-event-bridge.ts:949-1024.
-  await runPostBatchContinuationStep(params);
+  if (!acceptedDelegation) {
+    await runPostBatchContinuationStep(params);
 
-  // Narrate-without-emit nudge — the
-  // sibling of L4 for turns that END ON intent narration ("Now let me write
-  // the script:") with NO tool call. small/nano-gated, one bounded re-prompt;
-  // an unrecovered fire marks result.narrateNudge so the post-execution
-  // chokepoint promotes the turn to the named degraded cause narration_stall.
-  // Mutually exclusive with L4 by construction (L4 requires an EMPTY final
-  // turn; this requires visible text).
-  await runNarrateNudgeStep(params);
-  await runRequestToolNudgeStep(params);
-
-  // Budget-driven continuation loop
-  if (budgetTracker) {
-    await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);
+    // Narrate-without-emit nudge — the
+    // sibling of L4 for turns that END ON intent narration ("Now let me write
+    // the script:") with NO tool call. small/nano-gated, one bounded re-prompt;
+    // an unrecovered fire marks result.narrateNudge so the post-execution
+    // chokepoint promotes the turn to the named degraded cause narration_stall.
+    // Mutually exclusive with L4 by construction (L4 requires an EMPTY final
+    // turn; this requires visible text).
+    await runNarrateNudgeStep(params);
   }
 
-  await applyInteractiveSilentRecovery(params);
+  if (!acceptedDelegation || hasEnforcedPromptSkillRoute(params)) {
+    await runRequestToolNudgeStep(params);
+  }
+
+  if (!acceptedDelegation) {
+    // Budget-driven continuation loop
+    if (budgetTracker) {
+      await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);
+    }
+
+    await applyInteractiveSilentRecovery(params);
+  }
 
   // Surface discarded pre-tool URLs/short-codes absent from final response.
   // MUST run BEFORE the OutputGuard scan below so the surfaced URL passes through
@@ -342,7 +371,9 @@ async function processSuccessPath(
   }
 }
 
-/** Post-batch continuation step — separated so the success-path body stays focused. */
+/** Shared delegation receipt reader for post-batch and narration recovery. */
+const successfulDelegationCount = (params: RunPromptParams): number =>
+  Number(hasAcceptedDelegation(params.bridge.getResult().toolExecResults));
 async function runPostBatchContinuationStep(params: RunPromptParams): Promise<void> {
   const { session, config, agentId, result, deps } = params;
   const continuationConfig = config.contextEngine?.postBatchContinuation
@@ -359,6 +390,7 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
     guardProviderDispatch: resolveProviderDispatchGuard(
       params.executionOverrides?.onProviderStart,
     ),
+    currentSuccessfulDelegationCount: () => successfulDelegationCount(params),
   });
   if (continuationResult.ok) {
     const v = continuationResult.value;
@@ -368,7 +400,8 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
     // Stash outcome metrics for executor-post-execution.ts to emit in the
     // Execution complete log.
     result.continuationMetrics = {
-      fired: v.outcome !== "no_match" && v.outcome !== "disabled",
+      fired: v.outcome !== "no_match" && v.outcome !== "disabled"
+        && v.outcome !== "delegation_accepted",
       attempts: v.attempts,
       outcome: v.outcome,
     };
@@ -396,9 +429,7 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,
-    currentSuccessfulDelegationCount: () => Number((params.bridge.getResult().toolExecResults ?? []).some(
-      (record) => record.toolName === "sessions_spawn" && record.success && record.backgrounded !== true,
-    )),
+    currentSuccessfulDelegationCount: () => successfulDelegationCount(params),
     guardProviderDispatch: resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
   });
   if (outcome.recovered && outcome.response) {
@@ -406,92 +437,5 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
   }
   if (outcome.fired) {
     result.narrateNudge = { fired: true, recovered: outcome.recovered };
-  }
-}
-
-async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
-  const { session, agentId, result, deps } = params;
-  if (result.narrateNudge?.fired === true) return;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sessionMessages: unknown[] = (session as any).messages ?? [];
-  const successfulDiscoveredEvidenceToolNames = (params.bridge.getResult().toolExecResults ?? []).filter(
-    (record) => record.success
-      && record.backgrounded !== true
-      && isRecoveryEvidenceToolName(record.toolName)
-      && isReadOnlyTool(record.toolName)
-      && params.isDeferredToolDiscovered?.(record.toolName) === true,
-  ).map((record) => record.toolName);
-  const recoveryRelevantToolNames = [...new Set([
-    ...(params.requestRelevantToolNames ?? []),
-    ...successfulDiscoveredEvidenceToolNames,
-  ])];
-  const outcome = await runRequestToolNudge({
-    session,
-    requestText: params.msg.originalMessages?.map((message) => message.text).join("\n") ?? params.msg.text,
-    messages: sessionMessages,
-    capabilityClass: params.modelProfile?.capabilityClass,
-    requestRelevantToolNames: recoveryRelevantToolNames,
-    requestRelevantPromptSkillNames: params.requestRelevantPromptSkillNames ?? [],
-    requestRelevantPromptSkillLocations: params.requestRelevantPromptSkillLocations ?? [],
-    requestRelevantPromptSkillWorkflowToolNames: params.requestRelevantPromptSkillWorkflowToolNames ?? [],
-    requestRelevantPromptSkillMinDistinctWebFetchUrls: params.requestRelevantPromptSkillMinDistinctWebFetchUrls, requestRelevantPromptSkillMinDistinctWebSearchQueries: params.requestRelevantPromptSkillMinDistinctWebSearchQueries,
-    requestRelevantPromptSkillWorkflowContext: params.requestRelevantPromptSkillWorkflowContext,
-    currentSuccessfulMutationCount: () => (params.bridge.getResult().toolExecResults ?? [])
-      .filter((record) => record.success && classifyToolInvocationMutation(
-        record.toolName,
-        record.action === undefined ? {} : { action: record.action },
-      ) === "mutating").length,
-    currentSuccessfulToolCount: (toolNames) => {
-      const completionNames = (params.requestRelevantPromptSkillWorkflowToolNames?.length ?? 0) > 0 ? params.requestRelevantPromptSkillWorkflowToolNames : params.requestRelevantToolNames;
-      const relevantNames = new Set(toolNames ?? completionNames ?? []);
-      return (params.bridge.getResult().toolExecResults ?? [])
-        .filter((record) => record.success && relevantNames.has(record.toolName)).length;
-    },
-    currentSuccessfulNonWorkflowToolCount: (toolNames) => {
-      const relevantNames = toolNames === undefined ? undefined : new Set(toolNames);
-      const workflowNames = new Set([
-        ...(params.requestRelevantPromptSkillWorkflowToolNames ?? []),
-        ...((params.requestRelevantPromptSkillLocations?.length ?? 0) > 0 ? ["read"] : []),
-      ]);
-      return (params.bridge.getResult().toolExecResults ?? []).filter(
-        (record) => record.success && record.backgrounded !== true
-          && isRecoveryEvidenceToolName(record.toolName)
-          && isReadOnlyTool(record.toolName)
-          && (relevantNames === undefined || relevantNames.has(record.toolName))
-          && !workflowNames.has(record.toolName),
-      ).length;
-    },
-    currentDistinctSuccessfulWebFetchUrlCount: () => countDistinctSuccessfulWebFetchUrls(params.bridge.getResult().toolExecResults ?? []),
-    currentDistinctSuccessfulWebSearchQueryCount: () => countDistinctSuccessfulWebSearchQueries(params.bridge.getResult().toolExecResults ?? []),
-    currentDeferredWorkCount: () => {
-      const relevantNames = new Set(recoveryRelevantToolNames);
-      return (params.bridge.getResult().toolExecResults ?? [])
-        .filter((record) => record.backgrounded === true && relevantNames.has(record.toolName))
-        .length;
-    },
-    currentTerminalDenialCount: () => {
-      const relevantNames = new Set(recoveryRelevantToolNames);
-      return (params.bridge.getResult().toolExecResults ?? [])
-        .filter((record) => !record.success && record.failureCode === "permission_denied"
-          && relevantNames.has(record.toolName))
-        .length;
-    },
-    logger: deps.logger,
-    eventBus: deps.eventBus,
-    sessionKey: formatSessionKey(params.sessionKey),
-    clock: deps.clock,
-    agentId,
-    getVisibleAssistantText,
-    guardProviderDispatch: resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
-  });
-  if (outcome.recovered && outcome.response) {
-    result.response = outcome.response;
-  }
-  if (outcome.fired) {
-    result.requestToolNudge = {
-      fired: true,
-      recovered: outcome.recovered,
-      matchedToolNames: outcome.matchedToolNames,
-    };
   }
 }

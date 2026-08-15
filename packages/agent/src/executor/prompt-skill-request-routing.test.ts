@@ -138,7 +138,7 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
     expect(deferral.requestRelevantPromptSkillWorkflowContext).toBeUndefined();
-    expect(deferral.requestRelevantToolNames).toEqual(["browser", "read"]);
+    expect(deferral.requestRelevantToolNames).toEqual(["browser"]);
   });
 
   it("does not enforce a parent skill from a quoted child task", () => {
@@ -166,7 +166,7 @@ describe("prompt skill request routing", () => {
     expect(selected).toEqual(["deep-research"]);
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
-    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn", "read"]);
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
 
   it("does not enforce a parent skill from an unquoted delegated child task", () => {
@@ -346,6 +346,54 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toContain("read");
   });
 
+  it("preserves a parent skill after returning from delegated work", () => {
+    const deferral = result();
+    const request = [
+      "Spawn a child to inspect package.json.",
+      "After it finishes, return to the parent project and use Claude Code to refactor it.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: request,
+      requestRelevanceText: request,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(request)).toContain(
+      "return to the parent project and use Claude Code to refactor it",
+    );
+    expect(selected).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantPromptSkillNames).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantToolNames).toContain("read");
+  });
+
+  it("preserves parent work whose final result follows delegated work", () => {
+    const deferral = result();
+    const request = [
+      "Spawn a child to inspect package.json.",
+      "After it finishes, return to the parent project and use Claude Code to produce the final result.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: request,
+      requestRelevanceText: request,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(request)).toContain(
+      "return to the parent project and use Claude Code to produce the final result",
+    );
+    expect(selected).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantPromptSkillNames).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantToolNames).toContain("read");
+  });
+
   it("does not route a direct artifact write as a software workflow", () => {
     const deferral = result();
     deferral.activeTools.push(tool("write"));
@@ -397,6 +445,91 @@ describe("prompt skill request routing", () => {
 
     expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:terminal|write)\b/iu);
     expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("does not require a parent read for a captionless delegated attachment", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Live reliability test. Use sessions_spawn exactly once to launch one background sub-agent and do not wait for it.",
+      "Give the child this exact task: in its own workspace, use the write tool to create b2-media-proof.txt containing exactly B2_MEDIA_20260815 followed by one newline; declare b2-media-proof.txt as the only expected output; after the write succeeds return exactly NO_REPLY.",
+      "Use required_tools [write] and max_steps 30.",
+      "Reply now only with a brief natural launch acknowledgement.",
+      "When the child completes, deliver the file to this Telegram chat with no caption and no later terminal text.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).toBe("Live reliability test.");
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("does not route an unquoted sessions spawn task argument as parent coding intent", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Live captionless attachment check.",
+      "First call discover_tools with query sessions_spawn.",
+      "Then call sessions_spawn exactly once with task set to: Use write to create b2-media-proof.txt containing exactly B2_MEDIA_20260815 followed by one newline.",
+      "After the write succeeds, return exactly NO_REPLY.",
+      "Set required_tools to [write], max_steps to 30, and expected_outputs to [b2-media-proof.txt].",
+      "Do not wait for the child.",
+      "Reply now only with a brief natural launch acknowledgement.",
+      "The completed file must be delivered to this Telegram chat with no caption and no later terminal text.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:create|write)\b/iu);
+    expect(selected).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("does not route a separately declared child task argument as parent coding intent", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Live captionless attachment check.",
+      "First call discover_tools with query sessions_spawn.",
+      "Then call sessions_spawn exactly once and do not wait.",
+      "The task argument must be this exact single sentence: Use write to create b2-media-proof.txt containing exactly B2_MEDIA_20260815 followed by one newline, then return exactly NO_REPLY.",
+      "Set required_tools to [write], max_steps to 30, and expected_outputs to [b2-media-proof.txt].",
+      "Reply now only with a brief natural launch acknowledgement.",
+      "The completed file must be delivered to this Telegram chat with no caption and no later terminal text.",
+    ].join(" ");
+
+    applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:create|write)\b/iu);
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
@@ -585,7 +718,7 @@ describe("prompt skill request routing", () => {
     expect(excluded.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
     expect(excluded.requestRelevantPromptSkillMinDistinctWebFetchUrls).toBeUndefined();
     expect(excluded.requestRelevantPromptSkillMinDistinctWebSearchQueries).toBeUndefined();
-    expect(excluded.requestRelevantToolNames).toEqual(["read"]);
+    expect(excluded.requestRelevantToolNames).toEqual([]);
 
     const permitted = result();
     const permittedRequest = [

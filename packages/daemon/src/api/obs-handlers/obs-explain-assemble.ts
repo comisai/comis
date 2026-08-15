@@ -552,6 +552,9 @@ export function assembleIncidentReport(
     ...(signals.requestRelevantToolNames !== undefined
       ? { requestRelevantToolNames: signals.requestRelevantToolNames }
       : {}),
+    ...(signals.requestRelevantPromptSkillNames !== undefined
+      ? { requestRelevantPromptSkillNames: signals.requestRelevantPromptSkillNames }
+      : {}),
     ...(signals.requestRelevanceHistory !== undefined
       ? { requestRelevanceHistory: signals.requestRelevanceHistory }
       : {}),

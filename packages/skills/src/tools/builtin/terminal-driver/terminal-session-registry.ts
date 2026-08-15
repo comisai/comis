@@ -327,6 +327,7 @@ export function createTerminalSessionRegistry(
   const sessions = new Map<string, SessionHandle>();
   const pending = new Map<string, (f: TerminalReplyFrame) => void>();
   let worker: FakeWorkerChild | undefined;
+  let createTail: Promise<void> = Promise.resolve();
 
   const nowMs = deps.nowMs ?? systemNowMs;
   const { logger } = deps;
@@ -535,7 +536,7 @@ export function createTerminalSessionRegistry(
     });
   }
 
-  async function create(req: CreateRequest, owner: SessionOwner): Promise<CreateResult> {
+  async function createNow(req: CreateRequest, owner: SessionOwner): Promise<CreateResult> {
     const sessionId = req.sessionId ?? generateSessionId();
     if (sessions.has(sessionId)) {
       return Promise.reject(new Error("terminal session identity is already registered"));
@@ -711,6 +712,11 @@ export function createTerminalSessionRegistry(
     };
   }
 
+  function create(req: CreateRequest, owner: SessionOwner): Promise<CreateResult> {
+    const result = createTail.then(() => createNow(req, owner));
+    createTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
   /**
    * The handle ONLY when it exists AND is owned by `owner`. An owner mismatch
    * returns `undefined` — the SAME as a missing session — so every owner-scoped

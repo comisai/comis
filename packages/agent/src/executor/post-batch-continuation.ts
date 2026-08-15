@@ -44,8 +44,9 @@ export interface ContinuationOutcome {
    *                           (single-attempt diagnostic; not a terminal flag)
    *  - `max_attempts_exhausted` — all `maxRetries` attempts produced empty
    *  - `disabled`            — config.enabled = false OR maxRetries = 0
+   *  - `delegation_accepted` — a successful spawn receipt already proves the handoff
    *  - `no_match`            — empty-after-tool-batch pattern not detected */
-  outcome: "recovered" | "still_empty" | "max_attempts_exhausted" | "disabled" | "no_match";
+  outcome: "recovered" | "still_empty" | "max_attempts_exhausted" | "disabled" | "no_match" | "delegation_accepted";
   priorToolCallCount: number;
   priorToolNames: string[];
 }
@@ -67,6 +68,8 @@ export interface RunPostBatchContinuationDeps {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   getVisibleAssistantText: (session: any) => string;
   guardProviderDispatch: ProviderDispatchGuard;
+  /** Current-turn spawn receipts that prove asynchronous work was accepted. */
+  currentSuccessfulDelegationCount?: () => number;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +235,27 @@ export async function runPostBatchContinuation(
       outcome: "no_match",
       priorToolCallCount: 0,
       priorToolNames: [],
+    });
+  }
+
+  if ((deps.currentSuccessfulDelegationCount?.() ?? 0) > 0) {
+    logger.info(
+      {
+        submodule: SUBMODULE,
+        agentId,
+        decision: "skip",
+        continuationReason: "delegation_accepted",
+        priorToolCallCount,
+        priorToolNames,
+      },
+      "Post-batch continuation skipped",
+    );
+    return ok({
+      recovered: false,
+      attempts: 0,
+      outcome: "delegation_accepted",
+      priorToolCallCount,
+      priorToolNames,
     });
   }
 

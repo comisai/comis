@@ -826,6 +826,8 @@ have tripped -- the ceiling is the cause, the breaker its downstream symptom.
 
 The report may include content-free request-selection evidence:
 `requestRelevantToolNames` lists the bounded tool names selected for the turn;
+`requestRelevantPromptSkillNames` lists the bounded prompt-skill names whose
+route cleared the [workflow-enforcement bar](/skills/manifest#comis-namespace);
 `requestRelevanceHistory` records `{ turnCount, charCount, saturated, recallDisposition? }`
 for the bounded prior-user-turn window; and `operatorPolicyToolProjections` records up
 to 16 `{ toolName, sectionId, contentHash, projectedChars }` receipts for
@@ -895,7 +897,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 |----------|-------|
 | **Scope** | `rpc` route plus admin trust. A gateway token needs both `rpc` and `admin` (or `*`); the handler rejects non-admin trust. |
 | **Parameters** | `{ sessionKey?: string, traceId?: string, rootRunId?: string, graphId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` / `rootRunId` / `graphId` required. `traceId` accepts a trace ID or a sub-agent run ID and canonicalizes either to the indexed session. `rootRunId` is an autonomy run's id, canonicalized to its session before assembly (a `root-session-` synthetic root carries a generated UUID and a validated base64url session key; a real spawned root resolves by a session-index scan) and renders the run's `spawnTree`. `graphId` is a terminal execution-graph run's id, canonicalized to its caller session through the persisted run metadata and rendered with the `graph` section. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
-| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], requestRelevantToolNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated, recallDisposition? }, requestClarification?: { reason, inputChars }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, graph?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], requestRelevantToolNames?: string[], requestRelevantPromptSkillNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated, recallDisposition? }, requestClarification?: { reason, inputChars }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, graph?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
