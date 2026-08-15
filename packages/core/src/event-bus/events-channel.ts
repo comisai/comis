@@ -449,6 +449,10 @@ export interface ChannelEvents {
     stepIndex: number;
     transition: "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
     outcome: "blocked" | "in_flight" | "committed" | "failed" | "parked";
+    /** Content-free operation shape, present when the active sender knows it. */
+    deliveryKind?: "text" | "attachment";
+    /** Platform receipt retained only after a committed send. */
+    platformMessageId?: string;
     timestamp: number;
   };
 

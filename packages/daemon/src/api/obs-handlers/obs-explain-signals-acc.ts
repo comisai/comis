@@ -238,6 +238,8 @@ export interface Acc {
   deliveryAborts?: { events: number; chunksNotSent: number };
   /** The LAST valid `delivery.dispatched` terminal outcome. */
   deliveryDispatch?: IncidentSignals["deliveryDispatch"];
+  /** The LAST valid durable cross-session completion-delivery transition. */
+  outwardDelivery?: IncidentSignals["outwardDelivery"];
   /** Bounded platform response IDs from `delivery.reply_bound` records. */
   deliveryMessageIds: string[];
   /** Selected-turn runtime-recovery fold from `execution.recovery_attempted` and

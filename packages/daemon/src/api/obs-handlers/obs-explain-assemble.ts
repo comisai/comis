@@ -641,6 +641,21 @@ export function assembleIncidentReport(
     ...(signals.deliveryDispatch?.messageIds !== undefined
       ? { deliveryReceipt: { messageIds: signals.deliveryDispatch.messageIds } }
       : {}),
+    ...(signals.outwardDelivery !== undefined
+      ? {
+          outwardDelivery: {
+            status: signals.outwardDelivery.status,
+            rootRunId: signals.outwardDelivery.rootRunId,
+            stepIndex: signals.outwardDelivery.stepIndex,
+            ...(signals.outwardDelivery.deliveryKind !== undefined
+              ? { deliveryKind: signals.outwardDelivery.deliveryKind }
+              : {}),
+            ...(signals.outwardDelivery.platformMessageId !== undefined
+              ? { platformMessageId: signals.outwardDelivery.platformMessageId }
+              : {}),
+          },
+        }
+      : {}),
     ...(signals.deliveryAborts !== undefined
       ? { deliverySkipped: { events: signals.deliveryAborts.events, chunksNotSent: signals.deliveryAborts.chunksNotSent } }
       : {}),

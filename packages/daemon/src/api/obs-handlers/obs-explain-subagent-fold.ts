@@ -3,7 +3,7 @@
 
 import { asNumber, asString } from "./obs-explain-signals-fields.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
-import { accumulateSubAgentCompletedRecord } from "./obs-explain-signal-folds.js";
+import { accumulateSubAgentCompletedRecord } from "./obs-explain-subagent-output-fold.js";
 
 function subagentRouteKey(parentRunId: string | undefined, childRunId: string): string {
   return `${parentRunId ?? ""}:${childRunId}`;

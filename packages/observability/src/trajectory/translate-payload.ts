@@ -386,13 +386,14 @@ export function translatePayload(
       // terminal sessionId, agentId, and raw timestamp are envelope/correlation ids
       // (the recorder envelope carries the agent session) — never echoed.
       return { reason: payload.reason, durationMs: payload.durationMs };
-
     case "delivery:outward_ledger_transition":
       return {
         rootRunId: payload.rootRunId,
         stepIndex: payload.stepIndex,
         transition: payload.transition,
         outcome: payload.outcome,
+        ...(payload.deliveryKind !== undefined ? { deliveryKind: payload.deliveryKind } : {}),
+        ...(payload.platformMessageId !== undefined ? { platformMessageId: payload.platformMessageId } : {}),
       };
 
     case "delivery:enqueued":

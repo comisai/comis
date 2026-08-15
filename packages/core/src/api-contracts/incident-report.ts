@@ -675,6 +675,17 @@ export const IncidentReportSchema = z.object({
       messageIds: z.array(z.string()).max(100),
     })
     .optional(),
+  /** Durable cross-session completion delivery, including the committed
+   *  platform receipt when the outward ledger recorded one. */
+  outwardDelivery: z
+    .object({
+      status: z.enum(["blocked", "in_flight", "committed", "failed", "parked"]),
+      rootRunId: z.string(),
+      stepIndex: z.number().int().nonnegative(),
+      deliveryKind: z.enum(["text", "attachment"]).optional(),
+      platformMessageId: z.string().optional(),
+    })
+    .optional(),
   /** Runtime recovery attempts folded from the selected turn's
    *  `execution.recovery_attempted` and `execution.replay_recovered` records —
    *  model re-entries and deterministic response-grounding corrections that

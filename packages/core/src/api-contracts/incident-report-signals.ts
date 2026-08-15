@@ -512,6 +512,19 @@ export interface IncidentSignals {
     messageIds?: string[];
   };
   /**
+   * The LAST durable outward-ledger transition associated with a background
+   * completion. A committed transition may include the platform receipt that
+   * anchors the cross-session announcement to the channel transcript.
+   */
+  outwardDelivery?: {
+    status: "blocked" | "in_flight" | "committed" | "failed" | "parked";
+    rootRunId: string;
+    stepIndex: number;
+    transition: "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
+    deliveryKind?: "text" | "attachment";
+    platformMessageId?: string;
+  };
+  /**
    * Σ over the session's `delivery.aborted` records — aborted-delivery events
    * and the blocks they left unsent (chunksNotSent = Σ(totalChunks −
    * chunksDelivered)). Absent ⇒ no aborted deliveries.

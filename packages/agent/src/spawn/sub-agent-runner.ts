@@ -3333,6 +3333,9 @@ function classifyCompletionErrorKind(
             }, "Sub-agent output validation error");
           }
         }
+        const expectedOutputCount = validationResults?.length;
+        const verifiedOutputCount = validationResults?.filter((output) => output.exists).length;
+        let attachmentsPrepared = 0;
 
         const backgroundProcesses = backgroundProcessCounts(runId);
         // Only a process the child NEVER polled to a terminal state invalidates the run: the
@@ -3767,6 +3770,13 @@ function classifyCompletionErrorKind(
               });
             }
             const runCitationEvidence = childCitationEvidence.get(runId);
+            const completionAttachments = validationResults
+              ?.filter((output) => output.exists)
+              .map((output) => ({
+                sourceAgentId: params.agentId,
+                path: output.resolvedPath ?? output.path,
+              })) ?? [];
+            attachmentsPrepared = completionAttachments.length;
             await deliverAnnouncement({
               announcementText,
               announceChannelType: params.announceChannelType,
@@ -3818,15 +3828,8 @@ function classifyCompletionErrorKind(
                 ? { suppressText: true }
                 : {}),
               runId,
-              ...(validationResults?.some((output) => output.exists)
-                ? {
-                    attachments: validationResults
-                      .filter((output) => output.exists)
-                      .map((output) => ({
-                        sourceAgentId: params.agentId,
-                        path: output.resolvedPath ?? output.path,
-                      })),
-                  }
+              ...(completionAttachments.length > 0
+                ? { attachments: completionAttachments }
                 : {}),
             }, deps);
           }
@@ -3896,6 +3899,13 @@ function classifyCompletionErrorKind(
             : {}),
           ...(backgroundProcesses.failed > 0
             ? { failedBackgroundProcesses: backgroundProcesses.failed }
+            : {}),
+          ...(expectedOutputCount !== undefined && verifiedOutputCount !== undefined
+            ? {
+                expectedOutputs: expectedOutputCount,
+                verifiedOutputs: verifiedOutputCount,
+                attachmentsPrepared,
+              }
             : {}),
         });
 
