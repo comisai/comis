@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Output-size escalation policy and success-path response processing. */
-import { classifyToolInvocationMutation, formatSessionKey, toSafeErrorLogString } from "@comis/core";
+import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { withPromptTimeout } from "../prompt-timeout.js";
@@ -8,8 +8,6 @@ import { runContinuationTurn } from "../continuation-turn.js";
 import { scanWithOutputGuard, recoverEmptyFinalResponse, extractExecutionPlan, surfaceDiscardedPreToolUrl } from "../executor-response-filter.js";
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
-import { countDistinctSuccessfulWebFetchUrls, countDistinctSuccessfulWebSearchQueries, isRecoveryEvidenceToolName, runRequestToolNudge } from "../request-tool-nudge.js";
-import { isReadOnlyTool } from "../tool-parallelism.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -21,6 +19,11 @@ import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
 import { runBudgetContinuation } from "./budget-continuation.js";
 import { hasAcceptedDelegation } from "./accepted-delegation.js";
+import {
+  hasEnforcedPromptSkillRoute,
+  runRequestToolNudgeStep,
+} from "./request-tool-nudge-step.js";
+
 /** Runs output escalation and final success or failure response processing. */
 export async function escalateOutput(
   params: RunPromptParams,
@@ -320,8 +323,13 @@ async function processSuccessPath(
     // Mutually exclusive with L4 by construction (L4 requires an EMPTY final
     // turn; this requires visible text).
     await runNarrateNudgeStep(params);
-    await runRequestToolNudgeStep(params);
+  }
 
+  if (!acceptedDelegation || hasEnforcedPromptSkillRoute(params)) {
+    await runRequestToolNudgeStep(params);
+  }
+
+  if (!acceptedDelegation) {
     // Budget-driven continuation loop
     if (budgetTracker) {
       await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);
@@ -340,9 +348,7 @@ async function processSuccessPath(
     deps.logger,
   );
 
-  if (!acceptedDelegation) {
-    await applyResponseLocaleEnforcement(params);
-  }
+  await applyResponseLocaleEnforcement(params);
 
   suppressRedundantFinalAfterOutboundDelivery(params);
 
@@ -431,92 +437,5 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
   }
   if (outcome.fired) {
     result.narrateNudge = { fired: true, recovered: outcome.recovered };
-  }
-}
-
-async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
-  const { session, agentId, result, deps } = params;
-  if (result.narrateNudge?.fired === true) return;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sessionMessages: unknown[] = (session as any).messages ?? [];
-  const successfulDiscoveredEvidenceToolNames = (params.bridge.getResult().toolExecResults ?? []).filter(
-    (record) => record.success
-      && record.backgrounded !== true
-      && isRecoveryEvidenceToolName(record.toolName)
-      && isReadOnlyTool(record.toolName)
-      && params.isDeferredToolDiscovered?.(record.toolName) === true,
-  ).map((record) => record.toolName);
-  const recoveryRelevantToolNames = [...new Set([
-    ...(params.requestRelevantToolNames ?? []),
-    ...successfulDiscoveredEvidenceToolNames,
-  ])];
-  const outcome = await runRequestToolNudge({
-    session,
-    requestText: params.msg.originalMessages?.map((message) => message.text).join("\n") ?? params.msg.text,
-    messages: sessionMessages,
-    capabilityClass: params.modelProfile?.capabilityClass,
-    requestRelevantToolNames: recoveryRelevantToolNames,
-    requestRelevantPromptSkillNames: params.requestRelevantPromptSkillNames ?? [],
-    requestRelevantPromptSkillLocations: params.requestRelevantPromptSkillLocations ?? [],
-    requestRelevantPromptSkillWorkflowToolNames: params.requestRelevantPromptSkillWorkflowToolNames ?? [],
-    requestRelevantPromptSkillMinDistinctWebFetchUrls: params.requestRelevantPromptSkillMinDistinctWebFetchUrls, requestRelevantPromptSkillMinDistinctWebSearchQueries: params.requestRelevantPromptSkillMinDistinctWebSearchQueries,
-    requestRelevantPromptSkillWorkflowContext: params.requestRelevantPromptSkillWorkflowContext,
-    currentSuccessfulMutationCount: () => (params.bridge.getResult().toolExecResults ?? [])
-      .filter((record) => record.success && classifyToolInvocationMutation(
-        record.toolName,
-        record.action === undefined ? {} : { action: record.action },
-      ) === "mutating").length,
-    currentSuccessfulToolCount: (toolNames) => {
-      const completionNames = (params.requestRelevantPromptSkillWorkflowToolNames?.length ?? 0) > 0 ? params.requestRelevantPromptSkillWorkflowToolNames : params.requestRelevantToolNames;
-      const relevantNames = new Set(toolNames ?? completionNames ?? []);
-      return (params.bridge.getResult().toolExecResults ?? [])
-        .filter((record) => record.success && relevantNames.has(record.toolName)).length;
-    },
-    currentSuccessfulNonWorkflowToolCount: (toolNames) => {
-      const relevantNames = toolNames === undefined ? undefined : new Set(toolNames);
-      const workflowNames = new Set([
-        ...(params.requestRelevantPromptSkillWorkflowToolNames ?? []),
-        ...((params.requestRelevantPromptSkillLocations?.length ?? 0) > 0 ? ["read"] : []),
-      ]);
-      return (params.bridge.getResult().toolExecResults ?? []).filter(
-        (record) => record.success && record.backgrounded !== true
-          && isRecoveryEvidenceToolName(record.toolName)
-          && isReadOnlyTool(record.toolName)
-          && (relevantNames === undefined || relevantNames.has(record.toolName))
-          && !workflowNames.has(record.toolName),
-      ).length;
-    },
-    currentDistinctSuccessfulWebFetchUrlCount: () => countDistinctSuccessfulWebFetchUrls(params.bridge.getResult().toolExecResults ?? []),
-    currentDistinctSuccessfulWebSearchQueryCount: () => countDistinctSuccessfulWebSearchQueries(params.bridge.getResult().toolExecResults ?? []),
-    currentDeferredWorkCount: () => {
-      const relevantNames = new Set(recoveryRelevantToolNames);
-      return (params.bridge.getResult().toolExecResults ?? [])
-        .filter((record) => record.backgrounded === true && relevantNames.has(record.toolName))
-        .length;
-    },
-    currentTerminalDenialCount: () => {
-      const relevantNames = new Set(recoveryRelevantToolNames);
-      return (params.bridge.getResult().toolExecResults ?? [])
-        .filter((record) => !record.success && record.failureCode === "permission_denied"
-          && relevantNames.has(record.toolName))
-        .length;
-    },
-    logger: deps.logger,
-    eventBus: deps.eventBus,
-    sessionKey: formatSessionKey(params.sessionKey),
-    clock: deps.clock,
-    agentId,
-    getVisibleAssistantText,
-    guardProviderDispatch: resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
-  });
-  if (outcome.recovered && outcome.response) {
-    result.response = outcome.response;
-  }
-  if (outcome.fired) {
-    result.requestToolNudge = {
-      fired: true,
-      recovered: outcome.recovered,
-      matchedToolNames: outcome.matchedToolNames,
-    };
   }
 }
