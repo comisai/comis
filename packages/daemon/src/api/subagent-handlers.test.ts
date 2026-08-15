@@ -902,12 +902,33 @@ describe("createSubagentHandlers", () => {
       expect(deps.subAgentRunner.steerRun).not.toHaveBeenCalled();
     });
 
-    // The inject path must mirror killRun's status guard.
-    // getRunStatus returns a run for ANY status inside the retention window, so a
-    // completed/failed/queued target would otherwise proceed to steerRun, find no
-    // live handle, and throw the generic "No live session" — a worse, less
-    // actionable error than kill's "is not running (status: X)".
-    it.each(["completed", "failed", "queued"] as const)(
+    it("returns a successful no-op when the child completed before the steer arrived", async () => {
+      vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
+        runId: "run-completed",
+        status: "completed",
+        agentId: "researcher",
+        task: "t",
+        sessionKey: "default:sub-agent-run-completed:sub-agent:run-completed",
+        startedAt: Date.now() - 5_000,
+        completedAt: Date.now(),
+      } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);
+
+      await expect(
+        handlers["subagent.steer"]!({ target: "run-completed", message: "adjust" }),
+      ).resolves.toEqual({
+        status: "already_terminal",
+        runId: "run-completed",
+        terminalStatus: "completed",
+      });
+      expect(deps.subAgentRunner.steerRun).not.toHaveBeenCalled();
+      expect(deps.subAgentRunner.killRun).not.toHaveBeenCalled();
+      expect(deps.subAgentRunner.spawn).not.toHaveBeenCalled();
+      expect(deps.eventBus!.emit).not.toHaveBeenCalled();
+    });
+
+    // Failed and queued runs cannot accept a live steer and do not represent a
+    // successfully completed target, so they remain actionable errors.
+    it.each(["failed", "queued"] as const)(
       "throws an actionable status error (not the generic 'No live session') for a %s run, and does NOT call steerRun",
       async (status) => {
         vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
@@ -917,7 +938,7 @@ describe("createSubagentHandlers", () => {
           task: "t",
           sessionKey: `default:sub-agent-run-${status}:sub-agent:run-${status}`,
           startedAt: Date.now() - 5_000,
-          ...(status === "completed" || status === "failed"
+          ...(status === "failed"
             ? { completedAt: Date.now() }
             : {}),
         } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);

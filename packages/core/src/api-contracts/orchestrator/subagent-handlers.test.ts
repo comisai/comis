@@ -133,6 +133,19 @@ describe("SubagentSteerContract.response — discriminated union on status", () 
     expect(parsed).toEqual({ status: "steered_inject", runId: "run-1" });
   });
 
+  it("parses a completed-target no-op without treating the steer race as an error", () => {
+    const parsed = SubagentSteerContract.response.parse({
+      status: "already_terminal",
+      runId: "run-1",
+      terminalStatus: "completed",
+    });
+    expect(parsed).toEqual({
+      status: "already_terminal",
+      runId: "run-1",
+      terminalStatus: "completed",
+    });
+  });
+
   it("rejects a cross-shaped payload (steered_inject discriminant with oldRunId/newRunId)", () => {
     expect(() =>
       SubagentSteerContract.response.parse({
