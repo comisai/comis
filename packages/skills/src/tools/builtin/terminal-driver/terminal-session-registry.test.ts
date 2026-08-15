@@ -2222,6 +2222,25 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
     expect(onEvict.mock.calls[0][0].reason).toBe("max_sessions");
   });
 
+  it("serializes concurrent creates so maxSessions cannot be exceeded", async () => {
+    const fake = makeIsolatingWorker();
+    const { deps, onEvict } = reaperDeps(() => fake.child, { maxSessions: 1 });
+    const registry = createTerminalSessionRegistry(deps);
+
+    const [first, second] = await Promise.all([
+      registry.create({ ...bashReq, sessionId: "terminal-session_first" }, subA),
+      registry.create({ ...bashReq, sessionId: "terminal-session_second" }, subA),
+    ]);
+
+    expect(registry.size()).toBe(1);
+    expect(registry.get(first.sessionId, subA)).toBeUndefined();
+    expect(registry.get(second.sessionId, subA)).toBeDefined();
+    expect(onEvict).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: first.sessionId,
+      reason: "max_sessions",
+    }));
+  });
+
   it("Test B — cleanup() stops the sweep: the fake-timer interval is cancelled (no leaked sweep)", async () => {
     const fake = makeIsolatingWorker();
     const { deps, timers } = reaperDeps(() => fake.child, { maxSessions: 10 });
