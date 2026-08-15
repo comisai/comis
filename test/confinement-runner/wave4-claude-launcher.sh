@@ -63,6 +63,7 @@ export CLAUDE_CONFIG_DIR=/home/comis/.claude
 export COMIS_EXECUTION_ATTACHMENT="${own_attachment}"
 export COMIS_EXECUTION_ATTACHMENT_TARGET_NAME="${own_attachment##*/}"
 export PATH="${REPORTER_CAPTURE_DIR}:${REPORTER_DIR}:${PATH}"
+unset ANTHROPIC_API_KEY
 jq -n \
   --arg workingDirectory "$(pwd -P)" \
   --arg attachmentTargetName "${COMIS_EXECUTION_ATTACHMENT_TARGET_NAME:-}" \
