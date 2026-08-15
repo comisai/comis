@@ -109,6 +109,41 @@ describe("buildSpawnPlan — verified executable visibility", () => {
 });
 
 describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", () => {
+  it("pins private Git sources outside worker-writable mount targets", () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-source-pin-"));
+    try {
+      const commonDir = join(root, "repository", ".git");
+      const gitDir = join(commonDir, "worktrees", "task-a");
+      const workspace = join(root, "worktrees", "task-a");
+      const outside = join(root, "outside");
+      mkdirSync(gitDir, { recursive: true });
+      mkdirSync(join(commonDir, "objects"), { recursive: true });
+      mkdirSync(join(commonDir, "refs", "heads"), { recursive: true });
+      mkdirSync(workspace, { recursive: true });
+      mkdirSync(join(outside, "worktree"), { recursive: true });
+      mkdirSync(join(outside, "common"), { recursive: true });
+      writeFileSync(join(workspace, ".git"), `gitdir: ${gitDir}\n`, "utf8");
+      writeFileSync(join(gitDir, "commondir"), "../..\n", "utf8");
+      writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/task-a\n", "utf8");
+      writeFileSync(join(commonDir, "refs", "heads", "task-a"), `${"a".repeat(40)}\n`, "utf8");
+      writeFileSync(join(outside, "worktree", "HEAD"), "attacker-controlled\n", "utf8");
+
+      const resolved = resolveManagedWorkspaceGitMounts(workspace);
+      expect(resolved.ok).toBe(true);
+      if (!resolved.ok || resolved.value === undefined) return;
+      const expectedHead = readFileSync(join(resolved.value.worktree.sourcePath, "HEAD"), "utf8");
+      const privateTarget = join(workspace, ".comis-terminal-git");
+      rmSync(privateTarget, { recursive: true, force: true });
+      symlinkSync(outside, privateTarget);
+
+      expect(resolved.value.worktree.sourcePath.startsWith(`${realpathSync(gitDir)}/`)).toBe(true);
+      expect(resolved.value.privateCommon.sourcePath.startsWith(`${realpathSync(gitDir)}/`)).toBe(true);
+      expect(readFileSync(join(resolved.value.worktree.sourcePath, "HEAD"), "utf8")).toBe(expectedHead);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps shared Git administration read-only and only the leased worktree administration writable", async () => {
     const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-"));
     try {
