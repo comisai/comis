@@ -240,6 +240,17 @@ export interface Acc {
   deliveryDispatch?: IncidentSignals["deliveryDispatch"];
   /** The LAST valid durable cross-session completion-delivery transition. */
   outwardDelivery?: IncidentSignals["outwardDelivery"];
+  outwardDeliveryParts: Map<
+    string,
+    {
+      status: "blocked" | "in_flight" | "committed" | "failed" | "parked";
+      rootRunId: string;
+      stepIndex?: number;
+      transition: "prepare" | "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
+      deliveryKind?: "text" | "attachment";
+      platformMessageId?: string;
+    }
+  >;
   /** Bounded platform response IDs from `delivery.reply_bound` records. */
   deliveryMessageIds: string[];
   /** Selected-turn runtime-recovery fold from `execution.recovery_attempted` and

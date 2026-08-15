@@ -13092,7 +13092,8 @@ export const CONTRACTS = {
                 "in_flight",
                 "committed",
                 "failed",
-                "parked"
+                "parked",
+                "partial"
               ]
             },
             "rootRunId": {
@@ -13116,8 +13117,7 @@ export const CONTRACTS = {
           },
           "required": [
             "status",
-            "rootRunId",
-            "stepIndex"
+            "rootRunId"
           ],
           "additionalProperties": false
         },

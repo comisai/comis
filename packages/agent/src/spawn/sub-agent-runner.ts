@@ -4369,13 +4369,17 @@ function classifyCompletionErrorKind(
     reason?: string;
     idleMs?: number;
     thresholdMs?: number;
-  }): { killed: boolean; error?: string } {
+  }): { killed: boolean; error?: string; terminalStatus?: "completed" } {
     const run = runs.get(runId);
     if (!run) {
       return { killed: false, error: `Unknown run ID: ${runId}` };
     }
     if (run.status !== "running" && run.status !== "queued") {
-      return { killed: false, error: `Run ${runId} is not running (status: ${run.status})` };
+      return {
+        killed: false,
+        error: `Run ${runId} is not running (status: ${run.status})`,
+        ...(run.status === "completed" ? { terminalStatus: "completed" as const } : {}),
+      };
     }
 
     const killedBy = opts?.killedBy ?? "parent";
@@ -4600,7 +4604,12 @@ function classifyCompletionErrorKind(
   async function steerRun(
     runId: string,
     message: string,
-  ): Promise<{ steered: boolean; mode?: "steer" | "followup"; error?: string }> {
+  ): Promise<{
+    steered: boolean;
+    mode?: "steer" | "followup";
+    error?: string;
+    terminalStatus?: "completed";
+  }> {
     const steerDeps: SteerRunDeps = {
       // SubAgentRun structurally satisfies SteerableRun (the minimal slice the
       // helper reads); Map is invariant in its value type, so cast at the
@@ -4652,7 +4661,6 @@ function classifyCompletionErrorKind(
     heartbeatTimers.get(run.runId)?.cancel();
     heartbeatTimers.delete(run.runId);
     stopProgressFork(run);
-    closeTrajectoryOnce(run);
 
     const handle = deps.sessionResolver?.resolveActiveSession(run.conversationRef);
     if (handle) {
@@ -4668,8 +4676,10 @@ function classifyCompletionErrorKind(
     deps.eventBus.emit("durable:suspended", {
       rootRunId: run.rootRunId,
       checkpointId: run.runId,
+      sessionKey: run.sessionKey,
       timestamp: suspendedAt,
     });
+    closeTrajectoryOnce(run);
     deps.logger?.info(
       {
         runId: run.runId,

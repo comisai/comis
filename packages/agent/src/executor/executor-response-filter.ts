@@ -215,6 +215,7 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     success: boolean;
     backgrounded?: boolean;
     subagentWaitCompletedCount?: number;
+    spawnRunId?: string;
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
@@ -270,7 +271,10 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     // Spawn identifiers are internal coordination handles. Even a valid
     // receipt does not make them useful channel content, and exposing one
     // makes a natural launch acknowledgement read like a runtime envelope.
-    if (exposesSpawnRunIdentifier(params.response)) {
+    const structuredRunIds = (params.toolExecResults ?? []).flatMap(
+      (toolResult) => toolResult.spawnRunId === undefined ? [] : [toolResult.spawnRunId],
+    );
+    if (exposesSpawnRunIdentifier(params.response, structuredRunIds)) {
       return {
         response: params.verifiedSpawnResponse,
         corrected: true,

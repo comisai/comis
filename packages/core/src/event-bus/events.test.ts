@@ -153,6 +153,7 @@ describe("EventMap composition", () => {
     const payload: EventMap["delivery:outward_ledger_transition"] = {
       rootRunId: "root-1",
       stepIndex: 2,
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
       transition: "park",
       outcome: "parked",
       timestamp: 123,

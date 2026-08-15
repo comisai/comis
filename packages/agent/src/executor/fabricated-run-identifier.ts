@@ -58,6 +58,12 @@ export function assertsUnbackedRunIdentifier(params: {
 }
 
 /** Detect an internal spawn handle in a pending launch response. */
-export function exposesSpawnRunIdentifier(response: string): boolean {
+export function exposesSpawnRunIdentifier(
+  response: string,
+  structuredRunIds: readonly string[] = [],
+): boolean {
+  if (structuredRunIds.some((runId) => runId.length > 0 && response.includes(runId))) {
+    return true;
+  }
   return RUN_IDENTIFIER_CLAIM.test(response) || LEADING_RUN_HANDLE.test(response);
 }

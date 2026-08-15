@@ -2167,6 +2167,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     "durable:suspended": {
       rootRunId: "root-session-1",
       checkpointId: "run-child-1",
+      sessionKey: "child-session",
       timestamp: 0,
     },
     "session:sub_agent_wait_finished": {

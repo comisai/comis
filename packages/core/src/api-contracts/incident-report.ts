@@ -679,9 +679,9 @@ export const IncidentReportSchema = z.object({
    *  platform receipt when the outward ledger recorded one. */
   outwardDelivery: z
     .object({
-      status: z.enum(["blocked", "in_flight", "committed", "failed", "parked"]),
+      status: z.enum(["blocked", "in_flight", "committed", "failed", "parked", "partial"]),
       rootRunId: z.string(),
-      stepIndex: z.number().int().nonnegative(),
+      stepIndex: z.number().int().nonnegative().optional(),
       deliveryKind: z.enum(["text", "attachment"]).optional(),
       platformMessageId: z.string().optional(),
     })

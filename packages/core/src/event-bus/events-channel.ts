@@ -446,9 +446,11 @@ export interface ChannelEvents {
    */
   "delivery:outward_ledger_transition": {
     rootRunId: string;
-    stepIndex: number;
-    transition: "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
+    stepIndex?: number;
+    transition: "prepare" | "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
     outcome: "blocked" | "in_flight" | "committed" | "failed" | "parked";
+    sessionKey?: string;
+    partId?: string;
     /** Content-free operation shape, present when the active sender knows it. */
     deliveryKind?: "text" | "attachment";
     /** Platform receipt retained only after a committed send. */

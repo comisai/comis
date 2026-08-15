@@ -59,6 +59,7 @@ interface SteerRunLogger {
  */
 export interface SteerableRun {
   runId: string;
+  status: "queued" | "running" | "completed" | "failed";
   agentId: string;
   sessionKey: string;
   conversationRef: ConversationRef;
@@ -115,6 +116,7 @@ export interface SteerRunResult {
   mode?: "steer" | "followup";
   /** Set when no live handle / not running — the WARN-able failure branch. */
   error?: string;
+  terminalStatus?: "completed";
 }
 
 /**
@@ -134,6 +136,13 @@ export async function steerRun(
   const run = deps.runs.get(runId);
   if (!run) {
     return { steered: false, error: `Unknown run ID: ${runId}` };
+  }
+  if (run.status === "completed") {
+    return {
+      steered: false,
+      terminalStatus: "completed",
+      error: `Run ${runId} is not running (status: completed)`,
+    };
   }
 
   // Resolve the live handle via the composite lookup (the same lookup

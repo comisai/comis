@@ -418,6 +418,7 @@ export interface OrchestrationEvents {
   "durable:suspended": {
     rootRunId: string;
     checkpointId: string;
+    sessionKey: string;
     timestamp: number;
   };
 

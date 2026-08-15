@@ -517,10 +517,10 @@ export interface IncidentSignals {
    * anchors the cross-session announcement to the channel transcript.
    */
   outwardDelivery?: {
-    status: "blocked" | "in_flight" | "committed" | "failed" | "parked";
+    status: "blocked" | "in_flight" | "committed" | "failed" | "parked" | "partial";
     rootRunId: string;
-    stepIndex: number;
-    transition: "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
+    stepIndex?: number;
+    transition: "prepare" | "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
     deliveryKind?: "text" | "attachment";
     platformMessageId?: string;
   };

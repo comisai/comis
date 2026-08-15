@@ -388,9 +388,10 @@ export function translatePayload(
     case "delivery:outward_ledger_transition":
       return {
         rootRunId: payload.rootRunId,
-        stepIndex: payload.stepIndex,
+        ...(payload.stepIndex !== undefined ? { stepIndex: payload.stepIndex } : {}),
         transition: payload.transition,
         outcome: payload.outcome,
+        ...(payload.partId !== undefined ? { partId: payload.partId } : {}),
         ...(payload.deliveryKind !== undefined ? { deliveryKind: payload.deliveryKind } : {}),
         ...(payload.platformMessageId !== undefined ? { platformMessageId: payload.platformMessageId } : {}),
       };

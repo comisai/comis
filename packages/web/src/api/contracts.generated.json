@@ -12916,7 +12916,8 @@
                 "in_flight",
                 "committed",
                 "failed",
-                "parked"
+                "parked",
+                "partial"
               ]
             },
             "rootRunId": {
@@ -12940,8 +12941,7 @@
           },
           "required": [
             "status",
-            "rootRunId",
-            "stepIndex"
+            "rootRunId"
           ],
           "additionalProperties": false
         },
