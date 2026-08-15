@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { registerToolMetadata } from "@comis/core";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 
 const stageMocks = vi.hoisted(() => ({
   wrapEnvelope: vi.fn(),
   precheckBudget: vi.fn(),
   runWithModelRetry: vi.fn(),
+  applyResponseLocaleEnforcement: vi.fn(),
 }));
 
 vi.mock("./envelope-wrapper.js", () => ({
@@ -18,8 +20,18 @@ vi.mock("../model-retry.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../model-retry.js")>();
   return { ...actual, runWithModelRetry: stageMocks.runWithModelRetry };
 });
+vi.mock("./response-locale-enforcement.js", () => ({
+  applyResponseLocaleEnforcement: stageMocks.applyResponseLocaleEnforcement,
+}));
 
 import { runPrompt } from "./prompt-runner.js";
+
+registerToolMetadata("read", { isReadOnly: true });
+registerToolMetadata("exec", { isReadOnly: false });
+registerToolMetadata("sessions_spawn", {
+  isReadOnly: false,
+  mutationRequestPrefixes: ["spawn a child"],
+});
 
 function makeParams(input: {
   bridgeResult: ReturnType<RunPromptParams["bridge"]["getResult"]>;
@@ -103,6 +115,12 @@ beforeEach(() => {
   stageMocks.precheckBudget.mockReturnValue({ kind: "ok" });
   stageMocks.runWithModelRetry.mockReset();
   stageMocks.runWithModelRetry.mockResolvedValue({ succeeded: true });
+  stageMocks.applyResponseLocaleEnforcement.mockReset();
+  stageMocks.applyResponseLocaleEnforcement.mockImplementation(async (params) => {
+    if (params.responseLocalePolicy?.enforceLocale === true) {
+      params.result.response = "תוקן";
+    }
+  });
 });
 
 describe("runPrompt observable boundaries", () => {
@@ -188,5 +206,72 @@ describe("runPrompt observable boundaries", () => {
     });
     expect(stageMocks.runWithModelRetry).toHaveBeenCalledOnce();
     expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("continues a separate parent skill after accepting delegated work", async () => {
+    const { params, prompt } = makeParams({
+      bridgeResult: {
+        llmCalls: 1,
+        stepsExecuted: 1,
+        textEmitted: true,
+        finishReason: "stop",
+        toolExecResults: [{
+          toolName: "sessions_spawn",
+          success: true,
+          durationMs: 5,
+        }],
+      },
+      messages: [
+        { role: "user", content: [{ type: "text", text: "do both tasks" }] },
+        { role: "assistant", content: [{ type: "text", text: "The child was launched." }] },
+      ],
+      requestRelevantPromptSkillNames: ["claude-code"],
+    });
+    params.msg.text = [
+      "Spawn a child to inspect package.json.",
+      "Then use Claude Code to produce the final parent result.",
+    ].join(" ");
+    params.requestRelevantToolNames = ["sessions_spawn", "read", "exec"];
+    params.requestRelevantPromptSkillLocations = ["/skills/claude-code/SKILL.md"];
+    params.requestRelevantPromptSkillWorkflowToolNames = ["exec"];
+
+    await runPrompt(params);
+
+    expect(prompt).toHaveBeenCalled();
+    expect(params.result.requestToolNudge).toMatchObject({
+      fired: true,
+      matchedToolNames: ["read", "exec"],
+    });
+  });
+
+  it("enforces response locale after accepting delegated work", async () => {
+    const { params, prompt } = makeParams({
+      bridgeResult: {
+        llmCalls: 1,
+        stepsExecuted: 1,
+        textEmitted: true,
+        finishReason: "stop",
+        toolExecResults: [{
+          toolName: "sessions_spawn",
+          success: true,
+          durationMs: 5,
+        }],
+      },
+      messages: [
+        { role: "user", content: [{ type: "text", text: "הפעל עוזר" }] },
+        { role: "assistant", content: [{ type: "text", text: "The child was launched." }] },
+      ],
+    });
+    params.responseLocalePolicy = {
+      locale: "he",
+      source: "request",
+      enforceLocale: true,
+    };
+
+    await runPrompt(params);
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(stageMocks.applyResponseLocaleEnforcement).toHaveBeenCalledOnce();
+    expect(params.result.response).toBe("תוקן");
   });
 });
