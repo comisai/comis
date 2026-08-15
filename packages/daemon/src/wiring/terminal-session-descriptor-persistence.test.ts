@@ -196,6 +196,33 @@ describe("terminal-session-descriptor-persistence (durable descriptor store, rea
     expect(store.persist(makeDescriptor())).toMatchObject({ ok: false });
   });
 
+  it("retains the previous descriptor when an atomic replacement cannot commit", () => {
+    const initial = makeDescriptor({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    });
+    expect(createSessionDescriptorStore({ dataDir, agentId: AGENT }).persist(initial)).toEqual(ok(undefined));
+
+    const replacement = makeDescriptor({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux:991" },
+    });
+    const renameError = new Error("EIO: descriptor rename failed");
+    const failingDeps = {
+      dataDir,
+      agentId: AGENT,
+      renameSync: () => {
+        throw renameError;
+      },
+    } as SessionDescriptorPersistenceDeps & { renameSync: (from: string, to: string) => void };
+
+    expect(createSessionDescriptorStore(failingDeps).persist(replacement)).toEqual(err(renameError));
+    expect(createSessionDescriptorStore({ dataDir, agentId: AGENT }).recover()).toEqual([initial]);
+  });
+
   it("reports persistence failure for a degenerate relative data directory", () => {
     const store = createSessionDescriptorStore({ dataDir: ".", agentId: AGENT });
     expect(store.persist(makeDescriptor())).toMatchObject({ ok: false });
@@ -288,5 +315,18 @@ describe("terminal-session-descriptor-persistence (injected fs — mode + durabi
     const deps: SessionDescriptorPersistenceDeps = { dataDir: "/data", agentId: AGENT, unlinkSync: unlink };
     expect(() => createSessionDescriptorStore(deps).remove("gone")).not.toThrow();
     expect(unlink).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a descriptor deletion fault instead of claiming authority was removed", () => {
+    const unlinkError = new Error("EIO: descriptor unlink failed");
+    const deps: SessionDescriptorPersistenceDeps = {
+      dataDir: "/data",
+      agentId: AGENT,
+      unlinkSync: () => {
+        throw unlinkError;
+      },
+    };
+
+    expect(createSessionDescriptorStore(deps).remove("sess-a") as unknown).toEqual(err(unlinkError));
   });
 });

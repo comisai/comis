@@ -381,6 +381,74 @@ describe("createTerminalSessionRegistry — confirmed process termination", () =
     expect(retireManagedSession).toHaveBeenCalledOnce();
     expect(registry.get(created.sessionId, OWNER)).toMatchObject({ status: "exited" });
   });
+
+  it("retains managed authority until detached tmux termination is confirmed", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const killTmuxSession = vi.fn(() => err(new Error("detached tmux is still alive")));
+    const retireManagedSession = vi.fn(async () => ok(undefined));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { descriptorStore: fakeDescriptorStore(), killTmuxSession, retireManagedSession } as never,
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, OWNER);
+
+    await expect(registry.kill(created.sessionId, OWNER)).rejects.toThrow("detached tmux is still alive");
+    expect(retireManagedSession).not.toHaveBeenCalled();
+    expect(registry.get(created.sessionId, OWNER)).toMatchObject({ status: "exited" });
+  });
+
+  it("retains managed registry authority when descriptor deletion cannot commit", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const store = fakeDescriptorStore();
+    const removeError = new Error("descriptor deletion failed");
+    store.remove = vi.fn(() => err(removeError)) as never;
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: store,
+        killTmuxSession: () => ok(undefined),
+        retireManagedSession: async () => ok(undefined),
+      } as never,
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, OWNER);
+
+    await expect(registry.kill(created.sessionId, OWNER)).rejects.toThrow("descriptor deletion failed");
+    expect(registry.get(created.sessionId, OWNER)).toMatchObject({ status: "exited" });
+  });
 });
 
 describe("createTerminalSessionRegistry — lazy re-spawn", () => {
@@ -3088,7 +3156,38 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
     expect(store.remove).toHaveBeenCalledWith("old-sess");
   });
 
-  it("preserves an incomplete managed descriptor without re-attaching or claiming recovery", async () => {
+  it("rejects managed recovery when the live pane has a different process identity", async () => {
+    const fake = makeReattachWorker(true);
+    const managed = {
+      ...durableDescriptor(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux:991" },
+    };
+    const store = fakeDescriptorStore([managed]);
+    const onReattached = vi.fn();
+    const onUnrecoverable = vi.fn();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: store,
+        isTmuxAlive: () => true,
+        resolveTmuxRootProcessIdentity: () => ({ pid: 6200, startIdentity: "linux:992" }),
+        onReattached,
+        onUnrecoverable,
+      } as never,
+    }));
+
+    expect(registry.get("old-sess", DURABLE_OWNER)?.status).toBe("lost");
+    expect(fake.requestFrames.filter((frame) => frame.method === "reattach")).toHaveLength(0);
+    expect(onReattached).not.toHaveBeenCalled();
+    expect(onUnrecoverable).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "old-sess",
+      reason: "managed_root_identity_mismatch",
+    }));
+  });
+
+  it("rehydrates incomplete managed authority for cleanup without claiming recovery", async () => {
     const fake = makeReattachWorker(true);
     const managed = {
       ...durableDescriptor(),
@@ -3099,13 +3198,17 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
     const store = fakeDescriptorStore([managed]);
     const onReattached = vi.fn();
     const onUnrecoverable = vi.fn();
+    const killTmuxSession = vi.fn(() => ok(undefined));
+    const retireManagedSession = vi.fn(async () => ok(undefined));
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
       durability: {
         descriptorStore: store,
         isTmuxAlive: () => true,
+        killTmuxSession,
+        retireManagedSession,
         onReattached,
         onUnrecoverable,
-      },
+      } as never,
     }));
 
     await vi.waitFor(() => expect(onUnrecoverable).toHaveBeenCalledWith(expect.objectContaining({
@@ -3115,10 +3218,17 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
       workspaceLeaseId: "workspace-lease_a",
       serviceInstanceId: "service-instance_a",
     })));
-    expect(registry.get("old-sess", DURABLE_OWNER)).toBeUndefined();
+    expect(registry.get("old-sess", DURABLE_OWNER)?.status).toBe("lost");
     expect(fake.requestFrames.filter((frame) => frame.method === "reattach")).toHaveLength(0);
     expect(onReattached).not.toHaveBeenCalled();
     expect(store.remove).not.toHaveBeenCalled();
+
+    await expect(registry.terminateAndConfirm("old-sess", DURABLE_OWNER)).resolves.toEqual(ok(undefined));
+    expect(killTmuxSession).toHaveBeenCalledWith("comis-old-sess", undefined);
+    expect(retireManagedSession).toHaveBeenCalledWith(expect.objectContaining({
+      managedRunId: "managed-run_a",
+      terminalSessionId: "old-sess",
+    }));
   });
 });
 
