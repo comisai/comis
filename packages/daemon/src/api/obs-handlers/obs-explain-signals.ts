@@ -644,7 +644,6 @@ function handleEventRecord(
       return;
   }
 }
-// ---------------------------------------------------------------------------
 /**
  * Normalize a heterogeneous record stream (raw log lines AND/OR structured
  * trajectory events) into one `IncidentSignals` view.
