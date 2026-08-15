@@ -86,6 +86,7 @@ class ForgeFixtureServer {
   constructor(
     readonly gitExecutable: string,
     readonly remote: string,
+    readonly baseBranch: string,
   ) {
     this.checkGate = new Promise<void>((resolve) => {
       this.releaseCheckGate = resolve;
@@ -162,7 +163,7 @@ class ForgeFixtureServer {
         state: "open",
         html_url: "https://github.com/fixture-owner/fixture-repository/pull/1",
         head: { sha: head, ref: this.pull.branch },
-        base: { ref: "master" },
+        base: { ref: this.baseBranch },
       });
       return;
     }
@@ -202,7 +203,7 @@ function createCandidateFixture(
   const configPath = join(forgeRoot, "candidate.json");
   mkdirSync(credentialDirectory, { recursive: true, mode: 0o700 });
   execFileSync(repository.gitExecutable, ["init", "--bare", remote], { stdio: "pipe" });
-  const forge = new ForgeFixtureServer(repository.gitExecutable, remote);
+  const forge = new ForgeFixtureServer(repository.gitExecutable, remote, repository.defaultBranch);
   writeFileSync(readCredentialFile, "e0_read_identity", { mode: 0o600 });
   writeFileSync(pushCredentialFile, "e0_push_identity", { mode: 0o600 });
   writeFileSync(configPath, JSON.stringify({
