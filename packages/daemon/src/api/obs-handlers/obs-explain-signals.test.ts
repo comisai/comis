@@ -1470,6 +1470,9 @@ describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
         runtimeMs: 12_000,
         tokensUsed: 2_500,
         costUsd: 0.04,
+        expectedOutputs: 2,
+        verifiedOutputs: 1,
+        attachmentsPrepared: 1,
       }),
     ]);
 
@@ -1480,6 +1483,11 @@ describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
         runtimeMs: 12_000,
         tokensUsed: 2_500,
         costUsd: 0.04,
+        outputValidation: {
+          expected: 2,
+          verified: 1,
+          attachmentsPrepared: 1,
+        },
       }),
     ]);
     expect((s as unknown as { subagentCompletions?: unknown }).subagentCompletions).toEqual({

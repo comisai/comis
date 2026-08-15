@@ -1350,6 +1350,14 @@ describe("createSubAgentRunner", () => {
     expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
       attachments: [{ sourceAgentId: "report-agent", path: outputPath }],
     }));
+    await vi.waitFor(() => expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_completed",
+      expect.objectContaining({
+        expectedOutputs: 1,
+        verifiedOutputs: 1,
+        attachmentsPrepared: 1,
+      }),
+    ));
     await runner.shutdown();
     fs.rmSync(outputDir, { recursive: true, force: true });
   });

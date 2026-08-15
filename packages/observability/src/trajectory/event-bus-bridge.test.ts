@@ -777,6 +777,35 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
     }]);
   });
 
+  it("preserves a committed outward attachment receipt without its body", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("delivery:outward_ledger_transition", {
+      rootRunId: "root-attachment",
+      stepIndex: 0,
+      transition: "commit",
+      outcome: "committed",
+      deliveryKind: "attachment",
+      platformMessageId: "telegram-document-218",
+      timestamp: 1_000,
+    } as never);
+
+    expect(recorder.calls).toEqual([{
+      type: "delivery.outward_ledger_transition",
+      data: {
+        rootRunId: "root-attachment",
+        stepIndex: 0,
+        transition: "commit",
+        outcome: "committed",
+        deliveryKind: "attachment",
+        platformMessageId: "telegram-document-218",
+      },
+      parentEntryId: undefined,
+    }]);
+  });
+
   it("delivery_enqueued_maps_to_delivery.queued with channelType/channelId", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
