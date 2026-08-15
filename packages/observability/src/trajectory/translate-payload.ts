@@ -395,7 +395,6 @@ export function translatePayload(
         ...(payload.deliveryKind !== undefined ? { deliveryKind: payload.deliveryKind } : {}),
         ...(payload.platformMessageId !== undefined ? { platformMessageId: payload.platformMessageId } : {}),
       };
-
     case "delivery:enqueued":
       return {
         entryId: payload.entryId,
