@@ -328,9 +328,12 @@ describe.skipIf(!isLinux() || !distBuilt)(
           " print('SOURCE_BLOCKED', flush=True)",
           "attachment_mode=pathlib.Path(target).parent.stat().st_mode & 0o777",
           "print('ATTACHMENT_DIR_OWNER_ONLY' if attachment_mode == 0o700 else 'ATTACHMENT_DIR_MODE_' + oct(attachment_mode), flush=True)",
+          "attachment_calls=0",
           "while True:",
           " call=socket.socket(socket.AF_UNIX); call.connect(target); call.sendall(b'PING')",
-          " print(call.recv(64).decode().strip(), flush=True); call.close(); time.sleep(0.05)",
+          " response=call.recv(64).decode().strip(); call.close(); attachment_calls += 1",
+          " if attachment_calls <= 2: print(response, flush=True)",
+          " time.sleep(0.05)",
         ].join("\n");
 
         try {
