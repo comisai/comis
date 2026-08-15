@@ -9,6 +9,7 @@ import {
   type ExecutionAttachmentRecord,
   type ExecutionAttachmentScope,
   type ManagedRunRecord,
+  type ManagedRunServiceScope,
   type WorkspaceLeaseRecord,
 } from "@comis/core";
 import { createSqliteExecutionAttachmentStore } from "./execution-attachment-store.js";
@@ -40,6 +41,10 @@ const ATTACHMENT_SCOPE: ExecutionAttachmentScope = {
   serviceInstanceId: "service-instance_a",
   managedRunId: "managed-run_a",
   workspaceLeaseId: "workspace-lease_a",
+};
+const SERVICE_SCOPE: ManagedRunServiceScope = {
+  kind: "service",
+  serviceInstanceId: "service-instance_a",
 };
 
 function makeManagedRun(): ManagedRunRecord {
@@ -210,6 +215,25 @@ describe("SQLite execution attachment persistence", () => {
       executionAttachmentId: "execution-attachment_b",
       targetName: `attachment-${"c".repeat(32)}.sock`,
     }))).toEqual({ ok: true, value: { kind: "replay_conflict" } });
+    db.close();
+  });
+
+  it("rejects attachment creation after durable release reservation", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    await seed(db);
+    expect(await createSqliteManagedRunStore(db).reserveRelease(SERVICE_SCOPE, {
+      operationId: "operation_release_reserved",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      disposition: "reap_safe",
+      releasedAtMs: NOW_MS + 1,
+    })).toMatchObject({ ok: true, value: { kind: "reserved" } });
+
+    expect(await createSqliteExecutionAttachmentStore(db).create(makeAttachment())).toEqual({
+      ok: true,
+      value: { kind: "authority_mismatch" },
+    });
     db.close();
   });
 
