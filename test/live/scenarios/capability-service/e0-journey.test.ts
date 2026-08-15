@@ -172,7 +172,13 @@ class ForgeFixtureServer {
       await this.checkGate;
       if (response.destroyed) return;
       this.json(response, {
-        check_runs: [{ name: "ci/e0", status: "completed", conclusion: "success" }],
+        check_runs: [{
+          id: 1,
+          name: "ci/e0",
+          status: "completed",
+          conclusion: "success",
+          started_at: "2026-01-01T00:00:00Z",
+        }],
       });
       return;
     }
