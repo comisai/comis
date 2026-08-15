@@ -53,6 +53,22 @@ describe("sessions_spawn tool", () => {
     });
   });
 
+  it("forwards the declared whole-request delegation boundary", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ runId: "abc", async: true }));
+    const tool = createSessionsSpawnTool(mockRpcCall);
+    const params = tool.parameters as { properties: Record<string, unknown> };
+
+    expect(params.properties).toHaveProperty("delegation_scope");
+    await tool.execute("call-scope", {
+      task: "research the complete request",
+      delegation_scope: "whole_request",
+    } as never);
+
+    expect(mockRpcCall).toHaveBeenCalledWith("session.spawn", expect.objectContaining({
+      delegation_scope: "whole_request",
+    }));
+  });
+
   it("throws when task is missing", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({}));
 

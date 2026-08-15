@@ -1028,6 +1028,7 @@ describe("current-turn delegation evidence guard", () => {
 
   it.each([
     "Started. Internal run handle: 8dc57d7f-0071-45cb-bdaf-23d47ecead39",
+    "Started. Internal run handle: 8dc57d7f",
     '{"runId":"8dc57d7f-0071-45cb-bdaf-23d47ecead39","status":"started"}',
   ])("removes the exact structured spawn handle from a launch reply", (response) => {
     const verifiedSpawnResponse =

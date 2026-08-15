@@ -19,12 +19,19 @@ describe("hasAcceptedDelegation", () => {
 });
 
 describe("delegationOwnsPromptSkillWorkflow", () => {
-  it("recognizes a successful child that owns every enforced workflow tool", () => {
+  it("requires explicit whole-request ownership in addition to delegated tools", () => {
     expect(delegationOwnsPromptSkillWorkflow([{
       toolName: "sessions_spawn",
       success: true,
       delegatedToolNames: ["web_search", "web_fetch"],
-    }], ["web_search", "web_fetch"])).toBe(true);
+      delegationScope: "whole_request",
+    } as never], ["web_search", "web_fetch"])).toBe(true);
+    expect(delegationOwnsPromptSkillWorkflow([{
+      toolName: "sessions_spawn",
+      success: true,
+      delegatedToolNames: ["web_search", "web_fetch"],
+      delegationScope: "partial",
+    } as never], ["web_search", "web_fetch"])).toBe(false);
   });
 
   it("keeps parent ownership when a child lacks part of the workflow", () => {
