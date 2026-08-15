@@ -75,6 +75,7 @@ function makeBinder(
     },
   }));
   const getAttentionResponseByOperation = vi.fn(async () => ok(undefined));
+  const getAttentionBody = vi.fn(async () => ok<Uint8Array | undefined>(undefined));
   const store = {
     getAttentionResponseByOperation,
     listOpenAttention: vi.fn(async () => ok(candidates)),
@@ -90,6 +91,7 @@ function makeBinder(
       contentHash: "a".repeat(64),
       byteLength: input.body.byteLength,
     })),
+    getAttentionBody,
     deleteAttentionBody: vi.fn(async () => ok(true)),
   } as unknown as ManagedRunContentPort;
   const binder = createManagedAttentionReplyBinder({ store, contentStore });
@@ -99,6 +101,7 @@ function makeBinder(
     contentStore,
     claimAttentionResponse,
     getAttentionResponseByOperation,
+    getAttentionBody,
   };
 }
 
@@ -229,6 +232,7 @@ describe("managed attention reply binding", () => {
     };
     const setup = makeBinder([replayed]);
     setup.getAttentionResponseByOperation.mockResolvedValue(ok(replayed));
+    setup.getAttentionBody.mockResolvedValue(ok(new TextEncoder().encode("Proceed")));
     setup.claimAttentionResponse.mockResolvedValue(ok({
       kind: "identical_replay",
       record: replayed,
@@ -237,14 +241,67 @@ describe("managed attention reply binding", () => {
     const result = await setup.binder.bind(SCOPE, {
       operationId: "reply-operation-replay",
       text: "Proceed",
-      respondedAtMs: 100,
+      respondedAtMs: 200,
     });
 
     expect(result).toEqual(ok({ kind: "bound", attention: replayed }));
     expect(setup.store.listOpenAttention).not.toHaveBeenCalled();
-    expect(setup.claimAttentionResponse).toHaveBeenCalledWith(SCOPE, expect.objectContaining({
+    expect(setup.contentStore.putAttentionBody).not.toHaveBeenCalled();
+    expect(setup.contentStore.deleteAttentionBody).not.toHaveBeenCalled();
+    expect(setup.claimAttentionResponse).toHaveBeenCalledWith(SCOPE, {
       attentionId: "attention-replay",
       operationId: "reply-operation-replay",
-    }));
+      responseRef: replayResponseRef,
+      respondedAtMs: 100,
+    });
+  });
+
+  it("rejects altered replay text without deleting the persisted response", async () => {
+    const replayed = {
+      ...attention("attention-replay-altered"),
+      status: "response_pending" as const,
+      responseRef: "attention-response-original",
+      updatedAtMs: 100,
+    };
+    const setup = makeBinder([replayed]);
+    setup.getAttentionResponseByOperation.mockResolvedValue(ok(replayed));
+    setup.getAttentionBody.mockResolvedValue(ok(new TextEncoder().encode("Proceed")));
+
+    const result = await setup.binder.bind(SCOPE, {
+      operationId: "reply-operation-altered",
+      text: "Stop",
+      respondedAtMs: 200,
+    });
+
+    expect(result).toEqual(err(new Error("managed-run attention response replay conflicted")));
+    expect(setup.claimAttentionResponse).not.toHaveBeenCalled();
+    expect(setup.contentStore.putAttentionBody).not.toHaveBeenCalled();
+    expect(setup.contentStore.deleteAttentionBody).not.toHaveBeenCalled();
+  });
+
+  it("deletes only the losing private body after a concurrent replay conflict", async () => {
+    const setup = makeBinder([attention("attention-concurrent")]);
+    const successfulRef = `attention-response-${createHash("sha256")
+      .update("attention-concurrent\0reply-operation-concurrent", "utf8")
+      .digest("hex")
+      .slice(0, 48)}`;
+    setup.claimAttentionResponse.mockResolvedValue(ok({ kind: "replay_conflict" }));
+
+    const result = await setup.binder.bind(SCOPE, {
+      operationId: "reply-operation-concurrent",
+      attentionId: "attention-concurrent",
+      text: "Proceed",
+      respondedAtMs: 100,
+    });
+
+    expect(result).toEqual(err(new Error("managed-run attention response replay conflicted")));
+    const publishedRef = setup.contentStore.putAttentionBody.mock.calls[0]?.[1];
+    expect(publishedRef).toEqual(expect.stringMatching(/^attention-response-[a-f0-9]{48}$/));
+    expect(publishedRef).not.toBe(successfulRef);
+    expect(setup.contentStore.deleteAttentionBody).toHaveBeenCalledWith({
+      tenantId: "tenant-a",
+      agentId: "agent-a",
+      managedRunId: "managed-run-a",
+    }, publishedRef);
   });
 });
