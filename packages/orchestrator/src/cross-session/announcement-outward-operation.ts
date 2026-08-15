@@ -24,6 +24,8 @@ export interface GovernedAnnouncementRequest {
   operationId: string;
   rootRunId: string;
   agentId: string;
+  sessionKey: string;
+  partId?: string;
   channelType: string;
   channelId: string;
   text: string;
@@ -121,6 +123,13 @@ interface GovernedAnnouncementSenderDeps {
   ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   eventBus?: TypedEventBus;
   logger?: Pick<ComisLogger, "error" | "warn">;
+}
+
+interface AnnouncementTransitionEvidence {
+  deliveryKind: "text" | "attachment";
+  platformMessageId?: string;
+  sessionKey: string;
+  partId?: string;
 }
 
 /** Build the bounded allocation key for one originating completion operation. */
@@ -322,10 +331,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
     identity: Pick<AnnouncementOperationIdentity, "rootRunId" | "stepIndex">,
     transition: "lookup" | "begin" | "mark_unknown" | "commit" | "park",
     outcome: "blocked" | "in_flight" | "committed" | "parked",
-    evidence?: {
-      deliveryKind: "text" | "attachment";
-      platformMessageId?: string;
-    },
+    evidence: AnnouncementTransitionEvidence,
   ): void {
     if (!deps.eventBus) return;
     emitObservationalEventSafely(
@@ -336,7 +342,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
         stepIndex: identity.stepIndex,
         transition,
         outcome,
-        ...(evidence ?? {}),
+        ...evidence,
         timestamp: systemNowMs(),
       },
     );
@@ -364,7 +370,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
 
   async function park(
     identity: AnnouncementOperationIdentity,
-    evidence: { deliveryKind: "text" | "attachment" },
+    evidence: AnnouncementTransitionEvidence,
   ): Promise<void> {
     const parked = await deps.ledger.parkUncertain(identity.rootRunId, identity.stepIndex);
     if (!parked.ok || !parked.value) {
@@ -398,6 +404,8 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       deliveryKind: request.attachment === undefined
         ? "text" as const
         : "attachment" as const,
+      sessionKey: request.sessionKey,
+      ...(request.partId === undefined ? {} : { partId: request.partId }),
     };
     const allocated = await deps.ledger.allocateStep(request.rootRunId, request.operationId);
     if (!allocated.ok) {

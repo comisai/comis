@@ -10,6 +10,7 @@ import type { IncidentSignals } from "@comis/core";
 import type { Acc } from "./obs-explain-signals-acc.js";
 
 const DELIVERY_MESSAGE_ID_CAP = 100;
+const OUTWARD_DELIVERY_PART_CAP = 100;
 
 function count(value: unknown): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
@@ -53,7 +54,7 @@ export function accumulateDeliveryReplyBound(
   acc.deliveryMessageIds.push(messageId);
 }
 
-/** Fold one valid durable completion-delivery transition, last record wins. */
+/** Fold one valid durable completion-delivery transition. */
 export function accumulateOutwardDelivery(
   acc: Acc,
   data: Record<string, unknown>,
@@ -62,28 +63,38 @@ export function accumulateOutwardDelivery(
   const transition = data.transition;
   const rootRunId = data.rootRunId;
   const stepIndex = data.stepIndex;
+  const hasStepIndex = Number.isSafeInteger(stepIndex) && (stepIndex as number) >= 0;
   if (
     (outcome !== "blocked"
       && outcome !== "in_flight"
       && outcome !== "committed"
       && outcome !== "failed"
       && outcome !== "parked")
-    || (transition !== "lookup"
+    || (transition !== "prepare"
+      && transition !== "lookup"
       && transition !== "begin"
       && transition !== "mark_unknown"
       && transition !== "commit"
       && transition !== "mark_failed"
       && transition !== "park")
     || typeof rootRunId !== "string"
-    || !Number.isSafeInteger(stepIndex)
-    || (stepIndex as number) < 0
+    || (transition !== "prepare" && !hasStepIndex)
   ) return;
   const deliveryKind = data.deliveryKind;
-  acc.outwardDelivery = {
+  const partId = `${rootRunId}:${
+    typeof data.partId === "string" && data.partId.length > 0
+      ? data.partId
+      : hasStepIndex ? String(stepIndex) : "prepare"
+  }`;
+  if (
+    !acc.outwardDeliveryParts.has(partId)
+    && acc.outwardDeliveryParts.size >= OUTWARD_DELIVERY_PART_CAP
+  ) return;
+  const signal = {
     status: outcome,
     rootRunId,
-    stepIndex: stepIndex as number,
     transition,
+    ...(hasStepIndex ? { stepIndex: stepIndex as number } : {}),
     ...(deliveryKind === "text" || deliveryKind === "attachment"
       ? { deliveryKind }
       : {}),
@@ -91,4 +102,26 @@ export function accumulateOutwardDelivery(
       ? { platformMessageId: data.platformMessageId }
       : {}),
   };
+  acc.outwardDeliveryParts.set(partId, signal);
+
+  const rootParts = [...acc.outwardDeliveryParts.values()]
+    .filter((part) => part.rootRunId === rootRunId);
+  const committed = rootParts.filter((part) => part.status === "committed");
+  if (committed.length > 0 && committed.length < rootParts.length) {
+    const receipt = committed.at(-1)!;
+    acc.outwardDelivery = {
+      status: "partial",
+      rootRunId,
+      transition,
+      ...(receipt.stepIndex === undefined ? {} : { stepIndex: receipt.stepIndex }),
+      ...(receipt.deliveryKind === undefined
+        ? {}
+        : { deliveryKind: receipt.deliveryKind }),
+      ...(receipt.platformMessageId === undefined
+        ? {}
+        : { platformMessageId: receipt.platformMessageId }),
+    };
+    return;
+  }
+  acc.outwardDelivery = signal;
 }

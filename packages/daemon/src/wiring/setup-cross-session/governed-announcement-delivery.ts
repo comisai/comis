@@ -5,6 +5,7 @@ import {
   ChannelEndpointSchema,
   ConversationLocatorSchema,
   conversationScopeToSessionKey,
+  emitObservationalEventSafely,
   resolvePlatformDeliveryResult,
   systemNowMs,
   type AttachmentPayload,
@@ -363,12 +364,28 @@ export function createAnnouncementDelivery(
     }
     let prepared: PreparedCompletionAttachment | undefined;
     if (request.attachment) {
+      const emitPreparationFailure = (): void => {
+        emitObservationalEventSafely(
+          { eventBus: deps.eventBus, logger: deps.logger },
+          "delivery:outward_ledger_transition",
+          {
+            rootRunId: resolvedRoot.value,
+            transition: "prepare",
+            outcome: "failed",
+            sessionKey: request.callerSessionKey,
+            ...(request.partId === undefined ? {} : { partId: request.partId }),
+            deliveryKind: "attachment",
+            timestamp: systemNowMs(),
+          },
+        );
+      };
       if (!deps.prepareCompletionAttachment) {
         deps.logger?.error({
           errorKind: "precondition" as const,
           hint: "Wire generated-file validation and snapshotting before retrying the retained completion",
           step: "completion-attachment-preparation",
         }, "Completion attachment preparation unavailable");
+        emitPreparationFailure();
         return ok({ delivered: false, failure: "attachment_preparation_blocked" });
       }
       const preparedResult = await deps.prepareCompletionAttachment(request.attachment);
@@ -378,6 +395,7 @@ export function createAnnouncementDelivery(
           hint: "Verify the expected output is a bounded regular file inside the producing agent workspace",
           step: "completion-attachment-preparation",
         }, "Completion attachment preparation rejected");
+        emitPreparationFailure();
         return ok({ delivered: false, failure: "attachment_preparation_blocked" });
       }
       prepared = preparedResult.value;
@@ -391,6 +409,8 @@ export function createAnnouncementDelivery(
       ),
       rootRunId: resolvedRoot.value,
       agentId: request.agentId,
+      sessionKey: request.callerSessionKey,
+      ...(request.partId ? { partId: request.partId } : {}),
       channelType: request.channelType,
       channelId: request.channelId,
       text: request.text,

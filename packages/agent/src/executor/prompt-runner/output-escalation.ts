@@ -20,8 +20,8 @@ import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
 import { runBudgetContinuation } from "./budget-continuation.js";
 import {
+  delegationOwnsPromptSkillWorkflow,
   hasAcceptedDelegation,
-  requestsPushDeliveredBackgroundCompletion,
 } from "./accepted-delegation.js";
 import {
   hasEnforcedPromptSkillRoute,
@@ -329,11 +329,11 @@ async function processSuccessPath(
     await runNarrateNudgeStep(params);
   }
 
-  const physicalRequestText = msg.originalMessages
-    ?.map((message) => message.text)
-    .join("\n") ?? msg.text;
   const pushDeliveredDelegation = acceptedDelegation
-    && requestsPushDeliveredBackgroundCompletion(physicalRequestText);
+    && delegationOwnsPromptSkillWorkflow(
+      bridge.getResult().toolExecResults,
+      params.requestRelevantPromptSkillWorkflowToolNames,
+    );
   if (
     !acceptedDelegation
     || (hasEnforcedPromptSkillRoute(params) && !pushDeliveredDelegation)

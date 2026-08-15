@@ -646,7 +646,9 @@ export function assembleIncidentReport(
           outwardDelivery: {
             status: signals.outwardDelivery.status,
             rootRunId: signals.outwardDelivery.rootRunId,
-            stepIndex: signals.outwardDelivery.stepIndex,
+            ...(signals.outwardDelivery.stepIndex !== undefined
+              ? { stepIndex: signals.outwardDelivery.stepIndex }
+              : {}),
             ...(signals.outwardDelivery.deliveryKind !== undefined
               ? { deliveryKind: signals.outwardDelivery.deliveryKind }
               : {}),

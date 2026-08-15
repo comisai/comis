@@ -590,11 +590,9 @@ describe("assembleIncidentReport — durable outward delivery", () => {
     expect(IncidentReportSchema.parse(report).outwardDelivery).toEqual({
       status: "partial",
       rootRunId: "root-partial",
+      stepIndex: 0,
       deliveryKind: "attachment",
-      partsTotal: 2,
-      partsCommitted: 1,
-      partsFailed: 1,
-      platformMessageIds: ["telegram-document-218"],
+      platformMessageId: "telegram-document-218",
     });
   });
 });

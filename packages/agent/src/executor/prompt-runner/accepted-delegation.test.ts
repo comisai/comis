@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
+  delegationOwnsPromptSkillWorkflow,
   hasAcceptedDelegation,
-  requestsPushDeliveredBackgroundCompletion,
 } from "./accepted-delegation.js";
 
 describe("hasAcceptedDelegation", () => {
@@ -18,26 +18,25 @@ describe("hasAcceptedDelegation", () => {
   });
 });
 
-describe("requestsPushDeliveredBackgroundCompletion", () => {
-  it("recognizes one durable child whose result should arrive without polling", () => {
-    expect(requestsPushDeliveredBackgroundCompletion([
-      "Start one durable background research task.",
-      "Acknowledge once now, then deliver the completed report here without me polling.",
-    ].join(" "))).toBe(true);
-    expect(requestsPushDeliveredBackgroundCompletion(
-      "Run an inventory review in the background. Acknowledge now and send it when complete.",
-    )).toBe(true);
-    expect(requestsPushDeliveredBackgroundCompletion(
-      "התחל משימת מחקר אחת ברקע, אשר עכשיו ושלח את הדוח לכאן כשהיא תסתיים בלי שאצטרך לבדוק.",
-    )).toBe(true);
+describe("delegationOwnsPromptSkillWorkflow", () => {
+  it("recognizes a successful child that owns every enforced workflow tool", () => {
+    expect(delegationOwnsPromptSkillWorkflow([{
+      toolName: "sessions_spawn",
+      success: true,
+      delegatedToolNames: ["web_search", "web_fetch"],
+    }], ["web_search", "web_fetch"])).toBe(true);
   });
 
-  it("does not suppress parent synthesis for concurrent delegated branches", () => {
-    expect(requestsPushDeliveredBackgroundCompletion(
-      "Start three background subagents concurrently, then send one merged summary after all settle.",
-    )).toBe(false);
-    expect(requestsPushDeliveredBackgroundCompletion(
-      "Spawn a child, then use the loaded skill to produce the final parent result.",
-    )).toBe(false);
+  it("keeps parent ownership when a child lacks part of the workflow", () => {
+    expect(delegationOwnsPromptSkillWorkflow([{
+      toolName: "sessions_spawn",
+      success: true,
+      delegatedToolNames: ["web_search"],
+    }], ["web_search", "web_fetch"])).toBe(false);
+    expect(delegationOwnsPromptSkillWorkflow([{
+      toolName: "sessions_spawn",
+      success: false,
+      delegatedToolNames: ["web_search", "web_fetch"],
+    }], ["web_search", "web_fetch"])).toBe(false);
   });
 });

@@ -1612,6 +1612,28 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     && (entry as Record<string, unknown>).status === "completed",
                 ).length
               : undefined;
+          const spawnRunId =
+            toolSuccess
+            && endEvent.toolName === "sessions_spawn"
+            && typeof resultDetails?.runId === "string"
+            && resultDetails.runId.length > 0
+            && resultDetails.runId.length <= 256
+              ? resultDetails.runId
+              : undefined;
+          const rawDelegatedToolNames =
+            toolSuccess
+            && endEvent.toolName === "sessions_spawn"
+            && rawArgsForParams !== null
+            && typeof rawArgsForParams === "object"
+            && Array.isArray((rawArgsForParams as Record<string, unknown>).required_tools)
+              ? (rawArgsForParams as Record<string, unknown>).required_tools as unknown[]
+              : undefined;
+          const delegatedToolNames = rawDelegatedToolNames === undefined
+            ? undefined
+            : [...new Set(rawDelegatedToolNames.filter(
+                (name): name is string =>
+                  typeof name === "string" && name.length > 0 && name.length <= 256,
+              ))].slice(0, 64);
           const processSessionObservation = extractProcessSessionObservation({
             toolName: endEvent.toolName,
             resultBackgrounded,
@@ -1650,6 +1672,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(subagentWaitCompletedCount === undefined
               ? {}
               : { subagentWaitCompletedCount }),
+            ...(spawnRunId === undefined ? {} : { spawnRunId }),
+            ...(delegatedToolNames === undefined ? {} : { delegatedToolNames }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel

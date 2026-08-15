@@ -678,6 +678,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     contextBudgetHistory: [],
     cacheBreaksByReason: new Map(),
     deliveryMessageIds: [],
+    outwardDeliveryParts: new Map(),
     learning: emptyLearningFold(),
     sessionKey: "",
     seq: 0,
