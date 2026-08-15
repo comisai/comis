@@ -1100,6 +1100,9 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/modelId:\s*params\.modelId/);
     expect(stripped).toMatch(/provider:\s*params\.provider/);
     expect(stripped).toMatch(/response\.active_model_self_status_guard/);
+    expect(stripped).toMatch(
+      /activeModelSelfStatus\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"active_model_self_status_grounding"[\s\S]*?succeeded:\s*true/,
+    );
   });
 
   it("source-grep — sender authority overclaims are grounded before delivery", () => {
