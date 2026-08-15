@@ -82,9 +82,9 @@ describe("managed terminal event bridge", () => {
     );
   });
 
-  it("reports service loss without acquiring terminal or lease cleanup authority", async () => {
+  it("records durable retirement even when the service endpoint is unavailable", async () => {
     const terminalEvent = vi.fn(async () => err({ kind: "unavailable" as const, reasonCode: "instance_not_connected" }));
-    const releaseTerminal = vi.fn();
+    const releaseTerminal = vi.fn(async () => ok({ kind: "released" as const }));
     const log = logger();
     const bridge = createManagedTerminalEventBridge({
       control: { terminalEvent } as unknown as CapabilityServiceControlPort,
@@ -101,11 +101,19 @@ describe("managed terminal event bridge", () => {
       transition: "released",
     })).resolves.toBeUndefined();
     expect(terminalEvent).toHaveBeenCalledOnce();
-    expect(releaseTerminal).not.toHaveBeenCalled();
+    expect(releaseTerminal).toHaveBeenCalledWith(
+      { kind: "service", serviceInstanceId: "service-instance_a" },
+      {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        terminalSessionId: "terminal-session_a",
+        releasedAtMs: 1700,
+      },
+    );
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({
       errorKind: "dependency",
       hint: expect.stringContaining("capabilityServices"),
     }), expect.any(String));
-    expect(Object.keys(bridge).sort()).toEqual(["publish"]);
+    expect(Object.keys(bridge).sort()).toEqual(["publish", "retire"]);
   });
 });

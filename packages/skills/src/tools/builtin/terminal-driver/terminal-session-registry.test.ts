@@ -25,6 +25,7 @@ import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { err, ok } from "@comis/shared";
 
 import { createFakeTimers } from "../../../../../../test/support/fake-timers.js";
 import {
@@ -348,6 +349,37 @@ describe("createTerminalSessionRegistry — confirmed process termination", () =
     });
     expect(fake.requestFrames.map((frame) => frame.method)).toEqual(["create", "kill"]);
     expect(registry.get(created.sessionId, OWNER)).toBeUndefined();
+  });
+
+  it("retains managed authority when durable retirement fails after termination", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const retireManagedSession = vi.fn(async () => err(new Error("managed store unavailable")));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { retireManagedSession } as never,
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, OWNER);
+
+    await expect(registry.kill(created.sessionId, OWNER)).rejects.toThrow("managed store unavailable");
+    expect(retireManagedSession).toHaveBeenCalledOnce();
+    expect(registry.get(created.sessionId, OWNER)).toMatchObject({ status: "exited" });
   });
 });
 
@@ -2065,6 +2097,49 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
     expect(typeof onEvict.mock.calls[0][0].durationMs).toBe("number");
     // The cap-state map is forgotten on the reap path (no SessionCaps leak).
     expect(onCapForget).toHaveBeenCalledWith(s.sessionId);
+  });
+
+  it("retires a managed binding before reaper eviction drops authority", async () => {
+    const order: string[] = [];
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const retireManagedSession = vi.fn(async () => {
+      order.push("retire");
+      return ok(undefined);
+    });
+    const capForget = vi.fn((sessionId: string) => {
+      order.push("cap-forget");
+      return sessionId;
+    });
+    const { deps } = reaperDeps(() => fake.child, {
+      maxSessions: 10,
+      durability: { retireManagedSession } as never,
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+      onCapForget: capForget,
+    });
+    const registry = createTerminalSessionRegistry(deps);
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, subA);
+
+    await registry.evict(created.sessionId, subA, "max_interactions");
+
+    expect(order).toEqual(["retire", "cap-forget"]);
+    expect(registry.get(created.sessionId, subA)).toBeUndefined();
   });
 
   it("Test C2 — evict() is owner-scoped: a cross-owner evict is a no-op (the session survives, no cap-forget)", async () => {
