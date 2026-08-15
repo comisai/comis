@@ -18,10 +18,15 @@ import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import { stringify } from "yaml";
 import { describe, expect, it } from "vitest";
-import { EchoChannelAdapter } from "@comis/channels";
 import { startTestDaemon, type TestDaemonHandle } from "../../../support/daemon-harness.js";
 import { createFixtureRepository, waitForUnixSocket } from "../../../support/capability-service-vertical-harness.js";
 import { getFreePort } from "../../../support/free-port.js";
+import {
+  createTgEmulator,
+  type ChatRef,
+  type TgEmulator,
+} from "../../emulators/telegram/tg-emulator.js";
+import { FAKE_BOT_TOKEN } from "../../harness/rig-config.js";
 import {
   CONTRIBUTION,
   CONTROL_SECRET,
@@ -32,7 +37,6 @@ import {
   acceptedReportDiagnostic,
   cli,
   makeConfig,
-  normalizedMessage,
   pollUntil,
   runBinding,
   startInstalledService,
@@ -50,15 +54,13 @@ const E0_DECISION_ANSWER = "Proceed with the bounded developer intervention.";
 const isFullJourney = process.env["COMIS_LIVE"] === "1"
   && process.env["COMIS_E0_OBSERVE"] === "1"
   && process.platform === "linux";
+const TELEGRAM_CHAT: ChatRef = Object.freeze({ chatId: 424_242 });
+const TELEGRAM_USER = Object.freeze({ id: 678_314_278, firstName: "Capability", username: "capability_user" });
 
 interface ToolStep {
   readonly tool: string;
   readonly arguments: Record<string, unknown>;
   readonly capture?: (text: string) => void;
-}
-
-interface InjectableChannelManager {
-  injectMessage(channelType: string, message: ReturnType<typeof normalizedMessage>): Promise<void>;
 }
 
 interface CandidateFixture {
@@ -475,17 +477,18 @@ function deliveryDiagnostic(
 
 async function liaisonTurn(
   model: LiaisonModelServer,
-  channelManager: InjectableChannelManager,
-  echo: EchoChannelAdapter,
+  telegram: TgEmulator,
   message: string,
   steps: readonly ToolStep[],
 ): Promise<void> {
   await pollUntil(() => model.idle, 10_000, `liaison idle before ${message}`);
-  const before = echo.getSentMessages().filter((entry) => entry.text.includes("LIAISON_TURN_DONE")).length;
+  const before = telegram.outbound(TELEGRAM_CHAT)
+    .filter((entry) => entry.text?.includes("LIAISON_TURN_DONE") === true).length;
   model.setScript(steps);
-  await channelManager.injectMessage("echo", normalizedMessage(message));
+  telegram.injectMessage(TELEGRAM_CHAT, TELEGRAM_USER, message);
   await pollUntil(
-    () => model.idle && echo.getSentMessages().filter((entry) => entry.text.includes("LIAISON_TURN_DONE")).length > before,
+    () => model.idle && telegram.outbound(TELEGRAM_CHAT)
+      .filter((entry) => entry.text?.includes("LIAISON_TURN_DONE") === true).length > before,
     60_000,
     `${message} response`,
   );
@@ -576,6 +579,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
     process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET;
     process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key";
     const model = new LiaisonModelServer();
+    const telegram = createTgEmulator({ botToken: FAKE_BOT_TOKEN });
     let service: RunningService | undefined;
     let daemon: TestDaemonHandle | undefined;
 
@@ -597,10 +601,11 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       await candidate.forge.start();
       bindForgeBaseUrl(candidate.configPath, candidate.forge.baseUrl);
       await model.start();
+      const telegramHandle = await telegram.start();
       service = startService();
       await waitForInstalledService(service, operatorSocket, mcpSocket);
       const gatewayPort = await getFreePort();
-      writeFileSync(configPath, stringify(makeConfig({
+      const daemonConfig = makeConfig({
         dataDir: canonicalDataDir,
         gatewayPort,
         modelBaseUrl: model.baseUrl,
@@ -614,13 +619,18 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
         reviewedToken: E0_TOKEN,
         contextWindow: 131_072,
         capabilityClass: "frontier",
-      })), { mode: 0o600 });
+      });
+      daemonConfig["channels"] = {
+        telegram: {
+          enabled: true,
+          botToken: FAKE_BOT_TOKEN,
+          apiRoot: telegramHandle.apiRoot,
+          allowFrom: [],
+        },
+      };
+      writeFileSync(configPath, stringify(daemonConfig), { mode: 0o600 });
 
-      const bootDaemon = async (): Promise<{
-        handle: TestDaemonHandle;
-        echo: EchoChannelAdapter;
-        channelManager: InjectableChannelManager;
-      }> => {
+      const bootDaemon = async (): Promise<{ handle: TestDaemonHandle }> => {
         // Each boot represents a fresh daemon process whose service manager
         // supplies credentials again after the prior process scrubbed them.
         process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET;
@@ -630,11 +640,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
           gatewayPort,
           overrides: { capabilityServiceContributions: [CONTRIBUTION] },
         });
-        const echo = new EchoChannelAdapter({ channelId: "echo-main", channelType: "echo" });
-        handle.daemon.adapterRegistry.set("echo", echo);
-        handle.daemon.deliveryAdapters.set("echo", echo);
-        const channelManager = handle.daemon.channelManager;
-        if (channelManager === undefined) throw new Error("channel manager is unavailable");
+        expect(handle.daemon.adapterRegistry.get("telegram")).toMatchObject({ channelType: "telegram" });
         const serviceDiagnostic = [
           `exit=${String(service?.child.exitCode)}`,
           `signal=${String(service?.child.signalCode)}`,
@@ -646,7 +652,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
         ).toContainEqual(
           expect.objectContaining({ serviceInstanceId: SERVICE_INSTANCE_ID, state: "active" }),
         );
-        return { handle, echo, channelManager };
+        return { handle };
       };
 
       let boot = await bootDaemon();
@@ -654,7 +660,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       const handles: string[] = [];
       for (const [shape, deliveryMode] of [["ship", "pull_request"], ["scout", "report"]] as const) {
         let taskHandle = "";
-        await liaisonTurn(model, boot.channelManager, boot.echo, `PREPARE_E0_${shape.toUpperCase()}`, [{
+        await liaisonTurn(model, telegram, `PREPARE_E0_${shape.toUpperCase()}`, [{
           tool: "prepare_task",
           arguments: {
             shape,
@@ -694,7 +700,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
 
       let shipSession = "";
       let scoutSession = "";
-      await liaisonTurn(model, boot.channelManager, boot.echo, "LAUNCH_E0_SHIP_AND_SCOUT", [
+      await liaisonTurn(model, telegram, "LAUNCH_E0_SHIP_AND_SCOUT", [
         { tool: "get_launch_plan", arguments: { taskHandle: shipTask } },
         { tool: "get_launch_plan", arguments: { taskHandle: scoutTask } },
         {
@@ -749,17 +755,18 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       );
       const attention = attentionSnapshot(canonicalDataDir, shipBinding.managed_run_id);
       if (attention === undefined) throw new Error("ship attention request is absent after continuation settlement");
-      const deliveredBeforeAnswer = boot.echo.getSentMessages().length;
-      await boot.channelManager.injectMessage(
-        "echo",
-        normalizedMessage(`/attention ${attention.attentionId} ${E0_DECISION_ANSWER}`),
+      const deliveredBeforeAnswer = telegram.outbound(TELEGRAM_CHAT).length;
+      telegram.injectMessage(
+        TELEGRAM_CHAT,
+        TELEGRAM_USER,
+        `/attention ${attention.attentionId} ${E0_DECISION_ANSWER}`,
       );
       await pollUntil(
         () => attentionSnapshot(canonicalDataDir, shipBinding.managed_run_id)?.status === "response_pending"
-          && boot.echo.getSentMessages().slice(deliveredBeforeAnswer)
+          && telegram.outbound(TELEGRAM_CHAT).slice(deliveredBeforeAnswer)
             .some((entry) => entry.text === "Response recorded for attention request [REDACTED]."),
         30_000,
-        () => `liaison decision answer binding; attention=${JSON.stringify(attentionSnapshot(canonicalDataDir, shipBinding.managed_run_id))}; replies=${JSON.stringify(boot.echo.getSentMessages().slice(deliveredBeforeAnswer).map((entry) => entry.text))}`,
+        () => `liaison decision answer binding; attention=${JSON.stringify(attentionSnapshot(canonicalDataDir, shipBinding.managed_run_id))}; replies=${JSON.stringify(telegram.outbound(TELEGRAM_CHAT).slice(deliveredBeforeAnswer).map((entry) => entry.text))}`,
       );
       writeFileSync(join(shipBinding.canonical_path, ".e0-answer"), `${E0_DECISION_ANSWER}\n`, { mode: 0o600 });
       await pollUntil(
@@ -778,7 +785,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
         expect(evidence).toEqual({ siblingReadBlocked: true, siblingWriteBlocked: true, siblingAttachmentAbsent: true });
       }
       let selectiveList = "";
-      await liaisonTurn(model, boot.channelManager, boot.echo, "STOP_E0_SHIP_ONLY", [
+      await liaisonTurn(model, telegram, "STOP_E0_SHIP_ONLY", [
         { tool: "terminal_session_kill", arguments: { sessionId: shipSession } },
         { tool: "terminal_session_list", arguments: {}, capture: (text) => { selectiveList = text; } },
       ]);
@@ -794,7 +801,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       commitFile(repository, shipBinding.canonical_path, "ship.txt", `Delivered ship task ${shipTask}\n`, "complete ship task");
       let handback = "";
       let postHandbackSessions = "";
-      await liaisonTurn(model, boot.channelManager, boot.echo, "HAND_BACK_DEVELOPER_WORK", [
+      await liaisonTurn(model, telegram, "HAND_BACK_DEVELOPER_WORK", [
         {
           tool: "handback_task",
           arguments: { taskHandle: shipTask, action: "validate-developer-work" },
@@ -819,9 +826,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
         })} diagnostic=${handbackDiagnostic(goDatabase, shipTask)} stderr=${service?.stderr() ?? ""}`,
       );
       expect(candidate.forge.pullCreateCount).toBe(1);
-      const deliveryMessages = [...boot.echo.getSentMessages()];
-
-      await liaisonTurn(model, boot.channelManager, boot.echo, "STOP_E0_SCOUT", [
+      await liaisonTurn(model, telegram, "STOP_E0_SCOUT", [
         { tool: "terminal_session_kill", arguments: { sessionId: scoutSession } },
       ]);
       await pollUntil(
@@ -853,14 +858,19 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
           [shipBinding.managed_run_id, scoutBinding.managed_run_id],
         )} stderr=${service?.stderr() ?? ""}`,
       );
-      deliveryMessages.push(...boot.echo.getSentMessages());
+      const deliveryMessages = telegram.outbound(TELEGRAM_CHAT);
+      console.log(`TELEGRAM_WIRE_RESULT=${JSON.stringify(deliveryMessages.map((entry) => ({
+        method: entry.method,
+        messageId: entry.messageId,
+        text: entry.text,
+        caption: entry.caption,
+      })))}`);
       expect(candidate.forge.pullCreateCount).toBe(1);
       expect(deliveryMessages.filter((entry) =>
-        entry.channelId === "wave4-conversation"
-        && entry.text.includes("https://github.com/fixture-owner/fixture-repository/pull/1")
+        entry.text?.includes("https://github.com/fixture-owner/fixture-repository/pull/1") === true
       )).toHaveLength(1);
       expect(deliveryMessages.filter((entry) =>
-        entry.channelId === "wave4-conversation" && entry.text.includes("[file:report.md]")
+        entry.method === "sendDocument" && entry.caption?.includes("LIAISON_TURN_DONE") === true
       )).toHaveLength(1);
       expect(service.child.exitCode).toBeNull();
 
@@ -899,7 +909,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       expect(cleanedScout?.state).toBe("cleaned");
 
       let cleanedShip = "";
-      await liaisonTurn(model, boot.channelManager, boot.echo, "CLEANUP_E0_SHIP", [{
+      await liaisonTurn(model, telegram, "CLEANUP_E0_SHIP", [{
         tool: "cleanup_task",
         arguments: { taskHandle: shipTask },
         capture: (text) => { cleanedShip = text; },
@@ -916,6 +926,9 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
 
       console.log("NETWORK_CONFINEMENT_NOT_PROVEN=outer Docker bridge is shared; filesystem and sibling worktree refusal are bubblewrap-enforced");
       console.log(`E0_RESULT=${JSON.stringify({
+        productionTelegramAdapter: true,
+        telegramApiRootLoopback: telegramHandle.apiRoot.startsWith("http://127.0.0.1:"),
+        telegramConversationId: String(TELEGRAM_CHAT.chatId),
         workersJoined: true,
         decisionRoundTrip: true,
         restartRecovered: true,
@@ -929,6 +942,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       await stopDaemon(daemon);
       await service?.stop();
       await model.close();
+      await telegram.stop();
       await candidate.forge.close();
       if (previousControl === undefined) delete process.env[CONTROL_SECRET_NAME];
       else process.env[CONTROL_SECRET_NAME] = previousControl;
