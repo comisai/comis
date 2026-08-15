@@ -6,9 +6,9 @@ icon: "file-code"
 
 **What this is for:** the single source of truth for everything you can put in `~/.comis/config.yaml`. **Who it's for:** anyone tuning agent behavior, wiring channels, hardening the gateway, or composing layered configs across environments.
 
-Comis uses a single `config.yaml` file (or multiple layered files) to configure every aspect of the system. The configuration contains 44 top-level sections defining agent behavior, channel adapters, security policies, gateway settings, capability services, and more. All schemas use Zod strict validation -- unknown keys are rejected at startup.
+Comis uses a single `config.yaml` file (or multiple layered files) to configure every aspect of the system. Its top-level sections define agent behavior, channel adapters, security policies, gateway settings, capability services, and more. All schemas use Zod strict validation -- unknown keys are rejected at startup.
 
-Config files are specified via the `COMIS_CONFIG_PATHS` environment variable (comma-separated). See the [Configuration Guide](/installation/configuration) for a step-by-step setup walkthrough.
+Config files are selected with [`COMIS_CONFIG_PATHS`](/reference/environment-variables#comis_config_paths). See the [Configuration Guide](/installation/configuration) for a step-by-step setup walkthrough.
 
 ## Config Loading
 
@@ -154,7 +154,7 @@ The values shown are real (not placeholders). Save it as `~/.comis/config.yaml`,
 
 ## Quick Reference
 
-All 44 top-level configuration sections at a glance:
+Top-level configuration sections at a glance:
 
 | Section | Type | Description |
 |---------|------|-------------|
@@ -2318,7 +2318,7 @@ Each instance requires these fields:
 The tool-first capability layer. Operator-only — agents cannot self-configure capability routing or detour policy. The entire `tooling` tree is added to `IMMUTABLE_CONFIG_PREFIXES` and rejected by `config.patch` from agent-callable surfaces.
 
 <Warning>
-  **Restart required.** Changes to `tooling.capabilityIndex.enabled` and `tooling.installDetours.mode` apply only after the daemon restarts. The `capabilityIndex.enabled` toggle selects between two cached system-prompt shapes (one-line residual vs flat tool dump); in-process reload is not supported. Operator config edits go through the standard `config.patch` / `config.apply` path which validates → writes → 200 ms delayed `SIGUSR1` → process restart.
+  **Restart required.** Changes to `tooling.capabilityIndex.enabled` and `tooling.installDetours.mode` apply only after the daemon restarts. The `capabilityIndex.enabled` toggle selects between two cached system-prompt shapes (one-line residual vs flat tool dump); in-process reload is not supported. Runtime `config.patch` and `config.apply` calls reject the operator-only `tooling` tree, so edit the config file, validate it, and restart the daemon manually.
 </Warning>
 
 Top-level fields:

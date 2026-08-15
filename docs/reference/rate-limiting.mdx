@@ -127,7 +127,7 @@ The gateway also enforces:
 A token bucket rate limiter prevents runaway config changes from agent tool calls or automated scripts.
 
 <Info>
-  **Source:** `packages/daemon/src/rpc/config-handlers.ts` -- token bucket shared between `config.patch` and `config.apply`.
+  **Source:** `packages/daemon/src/api/config-handlers/` -- token bucket shared between `config.patch` and `config.apply`.
 </Info>
 
 ### Configuration
@@ -157,7 +157,7 @@ This rate limiter protects against:
 
 - **Agent loop bugs:** An LLM agent in a retry loop rapidly patching config
 - **Automated scripts:** External automation making rapid config changes via the API
-- **Config churn:** Excessive config writes causing constant daemon restarts (each patch triggers SIGUSR1)
+- **Config churn:** Excessive config writes causing constant daemon restarts (each patch triggers SIGUSR2)
 
 ## Injection Rate Limiting
 

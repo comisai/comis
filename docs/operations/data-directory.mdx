@@ -612,11 +612,10 @@ If you use `secrets.db`, make sure you also have your `SECRETS_MASTER_KEY` store
 
 ## Custom location
 
-By default Comis resolves config from `~/.comis/config.yaml` and `~/.comis/config.local.yaml`. You can override this with `COMIS_CONFIG_PATHS`, a colon-separated list of absolute paths:
-
-```bash
-COMIS_CONFIG_PATHS="/etc/comis/config.yaml:/home/me/.comis/config.yaml" node packages/daemon/dist/daemon.js
-```
+By default Comis resolves config from `~/.comis/config.yaml` and
+`~/.comis/config.local.yaml`. Override those locations with
+[`COMIS_CONFIG_PATHS`](/reference/environment-variables#comis_config_paths),
+whose environment-variable reference owns the list syntax.
 
 The data directory (`~/.comis/`) is separately controlled by `COMIS_DATA_DIR`. See [Configuration](/installation/configuration) for a full reference.
 

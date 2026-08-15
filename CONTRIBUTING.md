@@ -212,7 +212,7 @@ Do **not** open public GitHub issues for security vulnerabilities. Instead, foll
 
 ## Project Structure
 
-Comis is a pnpm monorepo with 16 packages in the `packages/` directory. Each package has its own `package.json`, source code, and tests. See the [Developer Guide](https://docs.comis.ai/developer-guide) for detailed architecture documentation and package descriptions.
+Comis is a pnpm monorepo whose packages live in the `packages/` directory. Each package has its own `package.json`, source code, and tests. See the [package inventory](https://docs.comis.ai/developer-guide/packages) for package roles and dependencies.
 
 ```
 comis/

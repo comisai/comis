@@ -561,10 +561,8 @@ Recovers the underlying detail of a compressed summary region of the current con
 Nine tools for driving interactive terminal sessions. Each tool
 requires an operator-configured allowlist (`allowEntries`) -- without a
 matching allowlist entry the tool rejects. Designed for use with the
-bubblewrap sandbox on Linux. See [exec sandbox](/security/exec-sandbox) for
-the bubblewrap sandbox that terminal tools require. Driven sessions preserve a
-usable inherited `TERM`; when it is absent, blank, `dumb`, or `unknown`, Comis
-uses `xterm-256color` so full-screen terminal applications can render correctly.
+bubblewrap sandbox on Linux. See the [Terminal driver](/agent-tools/terminal-driver)
+reference for its configuration, environment, sandbox, and recovery contracts.
 
 | Tool | Description |
 |------|-------------|
