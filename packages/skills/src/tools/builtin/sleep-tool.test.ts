@@ -254,6 +254,18 @@ describe("createSleepTool — sleep primitive", () => {
     expect(desc).toMatch(/once|poll/); // "sleep once rather than poll"
   });
 
+  it("routes background child completion through the event-driven subagents wait tool", () => {
+    const tool = createSleepTool({ timer: createFakeTimer().timer });
+    const promptGuidelines = (
+      tool as unknown as { promptGuidelines: readonly string[] }
+    ).promptGuidelines.join(" ");
+    const guidance = `${tool.description} ${promptGuidelines}`.toLowerCase();
+
+    expect(guidance).toContain("subagents");
+    expect(guidance).toContain("wait");
+    expect(guidance).not.toMatch(/waiting on a background child[^.]*sleep once/iu);
+  });
+
   it("is named `sleep` with label `Sleep`", () => {
     const tool = createSleepTool({ timer: createFakeTimer().timer });
     expect(tool.name).toBe("sleep");
