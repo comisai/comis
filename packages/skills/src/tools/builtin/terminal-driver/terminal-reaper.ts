@@ -39,6 +39,7 @@
  */
 
 import type { TimerPort, TimerHandle } from "@comis/core";
+import { err, fromPromise, ok, type Result } from "@comis/shared";
 
 /**
  * The audited eviction reason — the full four-value union carried on the
@@ -76,7 +77,7 @@ export interface ReaperDeps {
   /** Current session snapshot (the registry's live map, mapped to the reaper rows). */
   listSessions: () => ReaperSession[];
   /** Called for every eviction with the audited reason — the registry drops + cleans + emits. */
-  onEvict: (sessionId: string, reason: EvictReason) => void;
+  onEvict: (sessionId: string, reason: EvictReason) => void | Promise<void>;
   /**
    * OPTIONAL alive-and-busy predicate (the endurance invariant).
    * When supplied, a session the idle sweep would otherwise reap is EXCLUDED while
@@ -102,7 +103,7 @@ export interface TerminalReaper {
   /** Cancel the sweep interval (the registry calls this from cleanup — no leaked interval). */
   stop(): void;
   /** Evict the idlest session(s) until size == maxSessions (run from create). */
-  checkOverflow(): void;
+  checkOverflow(): Promise<void>;
 }
 
 /**
@@ -141,14 +142,14 @@ export function createTerminalReaper(deps: ReaperDeps): TerminalReaper {
     }
   }
 
-  function checkOverflow(): void {
+  async function checkOverflow(): Promise<void> {
     const xs = deps.listSessions();
     const overflow = xs.length - deps.maxSessions;
     if (overflow <= 0) return;
     // Evict the idlest (lowest lastActivity) first, exactly `overflow` of them.
     const idlestFirst = [...xs].sort((a, b) => a.lastActivity - b.lastActivity);
     for (let i = 0; i < overflow; i++) {
-      deps.onEvict(idlestFirst[i].sessionId, "max_sessions");
+      await deps.onEvict(idlestFirst[i].sessionId, "max_sessions");
     }
   }
 
@@ -219,7 +220,7 @@ export interface RegistryReaperWiring<H extends ReaperSessionHandle> {
   /** The registry's injected `nowMs`. */
   nowMs: () => number;
   /** The registry's single drop + kill-frame + workspace-cleanup step (reused, never re-implemented). */
-  evictInternal: (handle: H) => void;
+  evictInternal: (handle: H) => Promise<Result<void, Error>>;
   /** The registry's structural logger (the audited WARN; NOT `@comis/infra`). */
   logger: { warn(obj: Record<string, unknown>, msg: string): void };
   /** The reaper caps + hooks from the registry deps (all optional). */
@@ -240,23 +241,32 @@ export interface RegistryReaperWiring<H extends ReaperSessionHandle> {
  */
 export function wireRegistryReaper<H extends ReaperSessionHandle>(w: RegistryReaperWiring<H>): {
   reaper: TerminalReaper | undefined;
-  evict: (sessionId: string, reason: EvictReason) => void;
+  evict: (sessionId: string, reason: EvictReason) => Promise<Result<void, Error>>;
 } {
   const idleTtlMs = w.caps.idleTtlMs ?? 0;
   const wallClockMs = w.caps.wallClockMs ?? 0;
   const maxSessions = w.caps.maxSessions ?? 0;
 
-  function evict(sessionId: string, reason: EvictReason): void {
+  async function evict(sessionId: string, reason: EvictReason): Promise<Result<void, Error>> {
     const handle = w.sessions.get(sessionId);
-    if (handle === undefined) return; // already gone — idempotent.
+    if (handle === undefined) return ok(undefined); // already gone — idempotent.
     const durationMs = w.nowMs() - handle.startedAt;
-    w.evictInternal(handle); // reuse the kill drop + workspace cleanup (single site).
+    const invoked = await fromPromise(w.evictInternal(handle));
+    const evicted = invoked.ok ? invoked.value : err(invoked.error);
+    if (!evicted.ok) {
+      w.logger.warn(
+        { sessionId, reason, durationMs, hint: "retry durable terminal retirement before evicting registry authority", errorKind: "resource" as const },
+        "terminal session eviction failed",
+      );
+      return evicted;
+    }
     w.caps.onCapForget?.(sessionId); // forget the cap state on EVERY eviction (no map leak).
     w.caps.onEvict?.({ sessionId, reason, durationMs });
     w.logger.warn(
       { sessionId, reason, durationMs, hint: "session evicted by reaper", errorKind: "resource" as const },
       "terminal session evicted",
     );
+    return ok(undefined);
   }
 
   const reaper =
@@ -274,7 +284,9 @@ export function wireRegistryReaper<H extends ReaperSessionHandle>(w: RegistryRea
               lastActivity: s.lastActivity,
               startedAtMs: s.startedAt,
             })),
-          onEvict: (sessionId, reason) => evict(sessionId, reason),
+          onEvict: async (sessionId, reason) => {
+            await evict(sessionId, reason);
+          },
           // Thread the daemon-bound alive-busy predicate onto the
           // sweep's idle gate (undefined ⇒ quietness-only eviction).
           isBusy: w.caps.isBusy,

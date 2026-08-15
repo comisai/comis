@@ -767,9 +767,6 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
       const handle = deps.registry.get(sessionId, owner);
       const exitCode = handle?.exitCode;
       await deps.registry.kill(sessionId, owner);
-      if (handle?.managedRunId !== undefined && handle.workspaceLeaseId !== undefined && handle.serviceInstanceId !== undefined) {
-        await deps.managedTerminalEvents?.publish({ managedRunId: handle.managedRunId, workspaceLeaseId: handle.workspaceLeaseId, serviceInstanceId: handle.serviceInstanceId, terminalSessionId: sessionId, transition: "released" });
-      }
       // The EXPLICIT kill forgets the per-session cap state directly (KEEP this —
       // it complements the reap-path onCapForget so EVERY end-of-life forgets the cap
       // state; the kill tool is the agent's intentional terminate, not an evict).

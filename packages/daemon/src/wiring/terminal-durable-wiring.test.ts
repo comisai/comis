@@ -24,6 +24,7 @@ import {
 describe("managed terminal recovery transitions", () => {
   it("publishes recovered and lost with the persisted managed identity", () => {
     const publish = vi.fn(async () => undefined);
+    const retire = vi.fn(async () => ({ ok: true as const, value: undefined }));
     const built = buildAgentTerminalDurability({
       dataDir: "/tmp/nonexistent-comis-managed-recovery",
       agentId: "agent_a",
@@ -32,7 +33,7 @@ describe("managed terminal recovery transitions", () => {
       registries: new Map(),
       workerStuckMs: 1_000,
       nowMs: () => 1700,
-      managedTerminalEvents: { publish },
+      managedTerminalEvents: { publish, retire },
     } as never);
     const identity = {
       sessionId: "terminal-session_a",
@@ -49,6 +50,7 @@ describe("managed terminal recovery transitions", () => {
       expect.objectContaining({ terminalSessionId: "terminal-session_a", transition: "recovered" }),
       expect.objectContaining({ terminalSessionId: "terminal-session_a", transition: "lost" }),
     ]);
+    expect(built.durability.retireManagedSession).toBe(retire);
   });
 });
 

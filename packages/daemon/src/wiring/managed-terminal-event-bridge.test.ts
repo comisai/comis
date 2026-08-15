@@ -116,4 +116,29 @@ describe("managed terminal event bridge", () => {
     }), expect.any(String));
     expect(Object.keys(bridge).sort()).toEqual(["publish", "retire"]);
   });
+
+  it("returns a failed retirement barrier when the local store is unavailable", async () => {
+    const terminalEvent = vi.fn(async (command) => ok({
+      managedRunId: command.managedRunId,
+      terminalSessionId: command.terminalSessionId,
+      transition: command.transition,
+    }));
+    const bridge = createManagedTerminalEventBridge({
+      control: { terminalEvent } as unknown as CapabilityServiceControlPort,
+      store: { releaseTerminal: vi.fn(async () => err(new Error("store unavailable"))) },
+      logger: logger() as never,
+      nowMs: () => 1700,
+    });
+
+    const result = await bridge.retire?.({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      terminalSessionId: "terminal-session_a",
+      transition: "released",
+    });
+
+    expect(result).toEqual(err(new Error("store unavailable")));
+    expect(terminalEvent).toHaveBeenCalledOnce();
+  });
 });

@@ -51,6 +51,7 @@
  * @module
  */
 
+import type { Result } from "@comis/shared";
 import { reattachDecision, type SessionDescriptor } from "./terminal-reattach-match.js";
 import type { SessionOwner } from "./terminal-session-owner.js";
 import type { SessionHandle } from "./terminal-session-types.js";
@@ -321,6 +322,14 @@ export interface TerminalDurabilityDeps {
    * Absent ⇒ no-op (the worker-IPC kill is the only teardown, today's behavior).
    */
   killTmuxSession?: (name: string, socket?: string) => void;
+  /** Confirm durable managed-run retirement before registry authority is discarded. */
+  retireManagedSession?: (input: {
+    readonly managedRunId: string;
+    readonly workspaceLeaseId: string;
+    readonly serviceInstanceId: string;
+    readonly terminalSessionId: string;
+    readonly transition: "released";
+  }) => Promise<Result<void, Error>>;
   onReattached?: (info: { sessionId: string; agentId: string; managedRunId?: string; workspaceLeaseId?: string; serviceInstanceId?: string }) => void;
   onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string; managedRunId?: string; workspaceLeaseId?: string; serviceInstanceId?: string }) => void;
 }

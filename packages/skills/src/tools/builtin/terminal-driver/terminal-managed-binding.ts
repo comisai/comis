@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { Result } from "@comis/shared";
 import type { SessionOwner } from "./terminal-session-owner.js";
 
 export const MANAGED_TERMINAL_ATTACHMENT_DIRECTORY = "/run/comis/attachments";
@@ -86,11 +87,19 @@ export type ManagedTerminalTransition =
 
 /** Content-free transition bridge; publishing failure never grants cleanup authority. */
 export interface ManagedTerminalEventSink {
-  publish(input: {
-    readonly managedRunId: string;
-    readonly workspaceLeaseId: string;
-    readonly serviceInstanceId: string;
-    readonly terminalSessionId: string;
-    readonly transition: ManagedTerminalTransition;
-  }): Promise<void>;
+  publish(input: ManagedTerminalTransitionInput): Promise<void>;
+  /** Durable end-of-life barrier. Local retirement remains authoritative when notification fails. */
+  retire?(input: ManagedTerminalRetirementInput): Promise<Result<void, Error>>;
 }
+
+export interface ManagedTerminalTransitionInput {
+  readonly managedRunId: string;
+  readonly workspaceLeaseId: string;
+  readonly serviceInstanceId: string;
+  readonly terminalSessionId: string;
+  readonly transition: ManagedTerminalTransition;
+}
+
+export type ManagedTerminalRetirementInput = Omit<ManagedTerminalTransitionInput, "transition"> & {
+  readonly transition: "exited" | "released";
+};

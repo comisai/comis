@@ -426,6 +426,7 @@ describe("createTerminalSessionRegistry — lazy re-spawn", () => {
       resolveIdentity = resolve;
     });
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { retireManagedSession: async () => ok(undefined) },
       resolveRootProcessIdentity: async () => identity,
     }));
     const creating = registry.create({
@@ -1062,6 +1063,7 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
         : { terminated: true },
     }));
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { retireManagedSession: async () => ok(undefined) },
       resolveRootProcessIdentity: vi.fn(async () => ({ pid: 6200, startIdentity: "linux:991" })),
     } as unknown as Partial<TerminalSessionRegistryDeps>));
 
@@ -1090,6 +1092,7 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
         : { terminated: true },
     }));
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { retireManagedSession: async () => ok(undefined) },
       resolveRootProcessIdentity: vi.fn(async () => undefined),
     } as unknown as Partial<TerminalSessionRegistryDeps>));
 
@@ -2884,7 +2887,11 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
     const store = fakeDescriptorStore([managed]);
 
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
-      durability: { descriptorStore: store, isTmuxAlive: () => false },
+      durability: {
+        descriptorStore: store,
+        isTmuxAlive: () => false,
+        retireManagedSession: async () => ok(undefined),
+      },
     }));
 
     expect(store.remove).not.toHaveBeenCalled();

@@ -15,7 +15,7 @@ import type {
   ManagedRunStorePort,
 } from "@comis/core";
 import type { ManagedTerminalEventSink } from "@comis/skills/tools";
-import { err, fromPromise, type Result } from "@comis/shared";
+import { err, fromPromise, ok, type Result } from "@comis/shared";
 
 type SendControl = <T>(
   frame: unknown,
@@ -68,29 +68,31 @@ export function createManagedTerminalEventBridge(deps: {
   readonly nowMs: () => number;
 }): ManagedTerminalEventSink {
   let sequence = 0;
-  return {
-    publish: async (input) => {
-      sequence += 1;
-      const operationDigest = createHash("sha256")
-        .update(`${input.managedRunId}\0${input.terminalSessionId}\0${input.transition}\0${deps.nowMs()}\0${sequence}`, "utf8")
-        .digest("hex").slice(0, 32);
-      const called = await fromPromise(deps.control.terminalEvent({
-        operationId: `operation-terminal-${operationDigest}`,
-        ...input,
-      }));
-      if (!called.ok || !called.value.ok) {
-        deps.logger.warn({
-          serviceInstanceId: input.serviceInstanceId,
-          managedRunId: input.managedRunId,
-          terminalSessionId: input.terminalSessionId,
-          transition: input.transition,
-          errorKind: "dependency" as const,
-          hint: "Check the capabilityServices socket and owning service instance; terminal, lease, and content were preserved",
-        }, "Managed terminal transition delivery failed");
-        return;
-      }
-      if (input.transition !== "exited" && input.transition !== "released") return;
-      const released = await fromPromise(deps.store.releaseTerminal(
+  const notify = async (input: Parameters<ManagedTerminalEventSink["publish"]>[0]): Promise<void> => {
+    sequence += 1;
+    const operationDigest = createHash("sha256")
+      .update(`${input.managedRunId}\0${input.terminalSessionId}\0${input.transition}\0${deps.nowMs()}\0${sequence}`, "utf8")
+      .digest("hex").slice(0, 32);
+    const called = await fromPromise(deps.control.terminalEvent({
+      operationId: `operation-terminal-${operationDigest}`,
+      ...input,
+    }));
+    if (!called.ok || !called.value.ok) {
+      deps.logger.warn({
+        serviceInstanceId: input.serviceInstanceId,
+        managedRunId: input.managedRunId,
+        terminalSessionId: input.terminalSessionId,
+        transition: input.transition,
+        errorKind: "dependency" as const,
+        hint: input.transition === "exited" || input.transition === "released"
+          ? "Check the capabilityServices socket and owning service instance; local durable retirement continues independently"
+          : "Check the capabilityServices socket and owning service instance; terminal, lease, and content were preserved",
+      }, "Managed terminal transition delivery failed");
+    }
+  };
+  const retire: NonNullable<ManagedTerminalEventSink["retire"]> = async (input) => {
+    await notify(input);
+    const released = await fromPromise(deps.store.releaseTerminal(
         { kind: "service", serviceInstanceId: input.serviceInstanceId },
         {
           managedRunId: input.managedRunId,
@@ -99,19 +101,30 @@ export function createManagedTerminalEventBridge(deps: {
           releasedAtMs: deps.nowMs(),
         },
       ));
-      if (
-        !released.ok
-        || !released.value.ok
-        || (released.value.value.kind !== "released" && released.value.value.kind !== "identical_replay")
-      ) {
-        deps.logger.warn({
-          serviceInstanceId: input.serviceInstanceId,
-          managedRunId: input.managedRunId,
-          terminalSessionId: input.terminalSessionId,
-          errorKind: "resource" as const,
-          hint: "Reconcile the exact managed run, workspace lease, and terminal binding before retrying cleanup",
-        }, "Managed terminal settlement was not durably recorded");
+    if (
+      released.ok
+      && released.value.ok
+      && (released.value.value.kind === "released" || released.value.value.kind === "identical_replay")
+    ) return ok(undefined);
+    deps.logger.warn({
+      serviceInstanceId: input.serviceInstanceId,
+      managedRunId: input.managedRunId,
+      terminalSessionId: input.terminalSessionId,
+      errorKind: "resource" as const,
+      hint: "Reconcile the exact managed run, workspace lease, and terminal binding before retrying cleanup",
+    }, "Managed terminal settlement was not durably recorded");
+    if (!released.ok) return err(released.error);
+    if (!released.value.ok) return err(released.value.error);
+    return err(new Error(`managed terminal retirement was rejected: ${released.value.value.kind}`));
+  };
+  return {
+    publish: async (input) => {
+      if (input.transition === "exited" || input.transition === "released") {
+        await retire({ ...input, transition: input.transition });
+        return;
       }
+      await notify(input);
     },
+    retire,
   };
 }

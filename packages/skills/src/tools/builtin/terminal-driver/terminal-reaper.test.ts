@@ -24,6 +24,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { ok } from "@comis/shared";
 
 import { createFakeTimers } from "../../../../../../test/support/fake-timers.js";
 import { createFakeClock } from "../../../../../../test/support/fake-clock.js";
@@ -130,7 +131,7 @@ describe("createTerminalReaper — wall-clock sweep", () => {
 });
 
 describe("createTerminalReaper — max-sessions overflow", () => {
-  it("checkOverflow evicts the idlest until size == maxSessions (reason max_sessions)", () => {
+  it("checkOverflow evicts the idlest until size == maxSessions (reason max_sessions)", async () => {
     const now0 = 1_000_000;
     const rows: Row[] = [
       { sessionId: "idlest", lastActivity: now0 - 9000, startedAtMs: now0 - 9000 },
@@ -140,14 +141,14 @@ describe("createTerminalReaper — max-sessions overflow", () => {
     const { deps, onEvict } = makeDeps(rows, { maxSessions: 2 });
     const reaper = createTerminalReaper(deps);
 
-    reaper.checkOverflow();
+    await reaper.checkOverflow();
 
     // 3 sessions, cap 2 → evict the single idlest (lowest lastActivity), reason max_sessions.
     expect(onEvict).toHaveBeenCalledTimes(1);
     expect(onEvict).toHaveBeenCalledWith("idlest", "max_sessions");
   });
 
-  it("checkOverflow over an at/under-cap snapshot evicts nothing", () => {
+  it("checkOverflow over an at/under-cap snapshot evicts nothing", async () => {
     const now0 = 1_000_000;
     const rows: Row[] = [
       { sessionId: "a", lastActivity: now0 - 2000, startedAtMs: now0 - 2000 },
@@ -156,7 +157,7 @@ describe("createTerminalReaper — max-sessions overflow", () => {
     const { deps, onEvict } = makeDeps(rows, { maxSessions: 2 });
     const reaper = createTerminalReaper(deps);
 
-    reaper.checkOverflow();
+    await reaper.checkOverflow();
 
     expect(onEvict).not.toHaveBeenCalled();
   });
@@ -352,14 +353,14 @@ describe("wireRegistryReaper — cap-eviction names the cap (max_interactions)",
     startedAt: number;
   }
 
-  it("evict(sid, 'max_interactions') carries the cap name verbatim onto onEvict AND the audited WARN", () => {
+  it("evict(sid, 'max_interactions') carries the cap name verbatim onto onEvict AND the audited WARN", async () => {
     const now0 = 2_000_000;
     const sessions = new Map<string, Handle>([
       ["heavy", { sessionId: "heavy", lastActivity: now0 - 1000, startedAt: now0 - 50_000 }],
     ]);
     const onEvict = vi.fn<(info: { sessionId: string; reason: EvictReason; durationMs: number }) => void>();
     const warn = vi.fn<(obj: Record<string, unknown>, msg: string) => void>();
-    const evictInternal = vi.fn<(h: Handle) => void>();
+    const evictInternal = vi.fn(async (_handle: Handle) => ok(undefined));
 
     const { evict } = wireRegistryReaper<Handle>({
       sessions,
@@ -370,7 +371,7 @@ describe("wireRegistryReaper — cap-eviction names the cap (max_interactions)",
     });
 
     // The daemon's max-interactions check calls this exact evict with the cap name.
-    evict("heavy", "max_interactions");
+    await evict("heavy", "max_interactions");
 
     // The cap name is surfaced verbatim onto the emitted eviction info...
     expect(onEvict).toHaveBeenCalledTimes(1);

@@ -27,7 +27,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { err, ok, type Result } from "@comis/shared";
+import { err, fromPromise, ok, type Result } from "@comis/shared";
 
 import {
   systemNowMs,
@@ -664,7 +664,7 @@ export function createTerminalSessionRegistry(
     );
     // An over-cap create evicts the idlest down to maxSessions (reason
     // max_sessions). Runs AFTER sessions.set so the new session is in the snapshot.
-    reaper?.checkOverflow();
+    await reaper?.checkOverflow();
     return {
       sessionId,
       allowId: req.allowId,
@@ -861,43 +861,78 @@ export function createTerminalSessionRegistry(
       }));
   }
 
-  /**
-   * Drop a session WITHOUT an owner check — the shared end-of-life path: kill frame (if
-   * running), delete the handle, rm the registry-allocated workspace, and drop a durable
-   * session's DESCRIPTOR (a cleanly-killed/evicted durable session is no longer
-   * re-attachable; the journal is preserved by the daemon holder). `kill` gates on ownership.
-   */
-  function evictInternal(handle: SessionHandle): void {
+  function dropSession(handle: SessionHandle, message: string): void {
     const { sessionId } = handle;
-    if (worker !== undefined && handle.status === "running") {
-      // Fire-and-forget: the session is dropped locally regardless of the reply.
-      send(sessionId, "kill", { sessionId });
-    }
-    // A DURABLE session's tmux is DETACHED on a per-boot socket; the worker-IPC "kill" above does
-    // NOT reliably terminate it (a never-tasked webhook drive lingered as an idle `claude` after
-    // kill fired), so deterministically kill-session it by name
-    // (the path proven to reap it). Best-effort + belt-and-suspenders alongside the worker kill.
-    if (handle.durable === true && handle.tmuxName !== undefined) {
-      deps.durability?.killTmuxSession?.(handle.tmuxName, handle.tmuxSocket);
-    }
     sessions.delete(sessionId);
     if (handle.workspace !== undefined) cleanupWorkspace(handle.workspace);
     if (handle.durable === true) deps.durability?.descriptorStore?.remove(sessionId);
-    logger.info({ sessionId }, "terminal session killed");
+    logger.info({ sessionId }, message);
+  }
+
+  async function terminateRetireAndDropManaged(handle: SessionHandle): Promise<Result<void, Error>> {
+    const { sessionId, managedRunId, workspaceLeaseId, serviceInstanceId } = handle;
+    if (managedRunId === undefined || workspaceLeaseId === undefined || serviceInstanceId === undefined) {
+      return err(new Error("managed terminal retirement identity is unavailable"));
+    }
+    const retireManagedSession = deps.durability?.retireManagedSession;
+    if (retireManagedSession === undefined) {
+      return err(new Error("managed terminal durable retirement is unavailable"));
+    }
+    if (handle.status === "running") {
+      if (worker === undefined) return err(new Error("terminal worker is unavailable"));
+      const reply = await request(sessionId, "kill", { sessionId });
+      if (!reply.ok) return err(new Error(reply.error ?? "terminal backend termination was not acknowledged"));
+      handle.status = "exited";
+      handle.lastActivity = nowMs();
+      if (handle.durable === true && handle.tmuxName !== undefined) {
+        deps.durability?.killTmuxSession?.(handle.tmuxName, handle.tmuxSocket);
+      }
+    }
+    const invoked = await fromPromise(retireManagedSession({
+      managedRunId,
+      workspaceLeaseId,
+      serviceInstanceId,
+      terminalSessionId: sessionId,
+      transition: "released",
+    }));
+    if (!invoked.ok) return err(invoked.error);
+    if (!invoked.value.ok) return invoked.value;
+    dropSession(handle, "managed terminal termination and retirement confirmed");
+    return ok(undefined);
+  }
+
+  /** Shared end-of-life boundary. Managed authority is retired durably before deletion. */
+  async function evictInternal(handle: SessionHandle): Promise<Result<void, Error>> {
+    if (
+      handle.managedRunId !== undefined
+      || handle.workspaceLeaseId !== undefined
+      || handle.serviceInstanceId !== undefined
+    ) return terminateRetireAndDropManaged(handle);
+    const { sessionId } = handle;
+    if (worker !== undefined && handle.status === "running") {
+      send(sessionId, "kill", { sessionId });
+    }
+    if (handle.durable === true && handle.tmuxName !== undefined) {
+      deps.durability?.killTmuxSession?.(handle.tmuxName, handle.tmuxSocket);
+    }
+    dropSession(handle, "terminal session killed");
+    return ok(undefined);
   }
 
   async function terminateAndConfirm(sessionId: string, owner: SessionOwner): Promise<Result<void, Error>> {
     const handle = ownedHandle(sessionId, owner);
     if (handle === undefined) return err(new Error("terminal session authority is unavailable"));
+    if (
+      handle.managedRunId !== undefined
+      || handle.workspaceLeaseId !== undefined
+      || handle.serviceInstanceId !== undefined
+    ) return terminateRetireAndDropManaged(handle);
     if (handle.status === "running") {
       if (worker === undefined) return err(new Error("terminal worker is unavailable"));
       const reply = await request(sessionId, "kill", { sessionId });
       if (!reply.ok) return err(new Error(reply.error ?? "terminal backend termination was not acknowledged"));
     }
-    sessions.delete(sessionId);
-    if (handle.workspace !== undefined) cleanupWorkspace(handle.workspace);
-    if (handle.durable === true) deps.durability?.descriptorStore?.remove(sessionId);
-    logger.info({ sessionId }, "terminal session termination confirmed");
+    dropSession(handle, "terminal session termination confirmed");
     return ok(undefined);
   }
 
@@ -906,7 +941,8 @@ export function createTerminalSessionRegistry(
     // sibling subagent's session). Owner mismatch == not-found.
     const handle = ownedHandle(sessionId, owner);
     if (handle === undefined) return;
-    evictInternal(handle);
+    const evicted = await evictInternal(handle);
+    if (!evicted.ok) return Promise.reject(evicted.error);
   }
 
   // Compose the reaper + its single audited eviction site (the wiring closes over
@@ -918,7 +954,8 @@ export function createTerminalSessionRegistry(
     // Owner-scoped like kill (no-op on absent/cross-owner); the single eviction
     // entry reused for max_interactions (cap-forget runs on that path too).
     if (ownedHandle(sessionId, owner) === undefined) return;
-    evictForReaper(sessionId, reason);
+    const evicted = await evictForReaper(sessionId, reason);
+    if (!evicted.ok) return Promise.reject(evicted.error);
   }
 
   function size(): number {
@@ -932,7 +969,10 @@ export function createTerminalSessionRegistry(
     // Owner-AGNOSTIC: tears down the per-agent registry, dropping every session (the worker is shared across owners).
     for (const handle of Array.from(sessions.values())) {
       if (handle.durable === true) continue; // PRESERVE a durable session (detached tmux + descriptor) for recover-on-boot re-attach; never kill it on a graceful shutdown.
-      evictInternal(handle);
+      const evicted = await evictInternal(handle);
+      if (!evicted.ok) {
+        logger.warn({ sessionId: handle.sessionId, hint: "retry terminal cleanup before daemon shutdown", errorKind: "resource" as const }, "terminal session cleanup failed");
+      }
     }
     if (worker !== undefined) {
       worker.kill("SIGTERM");

@@ -714,7 +714,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(managedBinding.release).toHaveBeenCalledOnce();
   });
 
-  it("publishes released after explicitly killing a managed terminal without releasing its lease", async () => {
+  it("delegates managed retirement to the registry without duplicate lifecycle publication", async () => {
     const handles = new Map<string, SessionHandle>([["terminal-session_a", {
       sessionId: "terminal-session_a",
       allowId: "bash",
@@ -735,13 +735,8 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
 
     await tool.execute("kill-managed", { sessionId: "terminal-session_a" });
 
-    expect(managedTerminalEvents.publish).toHaveBeenCalledWith({
-      managedRunId: "managed-run_a",
-      workspaceLeaseId: "workspace-lease_a",
-      serviceInstanceId: "service-instance_a",
-      terminalSessionId: "terminal-session_a",
-      transition: "released",
-    });
+    expect(registry.killCalls).toEqual(["terminal-session_a"]);
+    expect(managedTerminalEvents.publish).not.toHaveBeenCalled();
   });
 
   it("rejects a non-allowlisted command with permission_denied and never spawns", async () => {

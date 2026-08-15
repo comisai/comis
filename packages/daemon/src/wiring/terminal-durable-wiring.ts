@@ -221,6 +221,9 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
     descriptorStore,
     isTmuxAlive,
     killTmuxSession,
+    ...(i.managedTerminalEvents?.retire === undefined
+      ? {}
+      : { retireManagedSession: i.managedTerminalEvents.retire }),
     onReattached: (info) => {
       const { sessionId, agentId } = info;
       // The re-attach ran under the SAME persisted allow-entry; the content-free record carries
