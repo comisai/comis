@@ -89,9 +89,11 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
       wl.managed_run_id AS lease_managed_run_id,
       wl.service_instance_id AS lease_service_instance_id,
       wl.tenant_id AS lease_tenant_id, wl.agent_id AS lease_agent_id,
-      wl.state AS lease_state
+      wl.state AS lease_state,
+      rr.operation_id AS release_operation_id
     FROM managed_runs mr
     JOIN workspace_leases wl ON wl.workspace_lease_id = mr.workspace_lease_id
+    LEFT JOIN managed_run_release_reservations rr ON rr.managed_run_id = mr.managed_run_id
     WHERE mr.managed_run_id = ?
   `);
   const insertAttachment = db.prepare(`
@@ -183,6 +185,7 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
       && row.value.lease_tenant_id === record.tenantId
       && row.value.lease_agent_id === record.agentId
       && row.value.lease_state === "active"
+      && row.value.release_operation_id === null
     );
   }
 

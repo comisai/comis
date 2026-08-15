@@ -41,6 +41,7 @@ export const ExecutionAttachmentAuthorityDbRowSchema = z.strictObject({
   lease_tenant_id: z.string(),
   lease_agent_id: z.string(),
   lease_state: z.string(),
+  release_operation_id: z.string().nullable(),
 });
 
 export type ExecutionAttachmentDbRow = z.infer<typeof ExecutionAttachmentDbRowSchema>;
