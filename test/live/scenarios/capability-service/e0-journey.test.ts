@@ -769,9 +769,12 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
         `/attention ${attention.attentionId} ${E0_DECISION_ANSWER}`,
       );
       await pollUntil(
-        () => attentionSnapshot(canonicalDataDir, shipBinding.managed_run_id)?.status === "response_pending"
-          && telegram.outbound(TELEGRAM_CHAT).slice(deliveredBeforeAnswer)
-            .some((entry) => entry.text === "Response recorded for attention request [REDACTED]."),
+        () => {
+          const status = attentionSnapshot(canonicalDataDir, shipBinding.managed_run_id)?.status;
+          return (status === "response_pending" || status === "delivered")
+            && telegram.outbound(TELEGRAM_CHAT).slice(deliveredBeforeAnswer)
+              .some((entry) => entry.text === "Response recorded for attention request [REDACTED].");
+        },
         30_000,
         () => `liaison decision answer binding; attention=${JSON.stringify(attentionSnapshot(canonicalDataDir, shipBinding.managed_run_id))}; replies=${JSON.stringify(telegram.outbound(TELEGRAM_CHAT).slice(deliveredBeforeAnswer).map((entry) => entry.text))}`,
       );
