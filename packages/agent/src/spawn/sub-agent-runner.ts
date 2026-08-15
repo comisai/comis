@@ -1100,6 +1100,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const providerSettledRunIds = new Set<string>();
   const deliverySuppressedRunIds = new Set<string>();
   const forcedTerminalRunIds = new Set<string>();
+  const durableAdmittedRunIds = new Set<string>();
   const durableTerminalReasons = new Map<string, DurableRunTerminalReason>();
   const trajectoryClosedRunIds = new Set<string>();
   const watchdogTimers = new Map<string, TimerHandle>();
@@ -1588,6 +1589,7 @@ function classifyCompletionErrorKind(
     if (runs.get(run.runId)?.status !== "running" || durableTerminalReasons.has(run.runId)) {
       return err(new Error("Durable checkpoint heartbeat was suppressed after terminal state"));
     }
+    durableAdmittedRunIds.add(run.runId);
 
     // A keep-alive that fires INDEPENDENT of step/spawn completion so a
     // long-running child never trips the watchdog's stale threshold.
@@ -1713,6 +1715,7 @@ function classifyCompletionErrorKind(
     run: SubAgentRun,
     terminalReason: DurableRunTerminalReason,
   ): void {
+    durableAdmittedRunIds.delete(run.runId);
     durableTerminalReasons.set(run.runId, terminalReason);
     const handle = heartbeatTimers.get(run.runId);
     if (handle) {
@@ -1969,6 +1972,7 @@ function classifyCompletionErrorKind(
         startDeferreds.delete(runId);
         durableResumeHandshakeRunIds.delete(runId);
         forcedTerminalRunIds.delete(runId);
+        durableAdmittedRunIds.delete(runId);
         durableTerminalReasons.delete(runId);
         trajectoryClosedRunIds.delete(runId);
         resumeDescriptors.delete(runId);
@@ -1998,6 +2002,7 @@ function classifyCompletionErrorKind(
         startDeferreds.delete(pruneRunId);
         durableResumeHandshakeRunIds.delete(pruneRunId);
         forcedTerminalRunIds.delete(pruneRunId);
+        durableAdmittedRunIds.delete(pruneRunId);
         durableTerminalReasons.delete(pruneRunId);
         trajectoryClosedRunIds.delete(pruneRunId);
         resumeDescriptors.delete(pruneRunId);
@@ -4626,6 +4631,46 @@ function classifyCompletionErrorKind(
     return true;
   }
 
+  function suspendDurableRunForRestart(run: SubAgentRun): boolean {
+    if (run.status !== "running" || !durableAdmittedRunIds.has(run.runId)) {
+      return false;
+    }
+
+    deliverySuppressedRunIds.add(run.runId);
+    watchdogTimers.get(run.runId)?.cancel();
+    watchdogTimers.delete(run.runId);
+    heartbeatTimers.get(run.runId)?.cancel();
+    heartbeatTimers.delete(run.runId);
+    stopProgressFork(run);
+    closeTrajectoryOnce(run);
+
+    const handle = deps.sessionResolver?.resolveActiveSession(run.conversationRef);
+    if (handle) {
+      handle.abort().catch((abortErr: unknown) => {
+        deps.logger?.debug(
+          { runId: run.runId, err: abortErr },
+          "Durable sub-agent SDK abort during shutdown failed",
+        );
+      });
+    }
+
+    const suspendedAt = clock.now();
+    deps.eventBus.emit("durable:suspended", {
+      rootRunId: run.rootRunId,
+      checkpointId: run.runId,
+      timestamp: suspendedAt,
+    });
+    deps.logger?.info(
+      {
+        runId: run.runId,
+        rootRunId: run.rootRunId,
+        durationMs: Math.max(0, suspendedAt - run.startedAt),
+      },
+      "Durable sub-agent suspended for restart",
+    );
+    return true;
+  }
+
   async function performShutdown(): Promise<void> {
     sweepInterval.cancel();
     deps.eventBus.off("tool:executed", observeChildToolOutcome);
@@ -4636,12 +4681,21 @@ function classifyCompletionErrorKind(
     );
     if (!activeSettled) {
       const remaining = new Set(activeRunIds);
+      let suspendedRunCount = 0;
+      let stoppedRunCount = 0;
       for (const run of runs.values()) {
         if (run.status === "queued") remaining.add(run.runId);
       }
       for (const runId of remaining) {
         const run = runs.get(runId);
         if (!run) continue;
+        if (
+          !providerSettledRunIds.has(runId)
+          && suspendDurableRunForRestart(run)
+        ) {
+          suspendedRunCount++;
+          continue;
+        }
         if (providerSettledRunIds.has(runId)) {
           if (run.status === "completed" || run.status === "failed") continue;
           deliverySuppressedRunIds.add(runId);
@@ -4691,6 +4745,7 @@ function classifyCompletionErrorKind(
               detail: "The background task finished, but result delivery was stopped during daemon shutdown.",
             }, deps));
           }
+          stoppedRunCount++;
           continue;
         }
         if (run.status === "completed" || run.status === "failed") continue;
@@ -4698,15 +4753,29 @@ function classifyCompletionErrorKind(
           killedBy: "system",
           reason: "Stopped during daemon shutdown",
         });
+        stoppedRunCount++;
       }
-      deps.logger?.warn(
-        {
-          activeRunCount: remaining.size,
-          errorKind: "timeout" as const,
-          hint: "Inspect the attributed shutdown failure notices and any retained outward operations",
-        },
-        "Sub-agent shutdown grace expired; remaining runs were stopped",
-      );
+      if (stoppedRunCount > 0) {
+        deps.logger?.warn(
+          {
+            stoppedRunCount,
+            suspendedRunCount,
+            errorKind: "timeout" as const,
+            hint: "Inspect the attributed shutdown failure notices and any retained outward operations",
+          },
+          "Sub-agent shutdown grace expired; non-resumable runs were stopped",
+        );
+      }
+      if (suspendedRunCount > 0) {
+        deps.logger?.info(
+          {
+            suspendedRunCount,
+            stoppedRunCount,
+            durationMs: SHUTDOWN_ACTIVE_GRACE_MS,
+          },
+          "Sub-agent shutdown preserved durable runs for restart",
+        );
+      }
     }
 
     retryPendingDurableTerminalizations();
@@ -4757,6 +4826,7 @@ function classifyCompletionErrorKind(
 
     startDeferreds.clear();
     durableResumeHandshakeRunIds.clear();
+    durableAdmittedRunIds.clear();
   }
 
   function shutdown(): Promise<void> {
