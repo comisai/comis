@@ -563,6 +563,48 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     expect(shutdownResolved).toBe(true);
   });
 
+  it("shutdown preserves an admitted durable run for boot recovery", async () => {
+    const store = createRecordingStore();
+    const abort = vi.fn().mockResolvedValue(undefined);
+    const eventBus = new TypedEventBus();
+    const emit = vi.spyOn(eventBus, "emit");
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: store,
+      eventBus,
+      sendToChannel,
+      sessionResolver: {
+        resolveActiveSession: vi.fn().mockReturnValue({ abort }),
+      },
+      executeAgent: vi.fn().mockReturnValue(new Promise(() => undefined)),
+    }));
+    const runId = runner.spawn({
+      task: "resume this task after restart",
+      agentId: "worker",
+      rootRunId: "root-restart-recovery",
+      workspacePolicyHash: POLICY_HASH,
+      announceChannelType: "telegram",
+      announceChannelId: "channel-a",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const shutdown = runner.shutdown();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await shutdown;
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(store.completed).not.toContainEqual({
+      checkpointId: runId,
+      terminalReason: "killed",
+    });
+    expect(runner.getRunStatus(runId)?.status).toBe("running");
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(emit).toHaveBeenCalledWith("durable:suspended", expect.objectContaining({
+      rootRunId: "root-restart-recovery",
+      checkpointId: runId,
+    }));
+  });
+
   it("watchdog immediately closes durable resources when execution ignores abort", async () => {
     const store = createRecordingStore();
     const closeTrajectory = vi.fn(async () => undefined);
