@@ -37,6 +37,10 @@ export const CONTROL_SECRET = "wave4-control-bearer-0123456789abcdef";
 const REVIEWED_LAUNCHER = "/usr/local/bin/wave4-codex-launcher";
 const REVIEWED_ALLOW_ID = "codex-confined";
 const REVIEWED_TOKEN = "wave4-reviewed";
+const REVIEWED_CLAUDE_LAUNCHER = "/usr/local/bin/wave4-claude-launcher";
+const REVIEWED_CLAUDE_ALLOW_ID = "claude-confined";
+const REVIEWED_CLAUDE_TOKEN = "wave4-claude-reviewed";
+const MIXED_WORKER_JOIN = process.env["COMIS_WAVE4_MIXED_WORKERS"] === "1";
 const isLiveLinux = process.env["COMIS_LIVE"] === "1" && process.platform === "linux";
 const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;
 
@@ -481,6 +485,7 @@ export function makeConfig(input: {
   readonly reviewedToken?: string;
   readonly contextWindow?: number;
   readonly capabilityClass?: "frontier" | "mid" | "small" | "nano";
+  readonly includeClaudeWorker?: boolean;
 }): Record<string, unknown> {
   const launcher = input.launcher ?? REVIEWED_LAUNCHER;
   const allowId = input.allowId ?? REVIEWED_ALLOW_ID;
@@ -530,7 +535,24 @@ export function makeConfig(input: {
           consent: { acknowledgedRisk: true, acknowledgedAt: "2026-08-10T00:00:00Z" },
           backend: "tmux",
           hardening: "none",
-        }],
+        }, ...(input.includeClaudeWorker === true ? [{
+          id: REVIEWED_CLAUDE_ALLOW_ID,
+          match: {
+            path: REVIEWED_CLAUDE_LAUNCHER,
+            argsPrefix: [REVIEWED_CLAUDE_TOKEN],
+            hash: launcherHash(REVIEWED_CLAUDE_LAUNCHER),
+          },
+          scope: {
+            filesystem: "workspace",
+            network: "full",
+            credentialPaths: ["~/.claude", "/home/comis/.wave4-tools"],
+            uid: "daemon",
+          },
+          autoAnswer: "none",
+          consent: { acknowledgedRisk: true, acknowledgedAt: "2026-08-15T00:00:00Z" },
+          backend: "tmux",
+          hardening: "none",
+        }] : [])],
       } },
       autonomy: {
         profile: "standard",
@@ -803,6 +825,17 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
         controlSocket,
         credentialFile,
         candidateConfig,
+        additionalArguments: MIXED_WORKER_JOIN ? [
+          "--claude-profile", "claude-reviewed",
+          "--claude-executable", REVIEWED_CLAUDE_LAUNCHER,
+          "--claude-version", process.env["COMIS_WAVE4_CLAUDE_VERSION"] ?? "2.1.233 (Claude Code)",
+          "--claude-model", process.env["COMIS_WAVE4_CLAUDE_MODEL"] ?? "claude-opus-4-6",
+          "--claude-effort", "high",
+          "--claude-terminal-allow-entry", REVIEWED_CLAUDE_ALLOW_ID,
+          "--claude-network", "host",
+          "--claude-concurrency", "1",
+          "--claude-config-directory", "/home/comis/.claude",
+        ] : [],
       });
       await waitForInstalledService(service, operatorSocket, mcpSocket);
       const gatewayPort = await getFreePort();
@@ -815,6 +848,7 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
         controlSocket,
         workspaceRoot: repository.worktreeRoot,
         runtimeRoot,
+        includeClaudeWorker: MIXED_WORKER_JOIN,
       })), { mode: 0o600 });
       daemon = await startTestDaemon({
         configPath,
@@ -836,6 +870,7 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
 
       const taskHandles: string[] = [];
       for (const identity of ["A", "B"] as const) {
+        const workerProfileId = MIXED_WORKER_JOIN && identity === "B" ? "claude-reviewed" : "codex-reviewed";
         await pollUntil(() => model.idle, 10_000, `liaison idle before prepare ${identity}`);
         const deliveredBefore = echo.getSentMessages().filter(
           (message) => message.text.includes("LIAISON_TURN_DONE"),
@@ -851,7 +886,7 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
             constraints: ["Stop in validation custody; do not deliver."],
             validationProfile: "wave4-live",
             deliveryMode: "report",
-            workerProfileId: "codex-reviewed",
+            workerProfileId,
           },
           capture: (text) => {
             taskHandle = /task-[a-f0-9]{24}/u.exec(text)?.[0] ?? "";
@@ -879,7 +914,15 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
 
       const planA = cli<LaunchPlan>(cliBinary, operatorSocket, ["task", "launch-plan", taskA, "--format", "json"]);
       const planB = cli<LaunchPlan>(cliBinary, operatorSocket, ["task", "launch-plan", taskB, "--format", "json"]);
-      for (const [plan, handle] of [[planA, taskA], [planB, taskB]] as const) {
+      for (const [plan, handle, workerProfileId, terminalAllowEntryId] of [
+        [planA, taskA, "codex-reviewed", REVIEWED_ALLOW_ID],
+        [
+          planB,
+          taskB,
+          MIXED_WORKER_JOIN ? "claude-reviewed" : "codex-reviewed",
+          MIXED_WORKER_JOIN ? REVIEWED_CLAUDE_ALLOW_ID : REVIEWED_ALLOW_ID,
+        ],
+      ] as const) {
         expect(plan).toMatchObject({
           schemaVersion: 1,
           completeness: "complete",
@@ -888,8 +931,8 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
           stateSource: "durable_store",
           stateConfidence: "verified",
           freshness: "current",
-          workerProfileId: "codex-reviewed",
-          terminalAllowEntryId: REVIEWED_ALLOW_ID,
+          workerProfileId,
+          terminalAllowEntryId,
         });
         expect(JSON.stringify(plan)).not.toMatch(/executable|arguments|environment|workingDirectory|sourcePath/iu);
       }
@@ -933,7 +976,7 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
           tool: "terminal_session_create",
           arguments: {
             allowId: planB.terminalAllowEntryId,
-            command: REVIEWED_LAUNCHER,
+            command: MIXED_WORKER_JOIN ? REVIEWED_CLAUDE_LAUNCHER : REVIEWED_LAUNCHER,
             args: [],
             managedRunId: bindingB.managed_run_id,
             workspaceLeaseId: bindingB.workspace_lease_id,
@@ -972,13 +1015,16 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
         () => {
           try {
             return readFileSync(join(bindingA.canonical_path, ".wave4-real-codex-started"), "utf8") === ""
-              && readFileSync(join(bindingB.canonical_path, ".wave4-real-codex-started"), "utf8") === "";
+              && readFileSync(join(
+                bindingB.canonical_path,
+                MIXED_WORKER_JOIN ? ".wave4-real-claude-started" : ".wave4-real-codex-started",
+              ), "utf8") === "";
           } catch {
             return false;
           }
         },
         30_000,
-        () => `two real Codex process starts; worker A: ${launcherDiagnostic(bindingA.canonical_path)}; worker B: ${launcherDiagnostic(bindingB.canonical_path)}; service stderr: ${service.stderr()}`,
+        () => `two real worker process starts; worker A: ${launcherDiagnostic(bindingA.canonical_path)}; worker B: ${launcherDiagnostic(bindingB.canonical_path)}; service stderr: ${service.stderr()}`,
       );
 
       let status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
@@ -1051,6 +1097,9 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
       await pollUntil(() => model.idle, 10_000, "liaison idle before final stop");
       model.setScript([{ tool: "terminal_session_kill", arguments: { sessionId: sessionB } }]);
       await channelManager.injectMessage("echo", normalizedMessage("STOP_REMAINING_WORKER_B"));
+      if (MIXED_WORKER_JOIN) {
+        console.log("WAVE4_WORKER_PROFILES=codex-reviewed,claude-reviewed");
+      }
       console.log("WAVE4_CONFINEMENT_POSTURE=outer Docker bridge network shared; inner bwrap filesystem, PID, IPC, UTS, cgroup, and user namespaces isolated; task workspace and one protected attachment mounted per worker");
     } finally {
       await stopDaemon(daemon);
