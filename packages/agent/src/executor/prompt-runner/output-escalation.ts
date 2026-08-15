@@ -18,7 +18,10 @@ import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js
 import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery-reconciliation.js";
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
 import { runBudgetContinuation } from "./budget-continuation.js";
-import { hasAcceptedDelegation } from "./accepted-delegation.js";
+import {
+  hasAcceptedDelegation,
+  requestsPushDeliveredBackgroundCompletion,
+} from "./accepted-delegation.js";
 import {
   hasEnforcedPromptSkillRoute,
   runRequestToolNudgeStep,
@@ -325,7 +328,15 @@ async function processSuccessPath(
     await runNarrateNudgeStep(params);
   }
 
-  if (!acceptedDelegation || hasEnforcedPromptSkillRoute(params)) {
+  const physicalRequestText = msg.originalMessages
+    ?.map((message) => message.text)
+    .join("\n") ?? msg.text;
+  const pushDeliveredDelegation = acceptedDelegation
+    && requestsPushDeliveredBackgroundCompletion(physicalRequestText);
+  if (
+    !acceptedDelegation
+    || (hasEnforcedPromptSkillRoute(params) && !pushDeliveredDelegation)
+  ) {
     await runRequestToolNudgeStep(params);
   }
 
