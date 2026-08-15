@@ -676,6 +676,7 @@ describe("prompt skill request routing", () => {
     "Use only the connected yfinance MCP—no web sources—for this research.",
     "Do not browse, fetch, or spawn anything else.",
     "Query current Ituran evidence directly; do not use prior results or web browsing.",
+    "Query current Ituran evidence directly; do not use prior results, memories, session history, or web browsing.",
   ])("recognizes a direct web evidence exclusion: %s", (constraint) => {
     const deferral = result();
     const currentRequestText = [
