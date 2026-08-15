@@ -45,6 +45,7 @@ import {
   type InvokeRetry,
   type RetryState,
 } from "./silent-failure-handlers.js";
+import { hasAcceptedDelegation } from "./accepted-delegation.js";
 
 /** Outcome of the retry loop phase, consumed by the orchestrator. */
 export interface RetryOutcome {
@@ -150,6 +151,13 @@ export async function runRetryLoop(
   // converted into a synthetic assistant message the SDK treats as "done."
   if (retryState.promptSucceeded && !skipPrompt) {
     const stuckCheck = bridge.getResult();
+    if (hasAcceptedDelegation(stuckCheck.toolExecResults)) {
+      return {
+        promptSucceeded: true,
+        promptError: undefined,
+        stuckSessionDetected: false,
+      };
+    }
     if ((stuckCheck.llmCalls ?? 0) === 0 && (stuckCheck.stepsExecuted ?? 0) === 0) {
       deps.logger.warn(
         {
