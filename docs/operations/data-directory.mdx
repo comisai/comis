@@ -142,6 +142,23 @@ The observability rows live in the `obs_diagnostics` table, grouped by a `catego
 
 `config_posture` is likewise a one-shot snapshot recorded once per boot, capturing the daemon's security posture — whether the gateway is running without TLS, the per-family **counts** of stranded secrets (credentials left in the inactive store that the active `security.storage` mode cannot reach), and a canary-fallback aggregate (how many agents fall back to deterministic canary tokens because `CANARY_SECRET` is unset). It records counts and closed labels only — **never a secret value** — so the system health lens can surface a TLS-off / stranded-secret / canary posture without opening the log.
 
+### `managed-runs/private/`
+
+Private capability-service activation descriptors, report bodies, evidence bodies,
+and attention content. The path is relative to the data directory and is selected
+by `capabilityServices.privateContentDirectory`; `managed-runs/private` is the
+default. Comis creates the root and every scope directory with owner-only `0700`
+permissions. Scope and body filenames are SHA-256-derived, while `memory.db`
+stores the owner-scoped content-free index, content hash, byte length, retention,
+and relative path.
+
+**Written by:** linked capability-service activation, report, evidence, and
+attention flows.
+
+**Safe to delete?** No while managed runs remain active or recoverable. Missing or
+hash-mismatched bodies fail closed as unavailable evidence, so preserve this tree
+together with `memory.db` when backing up or restoring managed-run state.
+
 #### Video Job Store — Async Render Lifecycle
 
 `memory.db` also contains the **`video_jobs`** table: the durable record of in-flight and completed `video_generate` renders (it lives in the shared `memory.db`, not a separate database file). A video render takes 30 s–5 min — longer than an agent turn and longer than the `promptTimeout` — so each job is persisted on submit (the opaque provider `jobId`, the routing — agent, channel, `traceId`, and the originating `session_key` — the state `pending`/`done`/`failed`, the estimated/actual cost, and the persisted `media_path` once delivered) and a background poller drives it to completion off-turn. The table is what the poller **resumes against across a daemon restart**: on boot it reloads the `pending` jobs and continues polling, downloads each finished clip before its provider URL expires, persists it to `workspace/media/videos/`, and delivers it to the originating channel — even though the turn that requested it is long gone. It carries **no secret** (the `jobId` is the opaque provider request id; the credential stays with the boot-bound adapter). Reads are agent-scoped, so the `video_status` tool can only return a job to the agent that created it. See the [`video_generate` and `video_status` tools](/agent-tools/media).
