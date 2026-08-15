@@ -37,6 +37,7 @@
 
 import { homedir } from "node:os";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   lstatSync,
@@ -263,6 +264,7 @@ export interface ManagedWorkspaceGitMounts {
 const MANAGED_GIT_DIRECTORY = ".comis-terminal-git";
 const MANAGED_GIT_SOURCE_RECORD = "source.json";
 const MAX_GIT_CONTROL_FILE_BYTES = 16 * 1024 * 1024;
+const MANAGED_GIT_HOST_EXCLUDE = `/${MANAGED_GIT_DIRECTORY}/`;
 
 function readManagedGitFile(path: string, maxBytes = MAX_GIT_CONTROL_FILE_BYTES): Buffer {
   const stat = lstatSync(path);
@@ -284,6 +286,22 @@ function writeManagedGitFile(path: string, content: string | Buffer): void {
 
 function copyManagedGitFile(source: string, target: string): void {
   writeManagedGitFile(target, readManagedGitFile(source));
+}
+
+function ensureManagedGitHostExclusion(commonDir: string): void {
+  const infoPath = safePath(commonDir, "info");
+  if (!existsSync(infoPath)) mkdirSync(infoPath, { recursive: true });
+  const infoStat = lstatSync(infoPath);
+  if (!infoStat.isDirectory() || infoStat.isSymbolicLink()) {
+    throw new Error("managed workspace Git exclusion directory is unavailable");
+  }
+  const excludePath = safePath(infoPath, "exclude");
+  const existing = existsSync(excludePath)
+    ? readManagedGitFile(excludePath).toString("utf8")
+    : "";
+  if (existing.split(/\r?\n/u).includes(MANAGED_GIT_HOST_EXCLUDE)) return;
+  const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+  appendFileSync(excludePath, `${separator}${MANAGED_GIT_HOST_EXCLUDE}\n`, { mode: 0o666 });
 }
 
 function resolveManagedGitHead(commonDir: string, headText: string): {
@@ -368,6 +386,7 @@ function loadManagedWorkspaceGitMounts(
       throw new Error("managed workspace private Git administration is unavailable");
     }
   }
+  ensureManagedGitHostExclusion(commonDir);
   return {
     common: { sourcePath: commonDir, targetPath: commonTarget },
     worktree: { sourcePath: privateWorktree, targetPath: gitDirTarget },

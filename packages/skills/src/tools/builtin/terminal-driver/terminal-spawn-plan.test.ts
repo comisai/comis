@@ -206,7 +206,7 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
     }
   });
 
-  it("commits through lease-private Git administration without mutating shared state", () => {
+  it("commits through lease-private Git administration without mutating shared refs or config", () => {
     const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-commit-"));
     try {
       const repository = join(root, "repository");
