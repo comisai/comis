@@ -24,6 +24,7 @@ function makeEntry(): DeadLetterEntry {
     channelType: "telegram",
     channelId: "chat-1",
     runId: "run-1",
+    sessionKey: "default:agent-a:telegram:chat-1:user_a",
     failedAt: 1,
     attemptCount: 0,
     lastAttemptAt: 1,

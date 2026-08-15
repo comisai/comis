@@ -31,6 +31,7 @@ const request = {
     "run-1",
   ),
   rootRunId: "root-1",
+  runId: "run-1",
   agentId: "agent-main",
   sessionKey: "default:user1:telegram:chat-1",
   partId: "attachment:0",

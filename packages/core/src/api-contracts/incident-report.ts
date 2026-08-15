@@ -675,15 +675,25 @@ export const IncidentReportSchema = z.object({
       messageIds: z.array(z.string()).max(100),
     })
     .optional(),
-  /** Durable cross-session completion delivery, including the committed
-   *  platform receipt when the outward ledger recorded one. */
-  outwardDelivery: z
-    .object({
-      status: z.enum(["blocked", "in_flight", "committed", "failed", "parked", "partial"]),
+  /** Bounded per-root cross-session completion deliveries. */
+  outwardDeliveries: z
+    .array(z.object({
+      status: z.enum(["prepared", "blocked", "in_flight", "committed", "failed", "parked", "partial"]),
       rootRunId: z.string(),
       stepIndex: z.number().int().nonnegative().optional(),
+      transition: z.enum(["prepare", "lookup", "begin", "mark_unknown", "commit", "mark_failed", "park"]),
       deliveryKind: z.enum(["text", "attachment"]).optional(),
       platformMessageId: z.string().optional(),
+    })).max(100)
+    .optional(),
+  /** Graceful restart lifecycle observed for this session. */
+  restartRecovery: z
+    .object({
+      suspended: z.number().int().nonnegative(),
+      resumed: z.number().int().nonnegative(),
+      lastStatus: z.enum(["suspended", "resumed"]),
+      rootRunId: z.string(),
+      checkpointId: z.string(),
     })
     .optional(),
   /** Runtime recovery attempts folded from the selected turn's

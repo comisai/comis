@@ -370,6 +370,7 @@ export function createAnnouncementDelivery(
           "delivery:outward_ledger_transition",
           {
             rootRunId: resolvedRoot.value,
+            runId: request.runId,
             transition: "prepare",
             outcome: "failed",
             sessionKey: request.callerSessionKey,
@@ -399,6 +400,20 @@ export function createAnnouncementDelivery(
         return ok({ delivered: false, failure: "attachment_preparation_blocked" });
       }
       prepared = preparedResult.value;
+      emitObservationalEventSafely(
+        { eventBus: deps.eventBus, logger: deps.logger },
+        "delivery:outward_ledger_transition",
+        {
+          rootRunId: resolvedRoot.value,
+          runId: request.runId,
+          transition: "prepare",
+          outcome: "prepared",
+          sessionKey: request.callerSessionKey,
+          ...(request.partId === undefined ? {} : { partId: request.partId }),
+          deliveryKind: "attachment",
+          timestamp: systemNowMs(),
+        },
+      );
     }
     const operation = {
       operationId: createStableAnnouncementOperationId(
@@ -408,6 +423,7 @@ export function createAnnouncementDelivery(
         request.partId,
       ),
       rootRunId: resolvedRoot.value,
+      runId: request.runId,
       agentId: request.agentId,
       sessionKey: request.callerSessionKey,
       ...(request.partId ? { partId: request.partId } : {}),

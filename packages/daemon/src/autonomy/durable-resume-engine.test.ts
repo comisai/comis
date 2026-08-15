@@ -1306,6 +1306,7 @@ describe("durable:orphaned / durable:resumed event payloads typed, content-free"
     expect(Object.keys(payload).sort()).toEqual([
       "checkpointId",
       "rootRunId",
+      "sessionKey",
       "sourceCheckpointId",
       "sourceTerminalReason",
       "timestamp",

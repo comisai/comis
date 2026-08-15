@@ -546,6 +546,7 @@ describe("assembleIncidentReport — durable outward delivery", () => {
       status: "committed",
       rootRunId: "root-attachment",
       stepIndex: 0,
+      transition: "commit",
       deliveryKind: "attachment",
       platformMessageId: "telegram-document-218",
     }]);
@@ -591,6 +592,7 @@ describe("assembleIncidentReport — durable outward delivery", () => {
       status: "partial",
       rootRunId: "root-partial",
       stepIndex: 0,
+      transition: "prepare",
       deliveryKind: "attachment",
       platformMessageId: "telegram-document-218",
     }]);

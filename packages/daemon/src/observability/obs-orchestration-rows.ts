@@ -73,6 +73,26 @@ export function deliveryDeadletteredEventToRow(
   };
 }
 
+/** Map a failed governed attachment part to a daemon-wide health warning. */
+export function outwardAttachmentFailureEventToRow(
+  payload: EventMap["delivery:outward_ledger_transition"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: undefined,
+    sessionKey: payload.sessionKey ?? undefined,
+    message: "delivery:outward_attachment_failed",
+    details: JSON.stringify({
+      signal: "outward_attachment_failed",
+      transition: payload.transition,
+      outcome: payload.outcome,
+    }),
+    traceId: undefined,
+  };
+}
+
 /** Map a missing sub-agent completion route to a content-free warning row. */
 export function deliverySkippedEventToRow(
   payload: EventMap["subagent:delivery_skipped"],

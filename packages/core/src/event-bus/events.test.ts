@@ -152,6 +152,7 @@ describe("EventMap composition", () => {
     const handler = vi.fn();
     const payload: EventMap["delivery:outward_ledger_transition"] = {
       rootRunId: "root-1",
+      runId: "run-1",
       stepIndex: 2,
       sessionKey: "default:agent-a:telegram:chat-a:user_a",
       transition: "park",

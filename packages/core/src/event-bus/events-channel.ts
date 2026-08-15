@@ -446,10 +446,13 @@ export interface ChannelEvents {
    */
   "delivery:outward_ledger_transition": {
     rootRunId: string;
+    /** Originating completion run, or null for a boot-time ledger recovery. */
+    runId: string | null;
     stepIndex?: number;
     transition: "prepare" | "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
-    outcome: "blocked" | "in_flight" | "committed" | "failed" | "parked";
-    sessionKey?: string;
+    outcome: "prepared" | "blocked" | "in_flight" | "committed" | "failed" | "parked";
+    /** Owning session, or null when recovery has no safe session attribution. */
+    sessionKey: string | null;
     partId?: string;
     /** Content-free operation shape, present when the active sender knows it. */
     deliveryKind?: "text" | "attachment";

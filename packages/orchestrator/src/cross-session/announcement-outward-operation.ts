@@ -23,6 +23,7 @@ export interface AnnouncementOperationIdentity {
 export interface GovernedAnnouncementRequest {
   operationId: string;
   rootRunId: string;
+  runId: string;
   agentId: string;
   sessionKey: string;
   partId?: string;
@@ -128,6 +129,7 @@ interface GovernedAnnouncementSenderDeps {
 interface AnnouncementTransitionEvidence {
   deliveryKind: "text" | "attachment";
   platformMessageId?: string;
+  runId: string;
   sessionKey: string;
   partId?: string;
 }
@@ -404,6 +406,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       deliveryKind: request.attachment === undefined
         ? "text" as const
         : "attachment" as const,
+      runId: request.runId,
       sessionKey: request.sessionKey,
       ...(request.partId === undefined ? {} : { partId: request.partId }),
     };

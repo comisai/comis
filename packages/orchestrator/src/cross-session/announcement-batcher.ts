@@ -100,6 +100,7 @@ export interface AnnouncementBatcherDeps {
       /** Framework-authenticated owner of the persisted outward operation. */
       agentId: string;
       runId: string;
+      sessionKey: string;
       failedAt: number;
       attemptCount: number;
       lastError?: string;
@@ -543,7 +544,6 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       );
       return false;
     }
-
     retainItems(items);
     deps.logger?.warn(
       {
@@ -563,6 +563,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       channelId: first.announceChannelId,
       agentId: first.callerAgentId,
       runId: first.runId,
+      sessionKey: first.callerSessionKey,
       failedAt: systemNowMs(),
       attemptCount: 0,
       ...(failure.lastError ? { lastError: failure.lastError } : {}),
@@ -891,7 +892,6 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       queues.set(batchKey, queue);
     }
     queue.push(params);
-
     // Clear existing debounce timer and reset
     const existingTimer = timers.get(batchKey);
     if (existingTimer !== undefined) {
