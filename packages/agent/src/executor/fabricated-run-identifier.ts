@@ -31,8 +31,10 @@
  * quoting are allowed between the two, which is how a formatted reply renders.
  */
 const RUN_IDENTIFIER_CLAIM =
+  // eslint-disable-next-line security/detect-unsafe-regex -- bounded markup and identifier branches are linear despite the plugin's nested-quantifier heuristic
   /\brun(?:[\s_-]?id|[\s_-]+(?:handle|identifier))\b\s*[:=]?\s*(?:<[^>]{1,40}>|["'`*]){0,4}\s*([0-9a-z][0-9a-z_-]{7,})/i;
 const RUN_IDENTIFIER_CLAIMS =
+  // eslint-disable-next-line security/detect-unsafe-regex -- bounded markup and identifier branches are linear despite the plugin's nested-quantifier heuristic
   /\brun(?:[\s_-]?id|[\s_-]+(?:handle|identifier))\b\s*[:=]?\s*(?:<[^>]{1,40}>|["'`*]){0,4}\s*([0-9a-z][0-9a-z_-]{7,})/gi;
 
 /**
@@ -42,6 +44,7 @@ const RUN_IDENTIFIER_CLAIMS =
  * are not mistaken for a launch identifier.
  */
 const LEADING_RUN_HANDLE =
+  // eslint-disable-next-line security/detect-unsafe-regex -- anchored UUID shape uses bounded repetitions and linear whitespace scans
   /^\s*(?:<code>|[`*]){0,2}[0-9a-f]{8}(?:-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?(?:<\/code>|[`*]){0,2}\s*(?:\r?\n|$)/i;
 
 /**

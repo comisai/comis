@@ -132,6 +132,8 @@ Skill lifecycle, tool execution, audit logging, observability (tokens and latenc
 | `graph:node_updated` | graphId, nodeId, status, previousStatus, durationMs, error, tokensUsed, cost, timestamp |
 | `graph:completed` | graphId, status, durationMs, nodeCount, nodesCompleted, nodesFailed, nodesSkipped, cancelReason, timestamp, graphCacheReadTokens, graphCacheWriteTokens, graphCacheEffectiveness, nodeEffectiveness, nodeTokenSpend, nodeCost |
 | `graph:driver_lifecycle` | graphId, nodeId, typeId, phase |
+| `durable:resumed` | rootRunId, sessionKey, sourceCheckpointId, checkpointId, sourceTerminalReason, timestamp |
+| `durable:suspended` | rootRunId, checkpointId, sessionKey, timestamp |
 | `pipeline:authored` | action, capabilityClass, schemaValid, repaired, agentId, sessionKey, timestamp |
 | `graph:repaired` | pattern, nodeCount, capabilityClass, agentId, sessionKey, timestamp |
 | `graph:synthesized_from_intent` | pattern, nodeCount, agentId, sessionKey, timestamp |
@@ -238,6 +240,7 @@ Channel registration, sender blocking, command queuing, streaming delivery, typi
 | `delivery:failed` | entryId, channelId, channelType, error, reason, timestamp |
 | `delivery:hook_cancelled` | channelId, channelType, reason, origin, timestamp |
 | `delivery:nacked` | entryId, channelId, channelType, error, attemptCount, nextRetryAt, timestamp |
+| `delivery:outward_ledger_transition` | rootRunId, runId, sessionKey, stepIndex, partId, transition, outcome, deliveryKind, platformMessageId, timestamp |
 | `delivery:queue_drained` | entriesAttempted, entriesDelivered, entriesFailed, durationMs, timestamp |
 | `elevated:model_routed` | sessionKey, senderTrustLevel, modelRoute, agentId, timestamp |
 | `followup:depth_exceeded` | sessionKey, chainId, maxDepth, timestamp |
