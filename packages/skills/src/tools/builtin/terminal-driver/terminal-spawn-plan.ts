@@ -345,14 +345,24 @@ function loadManagedWorkspaceGitMounts(
   gitDir: string,
   gitDirTarget: string,
 ): ManagedWorkspaceGitMounts {
+  const privateRootSourcePath = safePath(gitDir, MANAGED_GIT_DIRECTORY);
+  const privateRootSourceStat = lstatSync(privateRootSourcePath);
+  if (!privateRootSourceStat.isDirectory() || privateRootSourceStat.isSymbolicLink()) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
+  const privateRoot = realpathSync(privateRootSourcePath);
+  const canonicalGitDir = realpathSync(gitDir);
+  if (privateRoot !== safePath(canonicalGitDir, MANAGED_GIT_DIRECTORY)) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
   const privateRootTarget = safePath(workspace, MANAGED_GIT_DIRECTORY);
   const privateRootTargetStat = lstatSync(privateRootTarget);
   if (!privateRootTargetStat.isDirectory() || privateRootTargetStat.isSymbolicLink()) {
     throw new Error("managed workspace private Git administration is unavailable");
   }
-  const privateRoot = realpathSync(privateRootTarget);
+  const canonicalPrivateRootTarget = realpathSync(privateRootTarget);
   const canonicalWorkspace = realpathSync(workspace);
-  if (privateRoot !== safePath(canonicalWorkspace, MANAGED_GIT_DIRECTORY)) {
+  if (canonicalPrivateRootTarget !== safePath(canonicalWorkspace, MANAGED_GIT_DIRECTORY)) {
     throw new Error("managed workspace private Git administration is unavailable");
   }
   const sourceRecord = JSON.parse(
@@ -368,34 +378,76 @@ function loadManagedWorkspaceGitMounts(
   }
   const privateWorktreeTarget = safePath(privateRootTarget, "worktree");
   const privateCommonTarget = safePath(privateRootTarget, "common");
+  const privateWorktree = safePath(privateRoot, "worktree");
+  const privateCommon = safePath(privateRoot, "common");
+  const privateWorktreeStat = lstatSync(privateWorktree);
+  const privateCommonStat = lstatSync(privateCommon);
   const privateWorktreeTargetStat = lstatSync(privateWorktreeTarget);
   const privateCommonTargetStat = lstatSync(privateCommonTarget);
   if (
-    !privateWorktreeTargetStat.isDirectory()
+    !privateWorktreeStat.isDirectory()
+    || privateWorktreeStat.isSymbolicLink()
+    || !privateCommonStat.isDirectory()
+    || privateCommonStat.isSymbolicLink()
+    || !privateWorktreeTargetStat.isDirectory()
     || privateWorktreeTargetStat.isSymbolicLink()
     || !privateCommonTargetStat.isDirectory()
     || privateCommonTargetStat.isSymbolicLink()
   ) {
     throw new Error("managed workspace private Git administration is unavailable");
   }
-  const privateWorktree = realpathSync(privateWorktreeTarget);
-  const privateCommon = realpathSync(privateCommonTarget);
-  for (const canonicalPath of [privateWorktree, privateCommon]) {
+  const canonicalPrivateWorktree = realpathSync(privateWorktree);
+  const canonicalPrivateCommon = realpathSync(privateCommon);
+  for (const canonicalPath of [canonicalPrivateWorktree, canonicalPrivateCommon]) {
     const descendant = relative(privateRoot, canonicalPath);
     if (descendant.length === 0 || descendant === ".." || descendant.startsWith(`..${pathSep}`) || isAbsolute(descendant)) {
+      throw new Error("managed workspace private Git administration is unavailable");
+    }
+  }
+  for (const targetPath of [privateWorktreeTarget, privateCommonTarget]) {
+    const canonicalTarget = realpathSync(targetPath);
+    const descendant = relative(canonicalPrivateRootTarget, canonicalTarget);
+    if (
+      descendant.length === 0
+      || descendant === ".."
+      || descendant.startsWith(`..${pathSep}`)
+      || isAbsolute(descendant)
+    ) {
       throw new Error("managed workspace private Git administration is unavailable");
     }
   }
   ensureManagedGitHostExclusion(commonDir);
   return {
     common: { sourcePath: commonDir, targetPath: commonTarget },
-    worktree: { sourcePath: privateWorktree, targetPath: gitDirTarget },
+    worktree: { sourcePath: canonicalPrivateWorktree, targetPath: gitDirTarget },
     privateCommon: {
-      sourcePath: privateCommon,
+      sourcePath: canonicalPrivateCommon,
       targetPath: privateCommonTarget,
       systemConfigPath: safePath(privateCommonTarget, "system-config"),
     },
   };
+}
+
+function ensureManagedWorkspaceGitTargets(workspace: string): void {
+  const privateRootTarget = safePath(workspace, MANAGED_GIT_DIRECTORY);
+  if (!existsSync(privateRootTarget)) makeManagedGitDirectory(privateRootTarget);
+  const privateRootTargetStat = lstatSync(privateRootTarget);
+  if (!privateRootTargetStat.isDirectory() || privateRootTargetStat.isSymbolicLink()) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
+  for (const targetPath of [
+    safePath(privateRootTarget, "worktree"),
+    safePath(privateRootTarget, "common"),
+  ]) {
+    if (!existsSync(targetPath)) makeManagedGitDirectory(targetPath);
+    const targetStat = lstatSync(targetPath);
+    if (
+      !targetStat.isDirectory()
+      || targetStat.isSymbolicLink()
+    ) {
+      throw new Error("managed workspace private Git administration is unavailable");
+    }
+  }
 }
 
 function materializeManagedWorkspaceGitMounts(
@@ -405,8 +457,10 @@ function materializeManagedWorkspaceGitMounts(
   gitDir: string,
   gitDirTarget: string,
 ): ManagedWorkspaceGitMounts {
+  const privateRootSource = safePath(gitDir, MANAGED_GIT_DIRECTORY);
   const privateRootTarget = safePath(workspace, MANAGED_GIT_DIRECTORY);
-  if (existsSync(privateRootTarget)) {
+  ensureManagedWorkspaceGitTargets(workspace);
+  if (existsSync(privateRootSource)) {
     return loadManagedWorkspaceGitMounts(workspace, commonDir, commonTarget, gitDir, gitDirTarget);
   }
   if ([workspace, commonDir, commonTarget, gitDir, gitDirTarget].some((path) => /[\r\n]/u.test(path))) {
@@ -419,7 +473,7 @@ function materializeManagedWorkspaceGitMounts(
   }
   const head = readManagedGitFile(safePath(gitDir, "HEAD"), 4_096).toString("utf8");
   const resolvedHead = resolveManagedGitHead(commonDir, head);
-  const temporaryRoot = mkdtempSync(`${privateRootTarget}-`);
+  const temporaryRoot = mkdtempSync(`${privateRootSource}-`);
   try {
     chmodSync(temporaryRoot, 0o777);
     const privateWorktree = safePath(temporaryRoot, "worktree");
@@ -463,7 +517,7 @@ function materializeManagedWorkspaceGitMounts(
       safePath(temporaryRoot, MANAGED_GIT_SOURCE_RECORD),
       `${JSON.stringify({ schemaVersion: 1, commonDir, gitDir })}\n`,
     );
-    renameSync(temporaryRoot, privateRootTarget);
+    renameSync(temporaryRoot, privateRootSource);
   } catch (cause) {
     if (existsSync(temporaryRoot)) rmSync(temporaryRoot, { recursive: true, force: true });
     throw cause;

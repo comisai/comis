@@ -161,8 +161,8 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       const sourceCommonDir = realpathSync(commonDir);
       const resolved = resolveManagedWorkspaceGitMounts(workspace);
       if (!resolved.ok || resolved.value === undefined) throw new Error("managed Git mounts unavailable");
-      const privateWorktree = realpathSync(join(workspace, ".comis-terminal-git", "worktree"));
-      const privateCommon = realpathSync(join(workspace, ".comis-terminal-git", "common"));
+      const privateWorktree = realpathSync(join(gitDir, ".comis-terminal-git", "worktree"));
+      const privateCommon = realpathSync(join(gitDir, ".comis-terminal-git", "common"));
       expect(resolveManagedWorkspaceGitMounts(workspace)).toEqual({
         ok: true,
         value: {
@@ -187,6 +187,7 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       const plan = await planSpawnFromCreateFrame(params, {}, { bwrapPath: "/usr/bin/bwrap" });
 
       expect(hasBind(plan.argv, "--ro-bind", sourceCommonDir, commonDir)).toBe(true);
+      expect(hasBind(plan.argv, "--bind", privateCommon, join(workspace, ".comis-terminal-git", "common"))).toBe(true);
       expect(hasBind(plan.argv, "--bind", privateWorktree, gitDir)).toBe(true);
       expect(hasBind(plan.argv, "--bind", sourceCommonDir, commonDir)).toBe(false);
       expect(plan.env).toMatchObject({
@@ -199,14 +200,22 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
         { bwrapPath: "/usr/bin/bwrap" },
       );
       expect(hasBind(ordinaryPlan.argv, "--ro-bind", sourceCommonDir, commonDir)).toBe(false);
+      expect(hasBind(ordinaryPlan.argv, "--bind", privateCommon, join(workspace, ".comis-terminal-git", "common"))).toBe(false);
       expect(hasBind(ordinaryPlan.argv, "--bind", privateWorktree, gitDir)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("rejects symlinked private Git mount sources before a later launch", () => {
-    for (const attackedPath of ["root", "worktree", "common"] as const) {
+  it("rejects symlinked private Git sources and targets before a later launch", () => {
+    for (const attackedPath of [
+      "source-root",
+      "source-worktree",
+      "source-common",
+      "target-root",
+      "target-worktree",
+      "target-common",
+    ] as const) {
       const root = mkdtempSync(join(tmpdir(), `managed-linked-worktree-${attackedPath}-`));
       try {
         const commonDir = join(root, "repository", ".git");
@@ -224,12 +233,14 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
         writeFileSync(join(commonDir, "refs", "heads", "task-a"), `${"a".repeat(40)}\n`, "utf8");
         expect(resolveManagedWorkspaceGitMounts(workspace).ok).toBe(true);
 
-        const privateRoot = join(workspace, ".comis-terminal-git");
-        if (attackedPath === "root") {
+        const sourceAttack = attackedPath.startsWith("source-");
+        const privateRoot = join(sourceAttack ? gitDir : workspace, ".comis-terminal-git");
+        const targetName = attackedPath.slice(attackedPath.indexOf("-") + 1);
+        if (targetName === "root") {
           renameSync(privateRoot, `${privateRoot}-original`);
           symlinkSync(outside, privateRoot);
         } else {
-          const target = join(privateRoot, attackedPath);
+          const target = join(privateRoot, targetName);
           rmSync(target, { recursive: true });
           symlinkSync(outside, target);
         }

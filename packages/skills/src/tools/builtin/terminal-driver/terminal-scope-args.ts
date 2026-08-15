@@ -163,6 +163,11 @@ function pushFilesystemBinds(args: string[], input: ScopeArgsInput): void {
     );
     args.push(
       "--bind",
+      input.workspaceGitMounts.privateCommon.sourcePath,
+      input.workspaceGitMounts.privateCommon.targetPath,
+    );
+    args.push(
+      "--bind",
       input.workspaceGitMounts.worktree.sourcePath,
       input.workspaceGitMounts.worktree.targetPath,
     );
