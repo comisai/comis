@@ -2090,6 +2090,16 @@ describe("setupObsPersistence", () => {
     eventBus.emit("subagent:delivery_deadlettered", {
       runId: "run-x", channelType: "telegram", attempt: 3, transient: true, timestamp: 1007,
     });
+    eventBus.emit("delivery:outward_ledger_transition", {
+      rootRunId: "root-output",
+      runId: "run-output",
+      sessionKey: "sk-1",
+      partId: "attachment:0",
+      transition: "prepare",
+      outcome: "failed",
+      deliveryKind: "attachment",
+      timestamp: 1007,
+    } as never);
     // i. A per-node token-budget breach.
     eventBus.emit("subagent:budget_exceeded", {
       graphId: "g", nodeId: "greedy", agentId: "researcher", tokenBudget: 5000, tokensUsed: 17770, capSource: "node", timestamp: 1008,
@@ -2151,12 +2161,12 @@ describe("setupObsPersistence", () => {
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per degraded event (18 total), each with the right message.
+    // Exactly one health_signal row per degraded event (19 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(18);
+    expect(healthRows).toHaveLength(19);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
       "autonomy:denial_breaker_tripped",
@@ -2168,6 +2178,7 @@ describe("setupObsPersistence", () => {
       "context:summary_language_mismatch",
       "durable:orphaned",
       "durable:resumed",
+      "delivery:outward_attachment_failed",
       "health:budget_exceeded",
       "mcp:server:reconnect_failed",
       "message:inbound_persistence_failed",
