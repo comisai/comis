@@ -89,7 +89,10 @@ function makeContext(overrides: Record<string, unknown> = {}): RequestContext {
   } as unknown as RequestContext;
 }
 
-function makeView(behavior: "prepare_run" | "run_command" = "prepare_run") {
+function makeView(
+  behavior: "prepare_run" | "run_command" = "prepare_run",
+  actionClassification: "read" | "mutate" | "destructive" = "mutate",
+) {
   return {
     viewHash: "c".repeat(64),
     definitions: [{
@@ -100,7 +103,7 @@ function makeView(behavior: "prepare_run" | "run_command" = "prepare_run") {
         toolName: behavior === "prepare_run" ? "prepare_work" : "send_command",
         behavior,
         ...(behavior === "run_command" ? { runHandleArgument: "run_handle" } : {}),
-        actionClassification: "mutate" as const,
+        actionClassification,
         invocationSideEffects: ["deferred_work"],
       }],
       requestedScopes: ["health", "report"] as const,
@@ -418,6 +421,36 @@ describe("managed MCP private metadata boundary", () => {
 
     expect(request.ok).toBe(false);
   });
+
+  it.each(["succeeded", "failed", "cancelled"] as const)(
+    "resolves destructive run commands for %s managed-run records",
+    async (status) => {
+      const terminalRecord = {
+        managedRunId: "managed-run_a",
+        serviceInstanceId: "service-instance_a",
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        principalId: "principal_a",
+        conversationRef: conversationRef.value,
+        status,
+      } as ManagedRunRecord;
+      const bridge = createManagedMcpPrivateMetadataBridge(makeDeps({
+        activeView: makeView("run_command", "destructive"),
+        getManagedRunByExternalRef: vi.fn(async () => ok(terminalRecord)),
+        getCapturedToolIds: () => ["mcp:fixture-service/send_command"],
+      }));
+
+      const request = await runWithContext(makeContext(), () => bridge.createRequestMeta(
+        makeCall("send_command", { run_handle: "external-run_a", command: "release" }),
+      ));
+
+      expect(request.ok).toBe(true);
+      if (!request.ok) return;
+      expect(request.value?.[MCP_CAPABILITY_CALL_CONTEXT_KEY]).toMatchObject({
+        managedRunId: "managed-run_a",
+      });
+    },
+  );
 
   it("rejects managed metadata from an unbound tool despite server-authored claims", async () => {
     const deps = makeDeps();
