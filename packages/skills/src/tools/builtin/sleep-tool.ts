@@ -2,13 +2,12 @@
 /**
  * The `sleep` primitive.
  *
- * A builtin AgentTool the model calls to PAUSE between turns. Its whole reason
- * to exist is cost: instead of polling in a token-burning loop ("is the child
- * done yet?" every turn), the model sleeps ONCE for a duration keyed to the
- * ~5-minute prompt-cache TTL. While it sleeps, concurrency-safe reads /
- * background children keep running and the prompt cache stays warm — so pacing
- * costs zero tokens and never busts the cache. The description surfaces that
- * TTL so the model defers in a single call rather than spinning.
+ * A builtin AgentTool the model calls to PAUSE between turns when no
+ * event-driven completion primitive exists. Its whole reason to exist is cost:
+ * instead of polling an external clock in a token-burning loop, the model
+ * sleeps ONCE for a duration keyed to the ~5-minute prompt-cache TTL. Child
+ * completion is different: `subagents` action `wait` is event-driven and must
+ * own that wait so a finished child wakes the coordinator immediately.
  *
  * Safety invariants (asserted in sleep-tool.test.ts):
  *   - The timer is the sanctioned `systemSetTimeout` (raw `setTimeout` is banned
@@ -143,8 +142,8 @@ export function createSleepTool(deps: SleepToolDeps = {}): AgentTool<typeof Slee
   // it (the exec/ls convention) to avoid excess-property checks.
   const guidelines = {
     promptGuidelines: [
-      "Use sleep to PACE — not to poll. When you are waiting on a background child or a concurrency-safe read, sleep ONCE for the time you expect it to take rather than re-checking every turn; re-checking burns tokens and busts the prompt cache.",
-      "A single sleep up to the ~5-minute prompt-cache TTL keeps the cached prefix warm while parallel work finishes. Prefer one longer sleep over many short ones.",
+      "Use sleep to PACE external work only when no event-driven completion tool exists. Never sleep for a background child: call subagents with action wait so completion wakes you immediately and returns every settled result.",
+      "For genuinely time-based pacing, a single sleep up to the ~5-minute prompt-cache TTL keeps the cached prefix warm. Prefer one longer sleep over polling with many short sleeps.",
     ],
   };
   return {
@@ -152,9 +151,9 @@ export function createSleepTool(deps: SleepToolDeps = {}): AgentTool<typeof Slee
     name: "sleep",
     label: "Sleep",
     description:
-      "Pause for a bounded duration to let background or child work finish without consuming tokens. " +
+      "Pause for a bounded duration when no event-driven completion tool exists. " +
       `Max ~${MAX_SLEEP_MS / 1000}s — this matches the ~5-minute prompt-cache TTL, so a single sleep keeps the cache warm. ` +
-      "Sleep ONCE rather than polling in a loop: polling burns tokens every turn and busts the cache, whereas one sleep lets concurrency-safe reads overlap and the cached prefix survive.",
+      "Never use sleep to await a background child; use subagents action wait. For genuinely time-based pacing, sleep ONCE rather than polling in a loop.",
     parameters: SleepParams,
     async execute(
       _toolCallId: string,
