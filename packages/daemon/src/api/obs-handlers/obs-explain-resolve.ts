@@ -74,9 +74,10 @@ export function traceIdFromCronRootRun(rootRunId: string): string | undefined {
  * trace by scanning
  * the last two days of session-index JSONL files. Exact trace matches take
  * precedence. A child run id falls back to a structurally parsed session key
- * whose channel is exactly `sub-agent:runtime:<runId>`. Returns `""` when no
- * row matches OR the index files are absent/corrupt — soft-fail, never throws
- * on I/O.
+ * whose channel is exactly `sub-agent:runtime:<runId>`. When a durable child
+ * resumed after a restart has more than one execution trace, the last indexed
+ * trace is authoritative. Returns `""` when no row matches OR the index files
+ * are absent/corrupt — soft-fail, never throws on I/O.
  *
  * @param dataDir - data directory containing `logs/session-index.*.jsonl`.
  *   Defaults to `~/.comis` when an empty string is passed.
@@ -130,7 +131,7 @@ export async function resolveTraceReference(
       if (indexedTraceId === traceId) {
         return { sessionKey: canonicalSessionKey, traceId: indexedTraceId };
       }
-      if (childRunResolution === null && indexedTraceId !== undefined) {
+      if (indexedTraceId !== undefined) {
         const parsed = parseFormattedSessionKey(canonicalSessionKey);
         if (parsed?.channelId === `sub-agent:runtime:${traceId}`) {
           childRunResolution = {
