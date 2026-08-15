@@ -159,15 +159,25 @@ describe("buildScopeArgs — filesystem dimension", () => {
       workspaceGitMounts: {
         common: { sourcePath: "/repo/.git", targetPath: "/repo/.git" },
         worktree: {
-          sourcePath: "/repo/.git/worktrees/task-a",
+          sourcePath: "/ws/.comis-terminal-git/worktree",
           targetPath: "/repo/.git/worktrees/task-a",
+        },
+        privateCommon: {
+          sourcePath: "/ws/.comis-terminal-git/common",
+          targetPath: "/ws/.comis-terminal-git/common",
+          systemConfigPath: "/ws/.comis-terminal-git/common/system-config",
         },
       },
     }));
 
     expect(hasBind(args, "--ro-bind", "/repo/.git", "/repo/.git")).toBe(true);
-    expect(hasBind(args, "--bind", "/repo/.git/worktrees/task-a", "/repo/.git/worktrees/task-a")).toBe(true);
+    expect(hasBind(args, "--bind", "/ws/.comis-terminal-git/worktree", "/repo/.git/worktrees/task-a")).toBe(true);
     expect(hasBind(args, "--bind", "/repo/.git", "/repo/.git")).toBe(false);
+    expect(args).toEqual(expect.arrayContaining([
+      "--unsetenv", "GIT_DIR",
+      "--setenv", "GIT_COMMON_DIR", "/ws/.comis-terminal-git/common",
+      "--setenv", "GIT_CONFIG_SYSTEM", "/ws/.comis-terminal-git/common/system-config",
+    ]));
     expect(indexOfPair(args, "--ro-bind", "/repo/.git")).toBeGreaterThan(
       indexOfPair(args, "--bind", "/"),
     );

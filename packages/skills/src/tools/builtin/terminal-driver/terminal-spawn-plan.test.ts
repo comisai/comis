@@ -116,16 +116,28 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       const gitDir = join(commonDir, "worktrees", "task-a");
       const workspace = join(root, "worktrees", "task-a");
       mkdirSync(gitDir, { recursive: true });
+      mkdirSync(join(commonDir, "objects"), { recursive: true });
+      mkdirSync(join(commonDir, "refs", "heads"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
       writeFileSync(join(workspace, ".git"), `gitdir: ${gitDir}\n`, "utf8");
       writeFileSync(join(gitDir, "commondir"), "../..\n", "utf8");
+      writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/task-a\n", "utf8");
+      writeFileSync(join(commonDir, "refs", "heads", "task-a"), `${"a".repeat(40)}\n`, "utf8");
       const sourceCommonDir = realpathSync(commonDir);
-      const sourceGitDir = realpathSync(gitDir);
+      const resolved = resolveManagedWorkspaceGitMounts(workspace);
+      if (!resolved.ok || resolved.value === undefined) throw new Error("managed Git mounts unavailable");
+      const privateWorktree = realpathSync(join(workspace, ".comis-terminal-git", "worktree"));
+      const privateCommon = realpathSync(join(workspace, ".comis-terminal-git", "common"));
       expect(resolveManagedWorkspaceGitMounts(workspace)).toEqual({
         ok: true,
         value: {
           common: { sourcePath: sourceCommonDir, targetPath: commonDir },
-          worktree: { sourcePath: sourceGitDir, targetPath: gitDir },
+          worktree: { sourcePath: privateWorktree, targetPath: gitDir },
+          privateCommon: {
+            sourcePath: privateCommon,
+            targetPath: join(workspace, ".comis-terminal-git", "common"),
+            systemConfigPath: join(workspace, ".comis-terminal-git", "common", "system-config"),
+          },
         },
       });
 
@@ -140,15 +152,19 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       const plan = await planSpawnFromCreateFrame(params, {}, { bwrapPath: "/usr/bin/bwrap" });
 
       expect(hasBind(plan.argv, "--ro-bind", sourceCommonDir, commonDir)).toBe(true);
-      expect(hasBind(plan.argv, "--bind", sourceGitDir, gitDir)).toBe(true);
+      expect(hasBind(plan.argv, "--bind", privateWorktree, gitDir)).toBe(true);
       expect(hasBind(plan.argv, "--bind", sourceCommonDir, commonDir)).toBe(false);
+      expect(plan.env).toMatchObject({
+        GIT_COMMON_DIR: join(workspace, ".comis-terminal-git", "common"),
+        GIT_CONFIG_SYSTEM: join(workspace, ".comis-terminal-git", "common", "system-config"),
+      });
       const ordinaryPlan = await planSpawnFromCreateFrame(
         { ...params, managedWorkspace: false },
         {},
         { bwrapPath: "/usr/bin/bwrap" },
       );
       expect(hasBind(ordinaryPlan.argv, "--ro-bind", sourceCommonDir, commonDir)).toBe(false);
-      expect(hasBind(ordinaryPlan.argv, "--bind", sourceGitDir, gitDir)).toBe(false);
+      expect(hasBind(ordinaryPlan.argv, "--bind", privateWorktree, gitDir)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

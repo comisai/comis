@@ -32,6 +32,18 @@ import type { TerminalScope } from "./allowlist-matcher.js";
 import { JAIL_UNSET_ENV_VARS } from "./terminal-env-scrub.js";
 import { MANAGED_TERMINAL_ATTACHMENT_DIRECTORY, managedTerminalAttachmentTargetPath, type ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 
+export const MANAGED_WORKSPACE_GIT_ENVIRONMENT_KEYS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_INDEX_FILE",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_NOSYSTEM",
+] as const;
+
 // Re-export so consumers can `import { SYSTEM_RO_PATHS } from "./terminal-scope-args.js"`
 // alongside the composer — but the composer itself uses it as the RO base by default.
 export { SYSTEM_RO_PATHS };
@@ -52,6 +64,11 @@ export interface ScopeArgsInput {
   workspaceGitMounts?: {
     readonly common: { readonly sourcePath: string; readonly targetPath: string };
     readonly worktree: { readonly sourcePath: string; readonly targetPath: string };
+    readonly privateCommon: {
+      readonly sourcePath: string;
+      readonly targetPath: string;
+      readonly systemConfigPath: string;
+    };
   };
   /** The `--chdir` target. */
   cwd: string;
@@ -307,6 +324,13 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   const unsetEnvKeys = new Set<string>([...JAIL_UNSET_ENV_VARS, ...(input.extraUnsetEnvKeys ?? [])]);
   for (const key of unsetEnvKeys) {
     args.push("--unsetenv", key);
+  }
+  if (input.workspaceGitMounts !== undefined) {
+    for (const key of MANAGED_WORKSPACE_GIT_ENVIRONMENT_KEYS) {
+      args.push("--unsetenv", key);
+    }
+    args.push("--setenv", "GIT_COMMON_DIR", input.workspaceGitMounts.privateCommon.targetPath);
+    args.push("--setenv", "GIT_CONFIG_SYSTEM", input.workspaceGitMounts.privateCommon.systemConfigPath);
   }
   args.push("--setenv", "CLAUDE_CODE_BUBBLEWRAP", "1");
 

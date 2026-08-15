@@ -36,7 +36,18 @@
  */
 
 import { homedir } from "node:os";
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { isAbsolute, resolve as resolvePath, sep as pathSep } from "node:path";
 
 import { safePath, type EgressControlPort, type EgressMaterialization } from "@comis/core";
@@ -45,6 +56,7 @@ import { err, ok, tryCatch, type Result } from "@comis/shared";
 import type { TerminalScope } from "./allowlist-matcher.js";
 import {
   buildScopeArgs as defaultBuildScopeArgs,
+  MANAGED_WORKSPACE_GIT_ENVIRONMENT_KEYS,
   SYSTEM_RO_PATHS,
 } from "./terminal-scope-args.js";
 import { scrubChildEnv as defaultScrubChildEnv, secretEnvKeysIn } from "./terminal-env-scrub.js";
@@ -241,6 +253,183 @@ export interface ManagedWorkspaceGitMounts {
     readonly sourcePath: string;
     readonly targetPath: string;
   };
+  readonly privateCommon: {
+    readonly sourcePath: string;
+    readonly targetPath: string;
+    readonly systemConfigPath: string;
+  };
+}
+
+const MANAGED_GIT_DIRECTORY = ".comis-terminal-git";
+const MANAGED_GIT_SOURCE_RECORD = "source.json";
+const MAX_GIT_CONTROL_FILE_BYTES = 16 * 1024 * 1024;
+
+function readManagedGitFile(path: string, maxBytes = MAX_GIT_CONTROL_FILE_BYTES): Buffer {
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes) {
+    throw new Error("managed workspace Git control file is unavailable");
+  }
+  return readFileSync(path);
+}
+
+function makeManagedGitDirectory(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o777 });
+  chmodSync(path, 0o777);
+}
+
+function writeManagedGitFile(path: string, content: string | Buffer): void {
+  writeFileSync(path, content, { mode: 0o666 });
+  chmodSync(path, 0o666);
+}
+
+function copyManagedGitFile(source: string, target: string): void {
+  writeManagedGitFile(target, readManagedGitFile(source));
+}
+
+function resolveManagedGitHead(commonDir: string, headText: string): {
+  readonly oid: string;
+  readonly reference?: string;
+} {
+  const trimmed = headText.trim();
+  const referenceMatch = /^ref: (refs\/heads\/.+)$/u.exec(trimmed);
+  if (referenceMatch === null) {
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(trimmed)) {
+      throw new Error("managed workspace Git HEAD is malformed");
+    }
+    return { oid: trimmed };
+  }
+  const reference = referenceMatch[1]!;
+  const referencePath = safePath(commonDir, ...reference.split("/"));
+  if (existsSync(referencePath)) {
+    const oid = readManagedGitFile(referencePath, 4_096).toString("utf8").trim();
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(oid)) {
+      throw new Error("managed workspace Git branch reference is malformed");
+    }
+    return { oid, reference };
+  }
+  const packedRefsPath = safePath(commonDir, "packed-refs");
+  if (!existsSync(packedRefsPath)) {
+    throw new Error("managed workspace Git branch reference is unavailable");
+  }
+  const packedLine = readManagedGitFile(packedRefsPath).toString("utf8").split(/\r?\n/u)
+    .find((line) => line.endsWith(` ${reference}`));
+  const oid = packedLine?.slice(0, packedLine.indexOf(" "));
+  if (oid === undefined || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(oid)) {
+    throw new Error("managed workspace Git packed branch reference is malformed");
+  }
+  return { oid, reference };
+}
+
+function loadManagedWorkspaceGitMounts(
+  workspace: string,
+  commonDir: string,
+  commonTarget: string,
+  gitDir: string,
+  gitDirTarget: string,
+): ManagedWorkspaceGitMounts {
+  const privateRootTarget = safePath(workspace, MANAGED_GIT_DIRECTORY);
+  const privateRoot = realpathSync(privateRootTarget);
+  const privateRootStat = lstatSync(privateRoot);
+  if (!privateRootStat.isDirectory() || privateRootStat.isSymbolicLink()) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
+  const sourceRecord = JSON.parse(
+    readManagedGitFile(safePath(privateRoot, MANAGED_GIT_SOURCE_RECORD), 4_096).toString("utf8"),
+  ) as unknown;
+  if (
+    typeof sourceRecord !== "object"
+    || sourceRecord === null
+    || (sourceRecord as { commonDir?: unknown }).commonDir !== commonDir
+    || (sourceRecord as { gitDir?: unknown }).gitDir !== gitDir
+  ) {
+    throw new Error("managed workspace private Git administration belongs to another worktree");
+  }
+  const privateWorktreeTarget = safePath(privateRootTarget, "worktree");
+  const privateCommonTarget = safePath(privateRootTarget, "common");
+  const privateWorktree = realpathSync(privateWorktreeTarget);
+  const privateCommon = realpathSync(privateCommonTarget);
+  return {
+    common: { sourcePath: commonDir, targetPath: commonTarget },
+    worktree: { sourcePath: privateWorktree, targetPath: gitDirTarget },
+    privateCommon: {
+      sourcePath: privateCommon,
+      targetPath: privateCommonTarget,
+      systemConfigPath: safePath(privateCommonTarget, "system-config"),
+    },
+  };
+}
+
+function materializeManagedWorkspaceGitMounts(
+  workspace: string,
+  commonDir: string,
+  commonTarget: string,
+  gitDir: string,
+  gitDirTarget: string,
+): ManagedWorkspaceGitMounts {
+  const privateRootTarget = safePath(workspace, MANAGED_GIT_DIRECTORY);
+  if (existsSync(privateRootTarget)) {
+    return loadManagedWorkspaceGitMounts(workspace, commonDir, commonTarget, gitDir, gitDirTarget);
+  }
+  if ([workspace, commonDir, commonTarget, gitDir, gitDirTarget].some((path) => /[\r\n]/u.test(path))) {
+    throw new Error("managed workspace Git paths contain unsupported control characters");
+  }
+  const objectsPath = safePath(commonDir, "objects");
+  const objectsStat = lstatSync(objectsPath);
+  if (!objectsStat.isDirectory() || objectsStat.isSymbolicLink()) {
+    throw new Error("managed workspace Git object database is unavailable");
+  }
+  const head = readManagedGitFile(safePath(gitDir, "HEAD"), 4_096).toString("utf8");
+  const resolvedHead = resolveManagedGitHead(commonDir, head);
+  const temporaryRoot = mkdtempSync(`${privateRootTarget}-`);
+  try {
+    chmodSync(temporaryRoot, 0o777);
+    const privateWorktree = safePath(temporaryRoot, "worktree");
+    const privateCommon = safePath(temporaryRoot, "common");
+    makeManagedGitDirectory(privateWorktree);
+    makeManagedGitDirectory(privateCommon);
+    makeManagedGitDirectory(safePath(privateCommon, "objects"));
+    makeManagedGitDirectory(safePath(privateCommon, "objects", "info"));
+    makeManagedGitDirectory(safePath(privateCommon, "refs"));
+    makeManagedGitDirectory(safePath(privateCommon, "info"));
+    writeManagedGitFile(safePath(privateWorktree, "HEAD"), head);
+    writeManagedGitFile(safePath(privateWorktree, "commondir"), `${safePath(privateRootTarget, "common")}\n`);
+    writeManagedGitFile(safePath(privateWorktree, "gitdir"), `${safePath(workspace, ".git")}\n`);
+    const indexPath = safePath(gitDir, "index");
+    if (existsSync(indexPath)) copyManagedGitFile(indexPath, safePath(privateWorktree, "index"));
+    const worktreeConfigPath = safePath(gitDir, "config.worktree");
+    const hasWorktreeConfig = existsSync(worktreeConfigPath);
+    if (hasWorktreeConfig) copyManagedGitFile(worktreeConfigPath, safePath(privateWorktree, "config.worktree"));
+    const sparseCheckoutPath = safePath(gitDir, "info", "sparse-checkout");
+    if (existsSync(sparseCheckoutPath)) {
+      makeManagedGitDirectory(safePath(privateWorktree, "info"));
+      copyManagedGitFile(sparseCheckoutPath, safePath(privateWorktree, "info", "sparse-checkout"));
+    }
+    const repositoryVersion = resolvedHead.oid.length === 64 ? "1" : "0";
+    const objectFormat = resolvedHead.oid.length === 64 ? "\n[extensions]\n\tobjectFormat = sha256" : "";
+    const worktreeConfig = hasWorktreeConfig
+      ? `${objectFormat.length === 0 ? "\n[extensions]" : ""}\n\tworktreeConfig = true`
+      : "";
+    writeManagedGitFile(safePath(privateCommon, "config"), `[core]\n\trepositoryformatversion = ${repositoryVersion}\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true${objectFormat}${worktreeConfig}\n`);
+    writeManagedGitFile(safePath(privateCommon, "system-config"), `[safe]\n\tdirectory = ${JSON.stringify(workspace)}\n`);
+    writeManagedGitFile(safePath(privateCommon, "objects", "info", "alternates"), `${safePath(commonTarget, "objects")}\n`);
+    writeManagedGitFile(safePath(privateCommon, "info", "exclude"), `/${MANAGED_GIT_DIRECTORY}/\n`);
+    if (resolvedHead.reference !== undefined) {
+      const privateReference = safePath(privateCommon, ...resolvedHead.reference.split("/"));
+      makeManagedGitDirectory(resolvePath(privateReference, ".."));
+      writeManagedGitFile(privateReference, `${resolvedHead.oid}\n`);
+    }
+    const shallowPath = safePath(commonDir, "shallow");
+    if (existsSync(shallowPath)) copyManagedGitFile(shallowPath, safePath(privateCommon, "shallow"));
+    writeManagedGitFile(
+      safePath(temporaryRoot, MANAGED_GIT_SOURCE_RECORD),
+      `${JSON.stringify({ schemaVersion: 1, commonDir, gitDir })}\n`,
+    );
+    renameSync(temporaryRoot, privateRootTarget);
+  } catch (cause) {
+    if (existsSync(temporaryRoot)) rmSync(temporaryRoot, { recursive: true, force: true });
+    throw cause;
+  }
+  return loadManagedWorkspaceGitMounts(workspace, commonDir, commonTarget, gitDir, gitDirTarget);
 }
 
 /**
@@ -351,10 +540,13 @@ export function resolveManagedWorkspaceGitMounts(
     }
     return isCwdWithinBase(commonTarget, workspace)
       ? undefined
-      : {
-        common: { sourcePath: commonDir, targetPath: commonTarget },
-        worktree: { sourcePath: gitDir, targetPath: gitDirCandidate },
-      };
+      : materializeManagedWorkspaceGitMounts(
+        workspace,
+        commonDir,
+        commonTarget,
+        gitDir,
+        gitDirCandidate,
+      );
   });
   return resolved.ok ? ok(resolved.value) : err(resolved.error);
 }
@@ -397,6 +589,11 @@ export async function buildSpawnPlan(
   const terminalType = childEnv.TERM?.trim();
   if (terminalType === undefined || terminalType.length === 0 || terminalType === "dumb" || terminalType === "unknown") {
     childEnv.TERM = "xterm-256color";
+  }
+  if (input.workspaceGitMounts !== undefined) {
+    for (const key of MANAGED_WORKSPACE_GIT_ENVIRONMENT_KEYS) delete childEnv[key];
+    childEnv.GIT_COMMON_DIR = input.workspaceGitMounts.privateCommon.targetPath;
+    childEnv.GIT_CONFIG_SYSTEM = input.workspaceGitMounts.privateCommon.systemConfigPath;
   }
 
   // Operator opt-out of the jail (`skills.terminal.unsafeDisableSandbox`). For constrained hosts
