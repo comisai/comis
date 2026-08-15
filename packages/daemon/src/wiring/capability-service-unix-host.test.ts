@@ -707,6 +707,60 @@ describe("daemon-owned capability-service Unix host", () => {
     expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
   });
 
+  it("rejects an altered durable ingress retry after a transient internal response", async () => {
+    const root = makeRoot();
+    const ingestReport = vi.fn()
+      .mockResolvedValueOnce(err(new Error("synthetic store interruption")))
+      .mockResolvedValueOnce(ok({
+        kind: "accepted" as const,
+        report: {
+          schemaVersion: 1 as const,
+          serviceInstanceId: "service-instance_a",
+          managedRunId: "managed-run_a",
+          serviceReportId: "service-report_retry_conflict",
+          sequence: 1,
+          kind: "progress" as const,
+          contentRef: "service-report_retry_conflict",
+          contentHash: "a".repeat(64),
+          receivedAtMs: NOW_MS,
+          retainedUntilMs: NOW_MS + 60_000,
+        },
+      }));
+    const host = makeHost(root.socketPath, { ingestReport });
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const peer = await connectPeer(root.socketPath);
+    peers.push(peer);
+    peer.send(handshake(BEARER));
+    await peer.next();
+    if (!(await started).ok) return;
+    const request = {
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "operation_report_retry_conflict",
+      method: "managedRuns.report",
+      params: {
+        operationId: "operation_report_retry_conflict",
+        managedRunId: "managed-run_a",
+        serviceReportId: "service-report_retry_conflict",
+        kind: "progress",
+        summary: "Synthetic retry progress",
+      },
+    };
+
+    peer.send(request);
+    expect(await peer.next()).toMatchObject({ error: { kind: "internal_error", retryable: true } });
+    peer.send({
+      ...request,
+      params: { ...request.params, summary: "Altered retry progress" },
+    });
+    expect(await peer.next()).toMatchObject({ error: { kind: "replay_conflict", retryable: false } });
+    expect(ingestReport).toHaveBeenCalledOnce();
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
+
   it("classifies a written control request deadline as an uncertain outcome", async () => {
     const root = makeRoot();
     const host = makeHost(root.socketPath);
