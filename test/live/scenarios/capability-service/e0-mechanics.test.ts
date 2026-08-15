@@ -19,10 +19,15 @@ import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import { stringify } from "yaml";
 import { describe, expect, it } from "vitest";
-import { EchoChannelAdapter } from "@comis/channels";
 import { startTestDaemon, type TestDaemonHandle } from "../../../support/daemon-harness.js";
 import { createFixtureRepository, waitForUnixSocket } from "../../../support/capability-service-vertical-harness.js";
 import { getFreePort } from "../../../support/free-port.js";
+import {
+  createTgEmulator,
+  type ChatRef,
+  type TgEmulator,
+} from "../../emulators/telegram/tg-emulator.js";
+import { FAKE_BOT_TOKEN } from "../../harness/rig-config.js";
 import {
   CONTRIBUTION,
   CONTROL_SECRET,
@@ -32,7 +37,6 @@ import {
   SERVICE_INSTANCE_ID,
   cli,
   makeConfig,
-  normalizedMessage,
   pollUntil,
   runBinding,
   startInstalledService,
@@ -45,15 +49,13 @@ const MECHANICS_ALLOW_ID = "codex-e0-confined";
 const MECHANICS_TOKEN = "e0-reviewed";
 const MECHANICS_PROFILE = "e0-live";
 const isMechanicsGate = process.env["COMIS_E0_MECHANICS"] === "1" && process.platform === "linux";
+const TELEGRAM_CHAT: ChatRef = Object.freeze({ chatId: 424_242 });
+const TELEGRAM_USER = Object.freeze({ id: 678_314_278, firstName: "Capability", username: "capability_user" });
 
 interface ToolStep {
   readonly tool: string;
   readonly arguments: Record<string, unknown>;
   readonly capture?: (text: string) => void;
-}
-
-interface InjectableChannelManager {
-  injectMessage(channelType: string, message: ReturnType<typeof normalizedMessage>): Promise<void>;
 }
 
 interface PullTruth {
@@ -366,17 +368,18 @@ function releaseSnapshot(dataDir: string, managedRunId: string): string {
 
 async function liaisonTurn(
   model: LiaisonModelServer,
-  channelManager: InjectableChannelManager,
-  echo: EchoChannelAdapter,
+  telegram: TgEmulator,
   message: string,
   steps: readonly ToolStep[],
 ): Promise<void> {
   await pollUntil(() => model.idle, 10_000, `liaison idle before ${message}`);
-  const before = echo.getSentMessages().filter((entry) => entry.text.includes("LIAISON_TURN_DONE")).length;
+  const before = telegram.outbound(TELEGRAM_CHAT)
+    .filter((entry) => entry.text?.includes("LIAISON_TURN_DONE") === true).length;
   model.setScript(steps);
-  await channelManager.injectMessage("echo", normalizedMessage(message));
+  telegram.injectMessage(TELEGRAM_CHAT, TELEGRAM_USER, message);
   await pollUntil(
-    () => model.idle && echo.getSentMessages().filter((entry) => entry.text.includes("LIAISON_TURN_DONE")).length > before,
+    () => model.idle && telegram.outbound(TELEGRAM_CHAT)
+      .filter((entry) => entry.text?.includes("LIAISON_TURN_DONE") === true).length > before,
     60_000,
     `${message} response`,
   );
@@ -457,6 +460,7 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
     process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET;
     process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key";
     const model = new LiaisonModelServer();
+    const telegram = createTgEmulator({ botToken: FAKE_BOT_TOKEN });
     let service: RunningService | undefined;
     let daemon: TestDaemonHandle | undefined;
 
@@ -483,8 +487,9 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       await candidate.forge.start();
       bindForgeBaseUrl(candidate.configPath, candidate.forge.baseUrl);
       await model.start();
+      const telegramHandle = await telegram.start();
       const gatewayPort = await getFreePort();
-      writeFileSync(configPath, stringify(makeConfig({
+      const daemonConfig = makeConfig({
         dataDir: canonicalDataDir,
         gatewayPort,
         modelBaseUrl: model.baseUrl,
@@ -498,13 +503,20 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
         reviewedToken: MECHANICS_TOKEN,
         contextWindow: 131_072,
         capabilityClass: "frontier",
-      })), { mode: 0o600 });
+      });
+      daemonConfig["channels"] = {
+        telegram: {
+          enabled: true,
+          botToken: FAKE_BOT_TOKEN,
+          apiRoot: telegramHandle.apiRoot,
+          allowFrom: [],
+        },
+      };
+      writeFileSync(configPath, stringify(daemonConfig), { mode: 0o600 });
 
       const bootDaemonAndService = async (): Promise<{
         handle: TestDaemonHandle;
         service: RunningService;
-        echo: EchoChannelAdapter;
-        channelManager: InjectableChannelManager;
       }> => {
         process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET;
         process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key";
@@ -525,15 +537,11 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
           throw outcome.cause;
         }
         const handle = outcome.handle;
-        const echo = new EchoChannelAdapter({ channelId: "echo-main", channelType: "echo" });
-        handle.daemon.adapterRegistry.set("echo", echo);
-        handle.daemon.deliveryAdapters.set("echo", echo);
-        const channelManager = handle.daemon.channelManager;
-        if (channelManager === undefined) throw new Error("channel manager is unavailable");
+        expect(handle.daemon.adapterRegistry.get("telegram")).toMatchObject({ channelType: "telegram" });
         expect(handle.daemon.capabilityServices.runtime.getActiveView().instances).toContainEqual(
           expect.objectContaining({ serviceInstanceId: SERVICE_INSTANCE_ID, state: "active" }),
         );
-        return { handle, service: runningService, echo, channelManager };
+        return { handle, service: runningService };
       };
 
       let boot = await bootDaemonAndService();
@@ -542,7 +550,7 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       const handles: string[] = [];
       for (const [shape, deliveryMode] of [["ship", "pull_request"], ["scout", "report"]] as const) {
         let taskHandle = "";
-        await liaisonTurn(model, boot.channelManager, boot.echo, `PREPARE_MECHANICS_${shape.toUpperCase()}`, [{
+        await liaisonTurn(model, telegram, `PREPARE_MECHANICS_${shape.toUpperCase()}`, [{
           tool: "prepare_task",
           arguments: {
             shape,
@@ -574,7 +582,6 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       expect(candidate.forge.pullCreateCount).toBe(1);
       expect(taskState(goDatabase, shipTask)).not.toBe("delivered");
       console.log("FORGE_TRUTH_HELD_BEFORE_RELEASE");
-      const deliveryMessages = [...boot.echo.getSentMessages()];
 
       console.log("RESTART_DAEMON_AND_SERVICE_MID_FLIGHT");
       await stopDaemon(daemon);
@@ -595,14 +602,19 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
         90_000,
         () => `deterministic delivery recovery; ship=${taskState(goDatabase, shipTask)} scout=${taskState(goDatabase, scoutTask)} stderr=${service?.stderr() ?? ""}`,
       );
-      deliveryMessages.push(...boot.echo.getSentMessages());
+      const deliveryMessages = telegram.outbound(TELEGRAM_CHAT);
+      console.log(`TELEGRAM_WIRE_RESULT=${JSON.stringify(deliveryMessages.map((entry) => ({
+        method: entry.method,
+        messageId: entry.messageId,
+        text: entry.text,
+        caption: entry.caption,
+      })))}`);
       expect(candidate.forge.pullCreateCount).toBe(1);
       expect(deliveryMessages.filter((entry) =>
-        entry.channelId === "wave4-conversation"
-        && entry.text.includes("https://github.com/fixture-owner/fixture-repository/pull/1")
+        entry.text?.includes("https://github.com/fixture-owner/fixture-repository/pull/1") === true
       )).toHaveLength(1);
       expect(deliveryMessages.filter((entry) =>
-        entry.channelId === "wave4-conversation" && entry.text.includes("[file:report.md]")
+        entry.method === "sendDocument" && entry.caption?.includes("LIAISON_TURN_DONE") === true
       )).toHaveLength(1);
       expect(existsSync(join(shipBinding.canonical_path, ".e0-real-codex-started"))).toBe(false);
       expect(existsSync(join(scoutBinding.canonical_path, ".e0-real-codex-started"))).toBe(false);
@@ -682,6 +694,9 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       console.log("FINAL_CLEANUP_COMPLETED");
 
       console.log(`E0_MECHANICS_RESULT=${JSON.stringify({
+        productionTelegramAdapter: true,
+        telegramApiRootLoopback: telegramHandle.apiRoot.startsWith("http://127.0.0.1:"),
+        telegramConversationId: String(TELEGRAM_CHAT.chatId),
         deterministicFixtureWorkers: true,
         forgeTruthGated: true,
         restartRecovered: true,
@@ -695,6 +710,7 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       await stopDaemon(daemon);
       await service?.stop();
       await model.close();
+      await telegram.stop();
       await candidate.forge.close();
       if (previousControl === undefined) delete process.env[CONTROL_SECRET_NAME];
       else process.env[CONTROL_SECRET_NAME] = previousControl;
