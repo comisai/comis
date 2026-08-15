@@ -669,6 +669,22 @@ describe("promoteToolInvocationStall — repeated action answers stop reading as
   });
 });
 
+describe("tool invocation stall fallback wording", () => {
+  it("does not label every stalled request as a repeated action", () => {
+    const stripped = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8")
+      .replace(/\/\*[\s\S]*?\*\//gu, "")
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n");
+    const stallBranch = stripped.match(
+      /if \(effectiveFinishReason === "tool_invocation_stall"\) \{[\s\S]*?\n  \}/u,
+    )?.[0] ?? "";
+
+    expect(stallBranch).toContain("buildToolInvocationStallNoReceiptReply");
+    expect(stallBranch).not.toContain("buildPersistentActionEvidenceMissingReply");
+  });
+});
+
 describe("execution completion tool inventory", () => {
   it("reports only provider-visible tools as active instead of counting deferred discovery stubs", () => {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
