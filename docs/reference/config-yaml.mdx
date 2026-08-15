@@ -2293,6 +2293,13 @@ absolute, beneath the daemon's canonical owner-only data directory, and at most
 Workspace and runtime roots must be unique, normalized absolute paths narrower
 than a filesystem root.
 
+Linked contributions also declare the managed MCP tool bindings enforced by the
+host. Run commands resolve their model-visible handle only within the active
+owner scope. Read and mutate commands are unavailable after a managed run
+reaches a terminal outcome; destructive commands remain available there so an
+authorized service can release retained workspaces, attachments, or other
+run-owned resources through the normal approval and security path.
+
 | Key | Type | Default | Validation |
 |-----|------|---------|------------|
 | `instances` | `CapabilityServiceInstanceConfig[]` | `[]` | At most 256 configured instances |

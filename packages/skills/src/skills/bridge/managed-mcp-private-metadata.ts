@@ -129,6 +129,20 @@ const COMMANDABLE_RUN_STATUSES = new Set<ManagedRunRecord["status"]>([
   "candidate_complete",
 ]);
 
+const TERMINAL_RUN_STATUSES = new Set<ManagedRunRecord["status"]>([
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+
+function runCommandAllowedForStatus(
+  binding: Readonly<PlannedManagedToolBinding>,
+  status: ManagedRunRecord["status"],
+): boolean {
+  return COMMANDABLE_RUN_STATUSES.has(status)
+    || (binding.actionClassification === "destructive" && TERMINAL_RUN_STATUSES.has(status));
+}
+
 function callKey(input: McpPrivateMetadataCall): string {
   return JSON.stringify([input.qualifiedName, input.toolCallId]);
 }
@@ -262,7 +276,7 @@ async function resolveRunHandle(
     || record.agentId !== scope.agentId
     || record.principalId !== scope.principalId
     || record.conversationRef !== scope.conversationRef
-    || !COMMANDABLE_RUN_STATUSES.has(record.status)
+    || !runCommandAllowedForStatus(bound.binding, record.status)
   ) {
     return err(new Error("managed-run handle is unavailable in the active owner scope"));
   }
