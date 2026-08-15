@@ -186,6 +186,44 @@ describe("resolveTraceToSession", () => {
     });
   });
 
+  it("resolves a restarted sub-agent run to its latest execution trace", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        event: "execution_started",
+        ts: "2026-08-15T15:08:59.939Z",
+        traceId: "pre-restart-trace-id",
+        sessionKey: CHILD_SESSION_KEY,
+      }),
+      JSON.stringify({
+        event: "turn_completed",
+        ts: "2026-08-15T15:10:02.777Z",
+        traceId: "pre-restart-trace-id",
+        sessionKey: CHILD_SESSION_KEY,
+        stopReason: "aborted",
+      }),
+      JSON.stringify({
+        event: "execution_started",
+        ts: "2026-08-15T15:10:21.329Z",
+        traceId: "resumed-trace-id",
+        sessionKey: CHILD_SESSION_KEY,
+      }),
+      JSON.stringify({
+        event: "turn_completed",
+        ts: "2026-08-15T15:13:34.601Z",
+        traceId: "resumed-trace-id",
+        sessionKey: CHILD_SESSION_KEY,
+        stopReason: "stop",
+      }),
+    ]);
+
+    const resolved = await resolveTraceReference(dataDir, CHILD_RUN_ID);
+
+    expect(resolved).toEqual({
+      sessionKey: CHILD_SESSION_KEY,
+      traceId: "resumed-trace-id",
+    });
+  });
+
   it("does not resolve a run identifier found outside the sub-agent channel", async () => {
     const dataDir = makeDataDirWithIndex([
       JSON.stringify({
