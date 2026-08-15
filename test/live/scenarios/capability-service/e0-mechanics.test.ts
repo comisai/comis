@@ -221,13 +221,13 @@ function createCandidateFixture(
   writeFileSync(readCredentialFile, "e0_read_identity", { mode: 0o600 });
   writeFileSync(pushCredentialFile, "e0_push_identity", { mode: 0o600 });
   writeFileSync(configPath, JSON.stringify({
-    programs: [{ id: "repository-check", executable: "/usr/bin/true" }],
+    programs: [{ id: "repository-check", executable: "/usr/bin/sleep" }],
     profiles: [{
       id: MECHANICS_PROFILE,
       localChecks: [{
         id: "repository-unit",
         programId: "repository-check",
-        arguments: [{ kind: "literal", value: "--version" }],
+        arguments: [{ kind: "literal", value: "0.1" }],
         timeout: "30s",
         required: true,
       }],

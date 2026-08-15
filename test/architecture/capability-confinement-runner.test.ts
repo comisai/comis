@@ -94,7 +94,7 @@ describe("capability-service Linux confinement runner", () => {
     const joinGate = source(joinGatePath);
 
     expect(runner).toMatch(/spike \| join \| mechanics \| observe \| shell/u);
-    expect(joinGate).toContain('readonly DEV_CREW_COMMIT="ec07a36b632410acb694a61a80410200b890821e"');
+    expect(joinGate).toContain('readonly DEV_CREW_COMMIT="34c6e5fd092635a32cf0676a11888af2471b73ac"');
     expect(joinGate).toContain('git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}"');
     expect(joinGate).toContain("COMIS_LIVE=1");
     expect(joinGate).toContain("wave4-join.test.ts");
@@ -159,6 +159,7 @@ describe("capability-service Linux confinement runner", () => {
     expect(scenario).toContain("cleanup_task");
     expect(scenario).toContain("NETWORK_CONFINEMENT_NOT_PROVEN");
     expect(runner).toContain('if [[ "${mode}" == "observe" ]]');
+    expect(observation).toContain('readonly DEV_CREW_COMMIT="34c6e5fd092635a32cf0676a11888af2471b73ac"');
     expect(observation).toContain("COMIS_E0_OBSERVE=1");
     expect(observation).toContain("E0_CODEX_JOURNEY_OBSERVATION_COMPLETE");
     expect(observation).not.toContain("GATE_PASS");

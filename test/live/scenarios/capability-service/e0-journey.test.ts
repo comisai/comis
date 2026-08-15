@@ -79,6 +79,7 @@ class ForgeFixtureServer {
   private releaseCheckGate: (() => void) | undefined;
   private checkRequestObservedValue = false;
   private pullCreateCountValue = 0;
+  private readonly requestsValue: string[] = [];
 
   constructor(
     readonly gitExecutable: string,
@@ -99,6 +100,10 @@ class ForgeFixtureServer {
 
   get pullCreateCount(): number {
     return this.pullCreateCountValue;
+  }
+
+  get requests(): readonly string[] {
+    return this.requestsValue;
   }
 
   releaseChecks(): void {
@@ -128,6 +133,7 @@ class ForgeFixtureServer {
 
   private async respond(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? "/", this.baseUrlValue);
+    this.requestsValue.push(`${request.method ?? "UNKNOWN"} ${url.pathname}${url.search}`);
     const prefix = "/repos/fixture-owner/fixture-repository";
     if (request.method === "GET" && url.pathname === `${prefix}/pulls`) {
       this.json(response, this.pull === undefined ? [] : [{ number: this.pull.number }]);
@@ -198,13 +204,13 @@ function createCandidateFixture(
   writeFileSync(readCredentialFile, "e0_read_identity", { mode: 0o600 });
   writeFileSync(pushCredentialFile, "e0_push_identity", { mode: 0o600 });
   writeFileSync(configPath, JSON.stringify({
-    programs: [{ id: "repository-check", executable: "/usr/bin/true" }],
+    programs: [{ id: "repository-check", executable: "/usr/bin/sleep" }],
     profiles: [{
       id: E0_PROFILE,
       localChecks: [{
         id: "repository-unit",
         programId: "repository-check",
-        arguments: [{ kind: "literal", value: "--version" }],
+        arguments: [{ kind: "literal", value: "0.1" }],
         timeout: "30s",
         required: true,
       }],
@@ -301,8 +307,9 @@ function handbackDiagnostic(databasePath: string, taskHandle: string): string {
     const terminal = db.prepare(`SELECT latest_transition AS latestTransition,
       running_observed AS runningObserved, updated_at AS updatedAt
       FROM task_terminal_bindings WHERE task_handle = ?`).get(taskHandle);
-    const validation = db.prepare(`SELECT COUNT(*) AS active
-      FROM validation_processes WHERE task_handle = ? AND state <> 'exited'`).get(taskHandle);
+    const validation = db.prepare(`SELECT operation_id AS operationId, program_id AS programId,
+      state, pid, executable_label AS executableLabel, exit_code AS exitCode
+      FROM validation_processes WHERE task_handle = ? ORDER BY operation_id`).all(taskHandle);
     const handbacks = db.prepare(`SELECT operation_id AS operationId, observed_at AS observedAt,
       state_version AS stateVersion FROM task_handbacks WHERE task_handle = ? ORDER BY observed_at, operation_id`)
       .all(taskHandle);
@@ -805,7 +812,11 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       await pollUntil(
         () => candidate.forge.checkRequestObserved && taskState(goDatabase, shipTask) === "validating",
         30_000,
-        () => `ship validation blocked on forge truth; ship=${taskState(goDatabase, shipTask)} stderr=${service?.stderr() ?? ""}`,
+        () => `ship validation blocked on forge truth; ship=${taskState(goDatabase, shipTask)} forge=${JSON.stringify(candidate.forge.requests)} git=${JSON.stringify({
+          branch: git(repository, shipBinding.canonical_path, ["branch", "--show-current"]),
+          head: git(repository, shipBinding.canonical_path, ["rev-parse", "HEAD"]),
+          status: git(repository, shipBinding.canonical_path, ["status", "--porcelain=v2", "--untracked-files=all"]),
+        })} diagnostic=${handbackDiagnostic(goDatabase, shipTask)} stderr=${service?.stderr() ?? ""}`,
       );
       expect(candidate.forge.pullCreateCount).toBe(1);
       const deliveryMessages = [...boot.echo.getSentMessages()];

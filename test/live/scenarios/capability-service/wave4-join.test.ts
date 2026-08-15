@@ -28,7 +28,7 @@ import { stopManagedChild } from "../../../support/managed-child-process.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../../..");
 const REVIEWED_GO_COMMIT = process.env["COMIS_DEV_CREW_COMMIT"]
-  ?? "ec07a36b632410acb694a61a80410200b890821e";
+  ?? "34c6e5fd092635a32cf0676a11888af2471b73ac";
 export const SERVICE_INSTANCE_ID = "service-instance-wave4-join";
 export const MCP_SERVER_NAME = "devcrew";
 export const CONTROL_SECRET_NAME = "WAVE4_CONTROL_BEARER";
@@ -982,7 +982,7 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
       );
 
       let status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
-      expect(status.completeness).toBe("partial");
+      expect(status.completeness).toBe("complete");
       expect(new Set(status.tasks.map((task) => task.taskHandle))).toEqual(new Set([taskA, taskB]));
       try {
         await pollUntil(() => {
