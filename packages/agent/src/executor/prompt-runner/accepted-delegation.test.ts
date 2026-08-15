@@ -25,7 +25,7 @@ describe("requestsPushDeliveredBackgroundCompletion", () => {
       "Acknowledge once now, then deliver the completed report here without me polling.",
     ].join(" "))).toBe(true);
     expect(requestsPushDeliveredBackgroundCompletion(
-      "Run a fleet review in the background. Acknowledge now and send it when complete.",
+      "Run an inventory review in the background. Acknowledge now and send it when complete.",
     )).toBe(true);
   });
 

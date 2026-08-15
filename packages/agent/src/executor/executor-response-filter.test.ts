@@ -1005,9 +1005,9 @@ describe("current-turn delegation evidence guard", () => {
     const verifiedSpawnResponse =
       "I started a sub-agent for this request. Its result is still pending.";
     const guarded = delegationEvidenceGuard()({
-      request: "ask a background helper to review the full fleet",
+      request: "ask a background helper to review the full inventory",
       response: [
-        "I started the full-fleet review.",
+        "I started the full-inventory review.",
         "Run ID: 8dc57d7f-0071-45cb-bdaf-23d47ecead39",
         "I will share the result when it completes.",
       ].join("\n\n"),

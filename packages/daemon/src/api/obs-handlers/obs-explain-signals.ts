@@ -644,7 +644,6 @@ function handleEventRecord(
       return;
   }
 }
-// Public normalizer.
 // ---------------------------------------------------------------------------
 /**
  * Normalize a heterogeneous record stream (raw log lines AND/OR structured
