@@ -109,7 +109,7 @@ The shutdown follows this order:
 
 1. **Session summary** -- Logs total executions, cost, and token usage for the session.
 2. **Graph coordinator** -- Stops any running multi-agent pipelines.
-3. **Sub-agent runner** -- Drains active sub-agent tasks.
+3. **Sub-agent runner** -- Gives active tasks a bounded drain. If the grace period expires, checkpoint-admitted durable sub-agents suspend their local provider work and retain the running checkpoint for boot recovery; non-durable work is stopped with an attributed failure.
 4. **Cron schedulers** -- Stops scheduled jobs.
 5. **Channel adapters** -- Disconnects from messaging platforms (no new messages accepted).
 6. **Heartbeat runner** -- Stops health checks.
@@ -118,9 +118,13 @@ The shutdown follows this order:
 9. **Memory database** -- Closes the SQLite database cleanly.
 
 <Info>
-The daemon waits up to 45 seconds for everything to stop cleanly. Active
-conversations will finish processing before shutdown completes. If a component
-takes too long, the daemon logs a timeout warning and forces an exit.
+The daemon waits up to 45 seconds for everything to stop cleanly. Work that
+settles inside its component grace period finishes normally. A durable
+sub-agent whose provider turn is still in flight after its 30-second drain is
+suspended and re-executes its protected task from the validated restart
+boundary after boot; it does not resume a half-finished provider turn. If
+another component takes too long, the daemon logs a timeout warning and forces
+an exit.
 </Info>
 
 The final log line confirms a clean shutdown:

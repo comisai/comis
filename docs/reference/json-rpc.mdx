@@ -788,6 +788,23 @@ When a grounded answer was preserved but the routed workflow still stalled,
 the report retains the specific `tool_invocation_stall` diagnosis instead of
 overwriting it with the later completion-evidence guard.
 
+Background completion delivery is likewise reconstructable without a raw-log
+join. The optional `outwardDelivery` block carries the latest durable
+completion-send disposition: `{ status, rootRunId, stepIndex?, deliveryKind?,
+platformMessageId? }`. `deliveryKind` distinguishes text from a generated-file
+attachment, and a committed platform receipt is retained as
+`platformMessageId`. `status: "partial"` means at least one completion part
+committed while another part did not; `blocked`, `in_flight`, `failed`, and
+`parked` preserve the corresponding durable-ledger state without claiming the
+user received the whole completion.
+
+Direct children in `spawnTree` also carry terminal execution evidence when it
+was recorded: `terminalOutcome`, `runtimeMs`, `tokensUsed`, `costUsd`, and an
+optional `outputValidation: { expected, verified, attachmentsPrepared }`.
+These are content-free counts. They show whether declared files existed and
+entered governed attachment preparation, while `outwardDelivery` supplies the
+separate platform-delivery receipt.
+
 The same one-call diagnosis applies to bounded execution stalls. A local MCP
 queue refusal produces `mcp_queue_contention` with the resolved concurrency and
 queue/deadline budgets; a detector-owned repeating-call abort produces
@@ -897,7 +914,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 |----------|-------|
 | **Scope** | `rpc` route plus admin trust. A gateway token needs both `rpc` and `admin` (or `*`); the handler rejects non-admin trust. |
 | **Parameters** | `{ sessionKey?: string, traceId?: string, rootRunId?: string, graphId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` / `rootRunId` / `graphId` required. `traceId` accepts a trace ID or a sub-agent run ID and canonicalizes either to the indexed session. `rootRunId` is an autonomy run's id, canonicalized to its session before assembly (a `root-` synthetic root resolves by prefix-strip; a real spawned root by a session-index scan) and renders the run's `spawnTree`. `graphId` is a terminal execution-graph run's id, canonicalized to its caller session through the persisted run metadata and rendered with the `graph` section. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
-| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], requestRelevantToolNames?: string[], requestRelevantPromptSkillNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated, recallDisposition? }, requestClarification?: { reason, inputChars }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, graph?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], spawnTree?, outwardDelivery?, requestRelevantToolNames?: string[], requestRelevantPromptSkillNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated, recallDisposition? }, requestClarification?: { reason, inputChars }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, graph?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -4268,14 +4285,15 @@ Agent callers may kill an owned direct child. The reserved target `tree` hard-st
 |----------|-------|
 | **Scope** | `rpc`, `admin` |
 | **Parameters** | `{ target: string, message: string }` -- `target` is the sub-agent `runId` |
-| **Returns** | `{ status: "steered", oldRunId, newRunId } \| { status: "steered_inject", runId }` |
+| **Returns** | `{ status: "steered", oldRunId, newRunId } \| { status: "steered_inject", runId } \| { status: "already_terminal", runId, terminalStatus: "completed" }` |
 
 Agent callers may steer only an owned direct child; admins may target any run. Behavior is gated on [`security.agentToAgent.steerInject`](/reference/config-yaml#security), which defaults to `false`:
 
-The `status` discriminator is `steered` with `oldRunId` and `newRunId`, or `steered_inject` with `runId`.
+The `status` discriminator is `steered` with `oldRunId` and `newRunId`, `steered_inject` with `runId`, or `already_terminal` with `runId` and `terminalStatus: "completed"`.
 
 - **Flag off (default)** -- kills the current run and respawns a new run with `message` as its task. The continuation preserves the original spawn tree, agent, capabilities, and parent lease, but receives a new run ID and discards the prior live transcript and progress. Returns `{ status: "steered", oldRunId, newRunId }`.
 - **Flag on** -- requires `target` to be `running` and injects `message` into the live child at its next step boundary. It preserves the transcript and progress, performs no kill or respawn, and continues with the same run ID. Returns `{ status: "steered_inject", runId }`. Injection does not interrupt a tool call mid-execution.
+- **Completed race** -- if the child reaches `completed` before either mode can act, the handler preserves that terminal result and returns `{ status: "already_terminal", runId, terminalStatus: "completed" }`. This is a successful no-op, not a failed steer or a respawn.
 
 Both modes share a per-controller, per-`target` rate limit of one steer every 2 seconds. The `message` is framed as untrusted external content and cannot grant capabilities or bypass the child's tool restrictions.
 

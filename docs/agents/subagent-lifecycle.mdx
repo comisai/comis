@@ -14,14 +14,14 @@ calls `sessions_spawn`.
 ## How it works
 
 The subagent context lifecycle is a pipeline that begins when the parent agent
-calls `sessions_spawn`. The call returns a run ID immediately; the lifecycle ends
+calls `sessions_spawn`. The call returns an internal run handle immediately; the lifecycle ends
 when the terminal result is durably recorded and its immutable-origin delivery
 reaches an accepted or explicitly recorded failure state. A parent can also
 await owned children with `subagents` action `wait` without polling.
 
 ```mermaid
 flowchart LR
-    A[Parent calls sessions_spawn] --> B[Run ID returned]
+    A[Parent calls sessions_spawn] --> B[Internal run handle returned]
     B --> C[Spawn packet built]
     C --> D[Limits checked]
     D --> E[Sub-agent executes]
@@ -65,6 +65,9 @@ Comis accepts the spawn and returns immediately:
   "noteType": "background_running"
 }
 ```
+
+The handle stays inside the orchestration flow: it is used by `subagents`
+operations and is not included in the user-facing launch acknowledgement.
 
 The sub-agent then runs in its own session. Its exact-origin completion
 announcement, or a `subagents` wait result, carries a condensed result like
@@ -339,7 +342,7 @@ The `subagents` tool's `steer` action redirects a sub-agent that is already runn
 
 **A steer is a message, not a privilege grant.** A steered child's tool set is fixed at spawn time, so it **cannot** be steered into using a tool on the sub-agent tool denylist -- a steered request for a denied tool is still refused with `denied to ALL sub-agents -- the parent must perform this step`, and the child's sandbox posture is unchanged. The steer text cannot widen what the child is allowed to do; it can only redirect what the child works on within its existing governance. See [`subagent.steer`](/reference/json-rpc#subagent-steer) for the RPC surface and its discriminated-union response.
 
-**`steer` targets a *running* child.** If the target run has already `completed`/`failed` or is still `queued`, `steer` fails fast with `Run <id> is not running (status: <status>) -- cannot steer; use kill+respawn instead.` (mirroring `kill`'s precondition error) rather than attempting an inject against a child that has no live session.
+**`steer` targets a *running* child.** If a `completed` result wins the race before either steering mode can act, the operation succeeds as a no-op with `{ status: "already_terminal", runId, terminalStatus: "completed" }`; the completed result remains authoritative and is not respawned. A `failed` or still-`queued` target continues to fail fast rather than attempting an inject against a child that has no live session.
 
 **`steer` is intentionally ungated, unlike `kill`.** `kill` requires an explicit confirmation (it discards the child's in-flight work, a destructive teardown). `steer` has no confirmation gate: in inject mode it is non-destructive (the transcript and progress are preserved), and even in the flag-off kill+respawn fallback it is a course-correction, not a bare teardown. A steer is a steering *message*, so the asymmetry is deliberate.
 
