@@ -34,7 +34,9 @@ import { getFreePort } from "../support/free-port.js";
 
 const TEST_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(TEST_DIRECTORY, "../..");
-const GO_REPOSITORY = resolve(REPOSITORY_ROOT, "../../comis-dev-crew");
+const GO_REPOSITORY = resolve(
+  process.env["COMIS_DEV_CREW_SOURCE"] ?? resolve(REPOSITORY_ROOT, "../comis-dev-crew"),
+);
 const MCP_LAUNCHER = resolve(
   TEST_DIRECTORY,
   "../support/capability-service-mcp-fixture-launcher.mjs",
