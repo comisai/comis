@@ -2287,10 +2287,11 @@ capabilityServices:
 
 The `serviceDefinitionId` and `mcpServerName` must match a linked contribution.
 The control transport is Unix-socket only; `socketPath` must be normalized,
-absolute, and beneath the daemon's canonical owner-only data directory. The
-daemon creates the control socket with mode `0600`. `credentialRef` must be a
-`secret://` reference. Agent IDs must be unique. Workspace and runtime roots
-must be unique, normalized absolute paths narrower than a filesystem root.
+absolute, beneath the daemon's canonical owner-only data directory, and at most
+103 UTF-8 bytes. The daemon creates the control socket with mode `0600`.
+`credentialRef` must be a `secret://` reference. Agent IDs must be unique.
+Workspace and runtime roots must be unique, normalized absolute paths narrower
+than a filesystem root.
 
 | Key | Type | Default | Validation |
 |-----|------|---------|------------|

@@ -372,7 +372,7 @@ export OAUTH_OPENAI_CODEX='{"access":"EXAMPLE-access","refresh":"EXAMPLE-refresh
 
 1. **Stored profile wins.** If the OAuth credential store already has a profile for `openai-codex`, the daemon uses it and ignores `OAUTH_OPENAI_CODEX` entirely.
 2. **Env var is a one-time seed.** When the store is empty for the provider, the daemon parses the env var and writes the profile. Subsequent token refreshes update the stored profile, not the env var.
-3. **WARN once on drift.** If the env-var refresh token differs from the stored profile's refresh token, the daemon emits one WARN per (provider, process) with `errorKind: "config_drift"` and `hint: "env-override-ignored"`. Operators clear the drift by either:
+3. **WARN once on drift.** If the env-var refresh token differs from the stored profile's refresh token, the daemon emits one WARN per (provider, process) with `errorKind: "auth"` and `hint: "env-override-ignored"`. Operators clear the drift by either:
    - Running `comis auth logout --profile <id>` then restarting the daemon to re-bootstrap from env, **or**
    - Deleting the env var if the stored profile is the intended source of truth.
 

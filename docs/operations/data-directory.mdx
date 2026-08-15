@@ -604,13 +604,19 @@ A Unix domain socket (`0600`, owner-only) created for the **loopback capability 
 To migrate to a new machine, back up these items:
 
 ```bash
+optional_state=()
+for path in \
+  "$HOME/.comis/.env" \
+  "$HOME/.comis/secrets.db" \
+  "$HOME/.comis/managed-runs/private"; do
+  [[ -e "$path" ]] && optional_state+=("$path")
+done
+
 tar -czf comis-backup.tar.gz \
   ~/.comis/config.yaml \
-  ~/.comis/.env \
   ~/.comis/memory.db \
-  ~/.comis/managed-runs/private \
-  ~/.comis/secrets.db \
-  ~/.comis/workspace
+  ~/.comis/workspace \
+  "${optional_state[@]}"
 ```
 
 `config.last-good.yaml`, `logs/`, `traces/`, and `ecosystem.config.js` are machine-specific or regenerated and do not need to be included.
