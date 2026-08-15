@@ -69,23 +69,19 @@ interface ConfiguredInstance {
   readonly instance: PlannedCapabilityServiceInstance;
   readonly credential: () => string | undefined;
 }
-
 interface WireFailure extends CapabilityServiceControlFailure {
   readonly step: "request" | "response";
 }
-
 interface PendingControl<T = unknown> {
   readonly responseSchema: z.ZodType;
   readonly resolve: (result: Result<T, WireFailure>) => void;
   readonly timer: TimerHandle;
 }
-
 interface InboundReplay {
   readonly canonical: string;
   response?: unknown;
   retryable?: boolean;
 }
-
 interface HandshakeWaiter {
   readonly resolve: (result: Result<{
     readonly protocolId: typeof CAPABILITY_SERVICE_PROTOCOL_ID;
