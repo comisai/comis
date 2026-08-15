@@ -904,7 +904,10 @@ type DelegationEvidenceGuard = (params: {
 }) => {
   response: string;
   corrected: boolean;
-  reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
+  reason?:
+    | "missing_current_turn_spawn"
+    | "successful_spawn_response_internal_identifier"
+    | "successful_spawn_response_ungrounded";
 };
 
 function delegationEvidenceGuard(): DelegationEvidenceGuard {
@@ -970,6 +973,55 @@ describe("current-turn delegation evidence guard", () => {
     expect(guarded).toEqual({
       response: falseClaim,
       corrected: false,
+    });
+  });
+
+  it("replaces an unsolicited partial answer while its spawned result is pending", () => {
+    const verifiedSpawnResponse =
+      "I started a sub-agent for this request. Its result is still pending.";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "Scan a liquid US-equity universe and rank five short-term candidates using current data.",
+      response: [
+        "The supporting research workflow is complete.",
+        "The five-stock ranking itself is not yet evidenced, so I will not invent candidates.",
+      ].join("\n"),
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+        { toolName: "web_search", success: true },
+      ],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_ungrounded",
+    });
+  });
+
+  it("replaces a launch acknowledgement that exposes the internal spawn identifier", () => {
+    const verifiedSpawnResponse =
+      "I started a sub-agent for this request. Its result is still pending.";
+    const guarded = delegationEvidenceGuard()({
+      request: "ask a background helper to review the full fleet",
+      response: [
+        "I started the full-fleet review.",
+        "Run ID: 8dc57d7f-0071-45cb-bdaf-23d47ecead39",
+        "I will share the result when it completes.",
+      ].join("\n\n"),
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+      ],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_internal_identifier",
     });
   });
 
