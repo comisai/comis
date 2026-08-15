@@ -1405,6 +1405,14 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         reason: activeModelSelfStatus.reason,
       },
     });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "active_model_self_status_grounding",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
   }
   // Derive effectiveFinishReason BEFORE the bookend log so it is visible there.
   // The bookend must log effectiveFinishReason (not result.finishReason) so that

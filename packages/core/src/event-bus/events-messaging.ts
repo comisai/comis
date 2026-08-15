@@ -806,6 +806,8 @@ export interface MessagingEvents {
    *  the comparative-latency or provider-billed-cost claim. Collapsing it into
    *  `missing_runtime_self_report_evidence` sent operators to check obs_query
    *  admission for a turn where obs_query worked.
+   *  `active_model_self_status_grounding` means an unambiguous question about
+   *  the active model was replaced with the captured provider/model identity.
    *  Request-tool recovery also carries optional content-free handoff facts:
    *  whether a receipt-grounded response existed before recovery, whether it
    *  survived the result handoff, and a bounded count of successful receipts
@@ -822,6 +824,7 @@ export interface MessagingEvents {
       | "request_tool_nudge"
       | "interactive_silent_sentinel"
       | "locale_fidelity"
+      | "active_model_self_status_grounding"
       | "sender_authority_grounding"
       | "agent_update_noop_grounding"
       | "missing_ongoing_work_evidence"
