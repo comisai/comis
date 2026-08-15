@@ -219,6 +219,7 @@ describe("runPrompt observable boundaries", () => {
           toolName: "sessions_spawn",
           success: true,
           durationMs: 5,
+          delegatedToolNames: ["web_search", "web_fetch"],
         }],
       },
       messages: [
