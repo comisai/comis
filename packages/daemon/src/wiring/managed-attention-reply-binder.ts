@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type {
   ManagedAttentionReplyBindingOutcome,
   ManagedAttentionReplyInput,
@@ -20,12 +20,8 @@ async function invoke<T>(operation: () => Promise<Result<T, Error>>): Promise<Re
   return settled.ok ? settled.value : err(settled.error);
 }
 
-function responseRef(attentionId: string, operationId: string): string {
-  const digest = createHash("sha256")
-    .update(`${attentionId}\0${operationId}`, "utf8")
-    .digest("hex")
-    .slice(0, 48);
-  return `attention-response-${digest}`;
+function createResponseRef(): Result<string, Error> {
+  return tryCatch(() => `attention-response-${randomBytes(24).toString("hex")}`);
 }
 
 function contentScope(attention: ManagedRunAttentionRecord) {
@@ -44,6 +40,14 @@ function referencedRunDigests(text: string): ReadonlySet<string> {
   return digests;
 }
 
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let index = 0; index < left.byteLength; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
 /** Bind private reply content only after exact durable attention selection. */
 export function createManagedAttentionReplyBinder(deps: {
   readonly store: ManagedRunStorePort;
@@ -58,13 +62,41 @@ export function createManagedAttentionReplyBinder(deps: {
         () => deps.store.getAttentionResponseByOperation(scope, input.operationId),
       );
       if (!prior.ok) return prior;
-      let selected = prior.value;
-      let candidateAttentionIds: string[] = [];
-      if (selected !== undefined) {
-        if (input.attentionId !== undefined && input.attentionId !== selected.attentionId) {
+      const encodedText = new TextEncoder().encode(input.text);
+      if (prior.value !== undefined) {
+        const persisted = prior.value;
+        if (input.attentionId !== undefined && input.attentionId !== persisted.attentionId) {
           return err(new Error("managed-run attention response replay conflicts with its original handle"));
         }
-      } else {
+        if (persisted.responseRef === undefined) {
+          return err(new Error("managed-run attention response replay is missing private content"));
+        }
+        const persistedResponseRef = persisted.responseRef;
+        const persistedBody = await invoke(() => deps.contentStore.getAttentionBody(
+          contentScope(persisted),
+          persistedResponseRef,
+        ));
+        if (!persistedBody.ok) return persistedBody;
+        if (persistedBody.value === undefined) {
+          return err(new Error("managed-run attention response replay is missing private content"));
+        }
+        if (!equalBytes(persistedBody.value, encodedText)) {
+          return err(new Error("managed-run attention response replay conflicted"));
+        }
+        const replayed = await invoke(() => deps.store.claimAttentionResponse(scope, {
+          operationId: input.operationId,
+          attentionId: persisted.attentionId,
+          responseRef: persistedResponseRef,
+          respondedAtMs: persisted.updatedAtMs,
+        }));
+        if (!replayed.ok) return replayed;
+        return replayed.value.kind === "identical_replay"
+          ? ok({ kind: "bound", attention: replayed.value.record })
+          : err(new Error("managed-run attention response replay conflicted"));
+      }
+      let selected: ManagedRunAttentionRecord | undefined;
+      let candidateAttentionIds: string[] = [];
+      if (selected === undefined) {
         const listed = await invoke(() => deps.store.listOpenAttention(scope, { limit: 10_000 }));
         if (!listed.ok) return listed;
         const open = listed.value.filter((candidate) => candidate.status === "open");
@@ -109,12 +141,14 @@ export function createManagedAttentionReplyBinder(deps: {
       }
       if (selected === undefined) return err(new Error("managed-run attention selection failed closed"));
 
-      const privateRef = responseRef(selected.attentionId, input.operationId);
+      const createdRef = createResponseRef();
+      if (!createdRef.ok) return createdRef;
+      const privateRef = createdRef.value;
       const scopeForContent = contentScope(selected);
       const published = await invoke(() => deps.contentStore.putAttentionBody(
         scopeForContent,
         privateRef,
-        { body: new TextEncoder().encode(input.text) },
+        { body: encodedText },
       ));
       if (!published.ok) return published;
       const claimed = await invoke(() => deps.store.claimAttentionResponse(scope, {
@@ -124,13 +158,20 @@ export function createManagedAttentionReplyBinder(deps: {
         respondedAtMs: input.respondedAtMs,
       }));
       if (!claimed.ok) {
-        await invoke(() => deps.contentStore.deleteAttentionBody(scopeForContent, privateRef));
+        const removed = await invoke(() => deps.contentStore.deleteAttentionBody(
+          scopeForContent,
+          published.value.contentRef,
+        ));
+        if (!removed.ok) return removed;
         return claimed;
       }
       if (claimed.value.kind === "updated" || claimed.value.kind === "identical_replay") {
         return ok({ kind: "bound", attention: claimed.value.record });
       }
-      const removed = await invoke(() => deps.contentStore.deleteAttentionBody(scopeForContent, privateRef));
+      const removed = await invoke(() => deps.contentStore.deleteAttentionBody(
+        scopeForContent,
+        published.value.contentRef,
+      ));
       if (!removed.ok) return removed;
       if (claimed.value.kind === "state_mismatch") {
         return ok({ kind: "clarification_required", reason: "already_answered", candidateAttentionIds });
