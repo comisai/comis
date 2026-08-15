@@ -32,6 +32,8 @@ const request = {
   ),
   rootRunId: "root-1",
   agentId: "agent-main",
+  sessionKey: "default:user1:telegram:chat-1",
+  partId: "attachment:0",
   channelType: "telegram",
   channelId: "chat-1",
   text: "completion announcement",
@@ -102,6 +104,8 @@ describe("governed announcement sender", () => {
     expect(emitSafely).toHaveBeenCalledWith(
       "delivery:outward_ledger_transition",
       expect.objectContaining({
+        sessionKey: "default:user1:telegram:chat-1",
+        partId: "attachment:0",
         transition: "commit",
         outcome: "committed",
         deliveryKind: "attachment",

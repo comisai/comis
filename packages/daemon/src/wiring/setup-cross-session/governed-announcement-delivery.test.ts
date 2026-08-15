@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import type {
   ChannelEndpoint,
   DeliveryService,
@@ -399,5 +399,62 @@ describe("completion announcement delivery wiring", () => {
     expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
     expect(ledger.commit).toHaveBeenCalledWith("root-1", 0, "document-message");
     expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("emits a routed part failure when attachment preparation is rejected", async () => {
+    const emitSafely = vi.fn(() => ({ failures: [], pendingFailures: Promise.resolve([]) }));
+    const caller = makeChannelPrincipalCaller();
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([[
+        "telegram",
+        {
+          channelId: "telegram-primary",
+          channelType: "telegram",
+          sendMessage: vi.fn(async () => ok("unexpected-message")),
+          sendAttachment: vi.fn(async () => ok({
+            kind: "tracked" as const,
+            messageId: "unexpected-document-message",
+          })),
+        },
+      ]]),
+      deliveryService: makeDeliveryService(),
+      eventBus: { emitSafely } as unknown as TypedEventBus,
+      outwardLedger: makeLedger(),
+      resolveRootRunId: () => ({ ok: true, value: "root-partial" }),
+      prepareCompletionAttachment: vi.fn(async () => err(new Error("invalid output"))),
+    });
+
+    const result = await delivery.sendGovernedAnnouncement?.({
+      agentId: "agent-1",
+      callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      callerConversation: caller.locator,
+      destinationEndpoint: caller.endpoint,
+      runId: "run-partial",
+      partId: "attachment:1",
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "The second report is ready.",
+      options: { threadId: "topic-7" },
+      attachment: {
+        sourceAgentId: "agent-1",
+        path: "/workspace/reports/second-report.csv",
+      },
+    });
+
+    expect(result).toEqual(ok({
+      delivered: false,
+      failure: "attachment_preparation_blocked",
+    }));
+    expect(emitSafely).toHaveBeenCalledWith(
+      "delivery:outward_ledger_transition",
+      expect.objectContaining({
+        rootRunId: "root-partial",
+        sessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+        partId: "attachment:1",
+        transition: "prepare",
+        outcome: "failed",
+        deliveryKind: "attachment",
+      }),
+    );
   });
 });

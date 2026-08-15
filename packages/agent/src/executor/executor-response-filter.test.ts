@@ -897,6 +897,7 @@ type DelegationEvidenceGuard = (params: {
     success: boolean;
     backgrounded?: boolean;
     subagentWaitCompletedCount?: number;
+    spawnRunId?: string;
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
@@ -1023,6 +1024,32 @@ describe("current-turn delegation evidence guard", () => {
       corrected: true,
       reason: "successful_spawn_response_internal_identifier",
     });
+  });
+
+  it.each([
+    "Started. Internal run handle: 8dc57d7f-0071-45cb-bdaf-23d47ecead39",
+    '{"runId":"8dc57d7f-0071-45cb-bdaf-23d47ecead39","status":"started"}',
+  ])("removes the exact structured spawn handle from a launch reply", (response) => {
+    const verifiedSpawnResponse =
+      "I started a sub-agent for this request. Its result is still pending.";
+    const guarded = delegationEvidenceGuard()({
+      request: "ask a background helper to review the full inventory",
+      response,
+      toolExecResults: [{
+        toolName: "sessions_spawn",
+        success: true,
+        spawnRunId: "8dc57d7f-0071-45cb-bdaf-23d47ecead39",
+      }],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_internal_identifier",
+    });
+    expect(guarded.response).not.toContain("8dc57d7f-0071-45cb-bdaf-23d47ecead39");
   });
 
   // A spawn receipt proves only that delegation started. It cannot establish

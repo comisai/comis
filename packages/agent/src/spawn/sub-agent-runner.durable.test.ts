@@ -567,11 +567,17 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     const store = createRecordingStore();
     const abort = vi.fn().mockResolvedValue(undefined);
     const eventBus = new TypedEventBus();
+    const lifecycleOrder: string[] = [];
     const emit = vi.spyOn(eventBus, "emit");
+    eventBus.on("durable:suspended", () => lifecycleOrder.push("suspended"));
+    const closeTrajectory = vi.fn(async () => {
+      lifecycleOrder.push("closed");
+    });
     const sendToChannel = vi.fn().mockResolvedValue(true);
     const runner = createSubAgentRunner(createDeps({
       durableRuns: store,
       eventBus,
+      closeTrajectory,
       sendToChannel,
       sessionResolver: {
         resolveActiveSession: vi.fn().mockReturnValue({ abort }),
@@ -602,7 +608,9 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     expect(emit).toHaveBeenCalledWith("durable:suspended", expect.objectContaining({
       rootRunId: "root-restart-recovery",
       checkpointId: runId,
+      sessionKey: runner.getRunStatus(runId)?.sessionKey,
     }));
+    expect(lifecycleOrder).toEqual(["suspended", "closed"]);
   });
 
   it("watchdog immediately closes durable resources when execution ignores abort", async () => {
