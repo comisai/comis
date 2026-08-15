@@ -520,6 +520,38 @@ describe("assembleIncidentReport — spawnTree", () => {
   });
 });
 
+describe("assembleIncidentReport — durable outward delivery", () => {
+  it("surfaces the committed attachment receipt from the outward ledger transition", () => {
+    const report = assembleIncidentReport(
+      toIncidentSignals([{
+        traceSchema: "comis-trajectory",
+        type: "delivery.outward_ledger_transition",
+        seq: 1,
+        data: {
+          rootRunId: "root-attachment",
+          stepIndex: 0,
+          transition: "commit",
+          outcome: "committed",
+          deliveryKind: "attachment",
+          platformMessageId: "telegram-document-218",
+        },
+      }]),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      1,
+    );
+
+    expect((report as unknown as { outwardDelivery?: unknown }).outwardDelivery).toEqual({
+      status: "committed",
+      rootRunId: "root-attachment",
+      stepIndex: 0,
+      deliveryKind: "attachment",
+      platformMessageId: "telegram-document-218",
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The orchestrate? section — one entry per run, folded from
 // orchestrate.run_summary records with per-run toolCalls joined by the child

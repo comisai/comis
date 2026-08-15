@@ -76,6 +76,40 @@ describe("governed announcement sender", () => {
     expect(sendToPlatform).toHaveBeenCalledOnce();
   });
 
+  it("emits the committed attachment receipt on the durable delivery transition", async () => {
+    const emitSafely = vi.fn(() => ({ failures: [] }));
+    const sender = createGovernedAnnouncementSender({
+      ledger: makeLedger(),
+      sendToPlatform: vi.fn(async () => ok({
+        delivered: true,
+        status: "accepted" as const,
+        platformMessageId: "telegram-document-218",
+      })),
+      eventBus: { emitSafely } as never,
+    });
+
+    await sender.send({
+      ...request,
+      attachment: {
+        path: "/private/report.md",
+        fileName: "report.md",
+        mimeType: "text/markdown",
+        contentDigest: "a".repeat(64),
+        sizeBytes: 13_985,
+      },
+    });
+
+    expect(emitSafely).toHaveBeenCalledWith(
+      "delivery:outward_ledger_transition",
+      expect.objectContaining({
+        transition: "commit",
+        outcome: "committed",
+        deliveryKind: "attachment",
+        platformMessageId: "telegram-document-218",
+      }),
+    );
+  });
+
   it("parks a resolved false result and never claims delivery", async () => {
     let row: OutwardSendRecord | undefined;
     const ledger = makeLedger({
