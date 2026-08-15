@@ -98,6 +98,15 @@ export function translateOrchestrationPayload(
         costUsd: payload.cost,
         unresolvedBackgroundProcesses: payload.unresolvedBackgroundProcesses,
         failedBackgroundProcesses: payload.failedBackgroundProcesses,
+        ...(payload.expectedOutputs !== undefined
+          ? { expectedOutputs: payload.expectedOutputs }
+          : {}),
+        ...(payload.verifiedOutputs !== undefined
+          ? { verifiedOutputs: payload.verifiedOutputs }
+          : {}),
+        ...(payload.attachmentsPrepared !== undefined
+          ? { attachmentsPrepared: payload.attachmentsPrepared }
+          : {}),
       };
 
     case "session:sub_agent_wait_finished":

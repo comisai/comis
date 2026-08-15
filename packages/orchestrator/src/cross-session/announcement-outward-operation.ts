@@ -322,6 +322,10 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
     identity: Pick<AnnouncementOperationIdentity, "rootRunId" | "stepIndex">,
     transition: "lookup" | "begin" | "mark_unknown" | "commit" | "park",
     outcome: "blocked" | "in_flight" | "committed" | "parked",
+    evidence?: {
+      deliveryKind: "text" | "attachment";
+      platformMessageId?: string;
+    },
   ): void {
     if (!deps.eventBus) return;
     emitObservationalEventSafely(
@@ -332,6 +336,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
         stepIndex: identity.stepIndex,
         transition,
         outcome,
+        ...(evidence ?? {}),
         timestamp: systemNowMs(),
       },
     );
@@ -357,7 +362,10 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
     );
   }
 
-  async function park(identity: AnnouncementOperationIdentity): Promise<void> {
+  async function park(
+    identity: AnnouncementOperationIdentity,
+    evidence: { deliveryKind: "text" | "attachment" },
+  ): Promise<void> {
     const parked = await deps.ledger.parkUncertain(identity.rootRunId, identity.stepIndex);
     if (!parked.ok || !parked.value) {
       logFailure(
@@ -367,10 +375,10 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
         "repair the outward ledger and verify the destination manually before any retry",
         "Completion announcement uncertainty could not be parked",
       );
-      emit(identity, "park", "blocked");
+      emit(identity, "park", "blocked", evidence);
       return;
     }
-    emit(identity, "park", "parked");
+    emit(identity, "park", "parked", evidence);
   }
 
   const send: SendGovernedAnnouncement = async (request) => {
@@ -386,6 +394,11 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       return ok({ delivered: false, failure: "operation_validation_blocked" });
     }
     const digests = digestResult.value;
+    const deliveryEvidence = {
+      deliveryKind: request.attachment === undefined
+        ? "text" as const
+        : "attachment" as const,
+    };
     const allocated = await deps.ledger.allocateStep(request.rootRunId, request.operationId);
     if (!allocated.ok) {
       logFailure(
@@ -412,7 +425,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
         "repair outward-ledger reads before retrying the retained completion",
         "Completion announcement ledger lookup failed",
       );
-      emit(identity, "lookup", "blocked");
+      emit(identity, "lookup", "blocked", deliveryEvidence);
       return ok({ delivered: false, identity, failure: "lookup_blocked" });
     }
     if (existing.value !== undefined) {
@@ -424,7 +437,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
           "reuse a completion operation identity only with its exact original destination and payload",
           "Completion announcement operation identity mismatch",
         );
-        emit(identity, "lookup", "blocked");
+        emit(identity, "lookup", "blocked", deliveryEvidence);
         return ok({ delivered: false, identity, failure: "operation_mismatch" });
       }
       if (
@@ -432,16 +445,19 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
         && existing.value.platformMessageId !== undefined
         && existing.value.platformMessageId.length > 0
       ) {
-        emit(identity, "lookup", "committed");
+        emit(identity, "lookup", "committed", {
+          ...deliveryEvidence,
+          platformMessageId: existing.value.platformMessageId,
+        });
         return ok({ delivered: true, identity });
       }
       if (
         existing.value.state === "send_attempt_started"
         || existing.value.state === "unknown_after_send"
       ) {
-        await park(identity);
+        await park(identity, deliveryEvidence);
       }
-      emit(identity, "lookup", "blocked");
+      emit(identity, "lookup", "blocked", deliveryEvidence);
       return ok({ delivered: false, identity, failure: "operation_retained" });
     }
 
@@ -460,14 +476,14 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
         "inspect the retained operation before retrying; another attempt may own this identity",
         "Completion announcement durable intent could not be recorded",
       );
-      emit(identity, "begin", "blocked");
+      emit(identity, "begin", "blocked", deliveryEvidence);
       return ok({ delivered: false, identity, failure: "begin_blocked" });
     }
-    emit(identity, "begin", "in_flight");
+    emit(identity, "begin", "in_flight", deliveryEvidence);
 
     const markedUnknown = await deps.ledger.markUnknown(identity.rootRunId, identity.stepIndex);
     if (!markedUnknown.ok) {
-      await park(identity);
+      await park(identity, deliveryEvidence);
       logFailure(
         identity,
         "mark_unknown",
@@ -475,10 +491,10 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
         "repair the outward ledger before retrying; the platform call was blocked",
         "Completion announcement uncertainty transition failed",
       );
-      emit(identity, "mark_unknown", "blocked");
+      emit(identity, "mark_unknown", "blocked", deliveryEvidence);
       return ok({ delivered: false, identity, failure: "uncertainty_transition_blocked" });
     }
-    emit(identity, "mark_unknown", "in_flight");
+    emit(identity, "mark_unknown", "in_flight", deliveryEvidence);
 
     const boundary = await fromPromise(
       deps.sendToPlatform(
@@ -490,11 +506,11 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       ),
     );
     if (!boundary.ok || !boundary.value.ok) {
-      await park(identity);
+      await park(identity, deliveryEvidence);
       return ok({ delivered: false, identity, failure: "transport_failed" });
     }
     if (!boundary.value.value.delivered) {
-      await park(identity);
+      await park(identity, deliveryEvidence);
       return ok({
         delivered: false,
         identity,
@@ -505,7 +521,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
     }
     const receipt = boundary.value.value.platformMessageId;
     if (receipt === undefined || receipt.length === 0) {
-      await park(identity);
+      await park(identity, deliveryEvidence);
       logFailure(
         identity,
         "receipt",
@@ -518,7 +534,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
 
     const committed = await deps.ledger.commit(identity.rootRunId, identity.stepIndex, receipt);
     if (!committed.ok) {
-      await park(identity);
+      await park(identity, deliveryEvidence);
       logFailure(
         identity,
         "commit",
@@ -526,10 +542,13 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
         "verify the destination manually before any retry; the platform receipt was not committed",
         "Completion announcement receipt commit failed",
       );
-      emit(identity, "commit", "blocked");
+      emit(identity, "commit", "blocked", deliveryEvidence);
       return ok({ delivered: false, identity, failure: "commit_blocked" });
     }
-    emit(identity, "commit", "committed");
+    emit(identity, "commit", "committed", {
+      ...deliveryEvidence,
+      platformMessageId: receipt,
+    });
     return ok({ delivered: true, identity });
   };
 

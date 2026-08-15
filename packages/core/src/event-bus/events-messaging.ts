@@ -163,6 +163,12 @@ export interface MessagingEvents {
     unresolvedBackgroundProcesses?: number;
     /** Auto-background sessions observed in a failed or killed state. */
     failedBackgroundProcesses?: number;
+    /** Declared output files inspected at terminal validation. */
+    expectedOutputs?: number;
+    /** Declared output files that existed at terminal validation. */
+    verifiedOutputs?: number;
+    /** Verified files passed into governed attachment preparation. */
+    attachmentsPrepared?: number;
   };
 
   /** A synchronous parent wait finished for one requested child. */

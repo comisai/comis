@@ -790,35 +790,6 @@ export function accumulateSubAgentSpawnedRecord(
   } satisfies SpawnNodeFold);
 }
 
-/** Fold one parent-routed direct-child terminal record into topology and,
- * when it belongs to the selected turn, its acute completion counts. */
-export function accumulateSubAgentCompletedRecord(
-  acc: Acc,
-  data: Record<string, unknown>,
-  countForCurrentTurn: boolean,
-): void {
-  const runId = asString(data.runId);
-  if (runId === undefined) return;
-  const success = data.success === true;
-  if (countForCurrentTurn && !acc.subagentCompletedRunIds.has(runId)) {
-    acc.subagentCompletedRunIds.add(runId);
-    acc.subagentCompletedCount += 1;
-    if (!success) {
-      acc.subagentFailedCount += 1;
-      acc.subagentLastFailedRunId = runId;
-    }
-  }
-  const node = acc.spawnNodesByLease.get(runId);
-  if (node === undefined) return;
-  node.terminalOutcome = success ? "completed" : "failed";
-  const runtimeMs = asNumber(data.runtimeMs);
-  const tokensUsed = asNumber(data.tokensUsed);
-  const costUsd = asNumber(data.costUsd);
-  if (runtimeMs !== undefined) node.runtimeMs = Math.max(0, runtimeMs);
-  if (tokensUsed !== undefined) node.tokensUsed = Math.max(0, tokensUsed);
-  if (costUsd !== undefined) node.costUsd = Math.max(0, costUsd);
-}
-
 /**
  * Fold one `graph.node_spawned` trajectory record into the
  * spawn-tree working map. A graph DAG node spawns in-process (gatedSpawn →

@@ -11,7 +11,7 @@ import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord,
   accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
   accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
-  accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord, accumulateSubAgentSpawnedRecord, accumulateSubAgentCompletedRecord,
+  accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord, accumulateSubAgentSpawnedRecord,
   accumulateOrchestrateRunSummaryRecord, accumulateOrchestrateToolCall,
   accumulateBackgroundTaskRecord, buildBackgroundTasksSignal,
   accumulateContextRecord, accumulatePromptRequestRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
@@ -20,10 +20,10 @@ import {
 import { accumulateDiscoveryActivation, accumulateOauthRefreshFailure, ensureTool, handleLogRecord, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
-import { accumulateDeliveryDispatch, accumulateDeliveryReplyBound } from "./obs-explain-delivery-fold.js";
+import { accumulateDeliveryDispatch, accumulateDeliveryReplyBound, accumulateOutwardDelivery } from "./obs-explain-delivery-fold.js";
 import { accumulateSubagentIncidentRecord, selectedSubagentWaitSignals } from "./obs-explain-subagent-fold.js";
+import { accumulateSubAgentCompletedRecord } from "./obs-explain-subagent-output-fold.js";
 import { accumulateMediaAttachmentRejection, previousPromptSequence } from "./obs-explain-attachment-fold.js";
-/** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
 export const BREAKER_N = 5;
 const PROBLEMATIC_CHANNEL_STATES = new Set(["disconnected", "errored", "stale", "stuck", "unknown"]);
@@ -395,6 +395,7 @@ function handleEventRecord(
     }
     case "delivery.reply_bound": accumulateDeliveryReplyBound(acc, data); return;
     case "delivery.dispatched": accumulateDeliveryDispatch(acc, data); return;
+    case "delivery.outward_ledger_transition": accumulateOutwardDelivery(acc, data); return;
     case "activity.turn_finalized": {
       const strategy = asString(data.strategy);
       const outcome = asString(data.outcome);
@@ -903,6 +904,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
     ...(acc.turnFinalizeCounts !== undefined ? { turnFinalizeCounts: acc.turnFinalizeCounts } : {}),
     ...(acc.deliveryDispatch !== undefined ? { deliveryDispatch: acc.deliveryDispatch } : {}),
+    ...(acc.outwardDelivery !== undefined ? { outwardDelivery: acc.outwardDelivery } : {}),
     ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
     ...(acc.recoveries !== undefined ? { recoveries: acc.recoveries } : {}),
     ...(acc.discoveryActivation !== undefined ? { discoveryActivation: acc.discoveryActivation } : {}),

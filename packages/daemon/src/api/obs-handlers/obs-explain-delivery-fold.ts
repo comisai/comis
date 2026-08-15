@@ -52,3 +52,43 @@ export function accumulateDeliveryReplyBound(
   ) return;
   acc.deliveryMessageIds.push(messageId);
 }
+
+/** Fold one valid durable completion-delivery transition, last record wins. */
+export function accumulateOutwardDelivery(
+  acc: Acc,
+  data: Record<string, unknown>,
+): void {
+  const outcome = data.outcome;
+  const transition = data.transition;
+  const rootRunId = data.rootRunId;
+  const stepIndex = data.stepIndex;
+  if (
+    (outcome !== "blocked"
+      && outcome !== "in_flight"
+      && outcome !== "committed"
+      && outcome !== "failed"
+      && outcome !== "parked")
+    || (transition !== "lookup"
+      && transition !== "begin"
+      && transition !== "mark_unknown"
+      && transition !== "commit"
+      && transition !== "mark_failed"
+      && transition !== "park")
+    || typeof rootRunId !== "string"
+    || !Number.isSafeInteger(stepIndex)
+    || (stepIndex as number) < 0
+  ) return;
+  const deliveryKind = data.deliveryKind;
+  acc.outwardDelivery = {
+    status: outcome,
+    rootRunId,
+    stepIndex: stepIndex as number,
+    transition,
+    ...(deliveryKind === "text" || deliveryKind === "attachment"
+      ? { deliveryKind }
+      : {}),
+    ...(typeof data.platformMessageId === "string"
+      ? { platformMessageId: data.platformMessageId }
+      : {}),
+  };
+}

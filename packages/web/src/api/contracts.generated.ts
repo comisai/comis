@@ -12106,6 +12106,32 @@ export const CONTRACTS = {
               "costUsd": {
                 "type": "number",
                 "minimum": 0
+              },
+              "outputValidation": {
+                "type": "object",
+                "properties": {
+                  "expected": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "verified": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "attachmentsPrepared": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "expected",
+                  "verified",
+                  "attachmentsPrepared"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -13053,6 +13079,45 @@ export const CONTRACTS = {
           },
           "required": [
             "messageIds"
+          ],
+          "additionalProperties": false
+        },
+        "outwardDelivery": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "blocked",
+                "in_flight",
+                "committed",
+                "failed",
+                "parked"
+              ]
+            },
+            "rootRunId": {
+              "type": "string"
+            },
+            "stepIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "deliveryKind": {
+              "type": "string",
+              "enum": [
+                "text",
+                "attachment"
+              ]
+            },
+            "platformMessageId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "rootRunId",
+            "stepIndex"
           ],
           "additionalProperties": false
         },
