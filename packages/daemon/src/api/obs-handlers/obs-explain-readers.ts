@@ -184,6 +184,9 @@ export interface IncidentSourceReader {
     traceId: string,
   ): Promise<MessageLifecycleDiagnosticEvidence | null>;
   readSessionRecords(sessionKey: string): Promise<Array<Record<string, unknown>>>;
+  readRootRecoveryRecords?(
+    rootRunIds: readonly string[],
+  ): Promise<Array<Record<string, unknown>>>;
   readCacheTraceRecords(sessionKey: string): Promise<Array<Record<string, unknown>>>;
   readSessionMetadata(sessionKey: string): Promise<Record<string, unknown> | null>;
   readDiagnosticsRollup(sessionKey: string): Promise<Record<string, unknown> | null>;
@@ -613,6 +616,46 @@ function readJsonlBounded(file: string): Array<Record<string, unknown>> {
   return out.reverse();
 }
 
+function matchingRecoveryRoot(
+  record: Record<string, unknown>,
+  rootRunIds: ReadonlySet<string>,
+): boolean {
+  if (record.type !== "durable.suspended" && record.type !== "durable.resumed") return false;
+  if (typeof record.data !== "object" || record.data === null || Array.isArray(record.data)) {
+    return false;
+  }
+  const rootRunId = (record.data as Record<string, unknown>).rootRunId;
+  return typeof rootRunId === "string" && rootRunIds.has(rootRunId);
+}
+
+function scanRootRecoveryRecords(
+  workspaceDir: string,
+  rootRunIds: ReadonlySet<string>,
+  seenFiles: Set<string>,
+  records: Array<Record<string, unknown>>,
+): void {
+  const sessionsBase = safePath(workspaceDir, "sessions");
+  const visitTrajectory = (trajectoryFile: string): string | undefined => {
+    if (seenFiles.has(trajectoryFile)) return undefined;
+    seenFiles.add(trajectoryFile);
+    for (const record of readJsonlBounded(trajectoryFile)) {
+      if (matchingRecoveryRoot(record, rootRunIds)) records.push(record);
+      if (records.length >= MAX_RECORDS) return "full";
+    }
+    return undefined;
+  };
+  scanSessionArtifacts(sessionsBase, TRAJECTORY_POINTER_SUFFIX, (pointerFile) => {
+    const sessionFile = pointerFile.slice(0, -TRAJECTORY_POINTER_SUFFIX.length);
+    return visitTrajectory(resolveTrajectoryFilePath(sessionFile));
+  });
+  if (records.length >= MAX_RECORDS) return;
+  scanSessionArtifacts(
+    sessionsBase,
+    COLOCATED_TRAJECTORY_SUFFIX,
+    visitTrajectory,
+  );
+}
+
 function boundedTaskIdentifier(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length === 0) return undefined;
   return Buffer.byteLength(value, "utf8") <= MAX_TASK_IDENTIFIER_BYTES ? value : undefined;
@@ -785,6 +828,28 @@ export function makeRealReader(
         if (records.length > 0) return records;
       }
       return [];
+    },
+
+    async readRootRecoveryRecords(
+      rootRunIds: readonly string[],
+    ): Promise<Array<Record<string, unknown>>> {
+      const roots = new Set(rootRunIds.filter((rootRunId) => rootRunId.length > 0));
+      if (roots.size === 0) return [];
+      const records: Array<Record<string, unknown>> = [];
+      const seenFiles = new Set<string>();
+      const workspaceDirsToScan = workspaceDirectoryCandidates(base, "", workspaceDirs);
+      for (const workspaceDir of workspaceDirsToScan) {
+        scanRootRecoveryRecords(workspaceDir, roots, seenFiles, records);
+        if (records.length >= MAX_RECORDS) break;
+      }
+      return records
+        .map((record, index) => ({ record, index }))
+        .sort((left, right) => {
+          const leftTs = typeof left.record.ts === "string" ? left.record.ts : "";
+          const rightTs = typeof right.record.ts === "string" ? right.record.ts : "";
+          return leftTs.localeCompare(rightTs) || left.index - right.index;
+        })
+        .map(({ record }) => record);
     },
 
     async readCacheTraceRecords(sessionKey: string): Promise<Array<Record<string, unknown>>> {

@@ -521,6 +521,35 @@ describe("assembleIncidentReport — spawnTree", () => {
 });
 
 describe("assembleIncidentReport — durable outward delivery", () => {
+  it("surfaces an attachment allocation block without a ledger step", () => {
+    const report = assembleIncidentReport(
+      toIncidentSignals([{
+        traceSchema: "comis-trajectory",
+        type: "delivery.outward_ledger_transition",
+        seq: 1,
+        data: {
+          rootRunId: "root-allocation",
+          runId: "run-allocation",
+          partId: "attachment:0",
+          transition: "allocate",
+          outcome: "blocked",
+          deliveryKind: "attachment",
+        },
+      }]),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      1,
+    );
+
+    expect(IncidentReportSchema.parse(report).outwardDeliveries).toEqual([{
+      status: "blocked",
+      rootRunId: "root-allocation",
+      transition: "allocate",
+      deliveryKind: "attachment",
+    }]);
+  });
+
   it("surfaces the committed attachment receipt from the outward ledger transition", () => {
     const report = assembleIncidentReport(
       toIncidentSignals([{
@@ -561,6 +590,7 @@ describe("assembleIncidentReport — durable outward delivery", () => {
           seq: 1,
           data: {
             rootRunId: "root-partial",
+            runId: "run-committed",
             stepIndex: 0,
             partId: "attachment:0",
             transition: "commit",
@@ -575,7 +605,8 @@ describe("assembleIncidentReport — durable outward delivery", () => {
           seq: 2,
           data: {
             rootRunId: "root-partial",
-            partId: "attachment:1",
+            runId: "run-failed",
+            partId: "attachment:0",
             transition: "prepare",
             outcome: "failed",
             deliveryKind: "attachment",

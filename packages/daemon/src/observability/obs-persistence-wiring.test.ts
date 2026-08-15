@@ -1497,14 +1497,14 @@ describe("deliveryDeadletteredEventToRow", () => {
 });
 
 describe("outwardAttachmentFailureEventToRow", () => {
-  it("maps an attachment preparation failure to a warning health signal", () => {
+  it("maps an attachment allocation failure to a warning health signal", () => {
     const row = outwardAttachmentFailureEventToRow({
       rootRunId: "root-output",
       runId: "run-output",
       sessionKey: "default:agent-a:telegram:chat-a:user_a",
       partId: "attachment:0",
-      transition: "prepare",
-      outcome: "failed",
+      transition: "allocate",
+      outcome: "blocked",
       deliveryKind: "attachment",
       timestamp: 8_250,
     });
@@ -1517,8 +1517,8 @@ describe("outwardAttachmentFailureEventToRow", () => {
     });
     expect(JSON.parse(row.details ?? "{}")).toEqual({
       signal: "outward_attachment_failed",
-      transition: "prepare",
-      outcome: "failed",
+      transition: "allocate",
+      outcome: "blocked",
     });
     expect(JSON.stringify(row)).not.toContain("run-output");
     expect(JSON.stringify(row)).not.toContain("root-output");

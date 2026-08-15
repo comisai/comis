@@ -1220,6 +1220,24 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
+  it("quarantines an internal handle from a runtime completion report", () => {
+    const runId = "8dc57d7f-0071-45cb-bdaf-23d47ecead39";
+    const guarded = delegationEvidenceGuard()({
+      request: "[Background Task] completion",
+      response: `Internal run handle: ${runId}\n\nThe inventory review found three missing records.`,
+      toolExecResults: [],
+      runtimeCompletion: true,
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: "Internal run handle: [internal]\n\nThe inventory review found three missing records.",
+      corrected: true,
+      reason: "successful_spawn_response_internal_identifier",
+    });
+    expect(guarded.response).not.toContain(runId);
+  });
+
   it("still guards the same delegation prose when it is an ordinary request", () => {
     const guarded = delegationEvidenceGuard()({
       request: "use another agent for an independent check",
@@ -1324,6 +1342,33 @@ describe("current-turn delegation evidence guard", () => {
     expect(guarded).toEqual({
       response: completedResult,
       corrected: false,
+    });
+  });
+
+  it("quarantines an internal handle from a completed child wait", () => {
+    const runId = "8dc57d7f-0071-45cb-bdaf-23d47ecead39";
+    const guarded = delegationEvidenceGuard()({
+      request: "use sessions_spawn for one nested child and return its result",
+      response: `Run ID: ${runId}\nversion: 1\nNESTED_LEAF`,
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true, spawnRunId: runId },
+        {
+          toolName: "subagents",
+          action: "wait",
+          success: true,
+          subagentWaitCompletedCount: 1,
+        },
+      ],
+      honestResponse,
+      verifiedSpawnResponse:
+        "I successfully started the requested sub-agent. Its result is still pending.",
+    });
+
+    expect(guarded.response).toContain("version: 1\nNESTED_LEAF");
+    expect(guarded.response).not.toContain(runId);
+    expect(guarded).toMatchObject({
+      corrected: true,
+      reason: "successful_spawn_response_internal_identifier",
     });
   });
 
@@ -2458,6 +2503,20 @@ describe("active-model self-status grounding guard", () => {
       provider: "provider_a",
       modelId: "model_a",
     })).toEqual({ response, corrected: false });
+  });
+
+  it("grounds a later direct self-status query after an unrelated model query", () => {
+    expect(activeModelSelfStatusGuard()({
+      request:
+        "What model architecture does the paper use? Which current model are you using?",
+      response: "The paper uses a transformer, and my model is unspecified.",
+      provider: "provider_a",
+      modelId: "model_a",
+    })).toEqual({
+      response: "provider_a / model_a",
+      corrected: true,
+      reason: "active_model_status_mismatch",
+    });
   });
 });
 

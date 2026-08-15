@@ -2,19 +2,25 @@
 import { describe, expect, it } from "vitest";
 import {
   delegationOwnsPromptSkillWorkflow,
-  hasAcceptedDelegation,
+  hasWholeRequestDelegation,
 } from "./accepted-delegation.js";
 
-describe("hasAcceptedDelegation", () => {
-  it("recognizes only successful session spawn receipts", () => {
-    expect(hasAcceptedDelegation(undefined)).toBe(false);
-    expect(hasAcceptedDelegation([
+describe("hasWholeRequestDelegation", () => {
+  it("requires a successful spawn with explicit whole-request ownership", () => {
+    expect(hasWholeRequestDelegation(undefined)).toBe(false);
+    expect(hasWholeRequestDelegation([
       { toolName: "sessions_spawn", success: false },
       { toolName: "web_search", success: true },
-    ])).toBe(false);
-    expect(hasAcceptedDelegation([
+    ] as never)).toBe(false);
+    expect(hasWholeRequestDelegation([
       { toolName: "sessions_spawn", success: true },
-    ])).toBe(true);
+      { toolName: "sessions_spawn", success: true, delegationScope: "partial" },
+    ] as never)).toBe(false);
+    expect(hasWholeRequestDelegation([{
+      toolName: "sessions_spawn",
+      success: true,
+      delegationScope: "whole_request",
+    } as never])).toBe(true);
   });
 });
 

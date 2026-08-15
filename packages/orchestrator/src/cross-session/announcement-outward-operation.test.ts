@@ -115,6 +115,43 @@ describe("governed announcement sender", () => {
     );
   });
 
+  it("emits an attributed blocked transition when allocation fails", async () => {
+    const emitSafely = vi.fn(() => ({ failures: [] }));
+    const sender = createGovernedAnnouncementSender({
+      ledger: makeLedger({
+        allocateStep: vi.fn(async () => err(new Error("allocate failed"))),
+      }),
+      sendToPlatform: vi.fn(),
+      eventBus: { emitSafely } as never,
+    });
+
+    const result = await sender.send({
+      ...request,
+      attachment: {
+        path: "/private/report.md",
+        fileName: "report.md",
+        mimeType: "text/markdown",
+        contentDigest: "a".repeat(64),
+        sizeBytes: 13_985,
+      },
+    });
+
+    expect(result).toEqual(ok({ delivered: false, failure: "allocation_blocked" }));
+    expect(emitSafely).toHaveBeenCalledWith(
+      "delivery:outward_ledger_transition",
+      expect.objectContaining({
+        rootRunId: "root-1",
+        runId: "run-1",
+        sessionKey: "default:user1:telegram:chat-1",
+        partId: "attachment:0",
+        transition: "allocate",
+        outcome: "blocked",
+        deliveryKind: "attachment",
+      }),
+    );
+    expect(emitSafely.mock.calls[0]?.[1]).not.toHaveProperty("stepIndex");
+  });
+
   it("parks a resolved false result and never claims delivery", async () => {
     let row: OutwardSendRecord | undefined;
     const ledger = makeLedger({

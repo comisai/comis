@@ -9,6 +9,20 @@ export function hasAcceptedDelegation(
   ) ?? false;
 }
 
+export function hasWholeRequestDelegation(
+  records: readonly Pick<
+    ToolExecutionResultRecord,
+    "toolName" | "success" | "delegationScope"
+  >[] | undefined,
+): boolean {
+  return records?.some(
+    (record) =>
+      record.toolName === "sessions_spawn"
+      && record.success
+      && record.delegationScope === "whole_request",
+  ) ?? false;
+}
+
 export function delegationOwnsPromptSkillWorkflow(
   records: readonly Pick<
     ToolExecutionResultRecord,

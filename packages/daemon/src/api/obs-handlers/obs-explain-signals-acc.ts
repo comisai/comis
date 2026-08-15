@@ -249,7 +249,7 @@ export interface Acc {
       status: "prepared" | "blocked" | "in_flight" | "committed" | "failed" | "parked";
       rootRunId: string;
       stepIndex?: number;
-      transition: "prepare" | "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
+      transition: "prepare" | "allocate" | "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
       deliveryKind?: "text" | "attachment";
       platformMessageId?: string;
     }

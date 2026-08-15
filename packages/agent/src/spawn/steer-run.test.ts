@@ -154,6 +154,63 @@ describe("steerRun — inject a steer message into a running sub-agent's live se
     expect(handle.followUp).not.toHaveBeenCalled();
   });
 
+  it("reports completion when the run terminalizes during handle resolution", async () => {
+    const run = makeRun();
+    const deps = makeDeps({ run });
+    deps.sessionResolver = {
+      resolveActiveSession: vi.fn(() => {
+        deps.runs.set(run.runId, { ...run, status: "completed" });
+        return undefined;
+      }),
+    };
+
+    const result = await steerRun(deps, run.runId, "adjust the plan");
+
+    expect(result).toEqual({
+      steered: false,
+      terminalStatus: "completed",
+      error: "Run run-1 is not running (status: completed)",
+    });
+  });
+
+  it("reports completion when handle resolution throws after terminalization", async () => {
+    const run = makeRun();
+    const deps = makeDeps({ run });
+    deps.sessionResolver = {
+      resolveActiveSession: vi.fn(() => {
+        deps.runs.set(run.runId, { ...run, status: "completed" });
+        throw new Error("registry changed");
+      }),
+    };
+
+    const result = await steerRun(deps, run.runId, "adjust the plan");
+
+    expect(result).toEqual({
+      steered: false,
+      terminalStatus: "completed",
+      error: "Run run-1 is not running (status: completed)",
+    });
+  });
+
+  it("reports completion when injection loses the live handle race", async () => {
+    const run = makeRun();
+    const deps = makeDeps({ run });
+    const handle = makeHandle({ streaming: false });
+    handle.followUp.mockImplementation(async () => {
+      deps.runs.set(run.runId, { ...run, status: "completed" });
+      throw new Error("session closed");
+    });
+    deps.sessionResolver = { resolveActiveSession: vi.fn(() => handle) };
+
+    const result = await steerRun(deps, run.runId, "adjust the plan");
+
+    expect(result).toEqual({
+      steered: false,
+      terminalStatus: "completed",
+      error: "Run run-1 is not running (status: completed)",
+    });
+  });
+
   it("unknown run id returns {steered:false, error:/Unknown run/} without resolving a handle", async () => {
     const resolveSpy = vi.fn();
     const deps = makeDeps({ resolveSpy }); // no run added to the map

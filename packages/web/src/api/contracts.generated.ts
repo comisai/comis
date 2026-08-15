@@ -13112,6 +13112,7 @@ export const CONTRACTS = {
                 "type": "string",
                 "enum": [
                   "prepare",
+                  "allocate",
                   "lookup",
                   "begin",
                   "mark_unknown",

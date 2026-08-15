@@ -94,6 +94,17 @@ function recordHasTraceId(record: Record<string, unknown>, traceId: string): boo
   return record.traceId === traceId;
 }
 
+function spawnedRootRunIds(records: ReadonlyArray<Record<string, unknown>>): string[] {
+  const roots = records.flatMap((record) => {
+    if (record.type !== "subagent.spawned") return [];
+    const data = recordData(record);
+    return typeof data.rootRunId === "string" && data.rootRunId.length > 0
+      ? [data.rootRunId]
+      : [];
+  });
+  return [...new Set(roots)];
+}
+
 /** Select one prompt-anchored execution, including same-trace preparation
  * before the prompt and settlement rows whose ended request context carries
  * the session fallback trace. */
@@ -479,6 +490,13 @@ export async function assembleIncidentReportFromSources(
     : executionTraceId === undefined
       ? sessionRecords
       : recordsForExecution(sessionRecords, executionTraceId);
+  const recoveryRootRunIds = params.rootRunId === undefined
+    ? spawnedRootRunIds(selectedRecords)
+    : [params.rootRunId];
+  const rootRecoveryRecords =
+    recoveryRootRunIds.length === 0 || reader.readRootRecoveryRecords === undefined
+      ? []
+      : await reader.readRootRecoveryRecords(recoveryRootRunIds);
   const losslessEvidence =
     taskCheck === null &&
       executionTraceId === undefined &&
@@ -537,7 +555,12 @@ export async function assembleIncidentReportFromSources(
 
   // Normalize both shapes → uniform signals; assemble the report;
   // stamp the deterministic root cause; bound to the depth budget.
-  const signals = toIncidentSignals([...sessionIdentityRecords, ...records, ...cache]);
+  const signals = toIncidentSignals([
+    ...sessionIdentityRecords,
+    ...records,
+    ...rootRecoveryRecords,
+    ...cache,
+  ]);
   // ZERO-RECORD MISS → "did you mean …?": a lossy/partial key (e.g.
   // `telegram:<chatId>` instead of the formatted `<agent>:<chatId>:<chatId>:peer:
   // <chatId>`) resolves nothing. Enumerate the closest REAL keys so the operator

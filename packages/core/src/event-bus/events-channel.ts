@@ -449,7 +449,7 @@ export interface ChannelEvents {
     /** Originating completion run, or null for a boot-time ledger recovery. */
     runId: string | null;
     stepIndex?: number;
-    transition: "prepare" | "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
+    transition: "prepare" | "allocate" | "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
     outcome: "prepared" | "blocked" | "in_flight" | "committed" | "failed" | "parked";
     /** Owning session, or null when recovery has no safe session attribution. */
     sessionKey: string | null;

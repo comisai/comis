@@ -72,6 +72,7 @@ export function accumulateOutwardDelivery(
       && outcome !== "failed"
       && outcome !== "parked")
     || (transition !== "prepare"
+      && transition !== "allocate"
       && transition !== "lookup"
       && transition !== "begin"
       && transition !== "mark_unknown"
@@ -79,7 +80,7 @@ export function accumulateOutwardDelivery(
       && transition !== "mark_failed"
       && transition !== "park")
     || typeof rootRunId !== "string"
-    || (transition !== "prepare" && !hasStepIndex)
+    || (transition !== "prepare" && transition !== "allocate" && !hasStepIndex)
   ) return;
   const deliveryKind = data.deliveryKind;
   const runId = typeof data.runId === "string" ? data.runId : undefined;
@@ -102,11 +103,7 @@ export function accumulateOutwardDelivery(
       );
     }
   }
-  const partId = `${rootRunId}:${
-    typeof data.partId === "string" && data.partId.length > 0
-      ? data.partId
-      : hasStepIndex ? String(stepIndex) : "prepare"
-  }`;
+  const partId = JSON.stringify([rootRunId, runId ?? null, rawPartId]);
   if (
     !acc.outwardDeliveryParts.has(partId)
     && acc.outwardDeliveryParts.size >= OUTWARD_DELIVERY_PART_CAP
