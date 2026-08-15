@@ -410,6 +410,18 @@ export interface OrchestrationEvents {
   };
 
   /**
+   * A checkpoint-admitted sub-agent remained in flight when the daemon's
+   * graceful drain expired. The old process stopped its local execution while
+   * preserving the running checkpoint for the boot resume pass. Counts/ids
+   * only: task content and provider output never cross this event.
+   */
+  "durable:suspended": {
+    rootRunId: string;
+    checkpointId: string;
+    timestamp: number;
+  };
+
+  /**
    * A capability lease (or a whole spawn tree) was cooperatively
    * REVOKED (lease.revoke). Carries the revoked COUNT + the rootRunId (an id) +
    * timestamp ONLY — NEVER the lease bearer, selector, or any body.
