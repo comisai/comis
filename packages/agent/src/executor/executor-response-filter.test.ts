@@ -2415,6 +2415,22 @@ describe("active-model self-status grounding guard", () => {
       modelId: "model_a",
     })).toEqual({ response, corrected: false });
   });
+
+  it("does not combine scattered current-model words across a research request", () => {
+    const request = [
+      "Research three AI-agent security branches: model-provider guidance,",
+      "application-security standards, and real incident lessons.",
+      "Each branch must use current web evidence and state which branches completed.",
+    ].join(" ");
+    const response = "All three research branches completed with current citations.";
+
+    expect(activeModelSelfStatusGuard()({
+      request,
+      response,
+      provider: "provider_a",
+      modelId: "model_a",
+    })).toEqual({ response, corrected: false });
+  });
 });
 
 describe("empty-turn recovery does not narrate an already-delivered reply", () => {
