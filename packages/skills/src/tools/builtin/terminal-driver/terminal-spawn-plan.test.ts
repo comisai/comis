@@ -255,6 +255,31 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("keeps host Git status clean only for verified private administration", () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-host-status-"));
+    try {
+      const repository = join(root, "repository");
+      const workspace = join(root, "worktrees", "task-a");
+      mkdirSync(repository, { recursive: true });
+      execFileSync("git", ["init", "--initial-branch=main", repository]);
+      execFileSync("git", ["-C", repository, "config", "user.name", "Test User"]);
+      execFileSync("git", ["-C", repository, "config", "user.email", "test@example.com"]);
+      writeFileSync(join(repository, "tracked.txt"), "base\n", "utf8");
+      execFileSync("git", ["-C", repository, "add", "tracked.txt"]);
+      execFileSync("git", ["-C", repository, "-c", "commit.gpgsign=false", "commit", "-m", "base"]);
+      execFileSync("git", ["-C", repository, "worktree", "add", "-b", "task-a", workspace]);
+
+      expect(resolveManagedWorkspaceGitMounts(workspace).ok).toBe(true);
+      expect(execFileSync("git", ["-C", workspace, "status", "--porcelain"], { encoding: "utf8" })).toBe("");
+
+      writeFileSync(join(workspace, "user-note.txt"), "preserve me\n", "utf8");
+      expect(execFileSync("git", ["-C", workspace, "status", "--porcelain"], { encoding: "utf8" }))
+        .toBe("?? user-note.txt\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("buildSpawnPlan — execution attachment confinement", () => {
