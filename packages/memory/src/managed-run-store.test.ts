@@ -162,7 +162,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     db.close();
   });
 
-  it("rejects authority tables that omit filesystem creation identities", () => {
+  it("rejects authority tables that omit required identity and outcome columns", () => {
     for (const fixture of [
       {
         table: "workspace_leases",
@@ -171,6 +171,10 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       {
         table: "execution_attachments",
         missing: "source_filesystem_birthtime_ns",
+      },
+      {
+        table: "managed_run_continuation_claims",
+        missing: "reduction_outcome",
       },
     ] as const) {
       const incompatibleDb = new Database(":memory:");
@@ -1185,6 +1189,12 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       status: "waiting",
       statusReason: "attention_pending",
     })).value?.kind).toBe("claim_mismatch");
+    expect((await store.markContinuationOutcome(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      claimId: claim.claimId,
+      outcome: "completed",
+      recordedAtMs: 1_800_000_000_299,
+    })).ok).toBe(false);
 
     const outcome = {
       managedRunId: "managed-run_a",
@@ -1203,6 +1213,71 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       ...outcome,
       outcome: "failed",
     })).value?.kind).toBe("claim_mismatch");
+  });
+
+  it("rejects malformed continuation rows at every mutation boundary", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(true);
+    const claim = {
+      managedRunId: "managed-run_a",
+      claimId: "continuation-claim_malformed",
+      throughReportSequence: 1,
+      claimedAtMs: 1_800_000_000_200,
+      expiresAtMs: 1_800_000_060_200,
+    };
+    expect((await store.claimContinuation(OWNER_SCOPE, claim)).value?.kind).toBe("claimed");
+    db.prepare("UPDATE managed_run_continuation_claims SET claimed_at_ms = 'bad' WHERE claim_id = ?")
+      .run(claim.claimId);
+
+    expect((await store.claimContinuation(OWNER_SCOPE, claim)).ok).toBe(false);
+    expect((await store.commitReducedState(OWNER_SCOPE, {
+      managedRunId: claim.managedRunId,
+      claimId: claim.claimId,
+      throughReportSequence: claim.throughReportSequence,
+      status: "active",
+      statusReason: "report_activity",
+      continuationOutcome: "completed",
+      committedAtMs: 1_800_000_000_300,
+    })).ok).toBe(false);
+    expect((await store.markContinuationOutcome(OWNER_SCOPE, {
+      managedRunId: claim.managedRunId,
+      claimId: claim.claimId,
+      outcome: "completed",
+      recordedAtMs: 1_800_000_000_400,
+    })).ok).toBe(false);
+  });
+
+  it("rejects a reduced continuation whose durable outcome is missing", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(true);
+    const claim = {
+      managedRunId: "managed-run_a",
+      claimId: "continuation-claim_missing-outcome",
+      throughReportSequence: 1,
+      claimedAtMs: 1_800_000_000_200,
+      expiresAtMs: 1_800_000_060_200,
+    };
+    expect((await store.claimContinuation(OWNER_SCOPE, claim)).value?.kind).toBe("claimed");
+    expect((await store.commitReducedState(OWNER_SCOPE, {
+      managedRunId: claim.managedRunId,
+      claimId: claim.claimId,
+      throughReportSequence: claim.throughReportSequence,
+      status: "active",
+      statusReason: "report_activity",
+      continuationOutcome: "completed",
+      committedAtMs: 1_800_000_000_300,
+    })).value?.kind).toBe("updated");
+    db.prepare("UPDATE managed_run_continuation_claims SET reduction_outcome = NULL WHERE claim_id = ?")
+      .run(claim.claimId);
+
+    expect(await store.claimContinuation(OWNER_SCOPE, claim)).toEqual({
+      ok: false,
+      error: new Error("managed-run continuation reduction is missing its durable outcome"),
+    });
   });
 
   it("atomically completes a paused run after verified handback evidence", async () => {
