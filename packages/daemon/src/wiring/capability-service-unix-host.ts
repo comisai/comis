@@ -83,6 +83,7 @@ interface PendingControl<T = unknown> {
 interface InboundReplay {
   readonly canonical: string;
   response?: unknown;
+  retryable?: boolean;
 }
 
 interface HandshakeWaiter {
@@ -321,7 +322,10 @@ function createEndpoint(
 
     function rememberResponse(operationId: string, response: unknown): void {
       const entry = replay.get(operationId);
-      if (entry !== undefined) entry.response = response;
+      if (entry !== undefined) {
+        entry.response = response;
+        entry.retryable = false;
+      }
       while (replay.size > MAX_REPLAY_ENTRIES) {
         const oldest = replay.keys().next().value as string | undefined;
         if (oldest === undefined) break;
@@ -341,6 +345,10 @@ function createEndpoint(
         return ok("new");
       }
       if (previous.canonical !== encoded.value) return err("replay_conflict");
+      if (previous.retryable === true) {
+        previous.retryable = false;
+        return ok("new");
+      }
       return previous.response === undefined
         ? err("pending")
         : err({ response: previous.response });
@@ -373,7 +381,8 @@ function createEndpoint(
         ? { jsonrpc: "2.0", id: request.id, result: routed.response }
         : capabilityServiceErrorResponse(routed.errorKind, request.id);
       if (routed.errorKind === "deadline_exceeded" || routed.errorKind === "internal_error") {
-        replay.delete(operationId);
+        const entry = replay.get(operationId);
+        if (entry !== undefined) entry.retryable = true;
       } else {
         rememberResponse(operationId, response);
       }
