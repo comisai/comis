@@ -220,6 +220,7 @@ describe("runPrompt observable boundaries", () => {
           success: true,
           durationMs: 5,
           delegatedToolNames: ["web_search", "web_fetch"],
+          delegationScope: "whole_request",
         }],
       },
       messages: [

@@ -1634,6 +1634,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 (name): name is string =>
                   typeof name === "string" && name.length > 0 && name.length <= 256,
               ))].slice(0, 64);
+          const rawDelegationScope =
+            rawArgsForParams !== null
+            && typeof rawArgsForParams === "object"
+              ? (rawArgsForParams as Record<string, unknown>).delegation_scope
+              : undefined;
+          const delegationScope =
+            toolSuccess
+            && endEvent.toolName === "sessions_spawn"
+            && (rawDelegationScope === "whole_request" || rawDelegationScope === "partial")
+              ? rawDelegationScope
+              : undefined;
           const processSessionObservation = extractProcessSessionObservation({
             toolName: endEvent.toolName,
             resultBackgrounded,
@@ -1674,6 +1685,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               : { subagentWaitCompletedCount }),
             ...(spawnRunId === undefined ? {} : { spawnRunId }),
             ...(delegatedToolNames === undefined ? {} : { delegatedToolNames }),
+            ...(delegationScope === undefined ? {} : { delegationScope }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel

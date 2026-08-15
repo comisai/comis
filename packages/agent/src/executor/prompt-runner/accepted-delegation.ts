@@ -12,7 +12,7 @@ export function hasAcceptedDelegation(
 export function delegationOwnsPromptSkillWorkflow(
   records: readonly Pick<
     ToolExecutionResultRecord,
-    "toolName" | "success" | "delegatedToolNames"
+    "toolName" | "success" | "delegatedToolNames" | "delegationScope"
   >[] | undefined,
   workflowToolNames: readonly string[] | undefined,
 ): boolean {
@@ -21,6 +21,7 @@ export function delegationOwnsPromptSkillWorkflow(
     if (
       record.toolName !== "sessions_spawn"
       || !record.success
+      || record.delegationScope !== "whole_request"
       || record.delegatedToolNames === undefined
     ) return false;
     const delegated = new Set(record.delegatedToolNames);
