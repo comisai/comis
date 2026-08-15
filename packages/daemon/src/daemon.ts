@@ -2212,8 +2212,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     logger: daemonLogger,
   });
   const managedContinuationEngine = createContinuationExecutionEngine({
-    eventBus: container.eventBus,
-    getExecutor: handle.getExecutor,
+    eventBus: container.eventBus, getExecutor: handle.getExecutor,
     assembleToolsForAgent,
     resolveCurrentCapabilityViewHash: () => capabilityServices.runtime.getActiveView().viewHash,
     ...(activityCoordinatorFactory === undefined ? {} : { activityCoordinatorFactory }),
