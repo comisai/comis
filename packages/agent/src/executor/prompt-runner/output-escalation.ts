@@ -22,6 +22,7 @@ import { runBudgetContinuation } from "./budget-continuation.js";
 import {
   delegationOwnsPromptSkillWorkflow,
   hasAcceptedDelegation,
+  hasWholeRequestDelegation,
 } from "./accepted-delegation.js";
 import {
   hasEnforcedPromptSkillRoute,
@@ -43,7 +44,7 @@ export async function escalateOutput(
   let escalationAttempted = false;
   let ghostCost: PromptRunResult["ghostCost"];
   const bridgeResult = params.bridge.getResult();
-  const acceptedDelegation = hasAcceptedDelegation(bridgeResult.toolExecResults);
+  const wholeRequestDelegation = hasWholeRequestDelegation(bridgeResult.toolExecResults);
 
   // A safety abort is terminal and must not start generic silent recovery.
   if (bridgeResult.abortResponse !== undefined) {
@@ -63,7 +64,7 @@ export async function escalateOutput(
     && !skipPrompt
     && !escalationAttempted
     && !budgetTracker
-    && !acceptedDelegation
+    && !wholeRequestDelegation
   ) {
     const escalation = await maybeEscalateOutput(
       params,
@@ -89,7 +90,7 @@ export async function escalateOutput(
       budgetTracker,
       budgetCapped,
       requestedBudget,
-      acceptedDelegation,
+      wholeRequestDelegation,
     );
   } else if (!promptSucceeded) {
     // Directive-only commands set skipPrompt and bypass this failure path.
@@ -204,7 +205,7 @@ async function processSuccessPath(
   budgetTracker: TurnBudgetTracker | undefined,
   budgetCapped: boolean,
   requestedBudget: number | undefined,
-  acceptedDelegation: boolean,
+  wholeRequestDelegation: boolean,
 ): Promise<void> {
   const {
     msg, session, config, sessionKey, agentId, result,
@@ -241,7 +242,7 @@ async function processSuccessPath(
 
   // Nudge once if all intermediate text was thinking-only.
   if (
-    !acceptedDelegation
+    !wholeRequestDelegation
     && result.response === ""
     && (bridge.getResult().stepsExecuted ?? 0) > 0
   ) {
@@ -316,7 +317,7 @@ async function processSuccessPath(
   // shot retry. Falls through to L3 synthesis (recoverEmptyFinalResponse) on
   // exhaustion. SEP plan extraction + step counting remain intact for
   // observability — see pi-event-bridge.ts:949-1024.
-  if (!acceptedDelegation) {
+  if (!wholeRequestDelegation) {
     await runPostBatchContinuationStep(params);
 
     // Narrate-without-emit nudge — the
@@ -329,19 +330,19 @@ async function processSuccessPath(
     await runNarrateNudgeStep(params);
   }
 
-  const pushDeliveredDelegation = acceptedDelegation
+  const pushDeliveredDelegation = wholeRequestDelegation
     && delegationOwnsPromptSkillWorkflow(
       bridge.getResult().toolExecResults,
       params.requestRelevantPromptSkillWorkflowToolNames,
     );
   if (
-    !acceptedDelegation
+    !wholeRequestDelegation
     || (hasEnforcedPromptSkillRoute(params) && !pushDeliveredDelegation)
   ) {
     await runRequestToolNudgeStep(params);
   }
 
-  if (!acceptedDelegation) {
+  if (!wholeRequestDelegation) {
     // Budget-driven continuation loop
     if (budgetTracker) {
       await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);

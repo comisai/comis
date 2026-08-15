@@ -31,7 +31,9 @@
  * quoting are allowed between the two, which is how a formatted reply renders.
  */
 const RUN_IDENTIFIER_CLAIM =
-  /\brun[\s_-]?id\b\s*[:=]?\s*(?:<[^>]{1,40}>|["'`*]){0,4}\s*([0-9a-z][0-9a-z_-]{7,})/i;
+  /\brun(?:[\s_-]?id|[\s_-]+(?:handle|identifier))\b\s*[:=]?\s*(?:<[^>]{1,40}>|["'`*]){0,4}\s*([0-9a-z][0-9a-z_-]{7,})/i;
+const RUN_IDENTIFIER_CLAIMS =
+  /\brun(?:[\s_-]?id|[\s_-]+(?:handle|identifier))\b\s*[:=]?\s*(?:<[^>]{1,40}>|["'`*]){0,4}\s*([0-9a-z][0-9a-z_-]{7,})/gi;
 
 /**
  * A model sometimes abbreviates a freshly returned UUID to its first eight
@@ -71,4 +73,24 @@ export function exposesSpawnRunIdentifier(
     return true;
   }
   return RUN_IDENTIFIER_CLAIM.test(response) || LEADING_RUN_HANDLE.test(response);
+}
+
+export function quarantineSpawnRunIdentifiers(
+  response: string,
+  structuredRunIds: readonly string[] = [],
+): string {
+  let quarantined = response;
+  for (const runId of structuredRunIds) {
+    if (runId.length === 0) continue;
+    quarantined = quarantined.split(runId).join("[internal]");
+    const abbreviated = runId.slice(0, 8);
+    if (abbreviated.length === 8) {
+      quarantined = quarantined.split(abbreviated).join("[internal]");
+    }
+  }
+  quarantined = quarantined.replace(
+    RUN_IDENTIFIER_CLAIMS,
+    (claim, identifier: string) => claim.replace(identifier, "[internal]"),
+  );
+  return quarantined.replace(LEADING_RUN_HANDLE, "").trimStart();
 }

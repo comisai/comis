@@ -28,6 +28,7 @@ import { isCompletionClaim } from "./critic-isolation.js";
 import {
   assertsUnbackedRunIdentifier,
   exposesSpawnRunIdentifier,
+  quarantineSpawnRunIdentifiers,
 } from "./fabricated-run-identifier.js";
 
 // ---------------------------------------------------------------------------
@@ -221,6 +222,32 @@ export function enforceCurrentTurnDelegationEvidence(params: {
   honestResponse: string;
   verifiedSpawnResponse: string;
 }): DelegationEvidenceGuardResult {
+  const successfulSpawn = (params.toolExecResults ?? []).some(
+    (toolResult) =>
+      toolResult.toolName === "sessions_spawn"
+      && toolResult.success
+      && toolResult.backgrounded !== true,
+  );
+  const completedSpawnResult = (params.toolExecResults ?? []).some(
+    (toolResult) =>
+      toolResult.toolName === "subagents"
+      && toolResult.action === "wait"
+      && toolResult.success
+      && (toolResult.subagentWaitCompletedCount ?? 0) > 0,
+  );
+  const structuredRunIds = (params.toolExecResults ?? []).flatMap(
+    (toolResult) => toolResult.spawnRunId === undefined ? [] : [toolResult.spawnRunId],
+  );
+  if (
+    (params.runtimeCompletion === true || (successfulSpawn && completedSpawnResult))
+    && exposesSpawnRunIdentifier(params.response, structuredRunIds)
+  ) {
+    return {
+      response: quarantineSpawnRunIdentifiers(params.response, structuredRunIds),
+      corrected: true,
+      reason: "successful_spawn_response_internal_identifier",
+    };
+  }
   if (params.runtimeCompletion === true) {
     return { response: params.response, corrected: false };
   }
@@ -247,19 +274,6 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     request,
     EXPLICIT_DELEGATION_REQUEST_PHRASES,
   );
-  const successfulSpawn = (params.toolExecResults ?? []).some(
-    (toolResult) =>
-      toolResult.toolName === "sessions_spawn"
-      && toolResult.success
-      && toolResult.backgrounded !== true,
-  );
-  const completedSpawnResult = (params.toolExecResults ?? []).some(
-    (toolResult) =>
-      toolResult.toolName === "subagents"
-      && toolResult.action === "wait"
-      && toolResult.success
-      && (toolResult.subagentWaitCompletedCount ?? 0) > 0,
-  );
   const response = normalizedEvidenceText(params.response);
   if (successfulSpawn) {
     // A completed wait is structural evidence that the model received a
@@ -271,9 +285,6 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     // Spawn identifiers are internal coordination handles. Even a valid
     // receipt does not make them useful channel content, and exposing one
     // makes a natural launch acknowledgement read like a runtime envelope.
-    const structuredRunIds = (params.toolExecResults ?? []).flatMap(
-      (toolResult) => toolResult.spawnRunId === undefined ? [] : [toolResult.spawnRunId],
-    );
     if (exposesSpawnRunIdentifier(params.response, structuredRunIds)) {
       return {
         response: params.verifiedSpawnResponse,

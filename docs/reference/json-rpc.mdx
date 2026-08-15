@@ -789,9 +789,9 @@ the report retains the specific `tool_invocation_stall` diagnosis instead of
 overwriting it with the later completion-evidence guard.
 
 Background completion delivery is likewise reconstructable without a raw-log
-join. The optional `outwardDelivery` block carries the latest durable
-completion-send disposition: `{ status, rootRunId, stepIndex?, deliveryKind?,
-platformMessageId? }`. `deliveryKind` distinguishes text from a generated-file
+join. The optional `outwardDeliveries` array carries one bounded durable
+completion-send disposition per root: `{ status, rootRunId, transition,
+stepIndex?, deliveryKind?, platformMessageId? }`. `deliveryKind` distinguishes text from a generated-file
 attachment, and a committed platform receipt is retained as
 `platformMessageId`. `status: "partial"` means at least one completion part
 committed while another part did not; `blocked`, `in_flight`, `failed`, and
@@ -802,7 +802,7 @@ Direct children in `spawnTree` also carry terminal execution evidence when it
 was recorded: `terminalOutcome`, `runtimeMs`, `tokensUsed`, `costUsd`, and an
 optional `outputValidation: { expected, verified, attachmentsPrepared }`.
 These are content-free counts. They show whether declared files existed and
-entered governed attachment preparation, while `outwardDelivery` supplies the
+entered governed attachment preparation, while `outwardDeliveries` supplies the
 separate platform-delivery receipt.
 
 The same one-call diagnosis applies to bounded execution stalls. A local MCP
@@ -914,7 +914,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 |----------|-------|
 | **Scope** | `rpc` route plus admin trust. A gateway token needs both `rpc` and `admin` (or `*`); the handler rejects non-admin trust. |
 | **Parameters** | `{ sessionKey?: string, traceId?: string, rootRunId?: string, graphId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` / `rootRunId` / `graphId` required. `traceId` accepts a trace ID or a sub-agent run ID and canonicalizes either to the indexed session. `rootRunId` is an autonomy run's id, canonicalized to its session before assembly (a `root-` synthetic root resolves by prefix-strip; a real spawned root by a session-index scan) and renders the run's `spawnTree`. `graphId` is a terminal execution-graph run's id, canonicalized to its caller session through the persisted run metadata and rendered with the `graph` section. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
-| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], spawnTree?, outwardDelivery?, requestRelevantToolNames?: string[], requestRelevantPromptSkillNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated, recallDisposition? }, requestClarification?: { reason, inputChars }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, graph?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], spawnTree?, outwardDeliveries?: Array<{ rootRunId, status, transition, stepIndex?, deliveryKind?, platformMessageId? }>, requestRelevantToolNames?: string[], requestRelevantPromptSkillNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated, recallDisposition? }, requestClarification?: { reason, inputChars }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, graph?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request

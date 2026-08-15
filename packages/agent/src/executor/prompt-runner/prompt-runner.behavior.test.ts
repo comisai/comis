@@ -136,6 +136,7 @@ describe("runPrompt observable boundaries", () => {
           toolName: "sessions_spawn",
           success: true,
           durationMs: 5,
+          delegationScope: "whole_request",
         }],
       },
       messages: [
@@ -173,6 +174,7 @@ describe("runPrompt observable boundaries", () => {
           toolName: "sessions_spawn",
           success: true,
           durationMs: 5,
+          delegationScope: "whole_request",
         }],
       },
       messages: [

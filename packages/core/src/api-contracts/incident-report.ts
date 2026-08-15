@@ -681,7 +681,7 @@ export const IncidentReportSchema = z.object({
       status: z.enum(["prepared", "blocked", "in_flight", "committed", "failed", "parked", "partial"]),
       rootRunId: z.string(),
       stepIndex: z.number().int().nonnegative().optional(),
-      transition: z.enum(["prepare", "lookup", "begin", "mark_unknown", "commit", "mark_failed", "park"]),
+      transition: z.enum(["prepare", "allocate", "lookup", "begin", "mark_unknown", "commit", "mark_failed", "park"]),
       deliveryKind: z.enum(["text", "attachment"]).optional(),
       platformMessageId: z.string().optional(),
     })).max(100)

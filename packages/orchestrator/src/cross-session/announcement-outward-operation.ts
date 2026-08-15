@@ -330,8 +330,8 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
   send: SendGovernedAnnouncement;
 } {
   function emit(
-    identity: Pick<AnnouncementOperationIdentity, "rootRunId" | "stepIndex">,
-    transition: "lookup" | "begin" | "mark_unknown" | "commit" | "park",
+    identity: { rootRunId: string; stepIndex?: number },
+    transition: "allocate" | "lookup" | "begin" | "mark_unknown" | "commit" | "park",
     outcome: "blocked" | "in_flight" | "committed" | "parked",
     evidence: AnnouncementTransitionEvidence,
   ): void {
@@ -341,7 +341,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       "delivery:outward_ledger_transition",
       {
         rootRunId: identity.rootRunId,
-        stepIndex: identity.stepIndex,
+        ...(identity.stepIndex === undefined ? {} : { stepIndex: identity.stepIndex }),
         transition,
         outcome,
         ...evidence,
@@ -419,6 +419,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
         "repair the outward operation store before retrying the same completion",
         "Completion announcement operation allocation failed",
       );
+      emit({ rootRunId: request.rootRunId }, "allocate", "blocked", deliveryEvidence);
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
 
