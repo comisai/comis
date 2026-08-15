@@ -35,10 +35,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve as pathResolve } from "node:path";
 import { createServer } from "node:net";
+import { err, ok, type Result } from "@comis/shared";
 
 import {
   createTerminalSessionCreateTool,
@@ -52,6 +53,14 @@ import { createSessionCaps } from "./terminal-caps.js";
 import { buildProductionSpawnWorker } from "./terminal-worker-launch.js";
 import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
 import { managedTerminalAttachmentTargetPath } from "./terminal-managed-binding.js";
+import {
+  buildTmuxHasSessionArgv,
+  buildTmuxKillArgv,
+  tmuxSocketPathForSession,
+} from "./terminal-tmux-backend.js";
+import { terminalWorkerDir } from "./terminal-worker-main.js";
+import type { SessionDescriptor } from "./terminal-reattach-match.js";
+import type { SessionDescriptorStorePort } from "./terminal-session-reattach.js";
 
 function isLinux(): boolean {
   return process.platform === "linux";
@@ -72,6 +81,31 @@ function bwrapPathOrUndefined(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function tmuxPathOrUndefined(): string | undefined {
+  try {
+    return execFileSync("which", ["tmux"], { encoding: "utf8" }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function tmuxExitStatus(argv: string[]): Result<number | null, Error> {
+  const [command, ...args] = argv;
+  if (command === undefined) return err(new Error("tmux command is unavailable"));
+  const completed = spawnSync(command, args, { stdio: "ignore" });
+  return completed.error === undefined ? ok(completed.status) : err(completed.error);
+}
+
+function killTmuxAndConfirm(tmuxPath: string, name: string, socketPath?: string): Result<void, Error> {
+  if (socketPath === undefined) return err(new Error("tmux socket authority is unavailable"));
+  tmuxExitStatus(buildTmuxKillArgv({ tmuxPath, socketPath, name }));
+  const probe = tmuxExitStatus(buildTmuxHasSessionArgv({ tmuxPath, socketPath, name }));
+  if (!probe.ok) return probe;
+  return probe.value === 0
+    ? err(new Error("tmux session remained alive after termination"))
+    : ok(undefined);
 }
 
 function realShell(): string {
@@ -209,7 +243,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
       45000,
     );
 
-    it.skipIf(!bwrapPathOrUndefined() || !existsSync("/usr/bin/python3"))(
+    it.skipIf(!bwrapPathOrUndefined() || !tmuxPathOrUndefined() || !existsSync("/usr/bin/python3"))(
       "Part C: confines a managed terminal to its leased root and fixed attachment until confirmed revocation",
       async () => {
         const scratch = realpathSync(mkdtempSync(join(tmpdir(), "terminal-attachment-")));
@@ -241,11 +275,33 @@ describe.skipIf(!isLinux() || !distBuilt)(
           server.once("error", rejectListen);
           server.listen(sourcePath, () => resolveListen());
         });
+        const descriptors = new Map<string, SessionDescriptor>();
+        const descriptorStore: SessionDescriptorStorePort = {
+          persist: (descriptor) => {
+            descriptors.set(descriptor.sessionId, descriptor);
+            return ok(undefined);
+          },
+          recover: () => Array.from(descriptors.values()),
+          remove: (sessionId) => {
+            descriptors.delete(sessionId);
+            return ok(undefined);
+          },
+        };
+        const tmuxPath = tmuxPathOrUndefined();
+        if (tmuxPath === undefined) throw new Error("tmux binary disappeared after test selection");
         const registry = createTerminalSessionRegistry({
           spawnWorker: buildProductionSpawnWorker(distWorkerMainPath(), dataDir),
           logger: noopLogger,
           nowMs: () => Date.now(),
           bwrapPath: bwrapPathOrUndefined(),
+          tmuxSocketForSession: (sessionId) =>
+            tmuxSocketPathForSession(terminalWorkerDir(dataDir), sessionId),
+          durability: {
+            descriptorStore,
+            killTmuxSession: (name, socketPath) =>
+              killTmuxAndConfirm(tmuxPath, name, socketPath),
+            retireManagedSession: async () => ok(undefined),
+          },
           resolveRootProcessIdentity: async (pid) => ({ pid, startIdentity: `test:${pid}` }),
           cleanupWorkspace: () => undefined,
         });
@@ -294,6 +350,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
             ],
             cols: 100,
             rows: 30,
+            durable: true,
             scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "daemon" },
             workspace,
             cwd: workspace,
@@ -345,6 +402,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
             ok: true,
             value: undefined,
           });
+          expect(descriptors.size).toBe(0);
           await new Promise((resolveDrain) => setTimeout(resolveDrain, 150));
           const callsAfterRevocation = calls;
           await new Promise((resolveProbe) => setTimeout(resolveProbe, 250));
