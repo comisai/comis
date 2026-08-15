@@ -165,6 +165,10 @@ describe("createSqliteManagedRunStore durable state machine", () => {
   it("rejects authority tables that omit required identity and outcome columns", () => {
     for (const fixture of [
       {
+        table: "managed_runs",
+        missing: "managed_run_id",
+      },
+      {
         table: "workspace_leases",
         missing: "filesystem_birthtime_ns",
       },
@@ -737,10 +741,32 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       responseRef: "attention-response-content-direct",
       respondedAtMs: 1_800_000_000_200,
     }).value?.kind).toBe("updated");
+    db.exec("DROP INDEX idx_managed_run_attention_owner_response_operation");
+    db.prepare(`
+      INSERT INTO managed_run_attention_operations (
+        attention_id, tenant_id, agent_id, principal_id, conversation_ref,
+        operation_id, operation_kind, input_hash, result_record, created_at_ms
+      )
+      SELECT ?, tenant_id, agent_id, principal_id, conversation_ref,
+        ?, operation_kind, input_hash, result_record, created_at_ms
+      FROM managed_run_attention_operations
+      WHERE attention_id = ? AND operation_id = ? AND operation_kind = 'response'
+    `).run(
+      "attention-invalid-response",
+      "attention-response-corrupt",
+      "attention-direct",
+      "attention-response-corrupt",
+    );
+    expect(attention.getResponseByOperation(OWNER_SCOPE, "attention-response-corrupt").ok).toBe(false);
+    db.prepare(`
+      DELETE FROM managed_run_attention_operations
+      WHERE attention_id = ? AND operation_id = ? AND operation_kind = 'response'
+    `).run("attention-invalid-response", "attention-response-corrupt");
     db.prepare(`
       UPDATE managed_run_attention_operations SET result_record = ?
       WHERE attention_id = ? AND operation_id = ? AND operation_kind = 'response'
     `).run("{", "attention-direct", "attention-response-corrupt");
+    expect(attention.getResponseByOperation(OWNER_SCOPE, "attention-response-corrupt").ok).toBe(false);
     expect(attention.claimResponse(OWNER_SCOPE, {
       operationId: "attention-response-corrupt",
       attentionId: "attention-direct",
@@ -751,6 +777,17 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       UPDATE managed_run_attention_operations SET result_record = ?
       WHERE attention_id = ? AND operation_id = ? AND operation_kind = 'response'
     `).run("{}", "attention-direct", "attention-response-corrupt");
+    expect(attention.getResponseByOperation(OWNER_SCOPE, "attention-response-corrupt").ok).toBe(false);
+    expect(attention.claimResponse(OWNER_SCOPE, {
+      operationId: "attention-response-corrupt",
+      attentionId: "attention-direct",
+      responseRef: "attention-response-content-direct",
+      respondedAtMs: 1_800_000_000_200,
+    }).ok).toBe(false);
+    db.prepare(`
+      UPDATE managed_run_attention_operations SET input_hash = X'00'
+      WHERE attention_id = ? AND operation_id = ? AND operation_kind = 'response'
+    `).run("attention-direct", "attention-response-corrupt");
     expect(attention.claimResponse(OWNER_SCOPE, {
       operationId: "attention-response-corrupt",
       attentionId: "attention-direct",
