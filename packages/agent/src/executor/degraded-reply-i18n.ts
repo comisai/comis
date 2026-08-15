@@ -24,6 +24,7 @@ export type LocaleMessageId =
   | "tool_failure_notice_unnamed"
   | "prompt_timeout"
   | "tool_invocation_stall_missing_configuration"
+  | "tool_invocation_stall_no_receipt"
   | "execution_failed"
   | "background_task_failed_notice"
   | "delegation_evidence_missing"
@@ -92,6 +93,9 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   tool_invocation_stall_missing_configuration:
     "I could not complete the request because {tool} is not configured. "
       + "Configure {configKey} before retrying.",
+  tool_invocation_stall_no_receipt:
+    "I could not complete the request because no matching tool action succeeded in this turn. "
+      + "Check that the request includes the identifiers and inputs the tool needs, then try again.",
   execution_failed:
     "I couldn't complete that request because a required service failed. The request was not completed.",
   background_task_failed_notice:
@@ -377,6 +381,14 @@ export function selectToolInvocationStallMissingConfigurationReply(
     ...(template.includes("{configKey}") ? [] : [values.configKey]),
   ];
   return missing.length === 0 ? substituted : `${substituted} ${missing.join(" ")}`;
+}
+
+/** Honest fallback when a request-matched tool never produced a success receipt. */
+export function selectToolInvocationStallNoReceiptReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "tool_invocation_stall_no_receipt");
 }
 
 /**

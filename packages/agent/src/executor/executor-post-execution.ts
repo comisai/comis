@@ -135,7 +135,7 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildDelegationEvidenceStartedReply, buildPersistentActionEvidenceMissingReply, buildOutboundAudioEvidenceMissingReply, buildOutboundImageEvidenceMissingReply, buildOutboundDeliveryStatusEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildRuntimeSelfReportEvidenceUnsupportedReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildDelegationEvidenceStartedReply, buildPersistentActionEvidenceMissingReply, buildToolInvocationStallNoReceiptReply, buildOutboundAudioEvidenceMissingReply, buildOutboundImageEvidenceMissingReply, buildOutboundDeliveryStatusEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildRuntimeSelfReportEvidenceUnsupportedReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
@@ -2383,7 +2383,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       toolExecResults: bridgeResult.toolExecResults,
       ...(replyLanguage === undefined ? {} : { language: replyLanguage }),
       localeCatalog,
-    }) ?? buildPersistentActionEvidenceMissingReply(replyLanguage, localeCatalog);
+    }) ?? buildToolInvocationStallNoReceiptReply(replyLanguage, localeCatalog);
     deps.logger.warn(
       {
         step: "request-tool-nudge",

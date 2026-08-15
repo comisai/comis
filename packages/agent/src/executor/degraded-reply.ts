@@ -28,6 +28,7 @@ import {
   selectToolFailureNotice,
   selectToolFailureNoticeUnnamed,
   selectPromptTimeoutReply,
+  selectToolInvocationStallNoReceiptReply,
   selectExecutionFailureReply,
   selectBackgroundTaskFailedNotice,
   selectDelegationEvidenceMissingReply,
@@ -232,6 +233,14 @@ export function buildPersistentActionEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectPersistentActionEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when no request-matched tool produced a success receipt. */
+export function buildToolInvocationStallNoReceiptReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectToolInvocationStallNoReceiptReply(language, localeCatalog);
 }
 
 /** Honest replacement when requested audio lacks current-turn delivery proof. */
