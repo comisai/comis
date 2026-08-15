@@ -1442,4 +1442,47 @@ describe("managed-run restart recovery scans", () => {
     });
     reopenedDb.close();
   });
+
+  it("recovers the recorded failed continuation outcome after reopen", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "managed-run-continuation-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "managed-runs.db");
+    const firstDb = new Database(databasePath);
+    ensureManagedRunTables(firstDb);
+    const firstStore = createSqliteManagedRunStore(firstDb);
+    expect((await firstStore.create(makeRecord())).ok).toBe(true);
+    await activate(firstStore);
+    expect((await firstStore.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(true);
+    const claim = {
+      managedRunId: "managed-run_a",
+      claimId: "continuation-claim_reopen_failure",
+      throughReportSequence: 1,
+      claimedAtMs: 1_800_000_000_200,
+      expiresAtMs: 1_800_000_060_200,
+    };
+    expect((await firstStore.claimContinuation(OWNER_SCOPE, claim)).value?.kind).toBe("claimed");
+    const reduction = {
+      managedRunId: claim.managedRunId,
+      claimId: claim.claimId,
+      throughReportSequence: claim.throughReportSequence,
+      status: "unknown" as const,
+      statusReason: "service_state_unavailable" as const,
+      continuationOutcome: "failed" as const,
+      committedAtMs: 1_800_000_000_300,
+    };
+    expect((await firstStore.commitReducedState(OWNER_SCOPE, reduction)).value?.kind).toBe("updated");
+    firstDb.close();
+
+    const reopenedDb = new Database(databasePath);
+    ensureManagedRunTables(reopenedDb);
+    expect(await createSqliteManagedRunStore(reopenedDb).claimContinuation(OWNER_SCOPE, claim)).toMatchObject({
+      ok: true,
+      value: {
+        kind: "identical_replay",
+        reducedRecord: { status: "unknown", statusReason: "service_state_unavailable" },
+        reducedOutcome: "failed",
+      },
+    });
+    reopenedDb.close();
+  });
 });

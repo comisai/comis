@@ -377,6 +377,34 @@ describe("managed-run continuation coordination", () => {
     }));
   });
 
+  it("settles a durably reduced failed claim with its recorded outcome", async () => {
+    const reducedRecord = makeRecord({
+      lastReducedReportSequence: 2,
+      status: "unknown",
+      statusReason: "service_state_unavailable",
+    });
+    const setup = makeCoordinator({
+      record: reducedRecord,
+      claimContinuation: async () => ok({
+        kind: "identical_replay",
+        record: makeRecord(),
+        reducedRecord,
+        reducedOutcome: "failed" as const,
+      }),
+    });
+
+    expect(await setup.coordinator.process(ownerScope(reducedRecord), "managed-run-a")).toEqual(ok({
+      kind: "processed",
+      throughReportSequence: 2,
+      pendingAfterCurrent: false,
+    }));
+    expect(setup.store.listReportRange).not.toHaveBeenCalled();
+    expect(setup.execute).not.toHaveBeenCalled();
+    expect(setup.markContinuationOutcome).toHaveBeenCalledWith(ownerScope(reducedRecord), expect.objectContaining({
+      outcome: "failed",
+    }));
+  });
+
   it("folds concurrent notifications into at most one follow-up execution per run", async () => {
     let releaseFirst!: (pending: boolean) => void;
     const first = new Promise<boolean>((resolve) => { releaseFirst = resolve; });
