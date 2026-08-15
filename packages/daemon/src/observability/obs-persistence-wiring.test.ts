@@ -27,6 +27,7 @@ import {
   backgroundRecoveryScanEventToRow,
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
+  outwardAttachmentFailureEventToRow,
   nodeBudgetExceededEventToRow,
   subagentKilledEventToRow,
   durableOrphanedEventToRow,
@@ -1492,6 +1493,35 @@ describe("deliveryDeadletteredEventToRow", () => {
     expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual(["signal", "channelType", "transient"]);
     // A permanent dead-letter (immediate, transient:false) is recorded honestly.
     expect(JSON.parse(row.details ?? "{}").transient).toBe(false);
+  });
+});
+
+describe("outwardAttachmentFailureEventToRow", () => {
+  it("maps an attachment preparation failure to a warning health signal", () => {
+    const row = outwardAttachmentFailureEventToRow({
+      rootRunId: "root-output",
+      runId: "run-output",
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
+      partId: "attachment:0",
+      transition: "prepare",
+      outcome: "failed",
+      deliveryKind: "attachment",
+      timestamp: 8_250,
+    });
+
+    expect(row).toMatchObject({
+      category: "health_signal",
+      severity: "warning",
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
+      message: "delivery:outward_attachment_failed",
+    });
+    expect(JSON.parse(row.details ?? "{}")).toEqual({
+      signal: "outward_attachment_failed",
+      transition: "prepare",
+      outcome: "failed",
+    });
+    expect(JSON.stringify(row)).not.toContain("run-output");
+    expect(JSON.stringify(row)).not.toContain("root-output");
   });
 });
 

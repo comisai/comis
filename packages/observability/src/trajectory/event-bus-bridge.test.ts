@@ -5287,6 +5287,30 @@ describe("attachTrajectoryToEventBus ownerSessionKey scoping", () => {
     expect(otherRecorder.calls).toHaveLength(0);
   });
 
+  it("drops an explicitly unscoped off-turn delivery from every session recorder", () => {
+    const bus = makeBus();
+    const ownerRecorder = createCaptureRecorder();
+    const otherRecorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder: ownerRecorder, ownerSessionKey: OWNER });
+    attachTrajectoryToEventBus({ eventBus: bus, recorder: otherRecorder, ownerSessionKey: OTHER });
+
+    (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
+      "delivery:outward_ledger_transition",
+      {
+        rootRunId: "root-recovery",
+        stepIndex: 0,
+        transition: "park",
+        outcome: "parked",
+        sessionKey: null,
+        runId: null,
+        timestamp: 2,
+      },
+    );
+
+    expect(ownerRecorder.calls).toHaveLength(0);
+    expect(otherRecorder.calls).toHaveLength(0);
+  });
+
   it("binds session-less payloads via the ALS request context", async () => {
     const { runWithContext } = await import("@comis/core");
     const bus = makeBus();
