@@ -645,6 +645,10 @@ export interface SubAgentRunnerDeps {
       tokensUsed: number;
       cost: number;
       sessionKey: string;
+      outputValidation?: {
+        expected: number;
+        verified: number;
+      };
       /** The materialized full-output handle, when produced. */
       resultRef?: ResultRef;
     }): string;
@@ -3714,6 +3718,14 @@ function classifyCompletionErrorKind(
                 tokensUsed: result.tokensUsed.total,
                 cost: result.cost.total,
                 sessionKey: formattedKey,
+                ...(validationResults?.length
+                  ? {
+                      outputValidation: {
+                        expected: validationResults.length,
+                        verified: validationResults.filter((output) => output.exists).length,
+                      },
+                    }
+                  : {}),
                 // The materialized handle (when produced) so the tagged
                 // announcement carries the drill-in handle, not the diskPath.
                 resultRef: materializedRef,

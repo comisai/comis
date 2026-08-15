@@ -41,6 +41,11 @@ export interface CastParams {
   cost: number;
   /** Sub-agent session key for reference. */
   sessionKey: string;
+  /** Runtime-verified expected outputs retained for governed completion delivery. */
+  outputValidation?: {
+    expected: number;
+    verified: number;
+  };
   /**
    * The child's full output materialized to its jailed workspace as a
    * structured handle. When present, the "Full result" line becomes the
@@ -135,6 +140,13 @@ function formatFullResultLine(diskPath: string, resultRef?: ResultRef): string {
   return `Full result: ${diskPath}`;
 }
 
+function formatOutputValidation(params: CastParams): string | undefined {
+  const validation = params.outputValidation;
+  if (validation === undefined || validation.expected === 0) return undefined;
+  return `Outputs: ${validation.verified}/${validation.expected} verified; `
+    + "verified files are scheduled for governed delivery with this completion.";
+}
+
 // ---------------------------------------------------------------------------
 // Tagged result format (enabled mode)
 // ---------------------------------------------------------------------------
@@ -223,6 +235,9 @@ function formatTaggedResult(params: CastParams, tagPrefix: string): string {
   // 13. Session line
   sections.push(`Session: ${sessionKey}`);
 
+  const outputValidation = formatOutputValidation(params);
+  if (outputValidation !== undefined) sections.push(outputValidation);
+
   // 14. Trailing instruction
   sections.push("");
   sections.push(TRAILING_INSTRUCTION);
@@ -238,6 +253,7 @@ function formatUntaggedResult(params: CastParams): string {
   const { condensedResult, task, runtimeMs, stepsExecuted, tokensUsed, cost, sessionKey, resultRef } = params;
   const result = condensedResult.result;
 
+  const outputValidation = formatOutputValidation(params);
   return [
     `[System Message]`,
     `A background task has completed.`,
@@ -249,6 +265,7 @@ function formatUntaggedResult(params: CastParams): string {
     `---`,
     `Runtime: ${(runtimeMs / 1000).toFixed(1)}s | Steps: ${stepsExecuted} | Tokens: ${tokensUsed} | Cost: $${cost.toFixed(4)} | Session: ${sessionKey}`,
     formatFullResultLine(condensedResult.diskPath, resultRef),
+    ...(outputValidation === undefined ? [] : [outputValidation]),
     ``,
     TRAILING_INSTRUCTION,
   ].join("\n");
