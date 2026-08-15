@@ -253,6 +253,28 @@ describe("subagents tool", () => {
     });
   });
 
+  it("returns a normal tool receipt when the child completed before steering", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({
+      status: "already_terminal",
+      runId: "run-1",
+      terminalStatus: "completed",
+    }));
+    const tool = createSubagentsTool(mockRpcCall);
+
+    const result = await tool.execute("call-5b", {
+      action: "steer",
+      target: "run-1",
+      message: "adjust the result",
+    } as never);
+
+    expect(parseResult(result)).toEqual({
+      status: "already_terminal",
+      runId: "run-1",
+      terminalStatus: "completed",
+    });
+    expect(result).not.toHaveProperty("isError", true);
+  });
+
   it("steer action throws when message param missing", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({}));
 
