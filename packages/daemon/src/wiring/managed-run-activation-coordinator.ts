@@ -233,8 +233,7 @@ export function createManagedRunActivationCoordinator(
     reason: CapabilityServiceAbandonCommand["reason"],
     disposition: CapabilityServiceAbandonCommand["disposition"],
     record?: ManagedRunRecord,
-  ): Promise<void> {
-    let effectiveDisposition = disposition;
+  ): Promise<boolean> {
     if (record?.workspaceLeaseId !== undefined) {
       const resourcesRevoked = await revokeBoundResources(record, ids.leaseReleaseOperationId);
       const released = resourcesRevoked
@@ -252,13 +251,13 @@ export function createManagedRunActivationCoordinator(
         !released.ok
         || (released.value.kind !== "released" && released.value.kind !== "identical_replay")
       ) {
-        effectiveDisposition = "preserve";
         deps.logger.warn({
           managedRunId: record.managedRunId,
           serviceInstanceId: record.serviceInstanceId,
           errorKind: "resource" as const,
           hint: "Inspect the durable workspace lease before reaping the external preparation",
         }, "Workspace lease release was not durably acknowledged");
+        return false;
       }
     }
     const abandoned = await invokeControl(() => deps.control.abandon({
@@ -267,7 +266,7 @@ export function createManagedRunActivationCoordinator(
       externalRunRef: input.prepared.externalRunRef,
       registrationNonce: input.prepared.registrationNonce,
       reason,
-      disposition: effectiveDisposition,
+      disposition,
     }));
     if (!abandoned.ok) {
       deps.logger.warn({
@@ -276,7 +275,9 @@ export function createManagedRunActivationCoordinator(
         errorKind: "dependency" as const,
         hint: "Inspect the configured service and reap the named unbound preparation before its expiry",
       }, "Capability-service preparation abandon was not acknowledged");
+      return false;
     }
+    return true;
   }
 
   function emitRejected(
@@ -374,7 +375,11 @@ export function createManagedRunActivationCoordinator(
     record: ManagedRunRecord,
     reasonCode: "activation_rejected" | "attachment_not_allowed",
   ): Promise<Result<ManagedRunActivationOutcome, Error>> {
-    await abandonPrepared(input, ids, "activation_rejected", "reap_safe", record);
+    const abandoned = await abandonPrepared(input, ids, "activation_rejected", "reap_safe", record);
+    if (!abandoned) {
+      return err(new Error("managed-run rejection cleanup was not durably acknowledged"));
+    }
+    const transitionedAtMs = deps.nowMs();
     const rejected = await invokeStore(() => deps.store.claimTransition(
       { kind: "service", serviceInstanceId: input.serviceInstanceId },
       {
@@ -383,8 +388,8 @@ export function createManagedRunActivationCoordinator(
         expectedStatuses: ["preparing", "unknown"],
         nextStatus: "cancelled",
         nextStatusReason: "activation_rejected",
-        transitionedAtMs: deps.nowMs(),
-        terminalOutcome: { kind: "cancelled", recordedAtMs: deps.nowMs() },
+        transitionedAtMs,
+        terminalOutcome: { kind: "cancelled", recordedAtMs: transitionedAtMs },
       },
     ));
     if (!rejected.ok) return rejected;
@@ -787,7 +792,11 @@ export function createManagedRunActivationCoordinator(
     ids: ManagedRunActivationIds,
     record: ManagedRunRecord,
   ): Promise<Result<ManagedRunRecord, Error>> {
-    await abandonPrepared(input, ids, "registration_expired", "reap_safe", record);
+    const abandoned = await abandonPrepared(input, ids, "registration_expired", "reap_safe", record);
+    if (!abandoned) {
+      return err(new Error("managed-run expired recovery cleanup was not durably acknowledged"));
+    }
+    const transitionedAtMs = deps.nowMs();
     const transitioned = await invokeStore(() => deps.store.claimTransition(
       { kind: "service", serviceInstanceId: record.serviceInstanceId },
       {
@@ -796,8 +805,8 @@ export function createManagedRunActivationCoordinator(
         expectedStatuses: ["preparing", "unknown"],
         nextStatus: "cancelled",
         nextStatusReason: "activation_rejected",
-        transitionedAtMs: deps.nowMs(),
-        terminalOutcome: { kind: "cancelled", recordedAtMs: deps.nowMs() },
+        transitionedAtMs,
+        terminalOutcome: { kind: "cancelled", recordedAtMs: transitionedAtMs },
       },
     ));
     if (!transitioned.ok) return transitioned;

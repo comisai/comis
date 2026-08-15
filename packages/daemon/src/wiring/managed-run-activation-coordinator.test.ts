@@ -820,7 +820,39 @@ describe("managed-run two-phase activation", () => {
     expect(abandon).toHaveBeenCalledOnce();
     expect(await store.get(OWNER_SCOPE, "managed-operation_prepare_a")).toMatchObject({
       ok: true,
-      value: { status: "cancelled", statusReason: "activation_rejected" },
+      value: {
+        status: "cancelled",
+        statusReason: "activation_rejected",
+        updatedAtMs: NOW_MS,
+        terminalOutcome: { kind: "cancelled", recordedAtMs: NOW_MS },
+      },
+    });
+  });
+
+  it("retains rejection recovery state until abandon is acknowledged", async () => {
+    activate.mockResolvedValue(err({
+      kind: "rejected" as const,
+      reasonCode: "precondition_failed",
+    }));
+    abandon.mockResolvedValue(err({
+      kind: "uncertain" as const,
+      reasonCode: "deadline_exceeded",
+    }));
+
+    const result = await makeCoordinator().activatePrepared(makeInput());
+
+    expect(result).toMatchObject({ ok: false });
+    expect(await store.get(OWNER_SCOPE, "managed-operation_prepare_a")).toMatchObject({
+      ok: true,
+      value: { status: "preparing", activationDescriptorRef: "descriptor-operation_prepare_a" },
+    });
+    expect(await contentStore.getActivationDescriptor({
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      managedRunId: "managed-operation_prepare_a",
+    }, "descriptor-operation_prepare_a")).toMatchObject({
+      ok: true,
+      value: { externalRunRef: "external-run_a" },
     });
   });
 

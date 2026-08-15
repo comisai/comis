@@ -42,6 +42,33 @@ function makeCallTool(): McpClientManager["callTool"] {
   );
 }
 
+describe("MCP tool metadata registration", () => {
+  it("registers exact operator-owned managed mutation metadata", () => {
+    const privateMetadataBridge: McpPrivateMetadataBridge = {
+      resolveRegistrationMetadata: () => ({
+        actionClassification: "mutate",
+        invocationSideEffects: ["task.prepare", "deferred_work"],
+      }),
+      createRequestMeta: vi.fn(async () => ok(undefined)),
+      acceptResultMeta: vi.fn(async () => ok(undefined)),
+      discardCall: vi.fn(),
+    };
+
+    mcpToolsToAgentTools([makeTool()], makeCallTool(), undefined, undefined, undefined, undefined, undefined, privateMetadataBridge);
+
+    expect(getToolMetadata("mcp__db-server--search")).toMatchObject({
+      actionClassification: "mutate",
+      isReadOnly: false,
+      isConcurrencySafe: false,
+      externalMutationHint: true,
+      invocationSideEffects: {
+        kind: "managed",
+        capabilities: ["task.prepare", "deferred_work"],
+      },
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // jsonSchemaToTypeBox
 // ---------------------------------------------------------------------------

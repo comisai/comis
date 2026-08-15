@@ -104,9 +104,14 @@ export async function routeManagedRunReleaseIngress(
   if (settled === undefined) result = responseError("deadline_exceeded", deadline.settlement);
   else if (!settled.ok) result = responseError("internal_error", deadline.settlement);
   else if (settled.value.kind === "rejected") {
-    result = responseError(settled.value.reasonCode === "release_conflict"
-      ? "replay_conflict"
-      : "precondition_failed", deadline.settlement);
+    result = responseError(
+      settled.value.reasonCode === "release_conflict"
+        ? "replay_conflict"
+        : settled.value.reasonCode === "resources_active"
+          ? "internal_error"
+          : "precondition_failed",
+      deadline.settlement,
+    );
   } else {
     result = {
       response: {

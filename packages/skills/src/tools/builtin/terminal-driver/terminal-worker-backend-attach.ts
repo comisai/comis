@@ -172,6 +172,16 @@ export function markExited(state: SessionState, logger: WorkerLogger, exitCode?:
       );
     });
   }
+  if (state.attachmentRelay !== undefined) {
+    const { attachmentRelay } = state;
+    state.attachmentRelay = undefined;
+    void attachmentRelay.dispose().catch((err: unknown) => {
+      logger.warn(
+        { err, hint: "attachment relay dispose failed on session teardown", errorKind: "internal" as const },
+        "terminal attachment relay dispose failed",
+      );
+    });
+  }
   for (const cb of state.exitListeners) cb();
   // The exit wake: push the exited transition on fd3 even when
   // NO settle is pending (no wait/read in flight — the "finished while the agent sat idle"

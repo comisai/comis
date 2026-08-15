@@ -168,6 +168,20 @@ function makeDeps(
 }
 
 describe("managed MCP private metadata boundary", () => {
+  it("exposes exact binding metadata for tool registration", () => {
+    const bridge = createManagedMcpPrivateMetadataBridge(makeDeps());
+    const call = makeCall();
+
+    expect(bridge.resolveRegistrationMetadata?.({
+      serverName: call.serverName,
+      toolName: call.toolName,
+      qualifiedName: call.qualifiedName,
+    })).toEqual({
+      actionClassification: "mutate",
+      invocationSideEffects: ["deferred_work"],
+    });
+  });
+
   it("injects exact host call context and activates a valid prepared result", async () => {
     const deps = makeDeps();
     const bridge = createManagedMcpPrivateMetadataBridge(deps);
@@ -355,6 +369,7 @@ describe("managed MCP private metadata boundary", () => {
       agentId: "agent_a",
       principalId: "principal_a",
       conversationRef: conversationRef.value,
+      status: "active",
     } as ManagedRunRecord;
     const getManagedRunByExternalRef = vi.fn(async () => ok(record));
     const deps = makeDeps({
@@ -379,6 +394,29 @@ describe("managed MCP private metadata boundary", () => {
       principalId: "principal_a",
       conversationRef: conversationRef.value,
     }, "service-instance_a", "external-run_a");
+  });
+
+  it("rejects run commands for terminal managed-run records", async () => {
+    const terminalRecord = {
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationRef.value,
+      status: "cancelled",
+    } as ManagedRunRecord;
+    const bridge = createManagedMcpPrivateMetadataBridge(makeDeps({
+      activeView: makeView("run_command"),
+      getManagedRunByExternalRef: vi.fn(async () => ok(terminalRecord)),
+      getCapturedToolIds: () => ["mcp:fixture-service/send_command"],
+    }));
+
+    const request = await runWithContext(makeContext(), () => bridge.createRequestMeta(
+      makeCall("send_command", { run_handle: "external-run_a", command: "status" }),
+    ));
+
+    expect(request.ok).toBe(false);
   });
 
   it("rejects managed metadata from an unbound tool despite server-authored claims", async () => {

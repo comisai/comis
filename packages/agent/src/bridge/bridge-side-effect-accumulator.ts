@@ -11,10 +11,7 @@
  */
 
 import { getToolMetadata } from "@comis/core";
-import type {
-  ExecutionSideEffectSummary,
-  TrackedInvocationSideEffect,
-} from "@comis/core";
+import type { ExecutionSideEffectSummary, TrackedInvocationSideEffect } from "@comis/core";
 
 const TRACKED_INVOCATION_SIDE_EFFECTS: ReadonlySet<TrackedInvocationSideEffect> = new Set([
   "scheduling",
@@ -33,7 +30,7 @@ export function createBridgeSideEffectSummary(): ExecutionSideEffectSummary {
 
 function markInvocationCapabilities(
   summary: ExecutionSideEffectSummary,
-  capabilities: readonly TrackedInvocationSideEffect[],
+  capabilities: readonly string[],
 ): void {
   for (const capability of capabilities) {
     switch (capability) {
@@ -47,18 +44,21 @@ function markInvocationCapabilities(
         summary.deferredWorkCapabilityInvoked = true;
         break;
       default: {
-        const _exhaustive: never = capability;
-        void _exhaustive;
+        summary.unclassifiedInvocationObserved = true;
       }
     }
   }
 }
 
-function isCapabilityList(value: unknown): value is readonly TrackedInvocationSideEffect[] {
+function isTrackedCapabilityList(value: unknown): value is readonly TrackedInvocationSideEffect[] {
   return Array.isArray(value) && value.every(
     (entry) => typeof entry === "string"
       && TRACKED_INVOCATION_SIDE_EFFECTS.has(entry as TrackedInvocationSideEffect),
   );
+}
+
+function isStringList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
 /** Record one attempted invocation without ever clearing facts from earlier turns. */
@@ -72,8 +72,16 @@ export function recordToolInvocationSideEffects(
     summary.unclassifiedInvocationObserved = true;
     return;
   }
+  if (declaration.kind === "managed") {
+    if (!isStringList(declaration.capabilities)) {
+      summary.unclassifiedInvocationObserved = true;
+      return;
+    }
+    markInvocationCapabilities(summary, declaration.capabilities);
+    return;
+  }
   if (declaration.kind === "always") {
-    if (!isCapabilityList(declaration.capabilities)) {
+    if (!isTrackedCapabilityList(declaration.capabilities)) {
       summary.unclassifiedInvocationObserved = true;
       return;
     }
@@ -85,7 +93,7 @@ export function recordToolInvocationSideEffects(
     return;
   }
   const entries = Object.entries(declaration.actions);
-  if (entries.length === 0 || entries.some(([, capabilities]) => !isCapabilityList(capabilities))) {
+  if (entries.length === 0 || entries.some(([, capabilities]) => !isTrackedCapabilityList(capabilities))) {
     summary.unclassifiedInvocationObserved = true;
     return;
   }

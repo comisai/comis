@@ -52,7 +52,7 @@ import {
 import { isAbsolute, relative, resolve as resolvePath, sep as pathSep } from "node:path";
 
 import { safePath, type EgressControlPort, type EgressMaterialization } from "@comis/core";
-import { err, ok, tryCatch, type Result } from "@comis/shared";
+import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
 import {
@@ -65,6 +65,10 @@ import {
   buildEgressRelayLaunch as defaultBuildEgressRelayLaunch,
   type EgressRelayLaunch,
 } from "./terminal-egress-relay.js";
+import {
+  materializeExecutionAttachmentRelays as defaultMaterializeExecutionAttachmentRelays,
+  type AttachmentRelayMaterialization,
+} from "./terminal-attachment-relay.js";
 import {
   MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT,
   MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT,
@@ -128,6 +132,7 @@ export interface SpawnPlanComposers {
    * `browser.noSandbox` precedent). Default/absent ⇒ the fail-closed jail.
    */
   unsafeDisableSandbox?: boolean;
+  materializeExecutionAttachmentRelays?: typeof defaultMaterializeExecutionAttachmentRelays;
 }
 
 const EPHEMERAL_WRITABLE_PATH_CONFIG = "agents.*.skills.terminal.allow[].scope.ephemeralWritablePaths";
@@ -206,6 +211,7 @@ export interface SpawnPlan {
    * for `none`/`full`.
    */
   egress?: EgressMaterialization;
+  attachmentRelay?: AttachmentRelayMaterialization;
 }
 
 /** Raised when the jail cannot be materialized (no provider) — fail-closed. */
@@ -713,6 +719,7 @@ export async function buildSpawnPlan(
   if (composers.bwrapPath === undefined) {
     throw new JailUnavailableError();
   }
+  const bwrapPath = composers.bwrapPath;
   const buildScopeArgs = composers.buildScopeArgs ?? defaultBuildScopeArgs;
   const buildEgressRelayLaunch =
     composers.buildEgressRelayLaunch ?? defaultBuildEgressRelayLaunch;
@@ -746,15 +753,29 @@ export async function buildSpawnPlan(
     });
   }
 
+  let attachmentRelay: AttachmentRelayMaterialization | undefined;
+  let executionAttachments = input.executionAttachments;
+  if (dedicatedUid !== undefined && (executionAttachments?.length ?? 0) > 0) {
+    const materialize = composers.materializeExecutionAttachmentRelays
+      ?? defaultMaterializeExecutionAttachmentRelays;
+    const materialized = await materialize(executionAttachments ?? [], dedicatedUid);
+    if (!materialized.ok) {
+      if (egress !== undefined) await fromPromise(egress.dispose());
+      throw materialized.error;
+    }
+    attachmentRelay = materialized.value;
+    executionAttachments = materialized.value.attachments;
+  }
+
   // For listed-hosts the relay-init (above) performs the uid drop AFTER bringing
   // `lo` up as userns-root, so the bwrap jail itself must NOT pre-drop via `--uid`
   // (that would strip CAP_NET_ADMIN and break the loopback-up). For every other
   // network mode bwrap drops the uid directly (no relay in the path).
   const bwrapUid = scope.network === "listed-hosts" ? undefined : dedicatedUid;
 
-  const scopeArgs = buildScopeArgs({
+  const scopeArgsResult = tryCatch(() => buildScopeArgs({
     scope,
-    bwrapPath: composers.bwrapPath,
+    bwrapPath,
     workspace: input.workspace,
     workspaceGitMounts: input.workspaceGitMounts,
     cwd: input.cwd,
@@ -773,8 +794,14 @@ export async function buildSpawnPlan(
     // also strips them. The PTY backend is covered by the scrubChildEnv(input.env) below;
     // this is the backend-independent half (TERM-ENV-GATEWAY-TOKEN-LEAK).
     extraUnsetEnvKeys: secretEnvKeysIn(input.env),
-    executionAttachments: input.executionAttachments,
-  });
+    executionAttachments,
+  }));
+  if (!scopeArgsResult.ok) {
+    if (attachmentRelay !== undefined) await fromPromise(attachmentRelay.dispose());
+    if (egress !== undefined) await fromPromise(egress.dispose());
+    throw scopeArgsResult.error;
+  }
+  const scopeArgs = scopeArgsResult.value;
 
   // scopeArgs = [bwrapPath, ...args, "--"]. The child (and, for listed-hosts, the
   // relay-as-init wrapper) go AFTER that `--`.
@@ -789,8 +816,8 @@ export async function buildSpawnPlan(
   // listed-hosts merge the relay's HTTPS_PROXY/HTTP_PROXY over the scrubbed env.
   delete childEnv[MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT];
   delete childEnv[MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT];
-  const soleAttachment = input.executionAttachments?.length === 1
-    ? input.executionAttachments[0]
+  const soleAttachment = executionAttachments?.length === 1
+    ? executionAttachments[0]
     : undefined;
   const env: NodeJS.ProcessEnv = {
     ...childEnv,
@@ -815,6 +842,7 @@ export async function buildSpawnPlan(
     argv: afterSeparator,
     env,
     egress,
+    attachmentRelay,
   };
 }
 

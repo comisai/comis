@@ -139,7 +139,11 @@ function readVerifiedBody(root: string, row: ManagedRunContentDbRow): Result<Uin
   return loaded.ok ? ok(loaded.value) : err(fromCause(loaded.error));
 }
 
-function writeAtomicBody(directory: string, targetPath: string, bytes: Uint8Array): Result<void, Error> {
+function writeAtomicBody(
+  directory: string,
+  targetPath: string,
+  bytes: Uint8Array,
+): Result<"created" | "existing", Error> {
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- targetPath is safePath-confined beneath a verified scope directory
   const existing = tryCatch(() => lstatSync(targetPath));
   if (existing.ok) {
@@ -163,7 +167,7 @@ function writeAtomicBody(directory: string, targetPath: string, bytes: Uint8Arra
       && (existing.value.mode & 0o777) === 0o600
       && loaded.ok
       && digest(loaded.value) === digest(bytes)
-    ) return ok(undefined);
+    ) return ok("existing");
     return err(new Error("managed-run content path is occupied by different data"));
   }
   if ((existing.error as NodeJS.ErrnoException).code !== "ENOENT") return err(fromCause(existing.error));
@@ -199,7 +203,7 @@ function writeAtomicBody(directory: string, targetPath: string, bytes: Uint8Arra
       closeSync(directoryFd);
     }
   });
-  if (written.ok) return ok(undefined);
+  if (written.ok) return ok("created");
   const danglingFd = fd;
   if (danglingFd !== undefined) tryCatch(() => closeSync(danglingFd));
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- removes only the exact safePath-confined temp name created by this write
@@ -302,8 +306,25 @@ export function createSqliteManagedRunContentStore(
       nowMs(),
     ));
     if (!indexed.ok) {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- removes only the exact safePath-confined body whose index insert failed
-      tryCatch(() => unlinkSync(target.value));
+      const raced = selectRow(scope, contentRef);
+      if (
+        raced.ok
+        && raced.value !== undefined
+        && raced.value.kind === kind
+        && raced.value.content_hash === contentHash
+        && raced.value.byte_length === bytes.byteLength
+        && raced.value.relative_path === relativePath
+      ) {
+        const verified = readVerifiedBody(options.directoryPath, raced.value);
+        if (verified.ok) return ok(receipt(raced.value));
+      }
+      if (raced.ok && raced.value !== undefined) {
+        return err(new Error("managed-run private content replay conflicts with the original body"));
+      }
+      if (persisted.value === "created" && raced.ok) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- removes only the exact safePath-confined body created by this writer after proving no index owns it
+        tryCatch(() => unlinkSync(target.value));
+      }
       return err(fromCause(indexed.error));
     }
     return ok({

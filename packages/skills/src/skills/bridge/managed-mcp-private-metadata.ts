@@ -122,6 +122,13 @@ interface CapturedCall {
   readonly authority: ManagedMcpActivationAuthority;
 }
 
+const COMMANDABLE_RUN_STATUSES = new Set<ManagedRunRecord["status"]>([
+  "active",
+  "waiting",
+  "paused",
+  "candidate_complete",
+]);
+
 function callKey(input: McpPrivateMetadataCall): string {
   return JSON.stringify([input.qualifiedName, input.toolCallId]);
 }
@@ -255,6 +262,7 @@ async function resolveRunHandle(
     || record.agentId !== scope.agentId
     || record.principalId !== scope.principalId
     || record.conversationRef !== scope.conversationRef
+    || !COMMANDABLE_RUN_STATUSES.has(record.status)
   ) {
     return err(new Error("managed-run handle is unavailable in the active owner scope"));
   }
@@ -324,6 +332,23 @@ export function createManagedMcpPrivateMetadataBridge(
   deps: ManagedMcpPrivateMetadataDeps,
 ): McpPrivateMetadataBridge {
   const capturedCalls = new Map<string, CapturedCall>();
+
+  function resolveRegistrationMetadata(
+    input: Omit<McpPrivateMetadataCall, "toolCallId" | "params">,
+  ): {
+    readonly actionClassification: "read" | "mutate" | "destructive";
+    readonly invocationSideEffects: readonly string[];
+  } | undefined {
+    const bound = exactBinding(deps, { ...input, toolCallId: "registration", params: {} });
+    if (!bound.ok) {
+      return Object.freeze({ actionClassification: "destructive", invocationSideEffects: [] });
+    }
+    if (bound.value === undefined) return undefined;
+    return Object.freeze({
+      actionClassification: bound.value.binding.actionClassification,
+      invocationSideEffects: Object.freeze([...bound.value.binding.invocationSideEffects]),
+    });
+  }
 
   async function createRequestMeta(
     input: McpPrivateMetadataCall,
@@ -479,5 +504,5 @@ export function createManagedMcpPrivateMetadataBridge(
     capturedCalls.delete(callKey(input));
   }
 
-  return Object.freeze({ createRequestMeta, acceptResultMeta, discardCall });
+  return Object.freeze({ resolveRegistrationMetadata, createRequestMeta, acceptResultMeta, discardCall });
 }

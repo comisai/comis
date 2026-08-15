@@ -13,7 +13,7 @@
  * socket path, so the full argv composition is asserted on macOS. The live relay
  * bridge is the VPS suite (`terminal-scope-matrix.linux.test.ts`).
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { EgressControlPort } from "@comis/core";
+import { ok } from "@comis/shared";
 
 import { AttachmentSandboxUnavailableError, buildSpawnPlan, JailUnavailableError, planSpawnFromCreateFrame, resolveManagedWorkspaceGitMounts, type CreateFrameSpawnParams, type SpawnPlanInput } from "./terminal-spawn-plan.js";
 import { RELAY_INIT_SCRIPT_URL } from "./terminal-egress-relay.js";
@@ -334,6 +335,11 @@ describe("buildSpawnPlan — execution attachment confinement", () => {
     sourcePath: "/srv/runtime/worker.sock",
     targetName: `attachment-${"a".repeat(32)}.sock`,
   };
+  const attachmentRelay = {
+    attachments: [{ ...attachment, sourcePath: "/tmp/relays/worker.sock" }],
+    dispose: vi.fn(async () => undefined),
+  };
+  const materializeExecutionAttachmentRelays = vi.fn(async () => ok(attachmentRelay));
 
   it("fails closed when an attachment cannot be materialized by bubblewrap", async () => {
     await expect(buildSpawnPlan(makeInput({ executionAttachments: [attachment] }), {}))
@@ -350,18 +356,21 @@ describe("buildSpawnPlan — execution attachment confinement", () => {
   it("threads only the approved attachment record into the bubblewrap composer", async () => {
     const plan = await buildSpawnPlan(makeInput({ executionAttachments: [attachment] }), {
       bwrapPath: "/usr/bin/bwrap",
+      materializeExecutionAttachmentRelays,
     });
     expect(hasBind(
       plan.argv,
       "--ro-bind",
-      attachment.sourcePath,
+      "/tmp/relays/worker.sock",
       `/run/comis/attachments/${attachment.targetName}`,
     )).toBe(true);
+    expect(plan.attachmentRelay).toBe(attachmentRelay);
   });
 
   it("publishes the sole protected attachment identity to the jailed child", async () => {
     const plan = await buildSpawnPlan(makeInput({ executionAttachments: [attachment] }), {
       bwrapPath: "/usr/bin/bwrap",
+      materializeExecutionAttachmentRelays,
     });
 
     expect(plan.env).toMatchObject({

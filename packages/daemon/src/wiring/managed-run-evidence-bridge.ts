@@ -11,6 +11,7 @@ import {
   type ManagedEvidenceVerificationLevel,
   type ManagedRunContentPort,
   type ManagedRunContentScope,
+  type ManagedRunOwnerScope,
   type ManagedRunStorePort,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
@@ -104,6 +105,25 @@ function contentScope(
   };
 }
 
+function ownerScope(record: {
+  readonly tenantId: string;
+  readonly agentId: string;
+  readonly principalId: string;
+  readonly conversationRef: ManagedRunOwnerScope["conversationRef"];
+}): ManagedRunOwnerScope {
+  return {
+    kind: "owner",
+    tenantId: record.tenantId,
+    agentId: record.agentId,
+    principalId: record.principalId,
+    conversationRef: record.conversationRef,
+  };
+}
+
+function samePrivateBody(left: Uint8Array, right: Uint8Array): boolean {
+  return Buffer.from(left).equals(Buffer.from(right));
+}
+
 function deliveryMatches(
   policy: CapabilityServiceEvidencePolicy,
   delivery: ManagedEvidenceDelivery | undefined,
@@ -140,9 +160,24 @@ export function createManagedRunEvidenceBridge(
 
   async function removeUnindexedBody(
     scope: ManagedRunContentScope,
+    owner: ManagedRunOwnerScope,
     evidenceRef: string,
     identity: { readonly serviceInstanceId: string; readonly managedRunId: string },
   ): Promise<void> {
+    const indexed = await invoke(() => deps.store.listEvidenceByRefs(owner, {
+      managedRunId: identity.managedRunId,
+      evidenceRefs: [evidenceRef],
+    }));
+    if (!indexed.ok) {
+      deps.logger.error({
+        ...identity,
+        step: "evidence-index-compensation-check",
+        errorKind: "internal" as const,
+        hint: "Run managed-run private-content recovery after checking the evidence index",
+      }, "Managed-run evidence compensation ownership check failed");
+      return;
+    }
+    if (indexed.value.length > 0) return;
     const removed = await invoke(() => deps.contentStore.deleteEvidence(scope, evidenceRef));
     if (removed.ok) return;
     deps.logger.error({
@@ -210,6 +245,9 @@ export function createManagedRunEvidenceBridge(
       const privateBytes = Buffer.from(JSON.stringify(privateBody.data), "utf8");
       const existing = await invoke(() => deps.contentStore.getEvidence(scope, parsed.data.evidenceRef));
       if (!existing.ok) return existing;
+      if (existing.value !== undefined && !samePrivateBody(existing.value, privateBytes)) {
+        return rejectEvidence("replay_conflict", identity);
+      }
       const published = await invoke(() => deps.contentStore.putEvidence(
         scope,
         parsed.data.evidenceRef,
@@ -218,7 +256,19 @@ export function createManagedRunEvidenceBridge(
           ...(parsed.data.expiresAtMs === undefined ? {} : { expiresAtMs: parsed.data.expiresAtMs }),
         },
       ));
-      if (!published.ok) return rejectEvidence("replay_conflict", identity);
+      if (!published.ok) {
+        const raced = await invoke(() => deps.contentStore.getEvidence(scope, parsed.data.evidenceRef));
+        if (raced.ok && raced.value !== undefined && !samePrivateBody(raced.value, privateBytes)) {
+          return rejectEvidence("replay_conflict", identity);
+        }
+        deps.logger.error({
+          ...identity,
+          step: "evidence-private-body-write",
+          errorKind: "internal" as const,
+          hint: "Retry the evidence operation after checking the managed-run private-content store",
+        }, "Managed-run evidence private body write failed");
+        return published;
+      }
 
       const appended = await invoke(() => deps.store.appendEvidence(
         { kind: "service", serviceInstanceId: identity.serviceInstanceId },
@@ -238,11 +288,15 @@ export function createManagedRunEvidenceBridge(
         },
       ));
       if (!appended.ok) {
-        if (existing.value === undefined) await removeUnindexedBody(scope, parsed.data.evidenceRef, identity);
+        if (existing.value === undefined) {
+          await removeUnindexedBody(scope, ownerScope(record.value), parsed.data.evidenceRef, identity);
+        }
         return appended;
       }
       if (appended.value.kind !== "accepted" && appended.value.kind !== "identical_replay") {
-        if (existing.value === undefined) await removeUnindexedBody(scope, parsed.data.evidenceRef, identity);
+        if (existing.value === undefined) {
+          await removeUnindexedBody(scope, ownerScope(record.value), parsed.data.evidenceRef, identity);
+        }
         if (appended.value.kind === "replay_conflict") return rejectEvidence("replay_conflict", identity);
         if (appended.value.kind === "state_mismatch") return rejectEvidence("state_mismatch", identity);
         return rejectEvidence("managed_run_not_found", identity);

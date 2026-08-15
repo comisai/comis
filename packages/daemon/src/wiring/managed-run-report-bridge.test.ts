@@ -273,6 +273,29 @@ describe("managed-run report bridge", () => {
     }, { managedRunId: "managed-run_a", limit: 10 })).toEqual({ ok: true, value: [] });
   });
 
+  it("persists the report identity as the external attention key when omitted", async () => {
+    const accepted = await makeBridge().ingestReport({
+      ...makeInput(),
+      report: {
+        serviceReportId: "service-report_without-key",
+        kind: "blocked",
+        summary: "Operator input is required",
+      },
+    });
+    expect(accepted).toMatchObject({ ok: true, value: { kind: "accepted" } });
+
+    expect(await store.listOpenAttention({
+      kind: "owner",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationReference.value,
+    }, { managedRunId: "managed-run_a", limit: 10 })).toMatchObject({
+      ok: true,
+      value: [{ externalKey: "service-report_without-key", status: "open" }],
+    });
+  });
+
   it("accepts a delayed durable report observed during the managed run", async () => {
     db.prepare("UPDATE managed_runs SET created_at_ms = ?, updated_at_ms = ? WHERE managed_run_id = ?")
       .run(NOW_MS - 180_000, NOW_MS - 120_000, "managed-run_a");

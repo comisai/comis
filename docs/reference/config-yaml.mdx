@@ -2278,7 +2278,7 @@ capabilityServices:
       mcpServerName: example-service
       control:
         transport: unix
-        socketPath: /run/comis/example-service.sock
+        socketPath: /opt/comis/data/capability-services/example-service.sock
         credentialRef: secret://capability-services/example-service-1
       allowedAgents: [assistant]
       allowedWorkspaceRoots: [/srv/comis-workspaces]
@@ -2286,10 +2286,11 @@ capabilityServices:
 ```
 
 The `serviceDefinitionId` and `mcpServerName` must match a linked contribution.
-The control transport is Unix-socket only; `socketPath` must be normalized and
-absolute, and `credentialRef` must be a `secret://` reference. Agent IDs must be
-unique. Workspace and runtime roots must be unique, normalized absolute paths
-narrower than a filesystem root.
+The control transport is Unix-socket only; `socketPath` must be normalized,
+absolute, and beneath the daemon's canonical owner-only data directory. The
+daemon creates the control socket with mode `0600`. `credentialRef` must be a
+`secret://` reference. Agent IDs must be unique. Workspace and runtime roots
+must be unique, normalized absolute paths narrower than a filesystem root.
 
 | Key | Type | Default | Validation |
 |-----|------|---------|------------|

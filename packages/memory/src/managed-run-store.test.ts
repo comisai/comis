@@ -1023,7 +1023,11 @@ describe("createSqliteManagedRunStore durable state machine", () => {
 
   it("atomically blocks new resource bindings after durable lease release reservation", async () => {
     const store = createSqliteManagedRunStore(db);
-    expect((await store.create(makeRecord({ workspaceLeaseId: "workspace-lease_a" }))).ok).toBe(true);
+    const externalRunRef = "external-run_a";
+    expect((await store.create(makeRecord({
+      workspaceLeaseId: "workspace-lease_a",
+      externalRunRefDigest: createHash("sha256").update(externalRunRef, "utf8").digest("hex"),
+    }))).ok).toBe(true);
     const reservation = {
       operationId: "operation_release_reserved",
       managedRunId: "managed-run_a",
@@ -1038,6 +1042,12 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       ...reservation,
       disposition: "preserve",
     })).value?.kind).toBe("replay_conflict");
+    expect((await store.reserveRelease(SERVICE_SCOPE, {
+      ...reservation,
+      releasedAtMs: 1_800_000_000_101,
+    })).value?.kind).toBe("replay_conflict");
+    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", externalRunRef))
+      .toEqual({ ok: true, value: undefined });
     expect((await store.bindTerminal(OWNER_SCOPE, {
       managedRunId: "managed-run_a",
       terminalSessionId: "terminal_after_release_reservation",

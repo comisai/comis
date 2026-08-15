@@ -34,6 +34,13 @@ function scopeMatches(record: WorkspaceLeaseRecord, scope: WorkspaceLeaseScope):
     && record.managedRunId === scope.managedRunId;
 }
 
+function workspacePathsOverlap(left: string, right: string): boolean {
+  if (left === right) return true;
+  const leftPrefix = left.endsWith("/") ? left : `${left}/`;
+  const rightPrefix = right.endsWith("/") ? right : `${right}/`;
+  return right.startsWith(leftPrefix) || left.startsWith(rightPrefix);
+}
+
 function rowToRecord(row: WorkspaceLeaseDbRow): Result<WorkspaceLeaseRecord, Error> {
   const parsed = parseWorkspaceLeaseRecord({
     schemaVersion: row.schema_version,
@@ -79,15 +86,10 @@ function parseStored(raw: string): Result<WorkspaceLeaseRecord, Error> {
 export function createSqliteWorkspaceLeaseStore(db: Database.Database): WorkspaceLeasePort {
   const selectLease = db.prepare("SELECT * FROM workspace_leases WHERE workspace_lease_id = ?");
   const selectLeaseByRun = db.prepare("SELECT * FROM workspace_leases WHERE managed_run_id = ?");
-  const selectActiveWorkspaceIdentity = db.prepare(`
+  const selectActiveWorkspaceIdentities = db.prepare(`
     SELECT * FROM workspace_leases
-    WHERE state = 'active' AND (
-      canonical_path = ? OR (
-        filesystem_device = ? AND filesystem_inode = ? AND filesystem_birthtime_ns = ?
-      )
-    )
+    WHERE state = 'active'
     ORDER BY workspace_lease_id ASC
-    LIMIT 1
   `);
   const insertLease = db.prepare(`
     INSERT INTO workspace_leases (
@@ -136,14 +138,21 @@ export function createSqliteWorkspaceLeaseStore(db: Database.Database): Workspac
   function readActiveWorkspaceIdentity(
     record: WorkspaceLeaseRecord,
   ): Result<WorkspaceLeaseRecord | undefined, Error> {
-    const row = leaseMapper.parseOptionalRow(selectActiveWorkspaceIdentity.get(
-      record.canonicalPath,
-      record.filesystemIdentity.device,
-      record.filesystemIdentity.inode,
-      record.filesystemIdentity.birthtimeNs,
-    ));
-    if (!row.ok) return err(new Error(row.error.message));
-    return row.value === undefined ? ok(undefined) : rowToRecord(row.value);
+    const rows = leaseMapper.parseRows(selectActiveWorkspaceIdentities.all());
+    if (!rows.ok) return err(new Error(rows.error.message));
+    for (const row of rows.value) {
+      const active = rowToRecord(row);
+      if (!active.ok) return active;
+      if (
+        workspacePathsOverlap(active.value.canonicalPath, record.canonicalPath)
+        || (
+          active.value.filesystemIdentity.device === record.filesystemIdentity.device
+          && active.value.filesystemIdentity.inode === record.filesystemIdentity.inode
+          && active.value.filesystemIdentity.birthtimeNs === record.filesystemIdentity.birthtimeNs
+        )
+      ) return ok(active.value);
+    }
+    return ok(undefined);
   }
 
   function persist(record: WorkspaceLeaseRecord): Result<void, Error> {

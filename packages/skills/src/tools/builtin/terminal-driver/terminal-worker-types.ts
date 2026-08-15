@@ -193,6 +193,7 @@ export interface SessionState {
    * cleaned up (no leak). Absent for `none`/`full`.
    */
   egress?: EgressMaterialization;
+  attachmentRelay?: { dispose(): Promise<void> };
 }
 
 // ---------------------------------------------------------------------------

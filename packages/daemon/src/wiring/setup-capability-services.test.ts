@@ -215,10 +215,10 @@ describe("production capability-service setup", () => {
   });
 
   function makeRuntime() {
-    const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "cpsetup-")));
+    const dataDir = realpathSync(mkdtempSync("/tmp/cpsetup-"));
     temporaryDirectories.push(dataDir);
     chmodSync(dataDir, 0o700);
-    const socketPath = join(dataDir, "control", "service.sock");
+    const socketPath = join(dataDir, "capability-services", "example-service.sock");
     const config: CapabilityServicesConfig = {
       instances: [{
         serviceInstanceId: "service-instance_a",

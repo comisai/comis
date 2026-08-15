@@ -439,6 +439,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       throw err;
     }
     state.egress = plan.egress; // disposed on teardown (markExited)
+    state.attachmentRelay = plan.attachmentRelay;
 
     // Attach the backend (PTY or the degraded pipe fallback) — the EXACT try-loadPty /
     // wire-onData/onExit / pipe-close-error block, lifted into a sibling so this file

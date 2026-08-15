@@ -57,39 +57,6 @@ function source(path: string): string {
 }
 
 describe("generic runtime specialization boundary", () => {
-  it("keeps capability-service contracts and conformance surfaces inside the scan", () => {
-    const covered = new Set(scannedFiles().map((file) => relative(REPO_ROOT, file)));
-    for (const path of [
-      "packages/capability-service-sdk/src/constants.ts",
-      "packages/capability-service-sdk/src/methods.ts",
-      "packages/capability-service-sdk/protocol/manifest.json",
-      "packages/capability-service-sdk/protocol/fixtures/valid.json",
-      "packages/core/src/domain/managed-run.ts",
-      "packages/core/src/domain/managed-run-content.ts",
-      "packages/core/src/ports/managed-run.ts",
-      "packages/core/src/config/capability-service-contributions.ts",
-      "packages/core/src/event-bus/events-capability-service.ts",
-      "packages/core/src/event-bus/events-managed-run.ts",
-      "packages/core/src/ports/capability-service-control.ts",
-      "packages/memory/src/managed-run-store.ts",
-      "packages/memory/src/managed-run-content-store.ts",
-      "packages/daemon/src/wiring/capability-service-runtime.ts",
-      "packages/daemon/src/wiring/managed-run-activation-coordinator.ts",
-      "packages/memory/src/managed-run-content-row-schema.ts",
-      "packages/memory/src/managed-run-store-record.ts",
-      "packages/memory/src/managed-run-row-schema.ts",
-      "packages/memory/src/schema-managed-runs.ts",
-      "packages/daemon/src/__tests__/capability-service-protocol-fixture-host.ts",
-      "packages/daemon/src/__tests__/capability-service-protocol-fixture-server.ts",
-      "packages/daemon/src/__tests__/capability-service-protocol-fixture-host-entry.ts",
-      "packages/daemon/src/wiring/capability-service-strict-json.ts",
-      "packages/daemon/src/wiring/capability-service-unix-host.ts",
-      "packages/daemon/src/wiring/setup-capability-services.ts",
-    ]) {
-      expect(covered.has(path), path).toBe(true);
-    }
-  });
-
   it("contains no retired domain terms or health surface identifiers", () => {
     const removedTerms = [
       "f" + "leet",

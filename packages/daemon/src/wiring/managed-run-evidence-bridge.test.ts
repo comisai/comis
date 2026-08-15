@@ -19,7 +19,7 @@ import {
   createSqliteManagedRunStore,
   initSchema,
 } from "@comis/memory";
-import { err } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import {
   createManagedRunEvidenceBridge,
   type ManagedRunEvidenceBridgeDeps,
@@ -257,5 +257,54 @@ describe("managed-run evidence bridge", () => {
       agentId: "agent_a",
       managedRunId: "managed-run_a",
     }, "evidence_a")).toEqual({ ok: true, value: undefined });
+  });
+
+  it("returns transient private storage failures without converting them to replay conflicts", async () => {
+    const failingContentStore: ManagedRunContentPort = {
+      ...contentStore,
+      putEvidence: vi.fn(async () => err(new Error("synthetic private store interruption"))),
+    };
+
+    expect(await makeBridge({ contentStore: failingContentStore }).putEvidence(makeInput()))
+      .toMatchObject({ ok: false, error: { message: "synthetic private store interruption" } });
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      step: "evidence-private-body-write",
+      errorKind: "internal",
+      hint: expect.any(String),
+    }), "Managed-run evidence private body write failed");
+  });
+
+  it("preserves a concurrently accepted evidence body after an altered index replay", async () => {
+    const deleteEvidence = vi.fn(contentStore.deleteEvidence.bind(contentStore));
+    const racingContentStore: ManagedRunContentPort = { ...contentStore, deleteEvidence };
+    const racingStore: ManagedRunStorePort = {
+      ...store,
+      appendEvidence: vi.fn(async () => ok({ kind: "replay_conflict" as const })),
+      listEvidenceByRefs: vi.fn(async () => ok([{
+        schemaVersion: 1,
+        serviceInstanceId: "service-instance_a",
+        managedRunId: "managed-run_a",
+        evidenceRef: "evidence_a",
+        kind: "delivery_reference",
+        subjectDigest: "f".repeat(64),
+        observedAtMs: NOW_MS - 10,
+        expiresAtMs: NOW_MS + 60_000,
+        contentRef: "evidence_a",
+        contentHash: createHash("sha256").update(BODY).digest("hex"),
+        privateContentHash: "b".repeat(64),
+        verificationLevel: "adapter_verified",
+        deliveryKind: "reference",
+        receivedAtMs: NOW_MS,
+      }])),
+    };
+
+    expect(await makeBridge({ store: racingStore, contentStore: racingContentStore }).putEvidence(makeInput()))
+      .toMatchObject({ ok: true, value: { kind: "rejected", reasonCode: "replay_conflict" } });
+    expect(deleteEvidence).not.toHaveBeenCalled();
+    expect(await contentStore.getEvidence({
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      managedRunId: "managed-run_a",
+    }, "evidence_a")).toMatchObject({ ok: true, value: expect.any(Uint8Array) });
   });
 });

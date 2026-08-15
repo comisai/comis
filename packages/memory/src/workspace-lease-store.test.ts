@@ -165,6 +165,10 @@ describe("SQLite workspace lease persistence", () => {
       ok: true,
       value: { kind: "replay_conflict" },
     });
+    expect(await store.release(LEASE_SCOPE, { ...release, releasedAtMs: NOW_MS + 11 })).toEqual({
+      ok: true,
+      value: { kind: "replay_conflict" },
+    });
     expect(await store.listRecoverable({ kind: "recovery", limit: 10 })).toEqual({
       ok: true,
       value: [],
@@ -257,8 +261,26 @@ describe("SQLite workspace lease persistence", () => {
     }))).resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
     await expect(store.create(makeLease({
       ...secondBase,
+      canonicalPath: "/srv/comis-workspaces/task-a/subtask",
+      filesystemIdentity: { device: 10, inode: 22, birthtimeNs: "102" },
+    }))).resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
+    await expect(store.create(makeLease({
+      ...secondBase,
+      canonicalPath: "/srv/comis-workspaces",
+      filesystemIdentity: { device: 10, inode: 23, birthtimeNs: "103" },
+    }))).resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
+    await expect(store.create(makeLease({
+      ...secondBase,
       canonicalPath: "/srv/comis-workspaces/task-alias",
     }))).resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
+    await expect(store.create(makeLease({
+      ...secondBase,
+      canonicalPath: "/srv/comis-workspaces/task-ab",
+      filesystemIdentity: { device: 10, inode: 24, birthtimeNs: "104" },
+    }))).resolves.toMatchObject({
+      ok: true,
+      value: { kind: "created", record: { managedRunId: "managed-run_b" } },
+    });
 
     expect((await store.release(LEASE_SCOPE, {
       operationId: "release-for-reuse",
@@ -266,10 +288,6 @@ describe("SQLite workspace lease persistence", () => {
       disposition: "preserve",
       releasedAtMs: NOW_MS + 1,
     })).value?.kind).toBe("released");
-    await expect(store.create(makeLease(secondBase))).resolves.toMatchObject({
-      ok: true,
-      value: { kind: "created", record: { managedRunId: "managed-run_b" } },
-    });
     db.close();
   });
 

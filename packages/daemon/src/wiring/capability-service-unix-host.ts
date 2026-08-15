@@ -649,9 +649,13 @@ function createEndpoint(
       rejectRequest(socket, "method_not_found", id);
     }
 
-    function routeResponse(frame: Readonly<Record<string, unknown>>): void {
+    function routeResponse(socket: net.Socket, frame: Readonly<Record<string, unknown>>): void {
       const id = requestId(frame);
       if (id === null) return;
+      if (boundSocket !== socket) {
+        rejectRequest(socket, "precondition_failed", id);
+        return;
+      }
       const entry = pending.get(id);
       if (entry === undefined) return;
       const remoteError = CapabilityServiceErrorResponseSchema.safeParse(frame);
@@ -684,20 +688,13 @@ function createEndpoint(
       let partialFrameTimer: TimerHandle | undefined;
       socket.on("data", (chunk: Buffer) => {
         buffered = Buffer.concat([buffered, chunk]);
-        if (buffered.byteLength > CAPABILITY_SERVICE_LIMITS.maxLineBytes) {
-          partialFrameTimer?.cancel();
-          partialFrameTimer = undefined;
-          rejectRequest(socket, "size_limit_exceeded", null);
-          socket.destroy();
-          return;
-        }
         let newline = buffered.indexOf(0x0a);
         while (newline >= 0) {
           partialFrameTimer?.cancel();
           partialFrameTimer = undefined;
           const line = buffered.subarray(0, newline);
           buffered = buffered.subarray(newline + 1);
-          if (line.byteLength > CAPABILITY_SERVICE_LIMITS.maxRequestBytes) {
+          if (line.byteLength > CAPABILITY_SERVICE_LIMITS.maxLineBytes) {
             rejectRequest(socket, "size_limit_exceeded", null);
           } else {
             const decoded = parseStrictJson(line.toString("utf8"));
@@ -705,11 +702,23 @@ function createEndpoint(
             else {
               const frame = asRecord(decoded.value);
               if (frame === undefined) rejectRequest(socket, "invalid_request", null);
-              else if ("method" in frame) routeRequest(socket, frame);
-              else routeResponse(frame);
+              else if ("method" in frame) {
+                if (line.byteLength > CAPABILITY_SERVICE_LIMITS.maxRequestBytes) {
+                  rejectRequest(socket, "size_limit_exceeded", null);
+                } else routeRequest(socket, frame);
+              } else if (line.byteLength > CAPABILITY_SERVICE_LIMITS.maxResponseBytes) {
+                rejectRequest(socket, "size_limit_exceeded", null);
+              } else routeResponse(socket, frame);
             }
           }
           newline = buffered.indexOf(0x0a);
+        }
+        if (buffered.byteLength > CAPABILITY_SERVICE_LIMITS.maxLineBytes) {
+          partialFrameTimer?.cancel();
+          partialFrameTimer = undefined;
+          rejectRequest(socket, "size_limit_exceeded", null);
+          socket.destroy();
+          return;
         }
         if (buffered.byteLength > 0 && partialFrameTimer === undefined && !socket.destroyed) {
           partialFrameTimer = deps.timers.setTimeout(() => {

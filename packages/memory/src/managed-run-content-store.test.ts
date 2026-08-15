@@ -477,6 +477,30 @@ describe("createSqliteManagedRunContentStore confined bodies", () => {
     })).ok).toBe(false);
   });
 
+  it("preserves a body accepted by a concurrent matching index publication", async () => {
+    db.exec(`
+      CREATE TRIGGER concurrent_managed_run_content_insert
+      BEFORE INSERT ON managed_run_content_index
+      WHEN NEW.content_ref = 'evidence_concurrent_index'
+      BEGIN
+        INSERT INTO managed_run_content_index (
+          tenant_id, agent_id, managed_run_id, content_ref, kind, content_hash,
+          byte_length, relative_path, expires_at_ms, created_at_ms
+        ) VALUES (
+          NEW.tenant_id, NEW.agent_id, NEW.managed_run_id, NEW.content_ref, NEW.kind,
+          NEW.content_hash, NEW.byte_length, NEW.relative_path, NEW.expires_at_ms, NEW.created_at_ms
+        );
+        SELECT RAISE(FAIL, 'concurrent index publication');
+      END
+    `);
+    const bytes = new TextEncoder().encode("concurrently indexed body");
+
+    expect(await store.putEvidence(SCOPE, "evidence_concurrent_index", { body: bytes }))
+      .toMatchObject({ ok: true, value: { contentHash: sha256(bytes) } });
+    expect(await store.getEvidence(SCOPE, "evidence_concurrent_index"))
+      .toEqual({ ok: true, value: bytes });
+  });
+
   it("returns purge failure when an indexed body path becomes a directory", async () => {
     expect((await store.putEvidence(SCOPE, "evidence_directory_body", {
       body: new TextEncoder().encode("temporary"),

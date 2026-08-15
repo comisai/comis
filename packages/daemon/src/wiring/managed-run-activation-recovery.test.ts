@@ -352,7 +352,14 @@ describe("managed-run activation restart recovery", () => {
     });
     expect(validRecord.ok && validRecord.value?.activationDescriptorRef).toBeUndefined();
     expect(await store.get({ kind: "service", serviceInstanceId: "service-instance_a" }, "managed-run_expired"))
-      .toMatchObject({ ok: true, value: { status: "cancelled" } });
+      .toMatchObject({
+        ok: true,
+        value: {
+          status: "cancelled",
+          updatedAtMs: NOW_MS,
+          terminalOutcome: { kind: "cancelled", recordedAtMs: NOW_MS },
+        },
+      });
     expect(await store.get({ kind: "service", serviceInstanceId: "service-instance_a" }, "managed-run_missing"))
       .toMatchObject({ ok: true, value: { status: "unknown", statusReason: "recovery_join_missing" } });
     expect(await contentStore.getActivationDescriptor({
@@ -368,6 +375,63 @@ describe("managed-run activation restart recovery", () => {
       errorKind: "internal",
       hint: expect.any(String),
     }), "Corrupt managed-run recovery row was quarantined");
+
+    const retryDescriptor = {
+      externalRunRef: "external-run_retry",
+      registrationNonce: "registration-nonce_retry",
+      expiresAtMs: NOW_MS - 1,
+    };
+    const retryPrepared = { ...retryDescriptor, state: "prepared" as const };
+    const retryRecord = makeRecord("managed-run_retry", "service-instance_a", "descriptor_retry", {
+      activationDescriptorDigest: createHash("sha256")
+        .update(JSON.stringify(retryPrepared))
+        .digest("hex"),
+    });
+    expect((await store.create(retryRecord)).ok).toBe(true);
+    expect((await contentStore.putActivationDescriptor({
+      tenantId: "tenant_a", agentId: "agent_a", managedRunId: "managed-run_retry",
+    }, "descriptor_retry", { schemaVersion: 1, ...retryDescriptor })).ok).toBe(true);
+    const failingAbandon = vi.fn(async () => err({
+      kind: "uncertain" as const,
+      reasonCode: "deadline_exceeded",
+    }));
+    const retryCoordinator = createManagedRunActivationCoordinator({
+      store,
+      contentStore,
+      workspaceLeases,
+      attachments: createSqliteExecutionAttachmentStore(reopenedDb),
+      attachmentAuthority: { create: vi.fn() },
+      revokeManagedTerminals: async () => ok(undefined),
+      control: { activate, abandon: failingAbandon },
+      activeView: { getActiveView: () => makeActiveView([workspaceRoot]) },
+      validateWorkspacePath: (requestedPath, allowedWorkspaceRoots) =>
+        validateWorkspaceLeasePath({ requestedPath, allowedWorkspaceRoots, dataDir: dataDirectory }),
+      ids: {
+        forOperation: (operationId) => ({
+          managedRunId: `managed-${operationId}`,
+          activationDescriptorRef: `descriptor-${operationId}`,
+          ...controlIds(`managed-${operationId}`),
+        }),
+        forManagedRun: controlIds,
+      },
+      nowMs: () => NOW_MS,
+      eventBus: new TypedEventBus(),
+      logger,
+    });
+    const retryRecovery = await retryCoordinator.recoverPreparations({ updatedBeforeMs: NOW_MS, limit: 10 });
+    expect(retryRecovery).toMatchObject({
+      ok: true,
+      value: { failed: [{ managedRunId: "managed-run_retry", serviceInstanceId: "service-instance_a" }] },
+    });
+    expect(await store.get({ kind: "service", serviceInstanceId: "service-instance_a" }, "managed-run_retry"))
+      .toMatchObject({ ok: true, value: { status: "preparing", activationDescriptorRef: "descriptor_retry" } });
+    expect(await contentStore.getActivationDescriptorForRecovery({
+      tenantId: "tenant_a", agentId: "agent_a", managedRunId: "managed-run_retry",
+    }, "descriptor_retry", { kind: "recovery" })).toMatchObject({
+      ok: true,
+      value: { externalRunRef: "external-run_retry" },
+    });
+
     reopenedDb.close();
   });
 });

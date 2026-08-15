@@ -14,7 +14,7 @@ function makeInstance() {
     mcpServerName: "example-service",
     control: {
       transport: "unix" as const,
-      socketPath: "/tmp/example-service.sock",
+      socketPath: "/opt/comis/data/capability-services/example-service.sock",
       credentialRef: "secret://capability-services/service-instance_a",
     },
     allowedAgents: ["agent_a"],

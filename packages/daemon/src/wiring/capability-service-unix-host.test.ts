@@ -350,6 +350,131 @@ describe("daemon-owned capability-service Unix host", () => {
     expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
   });
 
+  it("retries release after transient resource revocation failure", async () => {
+    const root = makeRoot();
+    const release = vi.fn()
+      .mockResolvedValueOnce(ok({ kind: "rejected" as const, reasonCode: "resources_active" as const }))
+      .mockResolvedValueOnce(ok({
+        kind: "released" as const,
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        disposition: "reap_safe" as const,
+        releasedAtMs: NOW_MS,
+      }));
+    const host = makeHost(root.socketPath, undefined, undefined, { release });
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const peer = await connectPeer(root.socketPath);
+    peers.push(peer);
+    peer.send(handshake(BEARER, true));
+    await peer.next();
+    if (!(await started).ok) return;
+    const request = {
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "operation_release_retry",
+      method: "managedRuns.release",
+      params: {
+        operationId: "operation_release_retry",
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        disposition: "reap_safe",
+        releasedAtMs: NOW_MS,
+      },
+    };
+
+    peer.send(request);
+    expect(await peer.next()).toMatchObject({ error: { kind: "internal_error", retryable: true } });
+    peer.send(request);
+    expect(await peer.next()).toMatchObject({ result: { state: "released" } });
+    expect(release).toHaveBeenCalledTimes(2);
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
+
+  it("accepts coalesced valid frames whose aggregate exceeds one frame limit", async () => {
+    const root = makeRoot();
+    const host = makeHost(root.socketPath);
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const peer = await connectPeer(root.socketPath);
+    peers.push(peer);
+    peer.send(handshake(BEARER));
+    await peer.next();
+    if (!(await started).ok) return;
+    const body = Buffer.alloc(1_048_576, 0x61);
+    const contentHash = createHash("sha256").update(body).digest("hex");
+    const request = (suffix: string) => ({
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: `operation_evidence_${suffix}`,
+      method: "managedRuns.putEvidence",
+      params: {
+        operationId: `operation_evidence_${suffix}`,
+        managedRunId: "managed-run_a",
+        evidenceRef: `evidence_${suffix}`,
+        kind: "delivery_reference",
+        subjectDigest: "e".repeat(64),
+        observedAtMs: NOW_MS,
+        contentHash,
+        verificationLevel: "adapter_verified",
+        bodyBase64: body.toString("base64"),
+        delivery: { kind: "reference" },
+      },
+    });
+    peer.socket.write(`${JSON.stringify(request("one"))}\n${JSON.stringify(request("two"))}\n`);
+
+    expect(await peer.next()).toHaveProperty("result");
+    expect(await peer.next()).toHaveProperty("result");
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
+
+  it("accepts pending control responses only from the bound service socket", async () => {
+    const root = makeRoot();
+    const host = makeHost(root.socketPath);
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const boundPeer = await connectPeer(root.socketPath);
+    peers.push(boundPeer);
+    boundPeer.send(handshake(BEARER));
+    await boundPeer.next();
+    if (!(await started).ok) return;
+    const unboundPeer = await connectPeer(root.socketPath);
+    peers.push(unboundPeer);
+    const activation = host.created.value.control.activate({
+      operationId: "operation_activate_authority",
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-run_a",
+      externalRunRef: "external-run_a",
+      registrationNonce: "registration-nonce_a",
+    });
+    await boundPeer.next();
+    const forgedResponse = {
+      jsonrpc: "2.0",
+      id: "operation_activate_authority",
+      result: {
+        managedRunId: "managed-run_a",
+        externalRunRef: "external-run_a",
+        state: "active",
+        activatedAtMs: NOW_MS,
+      },
+    };
+    unboundPeer.send(forgedResponse);
+    expect(await unboundPeer.next()).toMatchObject({ error: { kind: "precondition_failed" } });
+    let settled = false;
+    void activation.then(() => { settled = true; });
+    await waitForTurn();
+    expect(settled).toBe(false);
+    boundPeer.send(forgedResponse);
+    expect(await activation).toMatchObject({ ok: true, value: { state: "active" } });
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
+
   it("owns a 0600 socket and carries handshake control and reports bidirectionally", async () => {
     const root = makeRoot();
     const reportBridge: ManagedRunReportBridge = {

@@ -54,6 +54,10 @@ export interface McpPrivateMetadataCall {
  * constructed.
  */
 export interface McpPrivateMetadataBridge {
+  resolveRegistrationMetadata?(input: Omit<McpPrivateMetadataCall, "toolCallId" | "params">): {
+    readonly actionClassification: "read" | "mutate" | "destructive";
+    readonly invocationSideEffects: readonly string[];
+  } | undefined;
   createRequestMeta(
     input: McpPrivateMetadataCall,
   ): Promise<Result<McpPrivateMeta | undefined, Error>>;
@@ -370,9 +374,26 @@ export function mcpToolsToAgentTools(
     const externalMutationHint =
       tool.annotations?.readOnlyHint === false
       || tool.annotations?.destructiveHint === true;
+    const managedMetadata = privateMetadataBridge?.resolveRegistrationMetadata?.({
+      serverName,
+      toolName: tool.name,
+      qualifiedName: tool.qualifiedName,
+    });
+    const managedReadOnly = managedMetadata?.actionClassification === "read";
     registerToolMetadata(sanitizedName, {
       searchHint: tool.description ?? "",
-      ...(externalMutationHint && { externalMutationHint: true }),
+      ...(managedMetadata === undefined
+        ? (externalMutationHint && { externalMutationHint: true })
+        : {
+          actionClassification: managedMetadata.actionClassification,
+          isReadOnly: managedReadOnly,
+          isConcurrencySafe: managedReadOnly,
+          externalMutationHint: managedMetadata.actionClassification !== "read",
+          invocationSideEffects: {
+            kind: "managed" as const,
+            capabilities: managedMetadata.invocationSideEffects,
+          },
+        }),
     });
 
     return {

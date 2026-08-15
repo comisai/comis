@@ -149,7 +149,7 @@ describe("buildScopeArgs — filesystem dimension", () => {
     expect(args).toEqual(expect.arrayContaining([
       "--dir", "/run/comis",
       "--dir", "/run/comis/attachments",
-      "--chmod", "0700", "/run/comis/attachments",
+      "--chmod", "0711", "/run/comis/attachments",
     ]));
   });
 

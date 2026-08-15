@@ -87,13 +87,17 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
   const attention = createManagedRunAttentionStoreStatements(db);
   const selectRun = db.prepare("SELECT * FROM managed_runs WHERE managed_run_id = ?");
   const selectRunByExternalRef = db.prepare(`
-    SELECT * FROM managed_runs
-    WHERE external_run_ref_digest = ?
-      AND service_instance_id = ?
-      AND tenant_id = ?
-      AND agent_id = ?
-      AND principal_id = ?
-      AND conversation_ref = ?
+    SELECT runs.* FROM managed_runs AS runs
+    WHERE runs.external_run_ref_digest = ?
+      AND runs.service_instance_id = ?
+      AND runs.tenant_id = ?
+      AND runs.agent_id = ?
+      AND runs.principal_id = ?
+      AND runs.conversation_ref = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM managed_run_release_reservations AS reservation
+        WHERE reservation.managed_run_id = runs.managed_run_id
+      )
     LIMIT 2
   `);
   const insertRun = db.prepare(`

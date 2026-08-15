@@ -228,7 +228,7 @@ export function createManagedRunReportBridge(deps: ManagedRunReportBridgeDeps): 
               attention: {
                 attentionId: attentionId(identity, body),
                 attentionRef: published.value.contentRef,
-                ...(body.externalKey === undefined ? {} : { externalKey: body.externalKey }),
+                externalKey: body.externalKey ?? body.serviceReportId,
               },
             }
             : {}),
