@@ -97,8 +97,8 @@ Message lifecycle, session management, subagent lifecycle, compaction, context e
 | `session:expired` | sessionKey, reason |
 | `session:cross_send` | fromSessionKey, toSessionKey, mode, timestamp |
 | `session:ping_pong_turn` | fromSessionKey, toSessionKey, turnNumber, totalTurns, tokensUsed, timestamp |
-| `session:sub_agent_spawned` | runId, parentSessionKey, agentId, task, timestamp |
-| `session:sub_agent_completed` | runId, agentId, success, runtimeMs, tokensUsed, cost, timestamp, cacheReadTokens, cacheWriteTokens |
+| `session:sub_agent_spawned` | runId, parentSessionKey, agentId, rootRunId, parentRunId, parentLeaseId, caps, timestamp |
+| `session:sub_agent_completed` | runId, parentSessionKey, agentId, success, runtimeMs, tokensUsed, cost, timestamp, cacheReadTokens, cacheWriteTokens, expectedOutputs, verifiedOutputs, attachmentsPrepared |
 | `session:sub_agent_archived` | runId, sessionKey, ageMs, timestamp |
 | `session:sub_agent_spawn_prepared` | runId, parentSessionKey, agentId, task, depth, maxDepth, artifactCount, timestamp |
 | `session:sub_agent_spawn_queued` | runId, parentSessionKey, agentId, task, queuePosition, activeChildren, maxChildren, timestamp |
