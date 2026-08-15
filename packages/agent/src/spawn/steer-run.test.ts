@@ -165,6 +165,22 @@ describe("steerRun — inject a steer message into a running sub-agent's live se
     expect(resolveSpy).not.toHaveBeenCalled();
   });
 
+  it("reports a child that completed before the authoritative steer operation", async () => {
+    const run = makeRun({ status: "completed", completedAt: 2_000 });
+    const handle = makeHandle({ streaming: true });
+    const deps = makeDeps({ run, handle });
+
+    const result = await steerRun(deps, "run-1", "adjust the plan");
+
+    expect(result).toEqual({
+      steered: false,
+      terminalStatus: "completed",
+      error: "Run run-1 is not running (status: completed)",
+    });
+    expect(handle.steer).not.toHaveBeenCalled();
+    expect(handle.followUp).not.toHaveBeenCalled();
+  });
+
   it("preserves the run object — never mutates status/sessionKey/startedAt (same runId, work preserved)", async () => {
     const run = makeRun();
     const before = { status: run.status, sessionKey: run.sessionKey, startedAt: run.startedAt };

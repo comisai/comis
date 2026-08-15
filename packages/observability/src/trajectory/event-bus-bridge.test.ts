@@ -5251,6 +5251,41 @@ describe("attachTrajectoryToEventBus ownerSessionKey scoping", () => {
     expect(recorder.calls[0]!.type).toBe("tool.call");
   });
 
+  it("routes off-turn restart and delivery evidence only to their owning session", () => {
+    const bus = makeBus();
+    const ownerRecorder = createCaptureRecorder();
+    const otherRecorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder: ownerRecorder, ownerSessionKey: OWNER });
+    attachTrajectoryToEventBus({ eventBus: bus, recorder: otherRecorder, ownerSessionKey: OTHER });
+
+    (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
+      "durable:suspended",
+      {
+        rootRunId: "root-owner",
+        checkpointId: "checkpoint-owner",
+        sessionKey: OWNER,
+        timestamp: 1,
+      },
+    );
+    (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
+      "delivery:outward_ledger_transition",
+      {
+        rootRunId: "root-owner",
+        stepIndex: 0,
+        transition: "commit",
+        outcome: "committed",
+        sessionKey: OWNER,
+        timestamp: 2,
+      },
+    );
+
+    expect(ownerRecorder.calls.map((call) => call.type)).toEqual([
+      "durable.suspended",
+      "delivery.outward_ledger_transition",
+    ]);
+    expect(otherRecorder.calls).toHaveLength(0);
+  });
+
   it("binds session-less payloads via the ALS request context", async () => {
     const { runWithContext } = await import("@comis/core");
     const bus = makeBus();

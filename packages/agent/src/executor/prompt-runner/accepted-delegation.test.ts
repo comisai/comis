@@ -27,6 +27,9 @@ describe("requestsPushDeliveredBackgroundCompletion", () => {
     expect(requestsPushDeliveredBackgroundCompletion(
       "Run an inventory review in the background. Acknowledge now and send it when complete.",
     )).toBe(true);
+    expect(requestsPushDeliveredBackgroundCompletion(
+      "התחל משימת מחקר אחת ברקע, אשר עכשיו ושלח את הדוח לכאן כשהיא תסתיים בלי שאצטרך לבדוק.",
+    )).toBe(true);
   });
 
   it("does not suppress parent synthesis for concurrent delegated branches", () => {

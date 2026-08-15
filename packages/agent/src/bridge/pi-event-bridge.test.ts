@@ -592,6 +592,42 @@ describe("createPiEventBridge", () => {
   // -------------------------------------------------------------------------
 
   describe("tool_execution_end", () => {
+    it("retains bounded structured spawn ownership without response prose", () => {
+      const bridge = createPiEventBridge(deps);
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "sessions_spawn",
+        toolCallId: "tc-spawn-receipt",
+        args: {
+          task: "private delegated task",
+          required_tools: ["web_search", "web_fetch", "web_search"],
+        },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "sessions_spawn",
+        "tc-spawn-receipt",
+        false,
+        {
+          content: [{ type: "text", text: "private spawn acknowledgement" }],
+          details: {
+            runId: "8dc57d7f-0071-45cb-bdaf-23d47ecead39",
+            status: "started",
+          },
+        },
+      ) as any);
+
+      expect(bridge.getResult().toolExecResults?.[0]).toMatchObject({
+        toolName: "sessions_spawn",
+        success: true,
+        spawnRunId: "8dc57d7f-0071-45cb-bdaf-23d47ecead39",
+        delegatedToolNames: ["web_search", "web_fetch"],
+      });
+      expect(JSON.stringify(bridge.getResult().toolExecResults?.[0]))
+        .not.toContain("private delegated task");
+      expect(JSON.stringify(bridge.getResult().toolExecResults?.[0]))
+        .not.toContain("private spawn acknowledgement");
+    });
+
     it("records a content-free digest for a successful web search query", () => {
       const bridge = createPiEventBridge(deps);
       bridge.listener({

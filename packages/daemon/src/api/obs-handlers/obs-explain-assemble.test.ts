@@ -550,6 +550,53 @@ describe("assembleIncidentReport — durable outward delivery", () => {
       platformMessageId: "telegram-document-218",
     });
   });
+
+  it("preserves a committed receipt beside a later attachment preparation failure", () => {
+    const report = assembleIncidentReport(
+      toIncidentSignals([
+        {
+          traceSchema: "comis-trajectory",
+          type: "delivery.outward_ledger_transition",
+          seq: 1,
+          data: {
+            rootRunId: "root-partial",
+            stepIndex: 0,
+            partId: "attachment:0",
+            transition: "commit",
+            outcome: "committed",
+            deliveryKind: "attachment",
+            platformMessageId: "telegram-document-218",
+          },
+        },
+        {
+          traceSchema: "comis-trajectory",
+          type: "delivery.outward_ledger_transition",
+          seq: 2,
+          data: {
+            rootRunId: "root-partial",
+            partId: "attachment:1",
+            transition: "prepare",
+            outcome: "failed",
+            deliveryKind: "attachment",
+          },
+        },
+      ]),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      2,
+    );
+
+    expect(IncidentReportSchema.parse(report).outwardDelivery).toEqual({
+      status: "partial",
+      rootRunId: "root-partial",
+      deliveryKind: "attachment",
+      partsTotal: 2,
+      partsCommitted: 1,
+      partsFailed: 1,
+      platformMessageIds: ["telegram-document-218"],
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

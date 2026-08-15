@@ -17,8 +17,8 @@ import * as fs from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
-import { buildSessionEndMetadata, isPairedMemoryEligibleOutcome, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, outputStarvedHint, promoteNarrationStall, promoteToolInvocationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, modelAcknowledgedFailure, buildSubagentTerminalToolFailureReply, type PostExecutionParams } from "./executor-post-execution.js";
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
+import { buildSessionEndMetadata, isPairedMemoryEligibleOutcome, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, outputStarvedHint, promoteNarrationStall, promoteToolInvocationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, modelAcknowledgedFailure, buildSubagentTerminalToolFailureReply, postExecution, type PostExecutionParams } from "./executor-post-execution.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply, buildToolInvocationStallNoReceiptReply } from "./degraded-reply.js";
 import { resolveResponseLocalePolicy } from "./resolve-response-locale-policy.js";
 import {
   createLocaleCatalog,
@@ -175,6 +175,149 @@ describe("buildSubagentTerminalToolFailureReply", () => {
 });
 const conversationRefForTest = (seed: string): ConversationRef =>
   `cv_${seed.padEnd(43, "x").slice(0, 43)}` as ConversationRef;
+
+function makePostExecutionHarness(overrides: {
+  request: string;
+  response: string;
+  requestToolNudge?: ExecutionResult["requestToolNudge"];
+}): {
+  params: PostExecutionParams;
+  emit: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+} {
+  const emit = vi.fn();
+  const dispose = vi.fn();
+  const messages = [{
+    role: "assistant",
+    stopReason: "stop",
+    provider: "provider_a",
+    model: "model_a",
+    timestamp: 1,
+    content: [{ type: "text", text: overrides.response }],
+  }];
+  const result: ExecutionResult = {
+    response: overrides.response,
+    sessionKey: {} as never,
+    executionId: "execution-post-test",
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
+    tokensUsed: { input: 1, output: 1, total: 2 },
+    cost: { total: 0 },
+    stepsExecuted: 0,
+    llmCalls: 1,
+    finishReason: "stop",
+    ...(overrides.requestToolNudge === undefined
+      ? {}
+      : { requestToolNudge: overrides.requestToolNudge }),
+  };
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    audit: vi.fn(),
+  };
+  const params = {
+    result,
+    session: {
+      messages,
+      agent: { state: { messages, model: { provider: "provider_a", id: "model_a" } } },
+      getSessionStats: () => ({ tokens: { input: 1, output: 1, total: 2 } }),
+      dispose,
+    },
+    sm: {
+      fileEntries: [],
+      getEntries: () => [],
+      getLeafEntry: () => undefined,
+    },
+    config: {
+      provider: "provider_a",
+      model: "model_a",
+      maxToolResultChars: 50_000,
+      contextEngine: { enabled: false },
+      verification: { enabled: false },
+    },
+    msg: {
+      id: "message-post-test",
+      text: overrides.request,
+      channelType: "telegram",
+      channelId: "channel-a",
+      senderId: "user_a",
+      metadata: {},
+    },
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
+    senderTrust: "admin",
+    sessionKey: {
+      tenantId: "default",
+      agentId: "agent-a",
+      channelId: "channel-a",
+      userId: "user_a",
+    },
+    formattedKey: "default:agent:agent-a:user_a:telegram:peer:user_a",
+    resolverRegisterKey: conversationRefForTest("post-execution"),
+    agentId: "agent-a",
+    executionStartMs: 0,
+    executionId: "execution-post-test",
+    executionOverrides: undefined,
+    bridge: {
+      getResult: () => ({
+        tokensUsed: { input: 1, output: 1, total: 2 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 1,
+        finishReason: "stop",
+        toolExecResults: [],
+        sideEffectSummary: {
+          schedulingCapabilityInvoked: false,
+          outboundDeliveryCapabilityInvoked: false,
+          deferredWorkCapabilityInvoked: false,
+          unclassifiedInvocationObserved: false,
+        },
+      }),
+      getDrainState: () => ({ drainInflightByKey: new Map() }),
+    },
+    unsubscribe: vi.fn(),
+    contextEngineRef: {},
+    ceSetup: {
+      getContextEngineDurationMs: () => 0,
+      getSignatureScrubCounters: () => ({
+        signatureScrubs: 0,
+        signatureScrubsToolCallsAffected: 0,
+      }),
+    },
+    streamSetup: {},
+    getTruncationSummary: () => ({ truncatedTools: 0, totalTruncatedChars: 0 }),
+    getTurnBudgetSummary: () => ({ turnsExceeded: 0, totalBudgetTruncatedChars: 0 }),
+    executionPlanRef: { current: undefined },
+    isOnboarding: false,
+    geminiCacheHit: false,
+    geminiCachedTokens: 0,
+    capabilityClass: "frontier",
+    budgetWindowTokens: 8_192,
+    provider: "provider_a",
+    modelId: "model_a",
+    providerFamily: "default",
+    deferralResult: { deferredCount: 0 },
+    mergedCustomTools: [],
+    deliveredGuides: new Set(),
+    deps: {
+      agentId: "agent-a",
+      eventBus: { emit },
+      logger,
+      contextStore: {},
+      tenantId: "default",
+      workspaceDir: "/workspace",
+      clock: {
+        now: () => 10,
+        nowDate: () => new Date("2026-01-01T00:00:00.000Z"),
+      },
+    },
+    sessionAdapter: { writeSessionMetadata: vi.fn() },
+    executionCacheRetentionClear: vi.fn(),
+    adaptiveRetentionClear: vi.fn(),
+    executionMinTokensOverrideClear: vi.fn(),
+  } as unknown as PostExecutionParams;
+  return { params, emit, dispose };
+}
 
 async function loadSilentTokens(): Promise<
   | {
@@ -669,19 +812,43 @@ describe("promoteToolInvocationStall — repeated action answers stop reading as
   });
 });
 
-describe("tool invocation stall fallback wording", () => {
-  it("does not label every stalled request as a repeated action", () => {
-    const stripped = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8")
-      .replace(/\/\*[\s\S]*?\*\//gu, "")
-      .split("\n")
-      .filter((line) => !line.trim().startsWith("//"))
-      .join("\n");
-    const stallBranch = stripped.match(
-      /if \(effectiveFinishReason === "tool_invocation_stall"\) \{[\s\S]*?\n  \}/u,
-    )?.[0] ?? "";
+describe("postExecution response grounding", () => {
+  it("delivers the no-receipt reply for a tool invocation stall", async () => {
+    const { params, dispose } = makePostExecutionHarness({
+      request: "Refresh the inventory snapshot.",
+      response: "I will refresh it now.",
+      requestToolNudge: {
+        fired: true,
+        recovered: false,
+        matchedToolNames: ["inventory_refresh"],
+      },
+    });
 
-    expect(stallBranch).toContain("buildToolInvocationStallNoReceiptReply");
-    expect(stallBranch).not.toContain("buildPersistentActionEvidenceMissingReply");
+    await postExecution(params);
+
+    expect(params.result.response).toBe(buildToolInvocationStallNoReceiptReply());
+    expect(params.result.finishReason).toBe("tool_invocation_stall");
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("grounds active model identity and emits observable recovery evidence", async () => {
+    const { params, emit, dispose } = makePostExecutionHarness({
+      request: "what model are u actually using now",
+      response: "The exact model is unspecified.",
+    });
+
+    await postExecution(params);
+
+    expect(params.result.response).toBe("provider_a / model_a");
+    expect(emit).toHaveBeenCalledWith(
+      "execution:recovery_attempted",
+      expect.objectContaining({
+        sessionKey: "default:agent:agent-a:user_a:telegram:peer:user_a",
+        reason: "active_model_self_status_grounding",
+        succeeded: true,
+      }),
+    );
+    expect(dispose).toHaveBeenCalledOnce();
   });
 });
 
@@ -1116,9 +1283,6 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/modelId:\s*params\.modelId/);
     expect(stripped).toMatch(/provider:\s*params\.provider/);
     expect(stripped).toMatch(/response\.active_model_self_status_guard/);
-    expect(stripped).toMatch(
-      /activeModelSelfStatus\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"active_model_self_status_grounding"[\s\S]*?succeeded:\s*true/,
-    );
   });
 
   it("source-grep — sender authority overclaims are grounded before delivery", () => {

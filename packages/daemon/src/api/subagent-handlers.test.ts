@@ -675,9 +675,18 @@ describe("createSubagentHandlers", () => {
     ).rejects.toThrow("Rate limited: wait 2s between steers to same target");
   });
 
-  it("subagent.steer throws when kill fails", async () => {
+  it("subagent.steer returns a no-op when the child completes before kill", async () => {
+    vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
+      runId: "steer-fail",
+      status: "running",
+      agentId: "researcher",
+      task: "old task",
+      sessionKey: "default:sub-agent-steer-fail:sub-agent:steer-fail",
+      startedAt: Date.now() - 1_000,
+    } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);
     vi.mocked(deps.subAgentRunner.killRun).mockReturnValue({
       killed: false,
+      terminalStatus: "completed",
       error: "Run steer-fail is not running (status: completed)",
     });
 
@@ -686,7 +695,12 @@ describe("createSubagentHandlers", () => {
         target: "steer-fail",
         message: "new task",
       }),
-    ).rejects.toThrow("Run steer-fail is not running (status: completed)");
+    ).resolves.toEqual({
+      status: "already_terminal",
+      runId: "steer-fail",
+      terminalStatus: "completed",
+    });
+    expect(deps.subAgentRunner.spawn).not.toHaveBeenCalled();
   });
 
   it("subagent.steer throws when target missing", async () => {
@@ -924,6 +938,28 @@ describe("createSubagentHandlers", () => {
       expect(deps.subAgentRunner.killRun).not.toHaveBeenCalled();
       expect(deps.subAgentRunner.spawn).not.toHaveBeenCalled();
       expect(deps.eventBus!.emit).not.toHaveBeenCalled();
+    });
+
+    it("returns a successful no-op when the child completes before steerRun", async () => {
+      mockRunningRun("run-completed-during-inject");
+      vi.mocked(deps.subAgentRunner.steerRun).mockResolvedValue({
+        steered: false,
+        terminalStatus: "completed",
+        error: "Run run-completed-during-inject is not running (status: completed)",
+      });
+
+      await expect(
+        handlers["subagent.steer"]!({
+          target: "run-completed-during-inject",
+          message: "adjust",
+        }),
+      ).resolves.toEqual({
+        status: "already_terminal",
+        runId: "run-completed-during-inject",
+        terminalStatus: "completed",
+      });
+      expect(deps.subAgentRunner.spawn).not.toHaveBeenCalled();
+      expect(deps.logger!.warn).not.toHaveBeenCalled();
     });
 
     // Failed and queued runs cannot accept a live steer and do not represent a
