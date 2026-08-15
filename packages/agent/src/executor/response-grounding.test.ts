@@ -521,6 +521,20 @@ describe("response grounding module", () => {
     })).toEqual({ response, corrected: false });
   });
 
+  it("does not combine separated market-report terms into scheduler state", () => {
+    const response = [
+      "Prices are Friday closes; markets were closed when this was prepared Saturday.",
+      "The reporting date was not confirmed.",
+      "Earnings growth supports the raised run-rate.",
+    ].join(" ");
+
+    expect(schedulerStateEvidenceGuard()({
+      response,
+      toolExecResults: [],
+      honestResponse: "I could not verify a scheduled job.",
+    })).toEqual({ response, corrected: false });
+  });
+
   it("uses the latest agent-update receipt as the no-op authority", () => {
     const honestResponse =
       "No configuration change was needed. This agent already uses provider_a / model_a.";
