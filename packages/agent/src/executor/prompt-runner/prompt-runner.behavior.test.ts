@@ -254,6 +254,8 @@ describe("runPrompt observable boundaries", () => {
           toolName: "sessions_spawn",
           success: true,
           durationMs: 5,
+          delegatedToolNames: ["exec"],
+          delegationScope: "partial",
         }],
       },
       messages: [

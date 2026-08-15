@@ -480,7 +480,9 @@ describe("SYSTEM_PROMPT_GUIDES", () => {
     const guide = SYSTEM_PROMPT_GUIDES.sessions_spawn;
     expect(guide).not.toMatch(/give them the runId/i);
     expect(guide).toMatch(/run (?:handle|id).*internal/i);
-    expect(guide).toMatch(/do not repeat the delegated work/i);
+    expect(guide).toMatch(/do not repeat the delegated portion/i);
+    expect(guide).toMatch(/continue.*explicitly retained.*parent/i);
+    expect(guide).toContain("delegation_scope");
   });
 });
 
