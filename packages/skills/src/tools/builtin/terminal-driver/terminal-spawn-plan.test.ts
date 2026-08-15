@@ -15,7 +15,8 @@
  */
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -148,6 +149,56 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       );
       expect(hasBind(ordinaryPlan.argv, "--ro-bind", sourceCommonDir, commonDir)).toBe(false);
       expect(hasBind(ordinaryPlan.argv, "--bind", sourceGitDir, gitDir)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("commits through lease-private Git administration without mutating shared state", () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-commit-"));
+    try {
+      const repository = join(root, "repository");
+      const workspace = join(root, "worktrees", "task-a");
+      mkdirSync(repository, { recursive: true });
+      execFileSync("git", ["init", "--initial-branch=main", repository]);
+      execFileSync("git", ["-C", repository, "config", "user.name", "Test User"]);
+      execFileSync("git", ["-C", repository, "config", "user.email", "test@example.com"]);
+      writeFileSync(join(repository, "tracked.txt"), "base\n", "utf8");
+      execFileSync("git", ["-C", repository, "add", "tracked.txt"]);
+      execFileSync("git", ["-C", repository, "-c", "commit.gpgsign=false", "commit", "-m", "base"]);
+      execFileSync("git", ["-C", repository, "worktree", "add", "-b", "task-a", workspace]);
+
+      const commonDir = realpathSync(join(repository, ".git"));
+      const sharedRefPath = join(commonDir, "refs", "heads", "task-a");
+      const sharedRefBefore = readFileSync(sharedRefPath, "utf8");
+      const sharedConfigBefore = readFileSync(join(commonDir, "config"), "utf8");
+      const siblingSentinel = join(commonDir, "worktrees", "sibling-sentinel");
+      writeFileSync(siblingSentinel, "shared sibling state\n", "utf8");
+      const resolved = resolveManagedWorkspaceGitMounts(workspace);
+      expect(resolved.ok).toBe(true);
+      if (!resolved.ok || resolved.value === undefined) return;
+      const mounts = resolved.value as typeof resolved.value & {
+        readonly privateCommon?: { readonly sourcePath: string; readonly targetPath: string };
+      };
+
+      expect(mounts.privateCommon).toBeDefined();
+      expect(mounts.worktree.sourcePath).not.toBe(mounts.worktree.targetPath);
+      if (mounts.privateCommon === undefined) return;
+      writeFileSync(join(workspace, "tracked.txt"), "isolated commit\n", "utf8");
+      const isolatedEnv = {
+        ...process.env,
+        GIT_DIR: mounts.worktree.sourcePath,
+        GIT_WORK_TREE: workspace,
+        GIT_COMMON_DIR: mounts.privateCommon.sourcePath,
+      };
+      execFileSync("git", ["add", "tracked.txt"], { env: isolatedEnv });
+      execFileSync("git", ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-m", "isolated"], { env: isolatedEnv });
+
+      expect(execFileSync("git", ["status", "--porcelain"], { env: isolatedEnv, encoding: "utf8" })).toBe("");
+      expect(readFileSync(sharedRefPath, "utf8")).toBe(sharedRefBefore);
+      expect(readFileSync(join(commonDir, "config"), "utf8")).toBe(sharedConfigBefore);
+      expect(readFileSync(siblingSentinel, "utf8")).toBe("shared sibling state\n");
+      expect(existsSync(join(mounts.privateCommon.sourcePath, "hooks"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
