@@ -2189,11 +2189,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     resolveSessionManager: (agentId) => handle.piSessionAdapters.get(agentId),
     assembleToolsForAgent, adaptersByType, deliveryService,
     resolveWorkspacePolicy: async (agentId, policyHash) => {
-      const loaded = await resolveCapturedWorkspacePolicy(
-        container.workspacePolicyPort,
-        agentId,
-        policyHash,
-      );
+      const loaded = await resolveCapturedWorkspacePolicy(container.workspacePolicyPort, agentId, policyHash);
       if (loaded === undefined || !loaded.ok) {
         return err(new Error("The captured immutable workspace policy snapshot is unavailable"));
       }
@@ -2234,11 +2230,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
       return readExecutionResultJournal(sessionManager, sessionKey, journalKey);
     },
     resolveWorkspacePolicy: async (agentId, policyHash) => {
-      const loaded = await resolveCapturedWorkspacePolicy(
-        container.workspacePolicyPort,
-        agentId,
-        policyHash,
-      );
+      const loaded = await resolveCapturedWorkspacePolicy(container.workspacePolicyPort, agentId, policyHash);
       if (loaded === undefined || !loaded.ok) {
         return err(new Error("The captured immutable workspace policy snapshot is unavailable"));
       }
