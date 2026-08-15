@@ -232,7 +232,7 @@ export function createSubagentsTool(
         // action === "steer"
         const target = readStringParam(p, "target");
         const message = readStringParam(p, "message");
-        logger?.debug({ toolName: "subagents", action: "steer", target }, "Subagent steered");
+        logger?.debug({ toolName: "subagents", action: "steer", target }, "Subagent steer requested");
         const result = await rpcCall("subagent.steer", { target, message });
         return jsonResult(result);
       } catch (err) {
