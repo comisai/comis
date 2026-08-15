@@ -39,6 +39,10 @@ export type ManagedTerminalBindOutcome =
   | { readonly kind: "bound" }
   | { readonly kind: "rejected" | "unavailable"; readonly reason: string };
 
+export type ManagedTerminalReleaseOutcome =
+  | { readonly kind: "released" }
+  | { readonly kind: "rejected" | "unavailable"; readonly reason: string };
+
 /** Daemon authority seam; the model supplies opaque handles, never paths or service IDs. */
 export interface ManagedTerminalBindingResolver {
   resolve(input: {
@@ -46,6 +50,13 @@ export interface ManagedTerminalBindingResolver {
     readonly workspaceLeaseId: string;
     readonly owner: SessionOwner;
   }): Promise<ManagedTerminalResolveOutcome>;
+  reserve(input: {
+    readonly managedRunId: string;
+    readonly workspaceLeaseId: string;
+    readonly serviceInstanceId: string;
+    readonly terminalSessionId: string;
+    readonly owner: SessionOwner;
+  }): Promise<ManagedTerminalBindOutcome>;
   bind(input: {
     readonly managedRunId: string;
     readonly workspaceLeaseId: string;
@@ -54,6 +65,13 @@ export interface ManagedTerminalBindingResolver {
     readonly rootProcessIdentity: TerminalRootProcessIdentity;
     readonly owner: SessionOwner;
   }): Promise<ManagedTerminalBindOutcome>;
+  release(input: {
+    readonly managedRunId: string;
+    readonly workspaceLeaseId: string;
+    readonly serviceInstanceId: string;
+    readonly terminalSessionId: string;
+    readonly owner: SessionOwner;
+  }): Promise<ManagedTerminalReleaseOutcome>;
 }
 
 export type ManagedTerminalTransition =

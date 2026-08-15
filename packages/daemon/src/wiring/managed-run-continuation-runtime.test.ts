@@ -21,7 +21,7 @@ function makeLogger() {
   } as unknown as import("@comis/core").ComisLogger;
 }
 
-function makeRecord(): ManagedRunRecord {
+function makeRecord(overrides: Partial<ManagedRunRecord> = {}): ManagedRunRecord {
   const endpoint = {
     channelType: "echo",
     channelInstanceId: "echo-main",
@@ -73,6 +73,7 @@ function makeRecord(): ManagedRunRecord {
     createdAtMs: 1,
     updatedAtMs: 2,
     lastHeartbeatAtMs: 2,
+    ...overrides,
   };
 }
 
@@ -166,6 +167,41 @@ describe("managed-run continuation event runtime", () => {
       limit: 10,
     });
     expect(process).toHaveBeenCalledOnce();
+    await runtime.shutdown();
+  });
+
+  it("recovers pending continuations across every stable recovery page", async () => {
+    const eventBus = new TypedEventBus();
+    const first = makeRecord({ managedRunId: "managed-run-a" });
+    const second = makeRecord({ managedRunId: "managed-run-b" });
+    const listRecoverable = vi.fn()
+      .mockResolvedValueOnce(ok({
+        records: [first],
+        invalid: [],
+        nextAfterManagedRunId: first.managedRunId,
+      }))
+      .mockResolvedValueOnce(ok({ records: [second], invalid: [] }));
+    const process = vi.fn(async () => ok<ManagedRunContinuationProcessOutcome>({ kind: "idle" }));
+    const runtime = createManagedRunContinuationRuntime({
+      eventBus,
+      store: { listRecoverable } as unknown as ManagedRunStorePort,
+      coordinator: { process } as ManagedRunContinuationCoordinator,
+      nowMs: () => 100,
+      timers: createFakeTimers(),
+      recoveryBatchSize: 1,
+      logger: makeLogger(),
+    });
+
+    expect(await runtime.recover()).toEqual(ok({ scheduledCount: 2, invalidCount: 0 }));
+    await runtime.waitUntilIdle();
+    expect(listRecoverable).toHaveBeenNthCalledWith(2, {
+      kind: "recovery",
+      statuses: ["active", "waiting", "paused", "candidate_complete", "unknown"],
+      updatedBeforeMs: 100,
+      limit: 1,
+      afterManagedRunId: "managed-run-a",
+    });
+    expect(process).toHaveBeenCalledTimes(2);
     await runtime.shutdown();
   });
 

@@ -59,9 +59,9 @@ import {
   capabilityServiceErrorResponse,
   classifyCapabilityServiceWireFailure,
 } from "./capability-service-wire-error.js";
+import { pruneCapabilityServiceReplayEntries } from "./capability-service-replay.js";
 
 const MAXIMUM_UNIX_SOCKET_PATH_BYTES = 103;
-const MAX_REPLAY_ENTRIES = 4_096;
 const REQUEST_KEYS = ["bearer", "id", "jsonrpc", "method", "params"] as const;
 
 interface ConfiguredInstance {
@@ -326,11 +326,7 @@ function createEndpoint(
         entry.response = response;
         entry.retryable = false;
       }
-      while (replay.size > MAX_REPLAY_ENTRIES) {
-        const oldest = replay.keys().next().value as string | undefined;
-        if (oldest === undefined) break;
-        replay.delete(oldest);
-      }
+      pruneCapabilityServiceReplayEntries(replay);
     }
 
     function beginReplay(
@@ -342,6 +338,7 @@ function createEndpoint(
       const previous = replay.get(operationId);
       if (previous === undefined) {
         replay.set(operationId, { canonical: encoded.value });
+        pruneCapabilityServiceReplayEntries(replay);
         return ok("new");
       }
       if (previous.canonical !== encoded.value) return err("replay_conflict");
@@ -360,6 +357,7 @@ function createEndpoint(
       invokeRoute: () => Promise<{
         readonly response: unknown;
         readonly errorKind?: CapabilityServiceErrorKind;
+        readonly settlement: Promise<void>;
       }>,
     ): Promise<void> {
       const operationId = request.params.operationId;
@@ -375,18 +373,33 @@ function createEndpoint(
         return;
       }
       inboundCount += 1;
-      const routed = await invokeRoute();
-      inboundCount -= 1;
-      const response = routed.errorKind === undefined
-        ? { jsonrpc: "2.0", id: request.id, result: routed.response }
-        : capabilityServiceErrorResponse(routed.errorKind, request.id);
-      if (routed.errorKind === "deadline_exceeded" || routed.errorKind === "internal_error") {
+      try {
+        const routed = await invokeRoute();
+        const response = routed.errorKind === undefined
+          ? { jsonrpc: "2.0", id: request.id, result: routed.response }
+          : capabilityServiceErrorResponse(routed.errorKind, request.id);
+        const transient = routed.errorKind === "deadline_exceeded" || routed.errorKind === "internal_error";
+        if (!transient) rememberResponse(operationId, response);
+        reply(socket, response);
+        await routed.settlement;
+        if (transient) {
+          const entry = replay.get(operationId);
+          if (entry !== undefined) entry.retryable = true;
+          pruneCapabilityServiceReplayEntries(replay);
+        }
+      } catch {
         const entry = replay.get(operationId);
         if (entry !== undefined) entry.retryable = true;
-      } else {
-        rememberResponse(operationId, response);
+        pruneCapabilityServiceReplayEntries(replay);
+        deps.logger.error({
+          serviceInstanceId: configured.instance.serviceInstanceId,
+          errorKind: "internal" as const,
+          hint: "Inspect the managed-run ingress bridge before retrying the exact operation",
+        }, "Capability-service ingress route failed unexpectedly");
+        reply(socket, capabilityServiceErrorResponse("internal_error", request.id));
+      } finally {
+        inboundCount -= 1;
       }
-      reply(socket, response);
     }
 
     function trackInbound(operation: Promise<void>): void {

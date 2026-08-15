@@ -159,29 +159,37 @@ export function createManagedRunContinuationRuntime(deps: {
 
   return Object.freeze({
     recover: async () => {
-      const recovered = await deps.store.listRecoverable({
-        kind: "recovery",
-        statuses: RECOVERABLE_STATUSES,
-        updatedBeforeMs: deps.nowMs(),
-        limit: deps.recoveryBatchSize,
-      });
-      if (!recovered.ok) return recovered;
-      for (const record of recovered.value.records) {
-        if (record.pendingContinuation) {
-          recoveredRecordByRun.set(record.managedRunId, record);
-          startNow(record.managedRunId, record.serviceInstanceId);
+      const updatedBeforeMs = deps.nowMs();
+      let afterManagedRunId: string | undefined;
+      let scheduledCount = 0;
+      let invalidCount = 0;
+      do {
+        const recovered = await deps.store.listRecoverable({
+          kind: "recovery",
+          statuses: RECOVERABLE_STATUSES,
+          updatedBeforeMs,
+          limit: deps.recoveryBatchSize,
+          ...(afterManagedRunId === undefined ? {} : { afterManagedRunId }),
+        });
+        if (!recovered.ok) return recovered;
+        for (const record of recovered.value.records) {
+          if (record.pendingContinuation) {
+            recoveredRecordByRun.set(record.managedRunId, record);
+            startNow(record.managedRunId, record.serviceInstanceId);
+            scheduledCount += 1;
+          }
         }
-      }
-      if (recovered.value.invalid.length > 0) {
-        log.warn({
-          invalidCount: recovered.value.invalid.length,
-          errorKind: "validation" as const,
-          hint: "Inspect quarantined managed-run rows and restore valid content-free authority records",
-        }, "Managed-run continuation recovery quarantined invalid rows");
-      }
+        invalidCount += recovered.value.invalid.length;
+        afterManagedRunId = recovered.value.nextAfterManagedRunId;
+      } while (afterManagedRunId !== undefined);
+      if (invalidCount > 0) log.warn({
+        invalidCount,
+        errorKind: "validation" as const,
+        hint: "Inspect quarantined managed-run rows and restore valid content-free authority records",
+      }, "Managed-run continuation recovery quarantined invalid rows");
       return ok({
-        scheduledCount: recovered.value.records.filter((record) => record.pendingContinuation).length,
-        invalidCount: recovered.value.invalid.length,
+        scheduledCount,
+        invalidCount,
       });
     },
     waitUntilIdle,

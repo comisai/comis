@@ -2297,7 +2297,7 @@ narrower than a filesystem root.
 | `privateContentDirectory` | `string` | `"managed-runs/private"` | Normalized relative path using safe directory segments |
 | `reportRetentionMs` | `integer` | `2592000000` (30 days) | Positive; at most 365 days |
 | `maxObservedClockSkewMs` | `integer` | `300000` | Non-negative; at most 24 hours |
-| `recoveryBatchSize` | `integer` | `256` | 1–10000 |
+| `recoveryBatchSize` | `integer` | `256` | 1–10000; page size for complete boot recovery scans |
 | `requestDeadlineMs` | `integer` | `5000` | 100–60000 |
 
 Each instance requires these fields:

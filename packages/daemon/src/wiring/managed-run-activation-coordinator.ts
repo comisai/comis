@@ -116,6 +116,7 @@ export interface ManagedRunActivationCoordinator {
 
 export interface ManagedRunActivationRecoveryInput {
   readonly updatedBeforeMs: number;
+  readonly afterManagedRunId?: string;
   readonly limit: number;
 }
 
@@ -131,6 +132,7 @@ export interface ManagedRunActivationRecoverySummary {
   readonly unknown: readonly string[];
   readonly invalid: readonly InvalidManagedRunRecord[];
   readonly failed: readonly ManagedRunActivationRecoveryFailure[];
+  readonly nextAfterManagedRunId?: string;
 }
 
 export interface ManagedRunActivationCoordinatorDeps {
@@ -858,6 +860,7 @@ export function createManagedRunActivationCoordinator(
       kind: "recovery",
       statuses: ["preparing", "unknown"],
       updatedBeforeMs: input.updatedBeforeMs,
+      ...(input.afterManagedRunId === undefined ? {} : { afterManagedRunId: input.afterManagedRunId }),
       limit: input.limit,
     }));
     if (!scanned.ok) return scanned;
@@ -942,7 +945,12 @@ export function createManagedRunActivationCoordinator(
         timestamp: deps.nowMs(),
       },
     );
-    return ok(summary);
+    return ok({
+      ...summary,
+      ...(scanned.value.nextAfterManagedRunId === undefined
+        ? {}
+        : { nextAfterManagedRunId: scanned.value.nextAfterManagedRunId }),
+    });
   }
 
   return Object.freeze({ activatePrepared, recoverPreparations });

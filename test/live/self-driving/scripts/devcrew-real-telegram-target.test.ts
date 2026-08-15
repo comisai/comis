@@ -28,4 +28,12 @@ describe("real Telegram DevCrew dogfood target", () => {
     expect(target).toContain("bot-token impersonation");
     expect(target).toContain("may not merge, publish, release, deploy");
   });
+
+  it("classifies the manual target outside automated emulator campaigns", () => {
+    expect(target).toContain("Unsupported by the automated emulator campaign");
+    expect(target).toContain("local Telegram emulator");
+    expect(target).toContain("no human intervention");
+    expect(target).toContain("no Comis pull-request creation or update");
+    expect(target).toContain("authorizes no exception");
+  });
 });

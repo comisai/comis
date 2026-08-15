@@ -48,7 +48,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { isAbsolute, resolve as resolvePath, sep as pathSep } from "node:path";
+import { isAbsolute, relative, resolve as resolvePath, sep as pathSep } from "node:path";
 
 import { safePath, type EgressControlPort, type EgressMaterialization } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
@@ -328,9 +328,13 @@ function loadManagedWorkspaceGitMounts(
   gitDirTarget: string,
 ): ManagedWorkspaceGitMounts {
   const privateRootTarget = safePath(workspace, MANAGED_GIT_DIRECTORY);
+  const privateRootTargetStat = lstatSync(privateRootTarget);
+  if (!privateRootTargetStat.isDirectory() || privateRootTargetStat.isSymbolicLink()) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
   const privateRoot = realpathSync(privateRootTarget);
-  const privateRootStat = lstatSync(privateRoot);
-  if (!privateRootStat.isDirectory() || privateRootStat.isSymbolicLink()) {
+  const canonicalWorkspace = realpathSync(workspace);
+  if (privateRoot !== safePath(canonicalWorkspace, MANAGED_GIT_DIRECTORY)) {
     throw new Error("managed workspace private Git administration is unavailable");
   }
   const sourceRecord = JSON.parse(
@@ -346,8 +350,24 @@ function loadManagedWorkspaceGitMounts(
   }
   const privateWorktreeTarget = safePath(privateRootTarget, "worktree");
   const privateCommonTarget = safePath(privateRootTarget, "common");
+  const privateWorktreeTargetStat = lstatSync(privateWorktreeTarget);
+  const privateCommonTargetStat = lstatSync(privateCommonTarget);
+  if (
+    !privateWorktreeTargetStat.isDirectory()
+    || privateWorktreeTargetStat.isSymbolicLink()
+    || !privateCommonTargetStat.isDirectory()
+    || privateCommonTargetStat.isSymbolicLink()
+  ) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
   const privateWorktree = realpathSync(privateWorktreeTarget);
   const privateCommon = realpathSync(privateCommonTarget);
+  for (const canonicalPath of [privateWorktree, privateCommon]) {
+    const descendant = relative(privateRoot, canonicalPath);
+    if (descendant.length === 0 || descendant === ".." || descendant.startsWith(`..${pathSep}`) || isAbsolute(descendant)) {
+      throw new Error("managed workspace private Git administration is unavailable");
+    }
+  }
   return {
     common: { sourcePath: commonDir, targetPath: commonTarget },
     worktree: { sourcePath: privateWorktree, targetPath: gitDirTarget },

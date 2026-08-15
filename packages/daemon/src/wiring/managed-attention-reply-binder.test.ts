@@ -74,7 +74,9 @@ function makeBinder(
       updatedAtMs: input.respondedAtMs,
     },
   }));
+  const getAttentionResponseByOperation = vi.fn(async () => ok(undefined));
   const store = {
+    getAttentionResponseByOperation,
     listOpenAttention: vi.fn(async () => ok(candidates)),
     getAttention: vi.fn(async (_scope, attentionId) => ok(
       candidates.find((item) => item.attentionId === attentionId),
@@ -91,7 +93,13 @@ function makeBinder(
     deleteAttentionBody: vi.fn(async () => ok(true)),
   } as unknown as ManagedRunContentPort;
   const binder = createManagedAttentionReplyBinder({ store, contentStore });
-  return { binder, store, contentStore, claimAttentionResponse };
+  return {
+    binder,
+    store,
+    contentStore,
+    claimAttentionResponse,
+    getAttentionResponseByOperation,
+  };
 }
 
 describe("managed attention reply binding", () => {
@@ -206,5 +214,37 @@ describe("managed attention reply binding", () => {
     });
     expect(result).toEqual(err(new Error("store unavailable")));
     expect(failed.contentStore.deleteAttentionBody).toHaveBeenCalledOnce();
+  });
+
+  it("replays an exact attention reply after the attention is no longer open", async () => {
+    const replayResponseRef = `attention-response-${createHash("sha256")
+      .update("attention-replay\0reply-operation-replay", "utf8")
+      .digest("hex")
+      .slice(0, 48)}`;
+    const replayed = {
+      ...attention("attention-replay"),
+      status: "response_pending" as const,
+      responseRef: replayResponseRef,
+      updatedAtMs: 100,
+    };
+    const setup = makeBinder([replayed]);
+    setup.getAttentionResponseByOperation.mockResolvedValue(ok(replayed));
+    setup.claimAttentionResponse.mockResolvedValue(ok({
+      kind: "identical_replay",
+      record: replayed,
+    }));
+
+    const result = await setup.binder.bind(SCOPE, {
+      operationId: "reply-operation-replay",
+      text: "Proceed",
+      respondedAtMs: 100,
+    });
+
+    expect(result).toEqual(ok({ kind: "bound", attention: replayed }));
+    expect(setup.store.listOpenAttention).not.toHaveBeenCalled();
+    expect(setup.claimAttentionResponse).toHaveBeenCalledWith(SCOPE, expect.objectContaining({
+      attentionId: "attention-replay",
+      operationId: "reply-operation-replay",
+    }));
   });
 });

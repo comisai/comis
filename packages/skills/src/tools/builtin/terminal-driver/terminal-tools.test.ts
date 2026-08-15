@@ -135,6 +135,7 @@ interface FakeRegistry extends TerminalSessionRegistry {
   /** The sessionIds each `status` round-trip was called with. */
   statusCalls: string[];
   killCalls: string[];
+  terminateCalls: string[];
   sendTextCalls: SendTextCall[];
   sendKeyCalls: SendKeyCall[];
   resizeCalls: ResizeCall[];
@@ -161,6 +162,7 @@ function makeFakeRegistry(overrides?: {
   const readOptsCalls: Array<ReadOptions | undefined> = [];
   const statusCalls: string[] = [];
   const killCalls: string[] = [];
+  const terminateCalls: string[] = [];
   const sendTextCalls: SendTextCall[] = [];
   const sendKeyCalls: SendKeyCall[] = [];
   const resizeCalls: ResizeCall[] = [];
@@ -176,6 +178,7 @@ function makeFakeRegistry(overrides?: {
     readOptsCalls,
     statusCalls,
     killCalls,
+    terminateCalls,
     sendTextCalls,
     sendKeyCalls,
     resizeCalls,
@@ -189,7 +192,7 @@ function makeFakeRegistry(overrides?: {
       createCalls.push(req);
       capturedOwners.push({ method: "create", owner });
       if (overrides?.createImpl) return overrides.createImpl(req);
-      return { sessionId: "sess-1", allowId: req.allowId, cols: req.cols, rows: req.rows };
+      return { sessionId: req.sessionId ?? "sess-1", allowId: req.allowId, cols: req.cols, rows: req.rows };
     },
     async read(id: string, owner: SessionOwner, opts?: ReadOptions): Promise<TerminalView> {
       readCalls.push(id);
@@ -241,6 +244,12 @@ function makeFakeRegistry(overrides?: {
       killCalls.push(id);
       capturedOwners.push({ method: "kill", owner });
       listing = listing.filter((s) => s.sessionId !== id);
+    },
+    async terminateAndConfirm(id: string, owner: SessionOwner) {
+      terminateCalls.push(id);
+      capturedOwners.push({ method: "terminateAndConfirm", owner });
+      handles.delete(id);
+      return { ok: true as const, value: undefined };
     },
     // The public owner-scoped eviction entry the send_* tool
     // layer drives on a maxInteractions/wall_clock cap breach. Records the (id, owner,
@@ -439,7 +448,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     const rootProcessIdentity = { pid: 4123, startIdentity: "linux-proc-start-991" };
     const registry = makeFakeRegistry({
       createImpl: async (req) => ({
-        sessionId: "terminal-session_a",
+        sessionId: req.sessionId!,
         allowId: req.allowId,
         cols: req.cols,
         rows: req.rows,
@@ -461,7 +470,9 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
           targetName: `attachment-${"a".repeat(32)}.sock`,
         }],
       })),
+      reserve: vi.fn(async () => ({ kind: "bound" })),
       bind: vi.fn(async () => ({ kind: "bound" })),
+      release: vi.fn(async () => ({ kind: "released" })),
     };
     const eventBus = makeCapturingBus();
     const managedTerminalEvents = { publish: vi.fn(async () => undefined) };
@@ -502,12 +513,12 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
       serviceInstanceId: "service-instance_a",
-      terminalSessionId: "terminal-session_a",
+      terminalSessionId: expect.any(String),
       rootProcessIdentity,
       owner: { agentId: "agent-1", sessionKey: "" },
     });
     expect(result.details).toMatchObject({
-      sessionId: "terminal-session_a",
+      sessionId: expect.any(String),
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
       executionAttachments: [{
@@ -518,7 +529,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(JSON.stringify(result.details)).not.toContain("/srv/runtime/run-a.sock");
     expect(eventBus.events.find((event) => event.event === "terminal:session_state")?.payload)
       .toMatchObject({
-        sessionId: "terminal-session_a",
+        sessionId: expect.any(String),
         managedRunId: "managed-run_a",
         workspaceLeaseId: "workspace-lease_a",
       });
@@ -527,14 +538,14 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
         managedRunId: "managed-run_a",
         workspaceLeaseId: "workspace-lease_a",
         serviceInstanceId: "service-instance_a",
-        terminalSessionId: "terminal-session_a",
+        terminalSessionId: expect.any(String),
         transition: "created",
       },
       {
         managedRunId: "managed-run_a",
         workspaceLeaseId: "workspace-lease_a",
         serviceInstanceId: "service-instance_a",
-        terminalSessionId: "terminal-session_a",
+        terminalSessionId: expect.any(String),
         transition: "running",
       },
     ]);
@@ -614,7 +625,15 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
   });
 
   it("kills a newly-created terminal when durable managed-run binding is refused without releasing its lease", async () => {
-    const registry = makeFakeRegistry();
+    const registry = makeFakeRegistry({
+      createImpl: async (req) => ({
+        sessionId: req.sessionId!,
+        allowId: req.allowId,
+        cols: req.cols,
+        rows: req.rows,
+        rootProcessIdentity: { pid: 4123, startIdentity: "linux-proc-start-991" },
+      }),
+    });
     const managedBinding = {
       resolve: vi.fn(async () => ({
         kind: "resolved",
@@ -626,8 +645,9 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
         },
         executionAttachments: [],
       })),
+      reserve: vi.fn(async () => ({ kind: "bound" })),
       bind: vi.fn(async () => ({ kind: "rejected", reason: "ownership_mismatch" })),
-      releaseLease: vi.fn(),
+      release: vi.fn(async () => ({ kind: "released" })),
     };
     const tool = createTerminalSessionCreateTool(baseDeps(registry, {
       managedBinding,
@@ -640,8 +660,58 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
       workspaceLeaseId: "workspace-lease_a",
     } as never)).rejects.toThrow(/managed terminal binding/i);
 
-    expect(registry.killCalls).toEqual(["sess-1"]);
-    expect(managedBinding.releaseLease).not.toHaveBeenCalled();
+    expect(registry.terminateCalls).toHaveLength(1);
+    expect(managedBinding.bind).toHaveBeenCalledOnce();
+    expect(managedBinding.release).toHaveBeenCalledOnce();
+  });
+
+  it("reserves the durable terminal identity before spawning and refuses release races", async () => {
+    const rootProcessIdentity = { pid: 4123, startIdentity: "linux-proc-start-991" };
+    const order: string[] = [];
+    const registry = makeFakeRegistry({
+      createImpl: async (req) => {
+        order.push("spawn");
+        return {
+          sessionId: req.sessionId!,
+          allowId: req.allowId,
+          cols: req.cols,
+          rows: req.rows,
+          rootProcessIdentity,
+        };
+      },
+    });
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+      reserve: vi.fn(async () => {
+        order.push("reserve");
+        return { kind: "bound" as const };
+      }),
+      bind: vi.fn(async () => ({ kind: "rejected" as const, reason: "release_reserved" })),
+      release: vi.fn(async () => ({ kind: "released" as const })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-release-race", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/release_reserved/u);
+
+    expect(order).toEqual(["reserve", "spawn"]);
+    expect(registry.terminateCalls).toHaveLength(1);
+    expect(managedBinding.release).toHaveBeenCalledOnce();
   });
 
   it("publishes released after explicitly killing a managed terminal without releasing its lease", async () => {

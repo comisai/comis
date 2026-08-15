@@ -54,46 +54,57 @@ export function createManagedAttentionReplyBinder(deps: {
       scope: ManagedRunOwnerScope,
       input: ManagedAttentionReplyInput,
     ): Promise<Result<ManagedAttentionReplyBindingOutcome, Error>> => {
-      const listed = await invoke(() => deps.store.listOpenAttention(scope, { limit: 10_000 }));
-      if (!listed.ok) return listed;
-      const open = listed.value.filter((candidate) => candidate.status === "open");
-      const candidateAttentionIds = open.map((candidate) => candidate.attentionId).sort();
-      let selected: ManagedRunAttentionRecord | undefined;
-      if (input.attentionId !== undefined) {
-        const exactAttentionId = input.attentionId;
-        const exact = await invoke(() => deps.store.getAttention(scope, exactAttentionId));
-        if (!exact.ok) return exact;
-        if (exact.value === undefined) {
-          return ok({ kind: "clarification_required", reason: "handle_not_found", candidateAttentionIds });
+      const prior = await invoke(
+        () => deps.store.getAttentionResponseByOperation(scope, input.operationId),
+      );
+      if (!prior.ok) return prior;
+      let selected = prior.value;
+      let candidateAttentionIds: string[] = [];
+      if (selected !== undefined) {
+        if (input.attentionId !== undefined && input.attentionId !== selected.attentionId) {
+          return err(new Error("managed-run attention response replay conflicts with its original handle"));
         }
-        if (exact.value.status !== "open") {
-          return ok({ kind: "clarification_required", reason: "already_answered", candidateAttentionIds });
-        }
-        selected = exact.value;
-      } else if (open.length === 0) {
-        return ok({ kind: "clarification_required", reason: "none_open", candidateAttentionIds });
       } else {
-        const referencedDigests = referencedRunDigests(input.text);
-        const scopedRuns = await invoke(() => deps.store.listScoped({ scope, limit: 10_000 }));
-        if (!scopedRuns.ok) return scopedRuns;
-        const referencedRunIds = new Set(scopedRuns.value
-          .filter((run) => referencedDigests.has(run.externalRunRefDigest))
-          .map((run) => run.managedRunId));
-        if (referencedRunIds.size === 1) {
-          const matching = open.filter((candidate) => referencedRunIds.has(candidate.managedRunId));
-          if (matching.length === 0) return ok({ kind: "not_applicable" });
-          if (matching.length === 1) selected = matching[0];
-          else {
-            return ok({
-              kind: "clarification_required",
-              reason: "ambiguous",
-              candidateAttentionIds: matching.map((candidate) => candidate.attentionId).sort(),
-            });
+        const listed = await invoke(() => deps.store.listOpenAttention(scope, { limit: 10_000 }));
+        if (!listed.ok) return listed;
+        const open = listed.value.filter((candidate) => candidate.status === "open");
+        candidateAttentionIds = open.map((candidate) => candidate.attentionId).sort();
+        if (input.attentionId !== undefined) {
+          const exactAttentionId = input.attentionId;
+          const exact = await invoke(() => deps.store.getAttention(scope, exactAttentionId));
+          if (!exact.ok) return exact;
+          if (exact.value === undefined) {
+            return ok({ kind: "clarification_required", reason: "handle_not_found", candidateAttentionIds });
           }
-        } else if (referencedRunIds.size > 1 || open.length !== 1) {
-          return ok({ kind: "clarification_required", reason: "ambiguous", candidateAttentionIds });
+          if (exact.value.status !== "open") {
+            return ok({ kind: "clarification_required", reason: "already_answered", candidateAttentionIds });
+          }
+          selected = exact.value;
+        } else if (open.length === 0) {
+          return ok({ kind: "clarification_required", reason: "none_open", candidateAttentionIds });
         } else {
-          selected = open[0];
+          const referencedDigests = referencedRunDigests(input.text);
+          const scopedRuns = await invoke(() => deps.store.listScoped({ scope, limit: 10_000 }));
+          if (!scopedRuns.ok) return scopedRuns;
+          const referencedRunIds = new Set(scopedRuns.value
+            .filter((run) => referencedDigests.has(run.externalRunRefDigest))
+            .map((run) => run.managedRunId));
+          if (referencedRunIds.size === 1) {
+            const matching = open.filter((candidate) => referencedRunIds.has(candidate.managedRunId));
+            if (matching.length === 0) return ok({ kind: "not_applicable" });
+            if (matching.length === 1) selected = matching[0];
+            else {
+              return ok({
+                kind: "clarification_required",
+                reason: "ambiguous",
+                candidateAttentionIds: matching.map((candidate) => candidate.attentionId).sort(),
+              });
+            }
+          } else if (referencedRunIds.size > 1 || open.length !== 1) {
+            return ok({ kind: "clarification_required", reason: "ambiguous", candidateAttentionIds });
+          } else {
+            selected = open[0];
+          }
         }
       }
       if (selected === undefined) return err(new Error("managed-run attention selection failed closed"));

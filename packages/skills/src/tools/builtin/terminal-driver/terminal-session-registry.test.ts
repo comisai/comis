@@ -352,6 +352,75 @@ describe("createTerminalSessionRegistry — confirmed process termination", () =
 });
 
 describe("createTerminalSessionRegistry — lazy re-spawn", () => {
+  it("uses a daemon-reserved managed session identity exactly once", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: { rootPid: 6200 },
+    }));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+    const request = {
+      sessionId: "terminal-session-reserved",
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    };
+
+    await expect(registry.create(request, OWNER)).resolves.toMatchObject({
+      sessionId: "terminal-session-reserved",
+    });
+    await expect(registry.create(request, OWNER)).rejects.toThrow("already registered");
+  });
+
+  it("refuses a managed create whose reserved authority is released during launch", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: { rootPid: 6200 },
+    }));
+    let resolveIdentity!: (identity: { pid: number; startIdentity: string }) => void;
+    const identity = new Promise<{ pid: number; startIdentity: string }>((resolve) => {
+      resolveIdentity = resolve;
+    });
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      resolveRootProcessIdentity: async () => identity,
+    }));
+    const creating = registry.create({
+      sessionId: "terminal-session-raced",
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, OWNER);
+    await vi.waitFor(() => expect(fake.requestFrames).toHaveLength(1));
+
+    await expect(registry.terminateAndConfirm(
+      "terminal-session-raced",
+      OWNER,
+    )).resolves.toEqual({ ok: true, value: undefined });
+    resolveIdentity({ pid: 6200, startIdentity: "linux:991" });
+
+    await expect(creating).rejects.toThrow("authority was revoked");
+    expect(registry.get("terminal-session-raced", OWNER)).toBeUndefined();
+  });
+
   it("spawns the worker once for the first create (single live worker per registry)", async () => {
     const spawnWorker = vi.fn(() => makeFakeWorker().child);
     const registry = createTerminalSessionRegistry(baseDeps(spawnWorker));
@@ -952,14 +1021,14 @@ describe("createTerminalSessionRegistry — malformed-frame on stdout does NOT c
 
 describe("createTerminalSessionRegistry — worker create failure is surfaced", () => {
   it("identifies a managed create reply that omits the terminal root PID", async () => {
-    const fake = makeFakeWorker((req) => req.method === "create"
-      ? {
-          sessionId: req.sessionId,
-          requestId: req.requestId,
-          ok: true,
-          result: { sessionId: req.sessionId, backend: "tmux", cols: 80, rows: 24 },
-        }
-      : undefined);
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create"
+        ? { sessionId: req.sessionId, backend: "tmux", cols: 80, rows: 24 }
+        : { terminated: true },
+    }));
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
       resolveRootProcessIdentity: vi.fn(async () => ({ pid: 6200, startIdentity: "linux:991" })),
     } as unknown as Partial<TerminalSessionRegistryDeps>));
@@ -980,14 +1049,14 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
   });
 
   it("identifies a managed root PID whose process start identity is unreadable", async () => {
-    const fake = makeFakeWorker((req) => req.method === "create"
-      ? {
-          sessionId: req.sessionId,
-          requestId: req.requestId,
-          ok: true,
-          result: { sessionId: req.sessionId, backend: "tmux", cols: 80, rows: 24, rootPid: 6200 },
-        }
-      : undefined);
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create"
+        ? { sessionId: req.sessionId, backend: "tmux", cols: 80, rows: 24, rootPid: 6200 }
+        : { terminated: true },
+    }));
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
       resolveRootProcessIdentity: vi.fn(async () => undefined),
     } as unknown as Partial<TerminalSessionRegistryDeps>));

@@ -357,6 +357,31 @@ describe("production capability-service setup", () => {
     expect(uncertain).toMatchObject({ ok: true, value: { kind: "activation_unknown" } });
     if (!uncertain.ok || uncertain.value.kind !== "activation_unknown") return;
     const uncertainRecord = uncertain.value.record;
+    const secondUncertainPromise = first.value.activationCoordinator.activatePrepared(
+      makeActivation("operation_prepare_uncertain_second", "external-run-uncertain-second"),
+    );
+    const secondUncertainRequest = await firstPeer.next();
+    expect(secondUncertainRequest).toMatchObject({ method: "managedRuns.activate" });
+    firstTimers.advance(5_000);
+    const secondUncertain = await secondUncertainPromise;
+    expect(secondUncertain).toMatchObject({ ok: true, value: { kind: "activation_unknown" } });
+    if (!secondUncertain.ok || secondUncertain.value.kind !== "activation_unknown") return;
+    const secondUncertainRecord = secondUncertain.value.record;
+    const expiringContentScope = {
+      tenantId: uncertainRecord.tenantId,
+      agentId: uncertainRecord.agentId,
+      managedRunId: uncertainRecord.managedRunId,
+    };
+    expect((await first.value.contentStore.putAttentionBody(
+      expiringContentScope,
+      "attention-expiring-a",
+      { body: new TextEncoder().encode("synthetic-a"), expiresAtMs: NOW_MS + 1 },
+    )).ok).toBe(true);
+    expect((await first.value.contentStore.putAttentionBody(
+      expiringContentScope,
+      "attention-expiring-b",
+      { body: new TextEncoder().encode("synthetic-b"), expiresAtMs: NOW_MS + 1 },
+    )).ok).toBe(true);
     expect(await first.value.shutdown()).toEqual({ ok: true, value: undefined });
     firstPeer.close();
 
@@ -364,7 +389,7 @@ describe("production capability-service setup", () => {
     const secondTimers = createFakeTimers(fixture.clock.now());
     const secondSetup = setupCapabilityServices({
       contributions: [CONTRIBUTION],
-      config: fixture.config,
+      config: { ...fixture.config, recoveryBatchSize: 1 },
       db: fixture.db,
       dataDir: fixture.dataDir,
       secretManager: fixture.secretManager,
@@ -377,36 +402,51 @@ describe("production capability-service setup", () => {
     peers.push(secondPeer);
     sendHandshake(secondPeer);
     expect(await secondPeer.next()).toHaveProperty("result");
-    const abandonRequest = await secondPeer.next();
-    expect(abandonRequest).toMatchObject({
-      method: "managedRuns.abandon",
-      params: {
-        externalRunRef: "external-run-uncertain",
-        reason: "registration_expired",
-        disposition: "reap_safe",
-      },
-    });
-    const abandonParams = abandonRequest["params"] as Record<string, unknown>;
-    secondPeer.send({
-      jsonrpc: "2.0",
-      id: abandonRequest["id"],
-      result: {
-        externalRunRef: abandonParams["externalRunRef"],
-        state: "abandoned",
-        disposition: abandonParams["disposition"],
-        terminalTransition: "unbound_preparation_abandoned",
-      },
-    });
+    const abandonedExternalRefs: string[] = [];
+    for (let index = 0; index < 2; index += 1) {
+      const abandonRequest = await secondPeer.next();
+      expect(abandonRequest).toMatchObject({
+        method: "managedRuns.abandon",
+        params: {
+          reason: "registration_expired",
+          disposition: "reap_safe",
+        },
+      });
+      const abandonParams = abandonRequest["params"] as Record<string, unknown>;
+      abandonedExternalRefs.push(abandonParams["externalRunRef"] as string);
+      secondPeer.send({
+        jsonrpc: "2.0",
+        id: abandonRequest["id"],
+        result: {
+          externalRunRef: abandonParams["externalRunRef"],
+          state: "abandoned",
+          disposition: abandonParams["disposition"],
+          terminalTransition: "unbound_preparation_abandoned",
+        },
+      });
+    }
     const second = await secondSetup;
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     expect(second.value.recoverySummary).toMatchObject({
       activated: [],
-      cancelled: [uncertainRecord.managedRunId],
+      cancelled: expect.arrayContaining([
+        uncertainRecord.managedRunId,
+        secondUncertainRecord.managedRunId,
+      ]),
       unknown: [],
       invalid: [],
       failed: [],
     });
+    expect(abandonedExternalRefs.sort()).toEqual([
+      "external-run-uncertain",
+      "external-run-uncertain-second",
+    ]);
+    expect(second.value.purgedContentCount).toBe(3);
+    expect(await second.value.contentStore.getAttentionBody(
+      expiringContentScope,
+      "attention-expiring-a",
+    )).toEqual({ ok: true, value: undefined });
 
     expect(await second.value.store.get(
       { kind: "service", serviceInstanceId: "service-instance_a" },

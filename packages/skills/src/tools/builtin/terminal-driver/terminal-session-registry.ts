@@ -205,6 +205,7 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
 
 /** A `create` request — the daemon passes buildDirectSpawn's `{bin,argv}`. */
 export interface CreateRequest {
+  sessionId?: string;
   allowId: string;
   bin: string;
   argv: string[];
@@ -499,8 +500,11 @@ export function createTerminalSessionRegistry(
   }
 
   async function create(req: CreateRequest, owner: SessionOwner): Promise<CreateResult> {
+    const sessionId = req.sessionId ?? generateSessionId();
+    if (sessions.has(sessionId)) {
+      return Promise.reject(new Error("terminal session identity is already registered"));
+    }
     const child = ensureWorker();
-    const sessionId = generateSessionId();
 
     // A REAL per-session jail workspace threaded onto the frame as workspace+cwd
     // (see terminal-workspace.ts); ownedWorkspace is set only when WE allocated it (a
@@ -610,21 +614,28 @@ export function createTerminalSessionRegistry(
       const result = reply.result as { rootPid?: unknown } | undefined;
       const rootPid = result?.rootPid;
       if (!reply.ok) {
-        await kill(sessionId, owner);
+        const terminated = await terminateAndConfirm(sessionId, owner);
+        if (!terminated.ok) return Promise.reject(terminated.error);
         return Promise.reject(new Error("managed terminal backend create failed before root process identity was available"));
       }
       if (!Number.isSafeInteger(rootPid) || (rootPid as number) <= 0) {
-        await kill(sessionId, owner);
+        const terminated = await terminateAndConfirm(sessionId, owner);
+        if (!terminated.ok) return Promise.reject(terminated.error);
         return Promise.reject(new Error("managed terminal create reply omitted a positive root PID"));
       }
       if (deps.resolveRootProcessIdentity === undefined) {
-        await kill(sessionId, owner);
+        const terminated = await terminateAndConfirm(sessionId, owner);
+        if (!terminated.ok) return Promise.reject(terminated.error);
         return Promise.reject(new Error("managed terminal root process identity resolver is unavailable"));
       }
       rootProcessIdentity = await deps.resolveRootProcessIdentity(rootPid as number);
       if (rootProcessIdentity === undefined) {
-        await kill(sessionId, owner);
+        const terminated = await terminateAndConfirm(sessionId, owner);
+        if (!terminated.ok) return Promise.reject(terminated.error);
         return Promise.reject(new Error(`managed terminal process ${String(rootPid)} start identity is unreadable`));
+      }
+      if (sessions.get(sessionId) !== handle) {
+        return Promise.reject(new Error("managed terminal launch authority was revoked during creation"));
       }
       handle.rootProcessIdentity = rootProcessIdentity;
       deps.durability?.descriptorStore?.persist(buildSessionDescriptor({

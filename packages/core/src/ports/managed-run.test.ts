@@ -28,6 +28,7 @@ describe("Managed-run store and private-content port contracts", () => {
       | "appendEvidence"
       | "listEvidenceByRefs"
       | "getAttention"
+      | "getAttentionResponseByOperation"
       | "listOpenAttention"
       | "claimAttentionResponse"
       | "markAttentionDelivered"

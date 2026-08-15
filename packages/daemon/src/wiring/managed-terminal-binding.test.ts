@@ -53,10 +53,12 @@ describe("managed terminal binding authority", () => {
       tenantId: "tenant_a",
       agentId: "agent_a",
       executionAttachmentIds: [],
+      updatedAtMs: 1600,
     };
     const store = {
       get: vi.fn(async () => ok(record)),
       bindTerminal: vi.fn(async () => ok({ kind: "bound", record })),
+      releaseTerminal: vi.fn(async () => ok({ kind: "released", record })),
     } as unknown as ManagedRunStorePort;
     const workspaceLeases = {
       get: vi.fn(async () => ok({
@@ -107,6 +109,29 @@ describe("managed terminal binding authority", () => {
       terminalAgentId: "agent_a",
       boundAtMs: 1700,
     });
+    await expect(resolver.reserve({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      terminalSessionId: "terminal-session_reserved",
+      owner: OWNER,
+    })).resolves.toEqual({ kind: "bound" });
+    await expect(resolver.release({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      terminalSessionId: "terminal-session_reserved",
+      owner: OWNER,
+    })).resolves.toEqual({ kind: "released" });
+    expect(store.releaseTerminal).toHaveBeenCalledWith(
+      { kind: "service", serviceInstanceId: "service-instance_a" },
+      {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        terminalSessionId: "terminal-session_reserved",
+        releasedAtMs: 1700,
+      },
+    );
   });
 
   it("rejects a lease that is not the run's exact active lease", async () => {

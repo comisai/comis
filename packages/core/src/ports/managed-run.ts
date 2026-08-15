@@ -301,6 +301,7 @@ export interface ManagedRunRecoveryScanInput {
   readonly kind: "recovery";
   readonly statuses: readonly ManagedRunStatus[];
   readonly updatedBeforeMs: number;
+  readonly afterManagedRunId?: string;
   readonly limit: number;
 }
 
@@ -313,6 +314,7 @@ export interface InvalidManagedRunRecord {
 export interface ManagedRunRecoveryScan {
   readonly records: readonly ManagedRunRecord[];
   readonly invalid: readonly InvalidManagedRunRecord[];
+  readonly nextAfterManagedRunId?: string;
 }
 
 export interface ManagedRunRevokeInput {
@@ -342,6 +344,10 @@ export interface ManagedRunStorePort {
   appendEvidence(scope: ManagedRunServiceScope, input: ManagedEvidenceAppendInput): Promise<Result<ManagedEvidenceAppendOutcome, Error>>;
   listEvidenceByRefs(scope: ManagedRunOwnerScope, input: ManagedEvidenceListInput): Promise<Result<ManagedEvidenceIndex[], Error>>;
   getAttention(scope: ManagedRunOwnerScope, attentionId: string): Promise<Result<ManagedRunAttentionRecord | undefined, Error>>;
+  getAttentionResponseByOperation(
+    scope: ManagedRunOwnerScope,
+    operationId: string,
+  ): Promise<Result<ManagedRunAttentionRecord | undefined, Error>>;
   listOpenAttention(scope: ManagedRunOwnerScope, input: ManagedRunAttentionListInput): Promise<Result<ManagedRunAttentionRecord[], Error>>;
   claimAttentionResponse(scope: ManagedRunOwnerScope, input: ManagedRunAttentionResponseInput): Promise<Result<ManagedRunAttentionMutationOutcome, Error>>;
   markAttentionDelivered(scope: ManagedRunOwnerScope, input: ManagedRunAttentionDeliveryInput): Promise<Result<ManagedRunAttentionMutationOutcome, Error>>;

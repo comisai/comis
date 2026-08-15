@@ -293,6 +293,8 @@ export function ensureManagedRunTables(db: Database.Database): void {
       created_at_ms INTEGER NOT NULL,
       PRIMARY KEY (attention_id, operation_id, operation_kind)
     );
+    CREATE INDEX IF NOT EXISTS idx_managed_run_attention_operation_lookup
+      ON managed_run_attention_operations (operation_id, operation_kind, attention_id);
 
     CREATE TABLE IF NOT EXISTS managed_run_operations (
       managed_run_id TEXT NOT NULL REFERENCES managed_runs(managed_run_id),

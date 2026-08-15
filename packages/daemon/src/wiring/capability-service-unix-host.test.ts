@@ -790,7 +790,7 @@ describe("daemon-owned capability-service Unix host", () => {
     expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
   });
 
-  it("drains an accepted report mutation before closing its socket", async () => {
+  it("keeps timed-out mutations admitted until durable settlement", async () => {
     const root = makeRoot();
     let resolveReport!: (value: Awaited<ReturnType<ManagedRunReportBridge["ingestReport"]>>) => void;
     const pendingReport = new Promise<Awaited<ReturnType<ManagedRunReportBridge["ingestReport"]>>>((resolve) => {
@@ -810,7 +810,7 @@ describe("daemon-owned capability-service Unix host", () => {
     await peer.next();
     if (!(await started).ok) return;
 
-    peer.send({
+    const request = {
       bearer: BEARER,
       jsonrpc: "2.0",
       id: "operation_report_drain",
@@ -822,8 +822,18 @@ describe("daemon-owned capability-service Unix host", () => {
         kind: "progress",
         summary: "Synthetic progress",
       },
-    });
+    };
+    peer.send(request);
     await vi.waitFor(() => expect(reportBridge.ingestReport).toHaveBeenCalledOnce());
+    host.timers.advance(5_000);
+    expect(await peer.next()).toMatchObject({
+      error: { kind: "deadline_exceeded", retryable: true },
+    });
+    peer.send(request);
+    expect(await peer.next()).toMatchObject({
+      error: { kind: "rate_limited", retryable: true },
+    });
+    expect(reportBridge.ingestReport).toHaveBeenCalledOnce();
 
     let closeSettled = false;
     const closing = constructed.value.close().then((result) => {
@@ -850,4 +860,5 @@ describe("daemon-owned capability-service Unix host", () => {
     }));
     expect(await closing).toEqual({ ok: true, value: undefined });
   });
+
 });

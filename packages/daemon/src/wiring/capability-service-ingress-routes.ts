@@ -41,16 +41,17 @@ export async function routeManagedAttentionResponseIngress(
     serviceInstanceId,
     ...request.params,
   }));
-  const settled = invoked.ok
+  const deadline = invoked.ok
     ? await awaitResultDeadline(invoked.value, deps.timers, deps.requestDeadlineMs)
-    : err(invoked.error);
+    : { result: err(invoked.error), settlement: Promise.resolve() };
+  const settled = deadline.result;
   let result: CapabilityServiceIngressRouteResult;
-  if (settled === undefined) result = responseError("deadline_exceeded");
-  else if (!settled.ok) result = responseError("internal_error");
+  if (settled === undefined) result = responseError("deadline_exceeded", deadline.settlement);
+  else if (!settled.ok) result = responseError("internal_error", deadline.settlement);
   else if (settled.value.kind === "rejected") {
     result = responseError(settled.value.reasonCode === "invalid_request"
       ? "invalid_params"
-      : "precondition_failed");
+      : "precondition_failed", deadline.settlement);
   } else if (settled.value.kind === "pending") {
     result = {
       response: {
@@ -58,6 +59,7 @@ export async function routeManagedAttentionResponseIngress(
         externalKey: settled.value.externalKey,
         state: "pending",
       },
+      settlement: deadline.settlement,
     };
   } else {
     result = {
@@ -67,6 +69,7 @@ export async function routeManagedAttentionResponseIngress(
         state: "delivered",
         response: settled.value.response,
       },
+      settlement: deadline.settlement,
     };
   }
   deps.logger.info({
@@ -93,16 +96,17 @@ export async function routeManagedRunReleaseIngress(
     serviceInstanceId,
     ...request.params,
   }));
-  const settled = invoked.ok
+  const deadline = invoked.ok
     ? await awaitResultDeadline(invoked.value, deps.timers, deps.requestDeadlineMs)
-    : err(invoked.error);
+    : { result: err(invoked.error), settlement: Promise.resolve() };
+  const settled = deadline.result;
   let result: CapabilityServiceIngressRouteResult;
-  if (settled === undefined) result = responseError("deadline_exceeded");
-  else if (!settled.ok) result = responseError("internal_error");
+  if (settled === undefined) result = responseError("deadline_exceeded", deadline.settlement);
+  else if (!settled.ok) result = responseError("internal_error", deadline.settlement);
   else if (settled.value.kind === "rejected") {
     result = responseError(settled.value.reasonCode === "release_conflict"
       ? "replay_conflict"
-      : "precondition_failed");
+      : "precondition_failed", deadline.settlement);
   } else {
     result = {
       response: {
@@ -112,6 +116,7 @@ export async function routeManagedRunReleaseIngress(
         disposition: settled.value.disposition,
         releasedAtMs: settled.value.releasedAtMs,
       },
+      settlement: deadline.settlement,
     };
   }
   deps.logger.info({
@@ -125,14 +130,21 @@ export async function routeManagedRunReleaseIngress(
 export interface CapabilityServiceIngressRouteResult {
   readonly response: unknown;
   readonly errorKind?: CapabilityServiceErrorKind;
+  readonly settlement: Promise<void>;
 }
 
 async function awaitResultDeadline<T>(
   operation: Promise<Result<T, Error>>,
   timers: TimerPort,
   deadlineMs: number,
-): Promise<Result<T, Error> | undefined> {
-  return new Promise((resolveDeadline) => {
+): Promise<{
+  readonly result: Result<T, Error> | undefined;
+  readonly settlement: Promise<void>;
+}> {
+  const settledOperation = fromPromise(operation).then((result) => (
+    result.ok ? result.value : err(result.error)
+  ));
+  const result = await new Promise<Result<T, Error> | undefined>((resolveDeadline) => {
     let settled = false;
     const timer = timers.setTimeout(() => {
       if (settled) return;
@@ -140,17 +152,21 @@ async function awaitResultDeadline<T>(
       resolveDeadline(undefined);
     }, deadlineMs);
     timer.unref();
-    void fromPromise(operation).then((result) => {
+    void settledOperation.then((operationResult) => {
       if (settled) return;
       settled = true;
       timer.cancel();
-      resolveDeadline(result.ok ? result.value : err(result.error));
+      resolveDeadline(operationResult);
     });
   });
+  return { result, settlement: settledOperation.then(() => undefined) };
 }
 
-function responseError(errorKind: CapabilityServiceErrorKind): CapabilityServiceIngressRouteResult {
-  return { response: undefined, errorKind };
+function responseError(
+  errorKind: CapabilityServiceErrorKind,
+  settlement: Promise<void>,
+): CapabilityServiceIngressRouteResult {
+  return { response: undefined, errorKind, settlement };
 }
 
 /** Invoke the durable report bridge within the bounded wire deadline. */
@@ -178,18 +194,19 @@ export async function routeManagedRunReportIngress(
       ...(request.params.observedAtMs === undefined ? {} : { observedAtMs: request.params.observedAtMs }),
     },
   }));
-  const settled = invoked.ok
+  const deadline = invoked.ok
     ? await awaitResultDeadline(invoked.value, deps.timers, deps.requestDeadlineMs)
-    : err(invoked.error);
+    : { result: err(invoked.error), settlement: Promise.resolve() };
+  const settled = deadline.result;
   let result: CapabilityServiceIngressRouteResult;
-  if (settled === undefined) result = responseError("deadline_exceeded");
-  else if (!settled.ok) result = responseError("internal_error");
+  if (settled === undefined) result = responseError("deadline_exceeded", deadline.settlement);
+  else if (!settled.ok) result = responseError("internal_error", deadline.settlement);
   else if (settled.value.kind === "rejected") {
     result = responseError(settled.value.reasonCode === "replay_conflict"
       ? "replay_conflict"
       : settled.value.reasonCode === "invalid_report"
         ? "invalid_params"
-        : "precondition_failed");
+        : "precondition_failed", deadline.settlement);
   } else {
     result = {
       response: {
@@ -198,6 +215,7 @@ export async function routeManagedRunReportIngress(
         acceptedSequence: settled.value.report.sequence,
         retainedUntilMs: settled.value.report.retainedUntilMs,
       },
+      settlement: deadline.settlement,
     };
   }
   deps.logger.info({
@@ -224,18 +242,19 @@ export async function routeManagedRunEvidenceIngress(
     serviceInstanceId,
     ...request.params,
   }));
-  const settled = invoked.ok
+  const deadline = invoked.ok
     ? await awaitResultDeadline(invoked.value, deps.timers, deps.requestDeadlineMs)
-    : err(invoked.error);
+    : { result: err(invoked.error), settlement: Promise.resolve() };
+  const settled = deadline.result;
   let result: CapabilityServiceIngressRouteResult;
-  if (settled === undefined) result = responseError("deadline_exceeded");
-  else if (!settled.ok) result = responseError("internal_error");
+  if (settled === undefined) result = responseError("deadline_exceeded", deadline.settlement);
+  else if (!settled.ok) result = responseError("internal_error", deadline.settlement);
   else if (settled.value.kind === "rejected") {
     result = responseError(settled.value.reasonCode === "replay_conflict"
       ? "replay_conflict"
       : settled.value.reasonCode === "invalid_evidence"
         ? "invalid_params"
-        : "precondition_failed");
+        : "precondition_failed", deadline.settlement);
   } else {
     result = {
       response: {
@@ -247,6 +266,7 @@ export async function routeManagedRunEvidenceIngress(
           ? {}
           : { retainedUntilMs: settled.value.evidence.expiresAtMs }),
       },
+      settlement: deadline.settlement,
     };
   }
   deps.logger.info({

@@ -9,6 +9,8 @@ import type {
 } from "@comis/core";
 import { createExecutionAttachmentAuthority } from "./execution-attachment-authority.js";
 
+const NOW_MS = 1_800_000_000_000;
+
 const OWNER: ManagedRunOwnerScope = {
   kind: "owner",
   tenantId: "tenant_a",
@@ -322,13 +324,13 @@ describe("execution attachment authority coordinator", () => {
     const deps = makeDeps({
       isServiceActive: vi.fn(() => false),
       attachments: {
-        listRecoverable: vi.fn(async () => ok([ATTACHMENT])),
+        listRecoverable: vi.fn(async () => ok({ records: [ATTACHMENT] })),
         reconcile: vi.fn(),
       } as unknown as ExecutionAttachmentPort,
     });
     const authority = createExecutionAttachmentAuthority(deps as never);
 
-    await expect(authority.reconcileAll({ limit: 10 })).resolves.toEqual({
+    await expect(authority.reconcileAll({ updatedBeforeMs: NOW_MS, limit: 10 })).resolves.toEqual({
       ok: true,
       value: { recovered: [], preserved: ["execution-attachment_a"] },
     });
@@ -342,13 +344,13 @@ describe("execution attachment authority coordinator", () => {
         get: vi.fn(async () => ok(undefined)),
       } as unknown as ManagedRunStorePort,
       attachments: {
-        listRecoverable: vi.fn(async () => ok([ATTACHMENT])),
+        listRecoverable: vi.fn(async () => ok({ records: [ATTACHMENT] })),
         reconcile: vi.fn(),
       } as unknown as ExecutionAttachmentPort,
     });
     const authority = createExecutionAttachmentAuthority(deps as never);
 
-    await expect(authority.reconcileAll({ limit: 10 })).resolves.toEqual({
+    await expect(authority.reconcileAll({ updatedBeforeMs: NOW_MS, limit: 10 })).resolves.toEqual({
       ok: true,
       value: { recovered: [], preserved: ["execution-attachment_a"] },
     });
@@ -375,7 +377,7 @@ describe("execution attachment authority coordinator", () => {
         })),
       } as unknown as ManagedRunStorePort,
       attachments: {
-        listRecoverable: vi.fn(async () => ok([ATTACHMENT])),
+        listRecoverable: vi.fn(async () => ok({ records: [ATTACHMENT] })),
         reconcile: vi.fn(async () => ok({ kind: "recovered" as const, record: rematerialized })),
       } as unknown as ExecutionAttachmentPort,
       validateSource: vi.fn(() => ok({
@@ -386,7 +388,7 @@ describe("execution attachment authority coordinator", () => {
     });
     const authority = createExecutionAttachmentAuthority(deps as never);
 
-    await expect(authority.reconcileAll({ limit: 10 })).resolves.toEqual({
+    await expect(authority.reconcileAll({ updatedBeforeMs: NOW_MS, limit: 10 })).resolves.toEqual({
       ok: true,
       value: { recovered: [ATTACHMENT.executionAttachmentId], preserved: [] },
     });
@@ -394,5 +396,38 @@ describe("execution attachment authority coordinator", () => {
       executionAttachmentId: ATTACHMENT.executionAttachmentId,
       sourceFilesystemIdentity: rematerialized.sourceFilesystemIdentity,
     }));
+  });
+
+  it("reconciles every stable attachment recovery page", async () => {
+    const second = {
+      ...ATTACHMENT,
+      executionAttachmentId: "execution-attachment_b",
+      targetName: `attachment-${"b".repeat(32)}.sock`,
+    };
+    const listRecoverable = vi.fn()
+      .mockResolvedValueOnce(ok({
+        records: [ATTACHMENT],
+        nextAfterExecutionAttachmentId: ATTACHMENT.executionAttachmentId,
+      }))
+      .mockResolvedValueOnce(ok({ records: [second] }));
+    const deps = makeDeps({
+      isServiceActive: vi.fn(() => false),
+      attachments: { listRecoverable, reconcile: vi.fn() } as unknown as ExecutionAttachmentPort,
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    await expect(authority.reconcileAll({ updatedBeforeMs: NOW_MS, limit: 1 })).resolves.toEqual({
+      ok: true,
+      value: {
+        recovered: [],
+        preserved: [ATTACHMENT.executionAttachmentId, second.executionAttachmentId],
+      },
+    });
+    expect(listRecoverable).toHaveBeenNthCalledWith(2, {
+      kind: "recovery",
+      updatedBeforeMs: NOW_MS,
+      limit: 1,
+      afterExecutionAttachmentId: ATTACHMENT.executionAttachmentId,
+    });
   });
 });

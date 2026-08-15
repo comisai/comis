@@ -121,8 +121,9 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
   `);
   const listRecoverable = db.prepare(`
     SELECT * FROM execution_attachments
-    WHERE state = 'active'
-    ORDER BY updated_at_ms ASC, execution_attachment_id ASC
+    WHERE state = 'active' AND updated_at_ms <= ?
+      AND (? IS NULL OR execution_attachment_id > ?)
+    ORDER BY execution_attachment_id ASC
     LIMIT ?
   `);
   const selectOperation = db.prepare(`
@@ -318,7 +319,12 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
     reconcile: (scope, input) => boundary(() => reconcileTransaction.immediate(scope, input)),
     listRecoverable: (input) => boundary(() => {
       if (!Number.isInteger(input.limit) || input.limit <= 0 || input.limit > 10_000) return err(new Error("execution attachment recovery scan limit is invalid"));
-      const rows = attachmentMapper.parseRows(listRecoverable.all(input.limit));
+      const rows = attachmentMapper.parseRows(listRecoverable.all(
+        input.updatedBeforeMs,
+        input.afterExecutionAttachmentId ?? null,
+        input.afterExecutionAttachmentId ?? null,
+        input.limit,
+      ));
       if (!rows.ok) return err(new Error(rows.error.message));
       const records: ExecutionAttachmentRecord[] = [];
       for (const row of rows.value) {
@@ -326,7 +332,13 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
         if (!record.ok) return record;
         records.push(record.value);
       }
-      return ok(records);
+      const last = records.at(-1);
+      return ok({
+        records,
+        ...(records.length === input.limit && last !== undefined
+          ? { nextAfterExecutionAttachmentId: last.executionAttachmentId }
+          : {}),
+      });
     }),
   } satisfies ExecutionAttachmentPort);
 }

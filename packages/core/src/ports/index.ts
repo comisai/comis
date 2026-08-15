@@ -91,6 +91,7 @@ export type {
   ExecutionAttachmentRevokeOutcome,
   ExecutionAttachmentReconcileOutcome,
   ExecutionAttachmentRecoveryScanInput,
+  ExecutionAttachmentRecoveryScan,
   ExecutionAttachmentPort,
 } from "./execution-attachment.js";
 export type {

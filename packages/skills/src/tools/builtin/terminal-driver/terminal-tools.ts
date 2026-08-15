@@ -1,15 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The eight terminal-driver AgentTool factories: `terminal_session_create` / `_read` /
- * `_list` / `_kill` + `_send_text` / `_send_key` / `_resize` / `_wait` (`terminal_session_status`
- * is the lone stub → `terminal-tools-stubs.ts`). `create` gates the substrate: (1) ALLOWLIST
- * (`matchAllowEntry` rejects a non-matching binary `permission_denied`; realpath + optional hash
- * pin); (2) FAIL-CLOSED (`undefined` `detectProvider()` rejects rather than spawn unsandboxed);
- * (3) CANONICALIZE (`buildDirectSpawn` is the SOLE realpath + `argsPrefix` site); (4) OBSERVABILITY
- * (success → INFO `terminal:session_state`; failure → WARN `terminal:spawn_failed`). The other seven
- * thinly delegate to the injected, ALREADY-GATED registry: `read` digests the screen
- * before redact+wrap; `wait`'s `isComplete:false` emits ONE content-free `terminal:drive_promoted`
- * on a qualifying wait. Daemon-side in `@comis/skills`: INJECTED logger + bus + `nowMs`.
+ * Terminal-driver tools with allowlist, sandbox, canonicalization, and observability gates.
  *
  * @module
  */
@@ -60,6 +51,11 @@ import {
 } from "./terminal-session-registry.js";
 import { withCompleteNote } from "./terminal-wait-reply.js";
 import { narrowManagedTerminalScope, selectManagedHandles } from "./terminal-managed-create.js";
+import {
+  confirmManagedTerminalLaunch,
+  reserveManagedTerminalLaunch,
+  retireFailedManagedTerminalLaunch,
+} from "./terminal-managed-launch.js";
 import { managedTerminalAttachmentTargetPath, type ManagedTerminalBindingResolver, type ManagedTerminalEventSink, type ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 
 // Injected dependency contracts
@@ -520,6 +516,13 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       // emits terminal:spawn_failed before rethrowing.
       const start = deps.nowMs();
       let result;
+      const reservation = managedResolved === undefined || deps.managedBinding === undefined
+        ? undefined
+        : await reserveManagedTerminalLaunch(deps.managedBinding, managedResolved, owner);
+      if (reservation?.kind === "rejected") {
+        throwToolError("conflict", `managed terminal launch reservation failed: ${reservation.reason}`);
+      }
+      const reservedTerminalSessionId = reservation?.terminalSessionId;
       try {
         // Scrollback is NOT an agent-facing param — the create surface
         // exposes only {allowId,command,args,cwd,cols,rows,...} to the model. The
@@ -531,7 +534,9 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         // no `scope` create param (CreateParams is closed), so it cannot set or
         // widen the jail; scope rides the create frame to the worker.
         result = await deps.registry.create(
-          createRequest,
+          reservedTerminalSessionId === undefined
+            ? createRequest
+            : { ...createRequest, sessionId: reservedTerminalSessionId },
           // Stamp the origin so this session is visible ONLY to its owner.
           owner,
         );
@@ -556,6 +561,22 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
           errorKind: "dependency",
           timestamp: failedAt,
         });
+        if (
+          managedResolved !== undefined
+          && reservedTerminalSessionId !== undefined
+          && deps.managedBinding !== undefined
+        ) {
+          const released = await retireFailedManagedTerminalLaunch({
+            registry: deps.registry,
+            binding: deps.managedBinding,
+            authority: managedResolved,
+            reservedTerminalSessionId,
+            owner,
+          });
+          if (released.kind !== "released") {
+            throwToolError("conflict", `managed terminal launch reservation release failed: ${released.reason}`);
+          }
+        }
         // @allow-throw: re-propagate the original spawn error to the AgentTool
         // execution boundary after recording observability; the SDK catches
         // it and marks the tool result isError:true (same boundary as tool-helpers.ts).
@@ -563,20 +584,18 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       }
 
       if (managedResolved !== undefined) {
-        if (result.rootProcessIdentity === undefined || deps.managedBinding === undefined) {
-          await deps.registry.kill(result.sessionId, owner);
-          throwToolError("conflict", "managed terminal binding failed: terminal root identity is unavailable");
+        if (deps.managedBinding === undefined || reservedTerminalSessionId === undefined) {
+          throwToolError("conflict", "managed terminal binding failed: launch reservation is unavailable");
         }
-        const bound = await deps.managedBinding.bind({
-          managedRunId: managedResolved.managedRunId,
-          workspaceLeaseId: managedResolved.workspaceLeaseId,
-          serviceInstanceId: managedResolved.serviceInstanceId,
-          terminalSessionId: result.sessionId,
-          rootProcessIdentity: result.rootProcessIdentity,
+        const bound = await confirmManagedTerminalLaunch({
+          registry: deps.registry,
+          binding: deps.managedBinding,
+          authority: managedResolved,
+          reservedTerminalSessionId,
+          result,
           owner,
         });
         if (bound.kind !== "bound") {
-          await deps.registry.kill(result.sessionId, owner);
           throwToolError("conflict", `managed terminal binding failed: ${bound.reason}`);
         }
         await deps.managedTerminalEvents?.publish({

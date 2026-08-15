@@ -65,6 +65,10 @@ export interface ManagedRunAttentionStoreStatements {
     scope: ManagedRunOwnerScope,
     attentionId: string,
   ): Result<ManagedRunAttentionRecord | undefined, Error>;
+  getResponseByOperation(
+    scope: ManagedRunOwnerScope,
+    operationId: string,
+  ): Result<ManagedRunAttentionRecord | undefined, Error>;
   listOpen(
     scope: ManagedRunOwnerScope,
     input: ManagedRunAttentionListInput,
@@ -119,6 +123,16 @@ export function createManagedRunAttentionStoreStatements(
   const selectOperation = db.prepare(`
     SELECT input_hash, result_record FROM managed_run_attention_operations
     WHERE attention_id = ? AND operation_id = ? AND operation_kind = ?
+  `);
+  const selectResponseOperationByOwner = db.prepare(`
+    SELECT o.input_hash, o.result_record
+    FROM managed_run_attention_operations o
+    INNER JOIN managed_run_attention a ON a.attention_id = o.attention_id
+    WHERE o.operation_id = ? AND o.operation_kind = 'response'
+      AND a.tenant_id = ? AND a.agent_id = ?
+      AND a.principal_id = ? AND a.conversation_ref = ?
+    ORDER BY o.attention_id ASC
+    LIMIT 2
   `);
   const insertOperation = db.prepare(`
     INSERT INTO managed_run_attention_operations (
@@ -265,6 +279,28 @@ export function createManagedRunAttentionStoreStatements(
       const record = read(attentionId);
       if (!record.ok || record.value === undefined) return record;
       return ok(scopeMatches(record.value, scope) ? record.value : undefined);
+    },
+    getResponseByOperation: (scope, operationId) => {
+      const rows = operationMapper.parseRows(selectResponseOperationByOwner.all(
+        operationId,
+        scope.tenantId,
+        scope.agentId,
+        scope.principalId,
+        scope.conversationRef,
+      ));
+      if (!rows.ok) return err(new Error(rows.error.message));
+      if (rows.value.length > 1) {
+        return err(new Error("managed-run attention response operation is not owner-unique"));
+      }
+      const row = rows.value[0];
+      if (row === undefined) return ok(undefined);
+      const decoded = tryCatch(() => JSON.parse(row.result_record) as unknown);
+      if (!decoded.ok) return err(decoded.error);
+      const parsed = ManagedRunAttentionRecordSchema.safeParse(decoded.value);
+      if (!parsed.success || !scopeMatches(parsed.data, scope)) {
+        return err(new Error("stored managed-run attention response operation is invalid"));
+      }
+      return ok(parsed.data);
     },
     listOpen: (scope, input) => {
       if (!Number.isInteger(input.limit) || input.limit <= 0 || input.limit > 10_000) {

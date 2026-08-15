@@ -61,6 +61,65 @@ import { createManagedRunReleaseCoordinator } from "./managed-run-release-coordi
 
 const SECRET_REFERENCE_PREFIX = "secret://";
 
+const EMPTY_RECOVERY_SUMMARY: ManagedRunActivationRecoverySummary = {
+  activated: [],
+  cancelled: [],
+  unknown: [],
+  invalid: [],
+  failed: [],
+};
+
+function mergeRecoverySummary(
+  aggregate: ManagedRunActivationRecoverySummary,
+  page: ManagedRunActivationRecoverySummary,
+): ManagedRunActivationRecoverySummary {
+  return {
+    activated: [...aggregate.activated, ...page.activated],
+    cancelled: [...aggregate.cancelled, ...page.cancelled],
+    unknown: [...aggregate.unknown, ...page.unknown],
+    invalid: [...aggregate.invalid, ...page.invalid],
+    failed: [...aggregate.failed, ...page.failed],
+  };
+}
+
+async function recoverAllPreparations(
+  coordinator: ManagedRunActivationCoordinator,
+  updatedBeforeMs: number,
+  limit: number,
+): Promise<Result<ManagedRunActivationRecoverySummary, Error>> {
+  let summary = EMPTY_RECOVERY_SUMMARY;
+  let afterManagedRunId: string | undefined;
+  do {
+    const page = await coordinator.recoverPreparations({
+      updatedBeforeMs,
+      limit,
+      ...(afterManagedRunId === undefined ? {} : { afterManagedRunId }),
+    });
+    if (!page.ok) return page;
+    summary = mergeRecoverySummary(summary, page.value);
+    afterManagedRunId = page.value.nextAfterManagedRunId;
+  } while (afterManagedRunId !== undefined);
+  return ok(summary);
+}
+
+async function purgeAllExpiredContent(
+  contentStore: ManagedRunContentPort,
+  expiredBeforeMs: number,
+  limit: number,
+): Promise<Result<number, Error>> {
+  let purgedCount = 0;
+  for (;;) {
+    const page = await invoke(contentStore.purgeExpired({
+      kind: "recovery",
+      expiredBeforeMs,
+      limit,
+    }));
+    if (!page.ok) return page;
+    purgedCount += page.value;
+    if (page.value < limit) return ok(purgedCount);
+  }
+}
+
 export interface CapabilityServicePlatform {
   readonly plan: CapabilityServiceActivationPlan;
   readonly runtime: CapabilityServiceRuntime;
@@ -359,16 +418,19 @@ export async function setupCapabilityServices(
     eventBus: deps.eventBus,
     logger: deps.logger,
   });
-  const recovered = await activationCoordinator.recoverPreparations({
-    updatedBeforeMs: deps.clock.now(),
-    limit: deps.config.recoveryBatchSize,
-  });
+  const recoverySnapshotMs = deps.clock.now();
+  const recovered = await recoverAllPreparations(
+    activationCoordinator,
+    recoverySnapshotMs,
+    deps.config.recoveryBatchSize,
+  );
   if (!recovered.ok) {
     await runtime.shutdown();
     logSetupFailure(deps, "managed-run-recovery", "internal");
     return recovered;
   }
   const attachmentRecovered = await attachmentAuthority.reconcileAll({
+    updatedBeforeMs: recoverySnapshotMs,
     limit: deps.config.recoveryBatchSize,
   });
   if (!attachmentRecovered.ok) {
@@ -376,11 +438,11 @@ export async function setupCapabilityServices(
     logSetupFailure(deps, "execution-attachment-recovery", "internal");
     return attachmentRecovered;
   }
-  const purged = await invoke(contentStore.purgeExpired({
-    kind: "recovery",
-    expiredBeforeMs: deps.clock.now(),
-    limit: deps.config.recoveryBatchSize,
-  }));
+  const purged = await purgeAllExpiredContent(
+    contentStore,
+    recoverySnapshotMs,
+    deps.config.recoveryBatchSize,
+  );
   if (!purged.ok) {
     await runtime.shutdown();
     logSetupFailure(deps, "managed-run-content-purge", "internal");

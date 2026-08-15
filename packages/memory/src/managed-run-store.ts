@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
-import { z } from "zod";
+import type { z } from "zod";
 import {
   ManagedRunReportIndexSchema,
   ManagedEvidenceIndexSchema,
@@ -9,7 +9,6 @@ import {
   type ManagedEvidenceAppendOutcome,
   type ManagedEvidenceIndex,
   type ManagedEvidenceListInput,
-  type InvalidManagedRunRecord,
   type ManagedRunBindingOutcome,
   type ManagedRunContinuationClaimInput,
   type ManagedRunContinuationClaimOutcome,
@@ -58,6 +57,7 @@ import {
   validateManagedRunRecord,
 } from "./managed-run-store-record.js";
 import { createManagedRunAttentionStoreStatements } from "./managed-run-attention-store.js";
+import { mapManagedRunRecoveryRows } from "./managed-run-recovery-scan.js";
 import { createRowMapper } from "./row-mapper.js";
 
 const runMapper = createRowMapper(ManagedRunDbRowSchema);
@@ -66,10 +66,6 @@ const evidenceMapper = createRowMapper(ManagedEvidenceDbRowSchema);
 const operationMapper = createRowMapper(ManagedRunOperationDbRowSchema);
 const releaseReservationMapper = createRowMapper(ManagedRunReleaseReservationDbRowSchema);
 const claimMapper = createRowMapper(ManagedRunContinuationClaimDbRowSchema);
-const recoveryIdentitySchema = z.object({
-  managed_run_id: z.string(),
-  service_instance_id: z.string(),
-});
 
 function asError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
@@ -217,7 +213,8 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
   const listRecoverableRows = db.prepare(`
     SELECT * FROM managed_runs
     WHERE status IN (SELECT value FROM json_each(?)) AND updated_at_ms <= ?
-    ORDER BY updated_at_ms ASC, managed_run_id ASC
+      AND (? IS NULL OR managed_run_id > ?)
+    ORDER BY managed_run_id ASC
     LIMIT ?
   `);
 
@@ -907,6 +904,9 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       return ok(evidence);
     }),
     getAttention: (scope, attentionId) => boundary(() => attention.get(scope, attentionId)),
+    getAttentionResponseByOperation: (scope, operationId) => boundary(
+      () => attention.getResponseByOperation(scope, operationId),
+    ),
     listOpenAttention: (scope, input) => boundary(() => attention.listOpen(scope, input)),
     claimAttentionResponse: (scope, input) => boundary(
       () => db.transaction(() => attention.claimResponse(scope, input)).immediate(),
@@ -949,34 +949,11 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       const rawRows = listRecoverableRows.all(
         JSON.stringify(input.statuses),
         input.updatedBeforeMs,
+        input.afterManagedRunId ?? null,
+        input.afterManagedRunId ?? null,
         input.limit,
       );
-      const records: ManagedRunRecord[] = [];
-      const invalid: InvalidManagedRunRecord[] = [];
-      for (const rawRow of rawRows) {
-        const identity = recoveryIdentitySchema.safeParse(rawRow);
-        if (!identity.success) return err(new Error("recoverable managed-run row lacks stable identity"));
-        const row = runMapper.parseOptionalRow(rawRow);
-        if (!row.ok || row.value === undefined) {
-          invalid.push({
-            managedRunId: identity.data.managed_run_id,
-            serviceInstanceId: identity.data.service_instance_id,
-            reason: "record_validation_failed",
-          });
-          continue;
-        }
-        const record = rowToManagedRunRecord(row.value);
-        if (!record.ok) {
-          invalid.push({
-            managedRunId: identity.data.managed_run_id,
-            serviceInstanceId: identity.data.service_instance_id,
-            reason: "record_validation_failed",
-          });
-          continue;
-        }
-        records.push(record.value);
-      }
-      return ok({ records, invalid });
+      return mapManagedRunRecoveryRows(rawRows, input.limit);
     }),
     revoke: (scope, input) => boundary(() => transitionTransaction.immediate(
       scope,

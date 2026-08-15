@@ -57,7 +57,10 @@ export interface ExecutionAttachmentRecoverySummary {
 export interface ExecutionAttachmentAuthority {
   create(input: ExecutionAttachmentCreateInput): Promise<Result<ExecutionAttachmentAuthorityCreateOutcome, Error>>;
   validateActive(record: ExecutionAttachmentRecord): Result<void, Error>;
-  reconcileAll(input: { readonly limit: number }): Promise<Result<ExecutionAttachmentRecoverySummary, Error>>;
+  reconcileAll(input: {
+    readonly updatedBeforeMs: number;
+    readonly limit: number;
+  }): Promise<Result<ExecutionAttachmentRecoverySummary, Error>>;
 }
 
 function digest(kind: string, value: string): string {
@@ -261,62 +264,79 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
     return ok({ kind: created.value.kind, record: created.value.record });
   }
 
-  async function reconcileAll(input: { readonly limit: number }): Promise<Result<ExecutionAttachmentRecoverySummary, Error>> {
-    const scanned = await invoke(deps.attachments.listRecoverable({ kind: "recovery", limit: input.limit }));
-    if (!scanned.ok) return scanned;
+  async function reconcileAll(input: {
+    readonly updatedBeforeMs: number;
+    readonly limit: number;
+  }): Promise<Result<ExecutionAttachmentRecoverySummary, Error>> {
     const recovered: string[] = [];
     const preserved: string[] = [];
-    for (const record of scanned.value) {
-      const instance = deps.instances.find((candidate) => candidate.serviceInstanceId === record.serviceInstanceId && candidate.enabled);
-      if (
-        instance === undefined
-        || !deps.isServiceActive(record.serviceInstanceId)
-        || !instance.allowedAgents.includes(record.agentId)
-      ) {
-        preserved.push(record.executionAttachmentId);
-        continue;
-      }
-      const run = await invoke(deps.runs.get(
-        { kind: "service", serviceInstanceId: record.serviceInstanceId },
-        record.managedRunId,
-      ));
-      if (!run.ok) return run;
-      if (
-        run.value === undefined
-        || run.value.tenantId !== record.tenantId
-        || run.value.agentId !== record.agentId
-        || run.value.workspaceLeaseId !== record.workspaceLeaseId
-        || !run.value.executionAttachmentIds.includes(record.executionAttachmentId)
-      ) {
-        preserved.push(record.executionAttachmentId);
-        continue;
-      }
-      const lease = await invoke(deps.leases.get(attachmentScope(record), record.workspaceLeaseId));
-      if (!lease.ok) return lease;
-      if (lease.value === undefined || lease.value.state !== "active") {
-        preserved.push(record.executionAttachmentId);
-        continue;
-      }
-      const source = validateSource({
-        requestedPath: record.sourcePath,
-        allowedRuntimeRoots: instance.allowedRuntimeRoots,
-        dataDir: deps.dataDir,
-        controlSocketPaths,
-      });
-      if (!source.ok) {
-        preserved.push(record.executionAttachmentId);
-        continue;
-      }
-      const reconciled = await invoke(deps.attachments.reconcile(attachmentScope(record), {
-        operationId: `attachment-recover-${digest("attachment-recover", `${record.executionAttachmentId}\0${source.value.filesystemIdentity.device}\0${source.value.filesystemIdentity.inode}\0${source.value.filesystemIdentity.birthtimeNs}`).slice(0, 48)}`,
-        executionAttachmentId: record.executionAttachmentId,
-        sourceFilesystemIdentity: source.value.filesystemIdentity,
-        recoveredAtMs: deps.nowMs(),
+    let afterExecutionAttachmentId: string | undefined;
+    do {
+      const scanned = await invoke(deps.attachments.listRecoverable({
+        kind: "recovery",
+        updatedBeforeMs: input.updatedBeforeMs,
+        limit: input.limit,
+        ...(afterExecutionAttachmentId === undefined ? {} : { afterExecutionAttachmentId }),
       }));
-      if (!reconciled.ok) return reconciled;
-      if (reconciled.value.kind === "recovered" || reconciled.value.kind === "identical_replay") recovered.push(record.executionAttachmentId);
-      else preserved.push(record.executionAttachmentId);
-    }
+      if (!scanned.ok) return scanned;
+      for (const record of scanned.value.records) {
+        const instance = deps.instances.find(
+          (candidate) => candidate.serviceInstanceId === record.serviceInstanceId && candidate.enabled,
+        );
+        if (
+          instance === undefined
+          || !deps.isServiceActive(record.serviceInstanceId)
+          || !instance.allowedAgents.includes(record.agentId)
+        ) {
+          preserved.push(record.executionAttachmentId);
+          continue;
+        }
+        const run = await invoke(deps.runs.get(
+          { kind: "service", serviceInstanceId: record.serviceInstanceId },
+          record.managedRunId,
+        ));
+        if (!run.ok) return run;
+        if (
+          run.value === undefined
+          || run.value.tenantId !== record.tenantId
+          || run.value.agentId !== record.agentId
+          || run.value.workspaceLeaseId !== record.workspaceLeaseId
+          || !run.value.executionAttachmentIds.includes(record.executionAttachmentId)
+        ) {
+          preserved.push(record.executionAttachmentId);
+          continue;
+        }
+        const lease = await invoke(deps.leases.get(attachmentScope(record), record.workspaceLeaseId));
+        if (!lease.ok) return lease;
+        if (lease.value === undefined || lease.value.state !== "active") {
+          preserved.push(record.executionAttachmentId);
+          continue;
+        }
+        const source = validateSource({
+          requestedPath: record.sourcePath,
+          allowedRuntimeRoots: instance.allowedRuntimeRoots,
+          dataDir: deps.dataDir,
+          controlSocketPaths,
+        });
+        if (!source.ok) {
+          preserved.push(record.executionAttachmentId);
+          continue;
+        }
+        const reconciled = await invoke(deps.attachments.reconcile(attachmentScope(record), {
+          operationId: `attachment-recover-${digest("attachment-recover", `${record.executionAttachmentId}\0${source.value.filesystemIdentity.device}\0${source.value.filesystemIdentity.inode}\0${source.value.filesystemIdentity.birthtimeNs}`).slice(0, 48)}`,
+          executionAttachmentId: record.executionAttachmentId,
+          sourceFilesystemIdentity: source.value.filesystemIdentity,
+          recoveredAtMs: deps.nowMs(),
+        }));
+        if (!reconciled.ok) return reconciled;
+        if (reconciled.value.kind === "recovered" || reconciled.value.kind === "identical_replay") {
+          recovered.push(record.executionAttachmentId);
+        } else {
+          preserved.push(record.executionAttachmentId);
+        }
+      }
+      afterExecutionAttachmentId = scanned.value.nextAfterExecutionAttachmentId;
+    } while (afterExecutionAttachmentId !== undefined);
     return ok({ recovered, preserved });
   }
 

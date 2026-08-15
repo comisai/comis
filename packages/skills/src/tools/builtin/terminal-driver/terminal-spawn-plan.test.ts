@@ -16,7 +16,7 @@
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -167,6 +167,42 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       expect(hasBind(ordinaryPlan.argv, "--bind", privateWorktree, gitDir)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects symlinked private Git mount sources before a later launch", () => {
+    for (const attackedPath of ["root", "worktree", "common"] as const) {
+      const root = mkdtempSync(join(tmpdir(), `managed-linked-worktree-${attackedPath}-`));
+      try {
+        const commonDir = join(root, "repository", ".git");
+        const gitDir = join(commonDir, "worktrees", "task-a");
+        const workspace = join(root, "worktrees", "task-a");
+        const outside = join(root, "outside");
+        mkdirSync(gitDir, { recursive: true });
+        mkdirSync(join(commonDir, "objects"), { recursive: true });
+        mkdirSync(join(commonDir, "refs", "heads"), { recursive: true });
+        mkdirSync(workspace, { recursive: true });
+        mkdirSync(outside, { recursive: true });
+        writeFileSync(join(workspace, ".git"), `gitdir: ${gitDir}\n`, "utf8");
+        writeFileSync(join(gitDir, "commondir"), "../..\n", "utf8");
+        writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/task-a\n", "utf8");
+        writeFileSync(join(commonDir, "refs", "heads", "task-a"), `${"a".repeat(40)}\n`, "utf8");
+        expect(resolveManagedWorkspaceGitMounts(workspace).ok).toBe(true);
+
+        const privateRoot = join(workspace, ".comis-terminal-git");
+        if (attackedPath === "root") {
+          renameSync(privateRoot, `${privateRoot}-original`);
+          symlinkSync(outside, privateRoot);
+        } else {
+          const target = join(privateRoot, attackedPath);
+          rmSync(target, { recursive: true });
+          symlinkSync(outside, target);
+        }
+
+        expect(resolveManagedWorkspaceGitMounts(workspace)).toMatchObject({ ok: false });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     }
   });
 

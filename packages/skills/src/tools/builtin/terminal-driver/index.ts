@@ -57,6 +57,7 @@ export type {
   ManagedTerminalBindingResolver,
   ManagedTerminalResolveOutcome,
   ManagedTerminalBindOutcome,
+  ManagedTerminalReleaseOutcome,
   TerminalRootProcessIdentity,
   ManagedTerminalTransition,
   ManagedTerminalEventSink,

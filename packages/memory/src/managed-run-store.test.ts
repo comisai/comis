@@ -548,6 +548,17 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     })).ok).toBe(false);
 
     expect((await store.claimAttentionResponse(OWNER_SCOPE, response)).value?.kind).toBe("updated");
+    expect(await store.getAttentionResponseByOperation(
+      OWNER_SCOPE,
+      "attention-response-replay",
+    )).toMatchObject({
+      ok: true,
+      value: { attentionId: "attention-replay", status: "response_pending" },
+    });
+    expect(await store.getAttentionResponseByOperation(
+      OTHER_OWNER_SCOPE,
+      "attention-response-replay",
+    )).toEqual({ ok: true, value: undefined });
     expect((await store.claimAttentionResponse(OWNER_SCOPE, response)).value?.kind).toBe("identical_replay");
     expect((await store.claimAttentionResponse(OWNER_SCOPE, {
       ...response,
@@ -1482,6 +1493,35 @@ describe("managed-run restart recovery scans", () => {
     for (const directory of temporaryDirectories.splice(0)) {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("pages a stable managed-run recovery snapshot to exhaustion", async () => {
+    const db = new Database(":memory:");
+    ensureManagedRunTables(db);
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord({ managedRunId: "managed-run_a" }))).ok).toBe(true);
+    expect((await store.create(makeRecord({ managedRunId: "managed-run_b" }))).ok).toBe(true);
+    const input = {
+      kind: "recovery" as const,
+      statuses: ["preparing" as const],
+      updatedBeforeMs: 1_800_000_000_000,
+      limit: 1,
+    };
+
+    const first = await store.listRecoverable(input);
+    const second = await store.listRecoverable({ ...input, afterManagedRunId: "managed-run_a" });
+    const exhausted = await store.listRecoverable({ ...input, afterManagedRunId: "managed-run_b" });
+
+    expect(first).toMatchObject({
+      ok: true,
+      value: { records: [{ managedRunId: "managed-run_a" }], nextAfterManagedRunId: "managed-run_a" },
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      value: { records: [{ managedRunId: "managed-run_b" }], nextAfterManagedRunId: "managed-run_b" },
+    });
+    expect(exhausted).toEqual({ ok: true, value: { records: [], invalid: [] } });
+    db.close();
   });
 
   it("survives close and reopen while quarantining one corrupt recoverable row", async () => {

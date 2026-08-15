@@ -54,7 +54,14 @@ export type ExecutionAttachmentReconcileOutcome =
 
 export interface ExecutionAttachmentRecoveryScanInput {
   readonly kind: "recovery";
+  readonly updatedBeforeMs: number;
+  readonly afterExecutionAttachmentId?: string;
   readonly limit: number;
+}
+
+export interface ExecutionAttachmentRecoveryScan {
+  readonly records: readonly ExecutionAttachmentRecord[];
+  readonly nextAfterExecutionAttachmentId?: string;
 }
 
 /** Content-free durable authority for run-scoped execution attachments. */
@@ -64,5 +71,5 @@ export interface ExecutionAttachmentPort {
   listActiveForRun(scope: ExecutionAttachmentScope): Promise<Result<ExecutionAttachmentRecord[], Error>>;
   revoke(scope: ExecutionAttachmentScope, input: ExecutionAttachmentRevokeInput): Promise<Result<ExecutionAttachmentRevokeOutcome, Error>>;
   reconcile(scope: ExecutionAttachmentScope, input: ExecutionAttachmentReconcileInput): Promise<Result<ExecutionAttachmentReconcileOutcome, Error>>;
-  listRecoverable(input: ExecutionAttachmentRecoveryScanInput): Promise<Result<ExecutionAttachmentRecord[], Error>>;
+  listRecoverable(input: ExecutionAttachmentRecoveryScanInput): Promise<Result<ExecutionAttachmentRecoveryScan, Error>>;
 }

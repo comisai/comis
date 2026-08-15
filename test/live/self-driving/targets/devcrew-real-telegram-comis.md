@@ -1,5 +1,10 @@
 # TARGET — real-Telegram Comis development through DevCrew
 
+> **Unsupported by the automated emulator campaign.** This manual target is
+> documentary only when a campaign requires the local Telegram emulator,
+> no human intervention, or no Comis pull-request creation or update. Those
+> predicates must be reported as `NO-ACCESS`; this target authorizes no exception.
+>
 > Protected E0 dogfood campaign for the Comis capability-service platform and
 > `comis-dev-crew`. A real human supervises two independent changes to
 > `comisai/comis` through the real Telegram app. The campaign may create two

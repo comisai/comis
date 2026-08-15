@@ -167,8 +167,51 @@ describe("SQLite execution attachment persistence", () => {
       value: makeAttachment(),
     });
     expect(await reopenedStore.listActiveForRun(ATTACHMENT_SCOPE)).toEqual({ ok: true, value: [makeAttachment()] });
-    expect(await reopenedStore.listRecoverable({ kind: "recovery", limit: 10 })).toEqual({ ok: true, value: [makeAttachment()] });
+    expect(await reopenedStore.listRecoverable({
+      kind: "recovery",
+      updatedBeforeMs: NOW_MS,
+      limit: 10,
+    })).toEqual({
+      ok: true,
+      value: { records: [makeAttachment()] },
+    });
     reopenedDb.close();
+  });
+
+  it("pages only attachments inside the stable recovery snapshot", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    await seed(db);
+    const store = createSqliteExecutionAttachmentStore(db);
+    expect((await store.create(makeAttachment())).ok).toBe(true);
+    expect((await store.create(makeAttachment({
+      executionAttachmentId: "execution-attachment_b",
+      sourcePath: "/srv/capability-runtime/service-a/worker-b.sock",
+      targetName: `attachment-${"b".repeat(32)}.sock`,
+      updatedAtMs: NOW_MS + 1,
+    }))).ok).toBe(true);
+
+    const first = await store.listRecoverable({
+      kind: "recovery",
+      updatedBeforeMs: NOW_MS,
+      limit: 1,
+    });
+    const exhausted = await store.listRecoverable({
+      kind: "recovery",
+      updatedBeforeMs: NOW_MS,
+      afterExecutionAttachmentId: "execution-attachment_a",
+      limit: 1,
+    });
+
+    expect(first).toMatchObject({
+      ok: true,
+      value: {
+        records: [{ executionAttachmentId: "execution-attachment_a" }],
+        nextAfterExecutionAttachmentId: "execution-attachment_a",
+      },
+    });
+    expect(exhausted).toEqual({ ok: true, value: { records: [] } });
+    db.close();
   });
 
   it("hides an attachment from every mismatched run and lease scope", async () => {
@@ -333,7 +376,11 @@ describe("SQLite execution attachment persistence", () => {
     const db = new Database(":memory:");
     initSchema(db, 4);
     const store = createSqliteExecutionAttachmentStore(db);
-    expect(await store.listRecoverable({ kind: "recovery", limit: 0 })).toMatchObject({
+    expect(await store.listRecoverable({
+      kind: "recovery",
+      updatedBeforeMs: NOW_MS,
+      limit: 0,
+    })).toMatchObject({
       ok: false,
       error: { message: "execution attachment recovery scan limit is invalid" },
     });

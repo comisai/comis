@@ -13,7 +13,11 @@ import {
   type WorkspaceLeasePort,
   type WorkspaceLeaseRecord,
 } from "@comis/core";
-import type { ManagedTerminalBindingResolver, SessionOwner } from "@comis/skills/tools";
+import type {
+  ManagedTerminalBindingResolver,
+  ManagedTerminalBindOutcome,
+  SessionOwner,
+} from "@comis/skills/tools";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import { createManagedTerminalEventBridge } from "./capability-service-terminal-event.js";
 export { createManagedTerminalRevoker } from "./managed-terminal-revoker.js";
@@ -157,27 +161,57 @@ export function createManagedTerminalBindingResolver(
     };
   };
 
+  const bind = async (
+    input: Parameters<ManagedTerminalBindingResolver["reserve"]>[0],
+  ): Promise<ManagedTerminalBindOutcome> => {
+    const current = await resolve(input);
+    if (current.kind !== "resolved") return current;
+    if (current.binding.serviceInstanceId !== input.serviceInstanceId) {
+      return { kind: "rejected", reason: "service_instance_mismatch" };
+    }
+    const scope = resolveScope(input.owner);
+    if (scope === undefined) return { kind: "rejected", reason: "owner_scope_unresolved" };
+    const bound = await invoke(() => deps.store.bindTerminal(scope, {
+      managedRunId: input.managedRunId,
+      terminalSessionId: input.terminalSessionId,
+      terminalTenantId: scope.tenantId,
+      terminalAgentId: scope.agentId,
+      boundAtMs: deps.nowMs(),
+    }));
+    if (!bound.ok) return { kind: "unavailable", reason: "managed_run_store_unavailable" };
+    return bound.value.kind === "bound" || bound.value.kind === "identical_replay"
+      ? { kind: "bound" }
+      : { kind: "rejected", reason: bound.value.kind };
+  };
+
   return {
     resolve,
-    bind: async (input) => {
-      const current = await resolve(input);
-      if (current.kind !== "resolved") return current;
-      if (current.binding.serviceInstanceId !== input.serviceInstanceId) {
-        return { kind: "rejected", reason: "service_instance_mismatch" };
-      }
+    reserve: bind,
+    bind,
+    release: async (input) => {
       const scope = resolveScope(input.owner);
       if (scope === undefined) return { kind: "rejected", reason: "owner_scope_unresolved" };
-      const bound = await invoke(() => deps.store.bindTerminal(scope, {
-        managedRunId: input.managedRunId,
-        terminalSessionId: input.terminalSessionId,
-        terminalTenantId: scope.tenantId,
-        terminalAgentId: scope.agentId,
-        boundAtMs: deps.nowMs(),
-      }));
-      if (!bound.ok) return { kind: "unavailable", reason: "managed_run_store_unavailable" };
-      return bound.value.kind === "bound" || bound.value.kind === "identical_replay"
-        ? { kind: "bound" }
-        : { kind: "rejected", reason: bound.value.kind };
+      const current = await invoke(() => deps.store.get(scope, input.managedRunId));
+      if (!current.ok) return { kind: "unavailable", reason: "managed_run_store_unavailable" };
+      if (
+        current.value === undefined
+        || current.value.serviceInstanceId !== input.serviceInstanceId
+        || current.value.workspaceLeaseId !== input.workspaceLeaseId
+      ) return { kind: "rejected", reason: "managed_run_authority_mismatch" };
+      const record = current.value;
+      const released = await invoke(() => deps.store.releaseTerminal(
+        { kind: "service", serviceInstanceId: input.serviceInstanceId },
+        {
+          managedRunId: input.managedRunId,
+          workspaceLeaseId: input.workspaceLeaseId,
+          terminalSessionId: input.terminalSessionId,
+          releasedAtMs: Math.max(deps.nowMs(), record.updatedAtMs),
+        },
+      ));
+      if (!released.ok) return { kind: "unavailable", reason: "managed_run_store_unavailable" };
+      return released.value.kind === "released" || released.value.kind === "identical_replay"
+        ? { kind: "released" }
+        : { kind: "rejected", reason: released.value.kind };
     },
   };
 }
