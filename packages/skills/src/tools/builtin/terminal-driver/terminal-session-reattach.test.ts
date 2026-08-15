@@ -25,6 +25,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { ok } from "@comis/shared";
 
 import {
   recoverSessionDescriptors,
@@ -50,7 +51,7 @@ function fakeStore(recovered: SessionDescriptor[]): SessionDescriptorStorePort {
   return {
     persist: vi.fn(() => ok(undefined)),
     recover: vi.fn(() => recovered),
-    remove: vi.fn(),
+    remove: vi.fn(() => ok(undefined)),
   };
 }
 
@@ -125,7 +126,7 @@ describe("recoverSessionDescriptors — the recover-on-boot scan", () => {
       recover: vi.fn(() => {
         throw new Error("disk read blew up");
       }),
-      remove: vi.fn(),
+      remove: vi.fn(() => ok(undefined)),
     };
     expect(() => recoverSessionDescriptors({ store, isTmuxAlive: () => true })).not.toThrow();
     expect(recoverSessionDescriptors({ store, isTmuxAlive: () => true })).toEqual([]);

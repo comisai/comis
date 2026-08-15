@@ -128,6 +128,7 @@ export {
   // comis-<id>` — the re-attach + backstop probe (exit 0 ⇒ alive).
   buildTmuxHasSessionArgv,
   buildTmuxKillArgv,
+  buildTmuxPanePidArgv,
   type SessionDescriptor,
   type ReattachDecision,
   type SessionDescriptorStorePort,

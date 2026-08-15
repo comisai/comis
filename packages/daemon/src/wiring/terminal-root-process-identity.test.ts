@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createTerminalRootProcessIdentityResolver,
+  createTerminalRootProcessIdentitySyncResolver,
   parseLinuxProcessStartIdentity,
 } from "./terminal-root-process-identity.js";
 
@@ -29,5 +30,16 @@ describe("terminal root process identity", () => {
       readText: vi.fn(async () => "malformed"),
     });
     await expect(resolveIdentity(6200)).resolves.toBeUndefined();
+  });
+
+  it("resolves the same exact Linux start identity during synchronous boot recovery", () => {
+    const readText = vi.fn(() => {
+      const fields = ["S", ...Array.from({ length: 18 }, (_, index) => String(index + 1)), "44221"];
+      return `6200 (bwrap) ${fields.join(" ")}`;
+    });
+    const resolveIdentity = createTerminalRootProcessIdentitySyncResolver({ platform: "linux", readText });
+
+    expect(resolveIdentity(6200)).toEqual({ pid: 6200, startIdentity: "linux:44221" });
+    expect(readText).toHaveBeenCalledWith("/proc/6200/stat");
   });
 });

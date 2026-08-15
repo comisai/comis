@@ -63,9 +63,9 @@ import type { SessionHandle } from "./terminal-session-types.js";
  * dir) and INJECTS it onto the registry deps. Unit tests pass a fake (in-memory) port
  * so the scan + decision are provable without any disk.
  *
- * `persist` is callable at create-time BEFORE the tmux session could exist (a SIGKILL
- * mid-create must not orphan tmux without a descriptor); `remove` is
- * ENOENT-tolerant (a double-remove on a gone session is a no-op, never a throw).
+ * `persist` is callable at create-time before the tmux session could exist so a process
+ * interruption cannot orphan tmux without a descriptor. `remove` is ENOENT-tolerant and
+ * reports genuine deletion or directory-flush faults.
  */
 export interface SessionDescriptorStorePort {
   /** Persist (or overwrite) the descriptor for a durable session. */
@@ -76,8 +76,8 @@ export interface SessionDescriptorStorePort {
    * The daemon impl swallows fs faults; this module ALSO defends a throwing impl.
    */
   recover(): SessionDescriptor[];
-  /** Remove a descriptor by sessionId. ENOENT-tolerant; never throws. */
-  remove(sessionId: string): void;
+  /** Remove a descriptor by sessionId and report whether deletion is durably committed. */
+  remove(sessionId: string): Result<void, Error>;
 }
 
 /**
@@ -93,7 +93,7 @@ export interface SessionDescriptorStorePort {
  */
 export type RecoveredAction =
   | { action: "reattach"; descriptor: SessionDescriptor }
-  | { action: "failed"; descriptor?: SessionDescriptor; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone" | "managed_root_identity_unavailable"; managedBinding?: { managedRunId: string; workspaceLeaseId: string; serviceInstanceId: string } };
+  | { action: "failed"; descriptor?: SessionDescriptor; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone" | "managed_root_identity_unavailable" | "managed_root_identity_mismatch"; managedBinding?: { managedRunId: string; workspaceLeaseId: string; serviceInstanceId: string } };
 
 /** Dependencies for {@link recoverSessionDescriptors} — the injected store + liveness probe. */
 export interface RecoverSessionDescriptorsDeps {
@@ -101,6 +101,8 @@ export interface RecoverSessionDescriptorsDeps {
   store: SessionDescriptorStorePort;
   /** The `has-session` liveness probe (the worker's `has-session`), injected. */
   isTmuxAlive: (name: string, socket?: string) => boolean;
+  /** Resolve the live pane's non-reusable process identity for managed recovery. */
+  resolveTmuxRootProcessIdentity?: (name: string, socket?: string) => SessionDescriptor["rootProcessIdentity"];
 }
 
 /**
@@ -138,7 +140,11 @@ export function recoverSessionDescriptors(deps: RecoverSessionDescriptorsDeps): 
   for (const descriptor of descriptors) {
     // reattachDecision is TOTAL — a throwing probe / degenerate descriptor resolves to
     // `failed` (the SAFE direction, never a wrong `reattach`), so this loop never throws.
-    const decision = reattachDecision(descriptor, deps.isTmuxAlive);
+    const decision = reattachDecision(
+      descriptor,
+      deps.isTmuxAlive,
+      deps.resolveTmuxRootProcessIdentity,
+    );
     if (decision.action === "reattach") {
       out.push({ action: "reattach", descriptor: decision.descriptor });
     } else if (decision.action === "failed") {
@@ -321,7 +327,9 @@ export interface TerminalDurabilityDeps {
    * after `kill` fired, while a manual kill-session by name reaped it.
    * Absent ⇒ no-op (the worker-IPC kill is the only teardown, today's behavior).
    */
-  killTmuxSession?: (name: string, socket?: string) => void;
+  killTmuxSession?: (name: string, socket?: string) => Result<void, Error>;
+  /** Resolve and verify the current detached pane identity before managed re-attach. */
+  resolveTmuxRootProcessIdentity?: (name: string, socket?: string) => SessionDescriptor["rootProcessIdentity"];
   /** Confirm durable managed-run retirement before registry authority is discarded. */
   retireManagedSession?: (input: {
     readonly managedRunId: string;
@@ -412,7 +420,11 @@ export function applyRecoveredSessions(
 ): void {
   if (deps.descriptorStore === undefined) return; // today's wiring — no recover.
   const isTmuxAlive = deps.isTmuxAlive ?? ((): boolean => false);
-  for (const r of recoverSessionDescriptors({ store: deps.descriptorStore, isTmuxAlive })) {
+  for (const r of recoverSessionDescriptors({
+    store: deps.descriptorStore,
+    isTmuxAlive,
+    resolveTmuxRootProcessIdentity: deps.resolveTmuxRootProcessIdentity,
+  })) {
     if (r.action === "reattach") {
       sessions.set(r.descriptor.sessionId, rehydrateHandleFromDescriptor(r.descriptor, nowMs()));
       if (reattachWorker !== undefined) {
@@ -429,7 +441,7 @@ export function applyRecoveredSessions(
       // re-emits lost every boot). The JOURNAL is preserved by the daemon holder
       // (the descriptor store is distinct from the journal store).
       deps.onUnrecoverable?.({ sessionId: r.sessionId, agentId: r.owner.agentId, reason: r.reason, errorKind: "dependency", ...(r.managedBinding ?? {}) });
-      if (r.managedBinding !== undefined && r.descriptor !== undefined && r.reason === "tmux_session_gone") {
+      if (r.managedBinding !== undefined && r.descriptor !== undefined) {
         const handle = rehydrateHandleFromDescriptor(r.descriptor, nowMs());
         handle.status = "lost";
         sessions.set(r.sessionId, handle);

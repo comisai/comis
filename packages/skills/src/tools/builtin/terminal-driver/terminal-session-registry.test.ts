@@ -117,11 +117,15 @@ function baseDeps(
   spawnWorker: TerminalSessionRegistryDeps["spawnWorker"],
   over: Partial<TerminalSessionRegistryDeps> = {},
 ): TerminalSessionRegistryDeps {
+  const durability = over.durability === undefined
+    ? undefined
+    : { killTmuxSession: () => ok(undefined), ...over.durability };
   return {
     spawnWorker,
     logger: makeLogger(),
     nowMs: () => 1_700_000_000_000,
     ...over,
+    ...(durability === undefined ? {} : { durability }),
   };
 }
 
@@ -272,7 +276,7 @@ describe("createTerminalSessionRegistry — durable evict kill-sessions the deta
     // The reap must target the socket this session actually runs on. With one server per
     // session, a boot-wide socket here would kill the wrong server — or, worse, another live
     // drive's — instead of this one.
-    const killTmuxSession = vi.fn();
+    const killTmuxSession = vi.fn(() => ok(undefined));
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(
       baseDeps(() => fake.child, {
@@ -289,7 +293,7 @@ describe("createTerminalSessionRegistry — durable evict kill-sessions the deta
   });
 
   it("kill of a NON-durable session does NOT kill-session (no durable tmux to reap)", async () => {
-    const killTmuxSession = vi.fn();
+    const killTmuxSession = vi.fn(() => ok(undefined));
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { killTmuxSession } }));
     const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
@@ -1207,7 +1211,7 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
     const descriptorStore: SessionDescriptorStorePort = {
       persist: vi.fn(() => ok(undefined)),
       recover: vi.fn(() => []),
-      remove: vi.fn(),
+      remove: vi.fn(() => ok(undefined)),
     };
     const resolveRootProcessIdentity = vi.fn(async (pid: number) => ({
       pid,
@@ -1255,7 +1259,7 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
         descriptorStore: {
           persist: vi.fn(() => err(new Error("descriptor storage unavailable"))),
           recover: vi.fn(() => []),
-          remove: vi.fn(),
+          remove: vi.fn(() => ok(undefined)),
         },
         retireManagedSession,
       },
@@ -1296,7 +1300,7 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
           : err(new Error("descriptor storage unavailable"));
       }),
       recover: vi.fn(() => []),
-      remove: vi.fn(),
+      remove: vi.fn(() => ok(undefined)),
     };
     const retireManagedSession = vi.fn(async () => ok(undefined));
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
@@ -2859,7 +2863,10 @@ function fakeDescriptorStore(seed: SessionDescriptor[] = []): SessionDescriptorS
       return ok(undefined);
     }),
     recover: vi.fn(() => Array.from(map.values())),
-    remove: vi.fn((id: string) => map.delete(id)),
+    remove: vi.fn((id: string) => {
+      map.delete(id);
+      return ok(undefined);
+    }),
   };
 }
 

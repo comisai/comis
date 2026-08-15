@@ -27,7 +27,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { err, fromPromise, ok, type Result } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 
 import {
   systemNowMs,
@@ -66,6 +66,7 @@ import {
   type TerminalDurabilityDeps,
 } from "./terminal-session-reattach.js";
 import { waitReplyTimeoutMs } from "./terminal-settle.js";
+import { createTerminalSessionRetirement } from "./terminal-session-retirement.js";
 import { mapWaitReply, degradedWaitResult, type WaitResult } from "./terminal-wait-reply.js";
 import { wireWorkerSupervision } from "./terminal-worker-supervisor.js";
 // The registry's shared structural contracts the BODY references (deps/handle/worker)
@@ -347,6 +348,30 @@ export function createTerminalSessionRegistry(
   // The paired teardown for `allocateWorkspace` (default = `rm -rf` the throwaway mkdtemp).
   // A daemon rooting the workspace in the agent's OWN persistent dir MUST inject a no-op here.
   const cleanupWorkspace = deps.cleanupWorkspace ?? ((workspace: string) => cleanupSessionWorkspace(workspace));
+  const retirement = createTerminalSessionRetirement({
+    sessions,
+    durability: deps.durability,
+    cleanupWorkspace,
+    logger,
+    terminateWorker: async (handle) => {
+      if (handle.status !== "running") return ok(undefined);
+      if (worker === undefined) return err(new Error("terminal worker is unavailable"));
+      const reply = await request(handle.sessionId, "kill", { sessionId: handle.sessionId });
+      if (!reply.ok) return err(new Error(reply.error ?? "terminal backend termination was not acknowledged"));
+      handle.status = "exited";
+      handle.lastActivity = nowMs();
+      return ok(undefined);
+    },
+    sendWorkerKill: (handle) => {
+      if (worker !== undefined) send(handle.sessionId, "kill", { sessionId: handle.sessionId });
+    },
+  });
+  const {
+    isManagedHandle,
+    retireManagedExit,
+    terminateRetireAndDropManaged,
+    evictInternal,
+  } = retirement;
 
   /**
    * Split a `${sessionId}:${requestId}` pending key. Both halves are UUIDs (no embedded
@@ -396,7 +421,15 @@ export function createTerminalSessionRegistry(
         handle.lastActivity = nowMs();
         if (handle.durable === true) {
           if (isManagedHandle(handle)) void retireManagedExit(handle);
-          else deps.durability?.descriptorStore?.remove(frame.sessionId);
+          else {
+            const removed = deps.durability?.descriptorStore?.remove(frame.sessionId);
+            if (removed !== undefined && !removed.ok) {
+              logger.warn(
+                { sessionId: frame.sessionId, hint: "retry descriptor deletion before reclaiming durable terminal authority", errorKind: "resource" as const },
+                "terminal descriptor deletion failed after natural exit",
+              );
+            }
+          }
         }
       }
     }
@@ -512,12 +545,8 @@ export function createTerminalSessionRegistry(
     }
     const capacity = await reaper?.checkOverflow(1);
     if (capacity !== undefined && !capacity.ok) return Promise.reject(capacity.error);
-    // A REAL per-session jail workspace threaded onto the frame as workspace+cwd
-    // (see terminal-workspace.ts); ownedWorkspace is set only when WE allocated it (a
-    // caller override is theirs) so kill rm's exactly what the registry owns.
     const { workspace, cwd, ownedWorkspace } = resolveCreateWorkspace(req, allocateWorkspace, sessionId);
-
-    const createdAt = nowMs(); // single clock read — lastActivity + startedAt (the reaper's wall-clock signal).
+    const createdAt = nowMs();
     const handle: SessionHandle = {
       sessionId,
       allowId: req.allowId,
@@ -528,26 +557,17 @@ export function createTerminalSessionRegistry(
       lastActivity: createdAt,
       startedAt: createdAt,
       workspace: ownedWorkspace,
-      // Stamp the origin (owner-scoped list/read/get/kill/send*). The owner rides
-      // the HANDLE only — NEVER the worker frame (the worker is owner-agnostic).
       owner,
       ...(req.managedBinding === undefined ? {} : {
         managedRunId: req.managedBinding.managedRunId,
         workspaceLeaseId: req.managedBinding.workspaceLeaseId,
         serviceInstanceId: req.managedBinding.serviceInstanceId,
       }),
-      // Stamp the origin CONVERSATION beside the owner — same handle-only rule, same
-      // verbatim re-stamp on re-attach. It is what makes a backgrounded drive's outcome
-      // reach the thread that started it instead of the most recent one. Delivery only:
-      // it never enters the owner gate.
       ...(req.originEndpoint !== undefined ? { originEndpoint: req.originEndpoint } : {}),
-      // Stamp the durable marker + re-attach key (the durable-aware lost gate); absent for a spawn session. The registry DERIVES the deterministic comis-<sessionId> name (the tool cannot — sessionId is generated HERE), so durable engages without the caller supplying tmuxName.
       ...(req.durable
         ? {
             durable: true,
             tmuxName: req.tmuxName ?? tmuxSessionName(sessionId),
-            // Stamp THIS SESSION's own socket so the daemon probe / reaper target the server it
-            // actually runs on, and a future restart re-attaches from that same socket.
             ...(deps.tmuxSocketForSession !== undefined
               ? { tmuxSocket: deps.tmuxSocketForSession(sessionId) }
               : {}),
@@ -568,7 +588,7 @@ export function createTerminalSessionRegistry(
           );
         }
       } else {
-        dropSession(handle, "terminal session registration rejected");
+        retirement.dropSession(handle, "terminal session registration rejected");
       }
       return Promise.reject(initialDescriptor.error);
     }
@@ -878,20 +898,6 @@ export function createTerminalSessionRegistry(
       }));
   }
 
-  function dropSession(handle: SessionHandle, message: string): void {
-    const { sessionId } = handle;
-    sessions.delete(sessionId);
-    if (handle.workspace !== undefined) cleanupWorkspace(handle.workspace);
-    if (handle.durable === true) deps.durability?.descriptorStore?.remove(sessionId);
-    logger.info({ sessionId }, message);
-  }
-
-  function isManagedHandle(handle: SessionHandle): boolean {
-    return handle.managedRunId !== undefined
-      || handle.workspaceLeaseId !== undefined
-      || handle.serviceInstanceId !== undefined;
-  }
-
   function persistDurableDescriptor(
     req: CreateRequest,
     owner: SessionOwner,
@@ -922,95 +928,10 @@ export function createTerminalSessionRegistry(
     }));
   }
 
-  async function retireManagedExit(handle: SessionHandle): Promise<void> {
-    const { sessionId, managedRunId, workspaceLeaseId, serviceInstanceId } = handle;
-    const retireManagedSession = deps.durability?.retireManagedSession;
-    if (
-      managedRunId === undefined
-      || workspaceLeaseId === undefined
-      || serviceInstanceId === undefined
-      || retireManagedSession === undefined
-    ) {
-      logger.warn(
-        { sessionId, hint: "restore the exact managed terminal retirement authority before cleanup", errorKind: "resource" as const },
-        "managed terminal exit retained its durable descriptor",
-      );
-      return;
-    }
-    const invoked = await fromPromise(retireManagedSession({
-      managedRunId,
-      workspaceLeaseId,
-      serviceInstanceId,
-      terminalSessionId: sessionId,
-      transition: "exited",
-    }));
-    if (invoked.ok && invoked.value.ok) {
-      deps.durability?.descriptorStore?.remove(sessionId);
-      return;
-    }
-    logger.warn(
-      { sessionId, hint: "retry durable terminal retirement before removing its descriptor", errorKind: "resource" as const },
-      "managed terminal exit retirement failed",
-    );
-  }
-
-  async function terminateRetireAndDropManaged(handle: SessionHandle): Promise<Result<void, Error>> {
-    const { sessionId, managedRunId, workspaceLeaseId, serviceInstanceId } = handle;
-    if (managedRunId === undefined || workspaceLeaseId === undefined || serviceInstanceId === undefined) {
-      return err(new Error("managed terminal retirement identity is unavailable"));
-    }
-    const retireManagedSession = deps.durability?.retireManagedSession;
-    if (retireManagedSession === undefined) {
-      return err(new Error("managed terminal durable retirement is unavailable"));
-    }
-    if (handle.status === "running") {
-      if (worker === undefined) return err(new Error("terminal worker is unavailable"));
-      const reply = await request(sessionId, "kill", { sessionId });
-      if (!reply.ok) return err(new Error(reply.error ?? "terminal backend termination was not acknowledged"));
-      handle.status = "exited";
-      handle.lastActivity = nowMs();
-      if (handle.durable === true && handle.tmuxName !== undefined) {
-        deps.durability?.killTmuxSession?.(handle.tmuxName, handle.tmuxSocket);
-      }
-    }
-    const invoked = await fromPromise(retireManagedSession({
-      managedRunId,
-      workspaceLeaseId,
-      serviceInstanceId,
-      terminalSessionId: sessionId,
-      transition: "released",
-    }));
-    if (!invoked.ok) return err(invoked.error);
-    if (!invoked.value.ok) return invoked.value;
-    dropSession(handle, "managed terminal termination and retirement confirmed");
-    return ok(undefined);
-  }
-
-  /** Shared end-of-life boundary. Managed authority is retired durably before deletion. */
-  async function evictInternal(handle: SessionHandle): Promise<Result<void, Error>> {
-    if (isManagedHandle(handle)) return terminateRetireAndDropManaged(handle);
-    const { sessionId } = handle;
-    if (worker !== undefined && handle.status === "running") {
-      send(sessionId, "kill", { sessionId });
-    }
-    if (handle.durable === true && handle.tmuxName !== undefined) {
-      deps.durability?.killTmuxSession?.(handle.tmuxName, handle.tmuxSocket);
-    }
-    dropSession(handle, "terminal session killed");
-    return ok(undefined);
-  }
-
   async function terminateAndConfirm(sessionId: string, owner: SessionOwner): Promise<Result<void, Error>> {
     const handle = ownedHandle(sessionId, owner);
     if (handle === undefined) return err(new Error("terminal session authority is unavailable"));
-    if (isManagedHandle(handle)) return terminateRetireAndDropManaged(handle);
-    if (handle.status === "running") {
-      if (worker === undefined) return err(new Error("terminal worker is unavailable"));
-      const reply = await request(sessionId, "kill", { sessionId });
-      if (!reply.ok) return err(new Error(reply.error ?? "terminal backend termination was not acknowledged"));
-    }
-    dropSession(handle, "terminal session termination confirmed");
-    return ok(undefined);
+    return retirement.terminateAndConfirm(handle);
   }
 
   async function kill(sessionId: string, owner: SessionOwner): Promise<void> {

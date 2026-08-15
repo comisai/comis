@@ -133,7 +133,7 @@ export interface SessionDescriptor {
  */
 export type ReattachDecision =
   | { action: "reattach"; descriptor: SessionDescriptor }
-  | { action: "failed"; sessionId: string; reason: "tmux_session_gone" | "managed_root_identity_unavailable" }
+  | { action: "failed"; sessionId: string; reason: "tmux_session_gone" | "managed_root_identity_unavailable" | "managed_root_identity_mismatch" }
   | { action: "fallback_nondurable"; sessionId: string };
 
 /** The content-free sessionId to carry on the failed/fallback branches (never throws). */
@@ -152,19 +152,23 @@ function safeSessionId(d: SessionDescriptor | undefined): string {
  *      probe a falsy name).
  *   3. Durable + a well-formed name → probe `isTmuxAlive(tmuxName)` inside try/catch:
  *      - the probe THROWS → `failed` (the SAFE direction — never re-attach on doubt).
- *      - the probe returns truthy → `reattach` (the session survived).
+ *      - the probe returns truthy → continue to managed identity verification.
  *      - the probe returns falsy → `failed`/`tmux_session_gone` (genuinely gone — the
  *        caller preserves the journal SEPARATELY; nothing is deleted here).
+ *   4. A managed session must resolve the same pane PID and process-start identity that
+ *      the descriptor recorded. Missing or mismatched identity fails closed.
  *
  * NEVER re-attaches on doubt: a false `reattach` double-drives. The decision issues
  * no create frame — it only signals re-attach; the worker backend does the no-double-create.
  *
  * @param d - The persisted descriptor recovered on boot (untrusted after a crash).
  * @param isTmuxAlive - The injected `has-session` liveness probe (exit 0 ⇒ true ⇒ alive).
+ * @param resolveTmuxRootProcessIdentity - The injected current pane identity resolver.
  */
 export function reattachDecision(
   d: SessionDescriptor,
   isTmuxAlive: (name: string, socket?: string) => boolean,
+  resolveTmuxRootProcessIdentity?: (name: string, socket?: string) => TerminalRootProcessIdentity | undefined,
 ): ReattachDecision {
   const sessionId = safeSessionId(d);
 
@@ -203,9 +207,23 @@ export function reattachDecision(
     return { action: "failed", sessionId, reason: "tmux_session_gone" };
   }
 
-  return alive
-    ? { action: "reattach", descriptor: d } // survived the restart → re-attach, identity verbatim
-    : { action: "failed", sessionId, reason: "tmux_session_gone" }; // genuinely gone (journal kept by caller)
+  if (!alive) return { action: "failed", sessionId, reason: "tmux_session_gone" };
+  if (hasManagedBinding) {
+    let currentIdentity: TerminalRootProcessIdentity | undefined;
+    try {
+      currentIdentity = resolveTmuxRootProcessIdentity?.(name, d.tmuxSocket);
+    } catch {
+      currentIdentity = undefined;
+    }
+    if (
+      currentIdentity === undefined
+      || currentIdentity.pid !== d.rootProcessIdentity?.pid
+      || currentIdentity.startIdentity !== d.rootProcessIdentity.startIdentity
+    ) {
+      return { action: "failed", sessionId, reason: "managed_root_identity_mismatch" };
+    }
+  }
+  return { action: "reattach", descriptor: d };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 import { safePath } from "@comis/core";
@@ -10,6 +11,12 @@ import type { TerminalRootProcessIdentity } from "@comis/skills/tools";
 export interface TerminalRootProcessIdentityDeps {
   readonly platform?: NodeJS.Platform;
   readonly readText?: (path: string) => Promise<string>;
+  readonly readDarwinStart?: (pid: number) => string | undefined;
+}
+
+export interface TerminalRootProcessIdentitySyncDeps {
+  readonly platform?: NodeJS.Platform;
+  readonly readText?: (path: string) => string;
   readonly readDarwinStart?: (pid: number) => string | undefined;
 }
 
@@ -52,6 +59,30 @@ export function createTerminalRootProcessIdentityResolver(
     if (platform === "linux") {
       const statPath = safePath("/proc", String(pid), "stat");
       const read = await fromPromise(readText(statPath));
+      startIdentity = read.ok ? parseLinuxProcessStartIdentity(read.value) : undefined;
+    } else if (platform === "darwin") {
+      startIdentity = readDarwinStart(pid);
+    }
+    return startIdentity === undefined ? undefined : { pid, startIdentity };
+  };
+}
+
+/** Build the synchronous trust-boundary resolver used during boot-time tmux recovery. */
+export function createTerminalRootProcessIdentitySyncResolver(
+  deps: TerminalRootProcessIdentitySyncDeps = {},
+): (pid: number) => TerminalRootProcessIdentity | undefined {
+  const platform = deps.platform ?? process.platform;
+  const readText = deps.readText ?? ((path: string) => {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- the caller constructs this path under /proc from a validated positive integer PID
+    return readFileSync(path, "utf8");
+  });
+  const readDarwinStart = deps.readDarwinStart ?? defaultDarwinStart;
+  return (pid) => {
+    if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+    let startIdentity: string | undefined;
+    if (platform === "linux") {
+      const statPath = safePath("/proc", String(pid), "stat");
+      const read = tryCatch(() => readText(statPath));
       startIdentity = read.ok ? parseLinuxProcessStartIdentity(read.value) : undefined;
     } else if (platform === "darwin") {
       startIdentity = readDarwinStart(pid);

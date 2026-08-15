@@ -242,9 +242,11 @@ describe("terminal-session-descriptor-persistence (injected fs — mode + durabi
     deps: SessionDescriptorPersistenceDeps;
     ensured: Array<{ dir: string; mode: number; confinedBaseDir?: string }>;
     written: Array<{ path: string; content: string; confinedBaseDir?: string; fsyncBeforeSuccess?: true }>;
+    renamed: Array<{ from: string; to: string }>;
   } {
     const ensured: Array<{ dir: string; mode: number; confinedBaseDir?: string }> = [];
     const written: Array<{ path: string; content: string; confinedBaseDir?: string; fsyncBeforeSuccess?: true }> = [];
+    const renamed: Array<{ from: string; to: string }> = [];
     const deps: SessionDescriptorPersistenceDeps = {
       dataDir: "/data",
       agentId: AGENT,
@@ -261,8 +263,12 @@ describe("terminal-session-descriptor-persistence (injected fs — mode + durabi
         });
         return ok({ totalBytes: 1 });
       },
+      renameSync: (from, to) => renamed.push({ from, to }),
+      openSync: () => 7,
+      fsyncSync: vi.fn(),
+      closeSync: vi.fn(),
     };
-    return { deps, ensured, written };
+    return { deps, ensured, written, renamed };
   }
 
   it("creates the descriptors dir at mode 0o700 with dataDir as the confinedBaseDir", () => {
@@ -279,9 +285,13 @@ describe("terminal-session-descriptor-persistence (injected fs — mode + durabi
     const descriptor = makeDescriptor({ sessionId: "sess-a" });
     createSessionDescriptorStore(s.deps).persist(descriptor);
     expect(s.written).toHaveLength(1);
-    expect(s.written[0].path).toBe(join("/data", "terminal-drive", AGENT, "descriptors", "sess-a.json"));
+    expect(s.written[0].path).toMatch(/\/descriptors\/\.sess-a\.[^.]+\.tmp$/u);
     expect(s.written[0].confinedBaseDir).toBe("/data");
     expect(s.written[0].fsyncBeforeSuccess).toBe(true);
+    expect(s.renamed).toEqual([{
+      from: s.written[0].path,
+      to: join("/data", "terminal-drive", AGENT, "descriptors", "sess-a.json"),
+    }]);
     // The bytes are exactly the SHIPPED serializeDescriptor output (no shape rewrite).
     expect(JSON.parse(s.written[0].content)).toEqual(descriptor);
   });

@@ -19,6 +19,7 @@ import {
   buildAgentTerminalDurability,
   buildIsTmuxAlive,
   buildKillTmux,
+  buildResolveTmuxRootProcessIdentity,
 } from "./terminal-durable-wiring.js";
 
 describe("managed terminal recovery transitions", () => {
@@ -304,11 +305,18 @@ describe("buildIsTmuxAlive — the daemon liveness probe targets the worker's -S
 describe("buildKillTmux — deterministic durable-evict kill-session by name", () => {
   const socketPath = "/home/comis/.comis/terminal-worker/tmux.sock";
 
+  function goneError(): Error & { status: number } {
+    return Object.assign(new Error("exit 1: no such session"), { status: 1 });
+  }
+
   it("kills `tmux -S <session socket> kill-session -t comis-<id>` — the path proven to reap a durable never-tasked drive", () => {
     const calls: Array<{ bin: string; args: string[] }> = [];
-    const kill = buildKillTmux("/usr/bin/tmux", socketPath, (bin, args) => calls.push({ bin, args }));
-    kill("comis-abc", "/home/comis/.comis/terminal-worker/tmux-999.sock");
-    expect(calls).toHaveLength(1);
+    const kill = buildKillTmux("/usr/bin/tmux", socketPath, (bin, args) => {
+      calls.push({ bin, args });
+      if (args.includes("has-session")) throw goneError();
+    });
+    expect(kill("comis-abc", "/home/comis/.comis/terminal-worker/tmux-999.sock")).toEqual({ ok: true, value: undefined });
+    expect(calls).toHaveLength(2);
     expect(calls[0]!.bin).toBe("/usr/bin/tmux");
     // the per-session socket (a durable's per-boot server) leads, then kill-session -t <name>.
     expect(calls[0]!.args).toEqual(["-S", "/home/comis/.comis/terminal-worker/tmux-999.sock", "kill-session", "-t", "comis-abc"]);
@@ -316,20 +324,62 @@ describe("buildKillTmux — deterministic durable-evict kill-session by name", (
 
   it("falls back to the default socket when no per-session socket is given", () => {
     const calls: Array<{ bin: string; args: string[] }> = [];
-    buildKillTmux("/usr/bin/tmux", socketPath, (bin, args) => calls.push({ bin, args }))("comis-abc");
+    const terminated = buildKillTmux("/usr/bin/tmux", socketPath, (bin, args) => {
+      calls.push({ bin, args });
+      if (args.includes("has-session")) throw goneError();
+    })("comis-abc");
+    expect(terminated).toEqual({ ok: true, value: undefined });
     expect(calls[0]!.args).toEqual(["-S", socketPath, "kill-session", "-t", "comis-abc"]);
   });
 
-  it("swallows a kill fault (already gone / spawn error) — the session is de-registered regardless (best-effort)", () => {
+  it("accepts an already-gone session only after the has-session probe confirms absence", () => {
     const kill = buildKillTmux("/usr/bin/tmux", socketPath, () => {
-      throw new Error("exit 1: no such session");
+      throw goneError();
     });
-    expect(() => kill("comis-gone")).not.toThrow();
+    expect(kill("comis-gone")).toEqual({ ok: true, value: undefined });
   });
 
-  it("absent tmuxPath ⇒ no-op (no run attempted)", () => {
+  it("reports a probe spawn fault because detached termination is unproven", () => {
+    const kill = buildKillTmux("/usr/bin/tmux", socketPath, (_bin, args) => {
+      if (args.includes("has-session")) throw Object.assign(new Error("spawn failed"), { code: "EACCES" });
+    });
+    expect(kill("comis-unknown")).toMatchObject({ ok: false });
+  });
+
+  it("absent tmuxPath reports unavailable termination authority without running", () => {
     let ran = false;
-    buildKillTmux(undefined, socketPath, () => { ran = true; })("comis-abc");
+    const result = buildKillTmux(undefined, socketPath, () => { ran = true; })("comis-abc");
     expect(ran).toBe(false);
+    expect(result).toMatchObject({ ok: false });
+  });
+});
+
+describe("buildResolveTmuxRootProcessIdentity — exact managed recovery identity", () => {
+  it("queries the durable pane PID on its own socket and resolves its start identity", () => {
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const resolveIdentity = vi.fn((pid: number) => ({ pid, startIdentity: "linux:991" }));
+    const resolvePane = buildResolveTmuxRootProcessIdentity(
+      "/usr/bin/tmux",
+      "/default.sock",
+      (bin, args) => {
+        calls.push({ bin, args });
+        return "6200\n";
+      },
+      resolveIdentity,
+    );
+
+    expect(resolvePane("comis-abc", "/session.sock")).toEqual({ pid: 6200, startIdentity: "linux:991" });
+    expect(calls[0]?.args).toEqual(["-S", "/session.sock", "display-message", "-p", "-t", "comis-abc", "#{pane_pid}"]);
+    expect(resolveIdentity).toHaveBeenCalledWith(6200);
+  });
+
+  it("fails closed when the live pane PID cannot be proven", () => {
+    const resolvePane = buildResolveTmuxRootProcessIdentity(
+      "/usr/bin/tmux",
+      "/default.sock",
+      () => "not-a-pid",
+      vi.fn(),
+    );
+    expect(resolvePane("comis-abc")).toBeUndefined();
   });
 });
