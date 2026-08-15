@@ -346,6 +346,30 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toContain("read");
   });
 
+  it("preserves a parent skill after returning from delegated work", () => {
+    const deferral = result();
+    const request = [
+      "Spawn a child to inspect package.json.",
+      "After it finishes, return to the parent project and use Claude Code to refactor it.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: request,
+      requestRelevanceText: request,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(request)).toContain(
+      "return to the parent project and use Claude Code to refactor it",
+    );
+    expect(selected).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantPromptSkillNames).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantToolNames).toContain("read");
+  });
+
   it("does not route a direct artifact write as a software workflow", () => {
     const deferral = result();
     deferral.activeTools.push(tool("write"));

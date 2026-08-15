@@ -85,6 +85,48 @@ describe("attachTrajectoryToEventBus -- OAuth refresh diagnostics", () => {
   });
 });
 
+describe("attachTrajectoryToEventBus prompt skill routing", () => {
+  it("records bounded prompt skill names on the submitted prompt", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+    const skillNames = Array.from({ length: 18 }, (_, index) => `skill-${String(index)}`);
+
+    bus.emit("prompt:submitted", {
+      agentId: "agent-a",
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
+      traceId: "trace-a",
+      promptChars: 100,
+      provider: "openai",
+      modelId: "model-a",
+      messageCount: 1,
+      systemDigest: "a".repeat(64),
+      messagesDigest: "b".repeat(64),
+      inboundKind: "message",
+      requestRelevantPromptSkillNames: [
+        "deep-research",
+        "deep-research",
+        "invalid skill",
+        ...skillNames,
+      ],
+      responseLocaleSource: "unset",
+      responseLocaleEnforced: false,
+      timestamp: 1,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]).toMatchObject({
+      type: "prompt.submitted",
+      data: {
+        requestRelevantPromptSkillNames: [
+          "deep-research",
+          ...skillNames.slice(0, 15),
+        ],
+      },
+    });
+  });
+});
+
 describe("attachTrajectoryToEventBus background cancellation and reentry", () => {
   it("records cancelled and reentered lifecycle events on the owning trajectory", () => {
     const bus = makeBus();

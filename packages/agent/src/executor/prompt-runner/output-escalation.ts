@@ -20,6 +20,7 @@ import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js
 import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery-reconciliation.js";
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
 import { runBudgetContinuation } from "./budget-continuation.js";
+import { hasAcceptedDelegation } from "./accepted-delegation.js";
 /** Runs output escalation and final success or failure response processing. */
 export async function escalateOutput(
   params: RunPromptParams,
@@ -35,6 +36,7 @@ export async function escalateOutput(
   let escalationAttempted = false;
   let ghostCost: PromptRunResult["ghostCost"];
   const bridgeResult = params.bridge.getResult();
+  const acceptedDelegation = hasAcceptedDelegation(bridgeResult.toolExecResults);
 
   // A safety abort is terminal and must not start generic silent recovery.
   if (bridgeResult.abortResponse !== undefined) {
@@ -49,7 +51,13 @@ export async function escalateOutput(
     return { promptSucceeded, promptError, escalationAttempted, ghostCost };
   }
 
-  if (promptSucceeded && !skipPrompt && !escalationAttempted && !budgetTracker) {
+  if (
+    promptSucceeded
+    && !skipPrompt
+    && !escalationAttempted
+    && !budgetTracker
+    && !acceptedDelegation
+  ) {
     const escalation = await maybeEscalateOutput(
       params,
       messageText,
@@ -69,7 +77,13 @@ export async function escalateOutput(
   }
 
   if (promptSucceeded && !skipPrompt) {
-    await processSuccessPath(params, budgetTracker, budgetCapped, requestedBudget);
+    await processSuccessPath(
+      params,
+      budgetTracker,
+      budgetCapped,
+      requestedBudget,
+      acceptedDelegation,
+    );
   } else if (!promptSucceeded) {
     // Directive-only commands set skipPrompt and bypass this failure path.
     const failureOutcome = await processFailurePath(
@@ -183,6 +197,7 @@ async function processSuccessPath(
   budgetTracker: TurnBudgetTracker | undefined,
   budgetCapped: boolean,
   requestedBudget: number | undefined,
+  acceptedDelegation: boolean,
 ): Promise<void> {
   const {
     msg, session, config, sessionKey, agentId, result,
@@ -218,7 +233,11 @@ async function processSuccessPath(
   result.response = extractedResponse;
 
   // Nudge once if all intermediate text was thinking-only.
-  if (result.response === "" && (bridge.getResult().stepsExecuted ?? 0) > 0) {
+  if (
+    !acceptedDelegation
+    && result.response === ""
+    && (bridge.getResult().stepsExecuted ?? 0) > 0
+  ) {
     const lateResult = bridge.getResult();
     if (lateResult.finishReason === "stop") {
       deps.logger.info(
@@ -290,24 +309,26 @@ async function processSuccessPath(
   // shot retry. Falls through to L3 synthesis (recoverEmptyFinalResponse) on
   // exhaustion. SEP plan extraction + step counting remain intact for
   // observability — see pi-event-bridge.ts:949-1024.
-  await runPostBatchContinuationStep(params);
+  if (!acceptedDelegation) {
+    await runPostBatchContinuationStep(params);
 
-  // Narrate-without-emit nudge — the
-  // sibling of L4 for turns that END ON intent narration ("Now let me write
-  // the script:") with NO tool call. small/nano-gated, one bounded re-prompt;
-  // an unrecovered fire marks result.narrateNudge so the post-execution
-  // chokepoint promotes the turn to the named degraded cause narration_stall.
-  // Mutually exclusive with L4 by construction (L4 requires an EMPTY final
-  // turn; this requires visible text).
-  await runNarrateNudgeStep(params);
-  await runRequestToolNudgeStep(params);
+    // Narrate-without-emit nudge — the
+    // sibling of L4 for turns that END ON intent narration ("Now let me write
+    // the script:") with NO tool call. small/nano-gated, one bounded re-prompt;
+    // an unrecovered fire marks result.narrateNudge so the post-execution
+    // chokepoint promotes the turn to the named degraded cause narration_stall.
+    // Mutually exclusive with L4 by construction (L4 requires an EMPTY final
+    // turn; this requires visible text).
+    await runNarrateNudgeStep(params);
+    await runRequestToolNudgeStep(params);
 
-  // Budget-driven continuation loop
-  if (budgetTracker) {
-    await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);
+    // Budget-driven continuation loop
+    if (budgetTracker) {
+      await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);
+    }
+
+    await applyInteractiveSilentRecovery(params);
   }
-
-  await applyInteractiveSilentRecovery(params);
 
   // Surface discarded pre-tool URLs/short-codes absent from final response.
   // MUST run BEFORE the OutputGuard scan below so the surfaced URL passes through
@@ -319,7 +340,9 @@ async function processSuccessPath(
     deps.logger,
   );
 
-  await applyResponseLocaleEnforcement(params);
+  if (!acceptedDelegation) {
+    await applyResponseLocaleEnforcement(params);
+  }
 
   suppressRedundantFinalAfterOutboundDelivery(params);
 
@@ -344,7 +367,7 @@ async function processSuccessPath(
 
 /** Shared delegation receipt reader for post-batch and narration recovery. */
 const successfulDelegationCount = (params: RunPromptParams): number =>
-  Number((params.bridge.getResult().toolExecResults ?? []).some((record) => record.toolName === "sessions_spawn" && record.success));
+  Number(hasAcceptedDelegation(params.bridge.getResult().toolExecResults));
 async function runPostBatchContinuationStep(params: RunPromptParams): Promise<void> {
   const { session, config, agentId, result, deps } = params;
   const continuationConfig = config.contextEngine?.postBatchContinuation
