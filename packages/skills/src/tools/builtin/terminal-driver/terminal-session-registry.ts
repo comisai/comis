@@ -394,7 +394,10 @@ export function createTerminalSessionRegistry(
       if (handle?.status === "running") {
         handle.status = "exited";
         handle.lastActivity = nowMs();
-        if (handle.durable === true) deps.durability?.descriptorStore?.remove(frame.sessionId);
+        if (handle.durable === true) {
+          if (isManagedHandle(handle)) void retireManagedExit(handle);
+          else deps.durability?.descriptorStore?.remove(frame.sessionId);
+        }
       }
     }
     deps.onTerminalEvent?.(frame);
@@ -504,8 +507,11 @@ export function createTerminalSessionRegistry(
     if (sessions.has(sessionId)) {
       return Promise.reject(new Error("terminal session identity is already registered"));
     }
-    const child = ensureWorker();
-
+    if (req.managedBinding !== undefined && req.durable !== true) {
+      return Promise.reject(new Error("managed terminal launches require durable descriptor authority"));
+    }
+    const capacity = await reaper?.checkOverflow(1);
+    if (capacity !== undefined && !capacity.ok) return Promise.reject(capacity.error);
     // A REAL per-session jail workspace threaded onto the frame as workspace+cwd
     // (see terminal-workspace.ts); ownedWorkspace is set only when WE allocated it (a
     // caller override is theirs) so kill rm's exactly what the registry owns.
@@ -550,11 +556,21 @@ export function createTerminalSessionRegistry(
     };
     sessions.set(sessionId, handle);
 
-    // Persist the durable descriptor at CREATE-time, BEFORE the create frame (no orphan window); non-durable persists nothing.
-    if (req.durable && deps.durability?.descriptorStore !== undefined) {
-      deps.durability.descriptorStore.persist(
-        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), tmuxSocket: deps.tmuxSocketForSession?.(sessionId), allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope, originEndpoint: req.originEndpoint, managedBinding: req.managedBinding }),
-      );
+    const initialDescriptor = persistDurableDescriptor(req, owner, sessionId, createdAt);
+    if (!initialDescriptor.ok) {
+      handle.status = "lost";
+      if (isManagedHandle(handle)) {
+        const retired = await terminateRetireAndDropManaged(handle);
+        if (!retired.ok) {
+          logger.warn(
+            { sessionId, hint: "retry managed terminal retirement before releasing its reserved authority", errorKind: "resource" as const },
+            "managed terminal descriptor persistence and retirement failed",
+          );
+        }
+      } else {
+        dropSession(handle, "terminal session registration rejected");
+      }
+      return Promise.reject(initialDescriptor.error);
     }
 
     // Forward the daemon-canonical {bin,argv} VERBATIM (buildDirectSpawn, the SOLE canonicalization site; argsPrefix preserved end-to-end). Fired WITHOUT
@@ -638,21 +654,25 @@ export function createTerminalSessionRegistry(
         return Promise.reject(new Error("managed terminal launch authority was revoked during creation"));
       }
       handle.rootProcessIdentity = rootProcessIdentity;
-      deps.durability?.descriptorStore?.persist(buildSessionDescriptor({
-        sessionId,
-        tmuxName: req.tmuxName ?? tmuxSessionName(sessionId),
-        tmuxSocket: deps.tmuxSocketForSession?.(sessionId),
-        allowId: req.allowId,
+      const persistedIdentity = persistDurableDescriptor(
+        req,
         owner,
-        cols: req.cols,
-        rows: req.rows,
+        sessionId,
         createdAt,
-        scope: req.scope,
-        originEndpoint: req.originEndpoint,
-        managedBinding: req.managedBinding,
         rootProcessIdentity,
-      }));
+      );
+      if (!persistedIdentity.ok) {
+        const retired = await terminateRetireAndDropManaged(handle);
+        if (!retired.ok) {
+          logger.warn(
+            { sessionId, hint: "retry managed terminal retirement before releasing its reserved authority", errorKind: "resource" as const },
+            "managed terminal identity persistence and retirement failed",
+          );
+        }
+        return Promise.reject(persistedIdentity.error);
+      }
     } else {
+      const child = ensureWorker();
       const createFrame = buildRequestFrame(sessionId, "create", createParams);
       pending.set(`${sessionId}:${createFrame.requestId}`, markSpawnFailure);
       child.stdin?.write(encodeFrame(createFrame));
@@ -662,9 +682,6 @@ export function createTerminalSessionRegistry(
       { sessionId, allowId: req.allowId, command: req.bin },
       "terminal session registered",
     );
-    // An over-cap create evicts the idlest down to maxSessions (reason
-    // max_sessions). Runs AFTER sessions.set so the new session is in the snapshot.
-    await reaper?.checkOverflow();
     return {
       sessionId,
       allowId: req.allowId,
@@ -869,6 +886,74 @@ export function createTerminalSessionRegistry(
     logger.info({ sessionId }, message);
   }
 
+  function isManagedHandle(handle: SessionHandle): boolean {
+    return handle.managedRunId !== undefined
+      || handle.workspaceLeaseId !== undefined
+      || handle.serviceInstanceId !== undefined;
+  }
+
+  function persistDurableDescriptor(
+    req: CreateRequest,
+    owner: SessionOwner,
+    sessionId: string,
+    createdAt: number,
+    rootProcessIdentity?: TerminalRootProcessIdentity,
+  ): Result<void, Error> {
+    if (req.durable !== true) return ok(undefined);
+    const store = deps.durability?.descriptorStore;
+    if (store === undefined) {
+      return req.managedBinding === undefined
+        ? ok(undefined)
+        : err(new Error("managed terminal durable descriptor store is unavailable"));
+    }
+    return store.persist(buildSessionDescriptor({
+      sessionId,
+      tmuxName: req.tmuxName ?? tmuxSessionName(sessionId),
+      tmuxSocket: deps.tmuxSocketForSession?.(sessionId),
+      allowId: req.allowId,
+      owner,
+      cols: req.cols,
+      rows: req.rows,
+      createdAt,
+      scope: req.scope,
+      originEndpoint: req.originEndpoint,
+      managedBinding: req.managedBinding,
+      rootProcessIdentity,
+    }));
+  }
+
+  async function retireManagedExit(handle: SessionHandle): Promise<void> {
+    const { sessionId, managedRunId, workspaceLeaseId, serviceInstanceId } = handle;
+    const retireManagedSession = deps.durability?.retireManagedSession;
+    if (
+      managedRunId === undefined
+      || workspaceLeaseId === undefined
+      || serviceInstanceId === undefined
+      || retireManagedSession === undefined
+    ) {
+      logger.warn(
+        { sessionId, hint: "restore the exact managed terminal retirement authority before cleanup", errorKind: "resource" as const },
+        "managed terminal exit retained its durable descriptor",
+      );
+      return;
+    }
+    const invoked = await fromPromise(retireManagedSession({
+      managedRunId,
+      workspaceLeaseId,
+      serviceInstanceId,
+      terminalSessionId: sessionId,
+      transition: "exited",
+    }));
+    if (invoked.ok && invoked.value.ok) {
+      deps.durability?.descriptorStore?.remove(sessionId);
+      return;
+    }
+    logger.warn(
+      { sessionId, hint: "retry durable terminal retirement before removing its descriptor", errorKind: "resource" as const },
+      "managed terminal exit retirement failed",
+    );
+  }
+
   async function terminateRetireAndDropManaged(handle: SessionHandle): Promise<Result<void, Error>> {
     const { sessionId, managedRunId, workspaceLeaseId, serviceInstanceId } = handle;
     if (managedRunId === undefined || workspaceLeaseId === undefined || serviceInstanceId === undefined) {
@@ -903,11 +988,7 @@ export function createTerminalSessionRegistry(
 
   /** Shared end-of-life boundary. Managed authority is retired durably before deletion. */
   async function evictInternal(handle: SessionHandle): Promise<Result<void, Error>> {
-    if (
-      handle.managedRunId !== undefined
-      || handle.workspaceLeaseId !== undefined
-      || handle.serviceInstanceId !== undefined
-    ) return terminateRetireAndDropManaged(handle);
+    if (isManagedHandle(handle)) return terminateRetireAndDropManaged(handle);
     const { sessionId } = handle;
     if (worker !== undefined && handle.status === "running") {
       send(sessionId, "kill", { sessionId });
@@ -922,11 +1003,7 @@ export function createTerminalSessionRegistry(
   async function terminateAndConfirm(sessionId: string, owner: SessionOwner): Promise<Result<void, Error>> {
     const handle = ownedHandle(sessionId, owner);
     if (handle === undefined) return err(new Error("terminal session authority is unavailable"));
-    if (
-      handle.managedRunId !== undefined
-      || handle.workspaceLeaseId !== undefined
-      || handle.serviceInstanceId !== undefined
-    ) return terminateRetireAndDropManaged(handle);
+    if (isManagedHandle(handle)) return terminateRetireAndDropManaged(handle);
     if (handle.status === "running") {
       if (worker === undefined) return err(new Error("terminal worker is unavailable"));
       const reply = await request(sessionId, "kill", { sessionId });

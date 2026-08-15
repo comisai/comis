@@ -21,6 +21,12 @@ const REQUIRED_MANAGED_RUN_COLUMNS = [
 const REQUIRED_WORKSPACE_LEASE_COLUMNS = ["filesystem_birthtime_ns"] as const;
 const REQUIRED_EXECUTION_ATTACHMENT_COLUMNS = ["source_filesystem_birthtime_ns"] as const;
 const REQUIRED_CONTINUATION_CLAIM_COLUMNS = ["reduction_outcome"] as const;
+const REQUIRED_ATTENTION_OPERATION_COLUMNS = [
+  "tenant_id",
+  "agent_id",
+  "principal_id",
+  "conversation_ref",
+] as const;
 
 /** Create the content-free managed-run authority, report, claim, and replay tables. */
 export function ensureManagedRunTables(db: Database.Database): void {
@@ -84,6 +90,22 @@ export function ensureManagedRunTables(db: Database.Database): void {
     if (missing.length > 0) {
       throw new Error(
         `managed_run_continuation_claims database schema is incompatible: missing ${missing.join(", ")}. Back up the database, then recreate it with the current Comis schema.`,
+      );
+    }
+  }
+
+  const existingAttentionOperations = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'managed_run_attention_operations'",
+  ).get() !== undefined;
+  if (existingAttentionOperations) {
+    const columns = new Set(requireTableInfoRows(
+      db.prepare("PRAGMA table_info(managed_run_attention_operations)").all(),
+      "managed_run_attention_operations",
+    ).map((row) => row.name));
+    const missing = REQUIRED_ATTENTION_OPERATION_COLUMNS.filter((column) => !columns.has(column));
+    if (missing.length > 0) {
+      throw new Error(
+        `managed_run_attention_operations database schema is incompatible: missing ${missing.join(", ")}. Back up the database, then recreate it with the current Comis schema.`,
       );
     }
   }
@@ -166,6 +188,12 @@ export function ensureManagedRunTables(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_workspace_leases_recovery
       ON workspace_leases (state, updated_at_ms, workspace_lease_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_leases_active_path
+      ON workspace_leases (canonical_path) WHERE state = 'active';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_leases_active_filesystem_identity
+      ON workspace_leases (
+        filesystem_device, filesystem_inode, filesystem_birthtime_ns
+      ) WHERE state = 'active';
 
     CREATE TABLE IF NOT EXISTS execution_attachments (
       schema_version INTEGER NOT NULL CHECK(schema_version = 1),
@@ -286,6 +314,10 @@ export function ensureManagedRunTables(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS managed_run_attention_operations (
       attention_id TEXT NOT NULL REFERENCES managed_run_attention(attention_id),
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      principal_id TEXT NOT NULL,
+      conversation_ref TEXT NOT NULL,
       operation_id TEXT NOT NULL,
       operation_kind TEXT NOT NULL CHECK(operation_kind IN ('response','delivery')),
       input_hash TEXT NOT NULL,
@@ -295,6 +327,10 @@ export function ensureManagedRunTables(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_managed_run_attention_operation_lookup
       ON managed_run_attention_operations (operation_id, operation_kind, attention_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_managed_run_attention_owner_response_operation
+      ON managed_run_attention_operations (
+        tenant_id, agent_id, principal_id, conversation_ref, operation_id
+      ) WHERE operation_kind = 'response';
 
     CREATE TABLE IF NOT EXISTS managed_run_operations (
       managed_run_id TEXT NOT NULL REFERENCES managed_runs(managed_run_id),

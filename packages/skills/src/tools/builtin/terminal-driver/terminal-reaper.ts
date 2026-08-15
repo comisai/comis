@@ -77,7 +77,10 @@ export interface ReaperDeps {
   /** Current session snapshot (the registry's live map, mapped to the reaper rows). */
   listSessions: () => ReaperSession[];
   /** Called for every eviction with the audited reason — the registry drops + cleans + emits. */
-  onEvict: (sessionId: string, reason: EvictReason) => void | Promise<void>;
+  onEvict: (
+    sessionId: string,
+    reason: EvictReason,
+  ) => void | Result<void, Error> | Promise<void | Result<void, Error>>;
   /**
    * OPTIONAL alive-and-busy predicate (the endurance invariant).
    * When supplied, a session the idle sweep would otherwise reap is EXCLUDED while
@@ -103,7 +106,7 @@ export interface TerminalReaper {
   /** Cancel the sweep interval (the registry calls this from cleanup — no leaked interval). */
   stop(): void;
   /** Evict the idlest session(s) until size == maxSessions (run from create). */
-  checkOverflow(): Promise<void>;
+  checkOverflow(additionalSessions?: number): Promise<Result<void, Error>>;
 }
 
 /**
@@ -142,15 +145,20 @@ export function createTerminalReaper(deps: ReaperDeps): TerminalReaper {
     }
   }
 
-  async function checkOverflow(): Promise<void> {
+  async function checkOverflow(additionalSessions = 0): Promise<Result<void, Error>> {
     const xs = deps.listSessions();
-    const overflow = xs.length - deps.maxSessions;
-    if (overflow <= 0) return;
+    const overflow = xs.length + additionalSessions - deps.maxSessions;
+    if (overflow <= 0) return ok(undefined);
     // Evict the idlest (lowest lastActivity) first, exactly `overflow` of them.
     const idlestFirst = [...xs].sort((a, b) => a.lastActivity - b.lastActivity);
     for (let i = 0; i < overflow; i++) {
-      await deps.onEvict(idlestFirst[i].sessionId, "max_sessions");
+      const invoked = await fromPromise(Promise.resolve(
+        deps.onEvict(idlestFirst[i].sessionId, "max_sessions"),
+      ));
+      if (!invoked.ok) return err(invoked.error);
+      if (invoked.value !== undefined && !invoked.value.ok) return invoked.value;
     }
+    return ok(undefined);
   }
 
   function start(): void {
@@ -285,7 +293,7 @@ export function wireRegistryReaper<H extends ReaperSessionHandle>(w: RegistryRea
               startedAtMs: s.startedAt,
             })),
           onEvict: async (sessionId, reason) => {
-            await evict(sessionId, reason);
+            return evict(sessionId, reason);
           },
           // Thread the daemon-bound alive-busy predicate onto the
           // sweep's idle gate (undefined ⇒ quietness-only eviction).

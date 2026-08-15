@@ -39,7 +39,7 @@ const LEASE_SCOPE: WorkspaceLeaseScope = {
   managedRunId: "managed-run_a",
 };
 
-function makeManagedRun(): ManagedRunRecord {
+function makeManagedRun(overrides: Partial<ManagedRunRecord> = {}): ManagedRunRecord {
   return {
     schemaVersion: 1,
     managedRunId: "managed-run_a",
@@ -81,6 +81,7 @@ function makeManagedRun(): ManagedRunRecord {
     openAttentionCount: 0,
     createdAtMs: NOW_MS,
     updatedAtMs: NOW_MS,
+    ...overrides,
   };
 }
 
@@ -227,6 +228,48 @@ describe("SQLite workspace lease persistence", () => {
       .resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
     await expect(store.create(makeLease({ workspaceLeaseId: "workspace-lease_b" })))
       .resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
+    db.close();
+  });
+
+  it("excludes concurrent active leases for the same workspace identity", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    const managedRuns = createSqliteManagedRunStore(db);
+    expect((await managedRuns.create(makeManagedRun())).ok).toBe(true);
+    expect((await managedRuns.create(makeManagedRun({
+      managedRunId: "managed-run_b",
+      externalRunRefDigest: "e".repeat(64),
+      activationDescriptorDigest: "f".repeat(64),
+      activationDescriptorRef: "activation-descriptor_b",
+      traceId: "10000000-0000-4000-8000-000000000002",
+      rootRunId: "root-run_b",
+    }))).ok).toBe(true);
+    const store = createSqliteWorkspaceLeaseStore(db);
+    expect((await store.create(makeLease())).value?.kind).toBe("created");
+    const secondBase = {
+      workspaceLeaseId: "workspace-lease_b",
+      managedRunId: "managed-run_b",
+    };
+
+    await expect(store.create(makeLease({
+      ...secondBase,
+      filesystemIdentity: { device: 10, inode: 21, birthtimeNs: "101" },
+    }))).resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
+    await expect(store.create(makeLease({
+      ...secondBase,
+      canonicalPath: "/srv/comis-workspaces/task-alias",
+    }))).resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
+
+    expect((await store.release(LEASE_SCOPE, {
+      operationId: "release-for-reuse",
+      workspaceLeaseId: "workspace-lease_a",
+      disposition: "preserve",
+      releasedAtMs: NOW_MS + 1,
+    })).value?.kind).toBe("released");
+    await expect(store.create(makeLease(secondBase))).resolves.toMatchObject({
+      ok: true,
+      value: { kind: "created", record: { managedRunId: "managed-run_b" } },
+    });
     db.close();
   });
 

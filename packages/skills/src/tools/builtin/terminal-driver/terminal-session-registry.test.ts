@@ -25,7 +25,7 @@ import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { err, ok } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 
 import { createFakeTimers } from "../../../../../../test/support/fake-timers.js";
 import {
@@ -360,7 +360,7 @@ describe("createTerminalSessionRegistry — confirmed process termination", () =
     }));
     const retireManagedSession = vi.fn(async () => err(new Error("managed store unavailable")));
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
-      durability: { retireManagedSession } as never,
+      durability: { descriptorStore: fakeDescriptorStore(), retireManagedSession } as never,
       resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
     }));
     const created = await registry.create({
@@ -392,6 +392,10 @@ describe("createTerminalSessionRegistry — lazy re-spawn", () => {
       result: { rootPid: 6200 },
     }));
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: fakeDescriptorStore(),
+        retireManagedSession: async () => ok(undefined),
+      },
       resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
     }));
     const request = {
@@ -401,6 +405,7 @@ describe("createTerminalSessionRegistry — lazy re-spawn", () => {
       argv: [],
       cols: 80,
       rows: 24,
+      durable: true,
       managedBinding: {
         managedRunId: "managed-run-a",
         workspaceLeaseId: "workspace-lease-a",
@@ -426,7 +431,10 @@ describe("createTerminalSessionRegistry — lazy re-spawn", () => {
       resolveIdentity = resolve;
     });
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
-      durability: { retireManagedSession: async () => ok(undefined) },
+      durability: {
+        descriptorStore: fakeDescriptorStore(),
+        retireManagedSession: async () => ok(undefined),
+      },
       resolveRootProcessIdentity: async () => identity,
     }));
     const creating = registry.create({
@@ -436,6 +444,7 @@ describe("createTerminalSessionRegistry — lazy re-spawn", () => {
       argv: [],
       cols: 80,
       rows: 24,
+      durable: true,
       managedBinding: {
         managedRunId: "managed-run-a",
         workspaceLeaseId: "workspace-lease-a",
@@ -1063,7 +1072,10 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
         : { terminated: true },
     }));
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
-      durability: { retireManagedSession: async () => ok(undefined) },
+      durability: {
+        descriptorStore: fakeDescriptorStore(),
+        retireManagedSession: async () => ok(undefined),
+      },
       resolveRootProcessIdentity: vi.fn(async () => ({ pid: 6200, startIdentity: "linux:991" })),
     } as unknown as Partial<TerminalSessionRegistryDeps>));
 
@@ -1092,7 +1104,10 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
         : { terminated: true },
     }));
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
-      durability: { retireManagedSession: async () => ok(undefined) },
+      durability: {
+        descriptorStore: fakeDescriptorStore(),
+        retireManagedSession: async () => ok(undefined),
+      },
       resolveRootProcessIdentity: vi.fn(async () => undefined),
     } as unknown as Partial<TerminalSessionRegistryDeps>));
 
@@ -1122,7 +1137,7 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
       };
     });
     const descriptorStore: SessionDescriptorStorePort = {
-      persist: vi.fn(),
+      persist: vi.fn(() => ok(undefined)),
       recover: vi.fn(() => []),
       remove: vi.fn(),
     };
@@ -1161,6 +1176,83 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
       serviceInstanceId: "service-instance_a",
       rootProcessIdentity: { pid: 6200, startIdentity: "linux-proc-start-6200" },
     }));
+  });
+
+  it("retires reserved authority when initial descriptor persistence fails", async () => {
+    const fake = makeFakeWorker();
+    const spawnWorker = vi.fn(() => fake.child);
+    const retireManagedSession = vi.fn(async () => ok(undefined));
+    const registry = createTerminalSessionRegistry(baseDeps(spawnWorker, {
+      durability: {
+        descriptorStore: {
+          persist: vi.fn(() => err(new Error("descriptor storage unavailable"))),
+          recover: vi.fn(() => []),
+          remove: vi.fn(),
+        },
+        retireManagedSession,
+      },
+    }));
+
+    await expect(registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    }, OWNER)).rejects.toThrow("descriptor storage unavailable");
+
+    expect(spawnWorker).not.toHaveBeenCalled();
+    expect(retireManagedSession).toHaveBeenCalledOnce();
+    expect(registry.size()).toBe(0);
+  });
+
+  it("retires a launched managed terminal when its resolved identity cannot be persisted", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    let persistenceAttempt = 0;
+    const descriptorStore: SessionDescriptorStorePort = {
+      persist: vi.fn(() => {
+        persistenceAttempt += 1;
+        return persistenceAttempt === 1
+          ? ok(undefined)
+          : err(new Error("descriptor storage unavailable"));
+      }),
+      recover: vi.fn(() => []),
+      remove: vi.fn(),
+    };
+    const retireManagedSession = vi.fn(async () => ok(undefined));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { descriptorStore, retireManagedSession },
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+
+    await expect(registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    }, OWNER)).rejects.toThrow("descriptor storage unavailable");
+
+    expect(fake.requestFrames.map((frame) => frame.method)).toEqual(["create", "kill"]);
+    expect(retireManagedSession).toHaveBeenCalledOnce();
+    expect(registry.size()).toBe(0);
   });
 
   it("an ok:false create reply flips the session to 'lost' (list/read agree alive:false) and fires onSpawnFailed", async () => {
@@ -2020,12 +2112,6 @@ describe("createTerminalSessionRegistry — cleanup() is owner-agnostic (tears d
 // interval); EVERY eviction runs the single audited site — drop +
 // cleanupSessionWorkspace + onEvict(reason) + onCapForget (so the cap-state map
 // is forgotten on the reap path, not only the tool kill).
-//
-// RED on the pre-patch registry: the deps have no maxSessions/idleTtlMs/timers/
-// onEvict/onCapForget, there is no reaper.checkOverflow() in create, no
-// reaper.stop() in cleanup, and no public evict() — so an over-cap create keeps
-// all 3 sessions, the fake-timer interval is never armed, and onCapForget never
-// fires.
 // ===========================================================================
 
 describe("createTerminalSessionRegistry — reaper composition", () => {
@@ -2120,7 +2206,7 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
     });
     const { deps } = reaperDeps(() => fake.child, {
       maxSessions: 10,
-      durability: { retireManagedSession } as never,
+      durability: { descriptorStore: fakeDescriptorStore(), retireManagedSession } as never,
       resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
       onCapForget: capForget,
     });
@@ -2143,6 +2229,43 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
 
     expect(order).toEqual(["retire", "cap-forget"]);
     expect(registry.get(created.sessionId, subA)).toBeUndefined();
+  });
+
+  it("rejects an over-cap create when durable retirement cannot evict the existing authority", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const retireManagedSession = vi.fn(async () => err(new Error("retirement unavailable")));
+    const { deps, onEvict, onCapForget } = reaperDeps(() => fake.child, {
+      maxSessions: 1,
+      durability: { descriptorStore: fakeDescriptorStore(), retireManagedSession },
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    });
+    const registry = createTerminalSessionRegistry(deps);
+    const managed = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, subA);
+
+    await expect(registry.create(bashReq, subA)).rejects.toThrow("retirement unavailable");
+
+    expect(registry.get(managed.sessionId, subA)?.status).toBe("exited");
+    expect(registry.size()).toBe(1);
+    expect(fake.requestFrames.map((frame) => frame.method)).toEqual(["create", "kill"]);
+    expect(onEvict).not.toHaveBeenCalled();
+    expect(onCapForget).not.toHaveBeenCalled();
   });
 
   it("Test C2 — evict() is owner-scoped: a cross-owner evict is a no-op (the session survives, no cap-forget)", async () => {
@@ -2202,16 +2325,27 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
  * (a length-prefixed event frame, or raw/oversized garbage for the crash-guard tests).
  * stdin/stdout are present so create() round-trips; on/kill complete the surface.
  */
-function makeFd3DrivableWorker(): {
+function makeFd3DrivableWorker(
+  autoReply?: (frame: TerminalRequestFrame) => TerminalReplyFrame | undefined,
+): {
   child: FakeWorkerChild;
   emitFd3: (bytes: Buffer) => void;
 } {
   const emitter = new EventEmitter();
   const stdout = new EventEmitter();
   const fd3 = new EventEmitter();
+  const decoder = createFrameDecoder();
   const child = {
     pid: 6161,
-    stdin: { write: () => true } as unknown as FakeWorkerChild["stdin"],
+    stdin: {
+      write: (chunk: Buffer) => {
+        for (const frame of decoder.push(chunk)) {
+          const reply = autoReply?.(frame as TerminalRequestFrame);
+          if (reply !== undefined) queueMicrotask(() => stdout.emit("data", encodeFrame(reply)));
+        }
+        return true;
+      },
+    } as unknown as FakeWorkerChild["stdin"],
     stdout: stdout as unknown as FakeWorkerChild["stdout"],
     // fd0=stdin, fd1=stdout, fd2=stderr, fd3=the events push channel.
     stdio: [null, stdout, null, fd3],
@@ -2284,6 +2418,49 @@ describe("createTerminalSessionRegistry — fd3 events-push reader (no poll)", (
     expect(registry.get(sessionId, OWNER)?.status).toBe("exited");
     expect(store.remove).toHaveBeenCalledWith(sessionId);
     expect(store.recover()).toHaveLength(0);
+  });
+
+  it("retains a managed descriptor until natural-exit retirement succeeds", async () => {
+    const fake = makeFd3DrivableWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const store = fakeDescriptorStore();
+    let confirmRetirement: ((result: Result<void, Error>) => void) | undefined;
+    const retireManagedSession = vi.fn(() => new Promise<Result<void, Error>>((resolve) => {
+      confirmRetirement = resolve;
+    }));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { descriptorStore: store, retireManagedSession },
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, OWNER);
+    store.remove.mockClear();
+
+    fake.emitFd3(encodeFrame({
+      sessionId,
+      event: "terminal:session_state",
+      payload: { state: "exited" },
+    }));
+
+    expect(store.remove).not.toHaveBeenCalled();
+    expect(store.recover()).toHaveLength(1);
+    confirmRetirement?.(ok(undefined));
+    await vi.waitFor(() => expect(store.remove).toHaveBeenCalledWith(sessionId));
   });
 
   it("a corrupt (non-JSON) fd3 byte does NOT crash the daemon — WARN errorKind:'validation', drop the worker, never rethrow", async () => {
@@ -2609,7 +2786,10 @@ function durableDescriptor(over: Partial<SessionDescriptor> = {}): SessionDescri
 function fakeDescriptorStore(seed: SessionDescriptor[] = []): SessionDescriptorStorePort {
   const map = new Map<string, SessionDescriptor>(seed.map((d) => [d.sessionId, d]));
   return {
-    persist: vi.fn((d: SessionDescriptor) => map.set(d.sessionId, d)),
+    persist: vi.fn((d: SessionDescriptor) => {
+      map.set(d.sessionId, d);
+      return ok(undefined);
+    }),
     recover: vi.fn(() => Array.from(map.values())),
     remove: vi.fn((id: string) => map.delete(id)),
   };

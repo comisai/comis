@@ -393,7 +393,7 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     return { deps, emitted, skillsLogger };
   }
 
-  it("bridges managed attention and exit transitions with identifiers only", () => {
+  it("bridges managed attention while registry retirement owns exit transitions", () => {
     const { deps } = makeEventDeps();
     const publish = vi.fn(async () => undefined);
     const hook = buildTerminalEventHook("agent-a", {
@@ -412,7 +412,6 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     expect(publish.mock.calls.map(([event]) => event)).toEqual([
       expect.objectContaining({ terminalSessionId: "s-managed", transition: "input_needed" }),
       expect.objectContaining({ terminalSessionId: "s-managed", transition: "stuck" }),
-      expect.objectContaining({ terminalSessionId: "s-managed", transition: "exited" }),
     ]);
     for (const [event] of publish.mock.calls) {
       expect(Object.keys(event).sort()).toEqual([

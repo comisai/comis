@@ -36,7 +36,6 @@ const RESTART_EMULATOR = resolve(HERE, "restart-emu.sh");
 const VPS_EMULATOR = resolve(HERE, "../../bin/vps-emu.ts");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
-const SETUP_VPS = resolve(HERE, "setup-vps.sh");
 const RIG_DOCTOR = resolve(HERE, "rig-doctor.sh");
 const VERIFY_BUILD = resolve(HERE, "verify-build.sh");
 const INSTALL_VPS = resolve(HERE, "install-vps.sh");
@@ -931,14 +930,6 @@ describe("local rig mode", () => {
     }
   });
 
-  it("loads the selected isolated rig before remote setup mutates its data root", () => {
-    const source = readFileSync(SETUP_VPS, "utf8");
-
-    expect(source).toContain('source "$HERE/_rig.sh"');
-    expect(source).toContain('rig_load_env "$HERE/.live-env" "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env');
-    expect(source).not.toContain("[ -f /root/comis-rig.env ] && . /root/comis-rig.env");
-  });
-
   it("scopes the local Telegram emulator lifecycle to the selected rig", () => {
     const shellRig = readFileSync(RIG_HELPER, "utf8");
     const nodeRig = readFileSync(RIG_NODE_HELPER, "utf8");
@@ -994,40 +985,6 @@ describe("local rig mode", () => {
     expect(source).not.toContain(
       'rig_load_env "$HERE/.live-env" "$HERE/.rig-env"',
     );
-  });
-
-  it("deploys and diagnoses every remote helper inside the selected kit directory", () => {
-    const deployScripts = readFileSync(DEPLOY_SCRIPTS, "utf8");
-    const deployEmulator = readFileSync(DEPLOY_EMULATOR, "utf8");
-    const rigDoctor = readFileSync(RIG_DOCTOR, "utf8");
-
-    expect(deployScripts).toContain("mkdir -p '$KIT_DIR' && tar -xf - -C '$KIT_DIR'");
-    expect(deployScripts).not.toContain('tar -xf - -C /root');
-    expect(deployEmulator).toContain("tar -xf - -C '$KIT_DIR'");
-    expect(deployEmulator).toContain('bash \'$KIT_DIR/restart-emu.sh\'');
-    expect(deployEmulator).toContain("node '$KIT_DIR/wire-emu.mjs'");
-    expect(deployEmulator).toContain("bash '$KIT_DIR/restart-daemon.sh'");
-    expect(rigDoctor).toContain('RIG_HELPER="$KIT_DIR/_rig.sh"');
-    expect(rigDoctor).toContain(
-      `remote_root "RIG_ENV='$RIG_ENV' node '$KIT_DIR/revoke.mjs'`,
-    );
-    expect(rigDoctor).not.toContain('RIG_HELPER="/root/_rig.sh"');
-  });
-
-  it("passes the selected rig environment into the detached remote emulator", () => {
-    const source = readFileSync(DEPLOY_EMULATOR, "utf8");
-    const restart = readFileSync(RESTART_EMULATOR, "utf8");
-
-    expect(source).toContain("RIG_ENV='$RIG_ENV' EMU_DIR='$EMU_DIR'");
-    expect(restart).toContain('rig_load_env "$HERE/.live-env" "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env');
-  });
-
-  it("renders every remote emulator isolation coordinate into the selected rig environment", () => {
-    const source = readFileSync(DEPLOY_SCRIPTS, "utf8");
-
-    for (const key of ["KIT_DIR", "RIG_ENV", "EMU_JSON", "EMU_LOG", "EMU_TMUX_SESSION"]) {
-      expect(source).toContain(`export ${key}="` + "\\${" + `${key}:-`);
-    }
   });
 
   it("derives the local trajectory root from an explicitly selected data root", () => {

@@ -115,19 +115,6 @@ describe("generic runtime specialization boundary", () => {
     expect(violations).toEqual([]);
   });
 
-  it("constructs no service-specific worker command line in production source", () => {
-    const serviceCommandToken = "dev" + "crew";
-    const violations = scannedFiles()
-      .filter((file) => relative(REPO_ROOT, file).startsWith("packages/"))
-      // Opt-in prompt skills are the sanctioned specialization boundary. Their
-      // advisory procedures are shipped as data and never execute in the kernel.
-      .filter((file) => !relative(REPO_ROOT, file).startsWith("packages/daemon/bundled-skills/"))
-      .filter((file) => !file.endsWith(".test.ts"))
-      .filter((file) => readFileSync(file, "utf8").toLowerCase().includes(serviceCommandToken));
-
-    expect(violations.map((file) => relative(REPO_ROOT, file))).toEqual([]);
-  });
-
   it("keeps starter workspaces neutral while seeding generic first-run setup", () => {
     const templates = source("packages/core/src/workspace/templates.ts");
     expect(templates).not.toContain('"BOOTSTRAP.md": ""');

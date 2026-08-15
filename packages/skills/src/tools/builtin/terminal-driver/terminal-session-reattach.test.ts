@@ -48,7 +48,7 @@ const DESC: SessionDescriptor = {
 /** A fake store whose `recover()` returns the seeded descriptors verbatim. */
 function fakeStore(recovered: SessionDescriptor[]): SessionDescriptorStorePort {
   return {
-    persist: vi.fn(),
+    persist: vi.fn(() => ok(undefined)),
     recover: vi.fn(() => recovered),
     remove: vi.fn(),
   };
@@ -121,7 +121,7 @@ describe("recoverSessionDescriptors — the recover-on-boot scan", () => {
 
   it("TOTAL: a throwing store.recover() yields an empty list, never an exception", () => {
     const store: SessionDescriptorStorePort = {
-      persist: vi.fn(),
+      persist: vi.fn(() => ok(undefined)),
       recover: vi.fn(() => {
         throw new Error("disk read blew up");
       }),

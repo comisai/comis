@@ -1,12 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: NONE — this substrate is best-effort THROUGHOUT (like its sibling
-// terminal-drive-journal-persistence.ts, and unlike terminal-wake-persistence.ts's
-// removeWakeStateFile which re-raises a genuine non-ENOENT unlink fault). The
-// descriptor store's persist runs at create-time off the registry's hot path and its
-// remove off the drive-cleanup path, where a surfaced fs fault would abort an unrelated
-// teardown; the registry's in-memory `sessions` handle is the source of truth at
-// runtime, so a write that cannot complete degrades to "this session is missed on the
-// next recover" (it is flipped `lost` on boot, never re-attached), never a throw.
 /**
  * The DAEMON-side durable SESSION-DESCRIPTOR store — the daemon impl of the
  * {@link SessionDescriptorStorePort} the registry's recover-on-boot consumes, and the
@@ -84,6 +76,7 @@ import {
   type EnsureContainedDirOptions,
   type WriteRegularFileOptions,
 } from "@comis/observability";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import {
   serializeDescriptor,
   deserializeDescriptor,
@@ -105,9 +98,7 @@ export const DESCRIPTORS_SUBDIR = "descriptors";
  * `node:fs` primitive; a test overrides them to capture the mode args without a real disk
  * (the journal store's `DriveJournalPersistenceDeps`-shaped seam).
  *
- * The store IGNORES the `ensureContainedDir`/`writeRegularFile` `Result` return
- * (best-effort — a failure is swallowed by the outer try), so the seam types them as
- * returning `unknown` and a spy may return `void`.
+ * Persistence reports the confined write result so managed launch can fail closed.
  */
 export interface SessionDescriptorPersistenceDeps {
   /** The confinement root (the parent of `terminal-drive/`). Required. */
@@ -115,9 +106,9 @@ export interface SessionDescriptorPersistenceDeps {
   /** The agent this store is bound to (its confinement subtree + recover scope). Required. */
   agentId: string;
   /** Create the confined dir at `0o700` (default: the `@comis/observability` helper). */
-  ensureContainedDir?: (options: EnsureContainedDirOptions) => unknown;
+  ensureContainedDir?: (options: EnsureContainedDirOptions) => ReturnType<typeof obsEnsureContainedDir>;
   /** Write the file at `0o600`, symlink-safe (default: the `@comis/observability` helper). */
-  writeRegularFile?: (options: WriteRegularFileOptions) => unknown;
+  writeRegularFile?: (options: WriteRegularFileOptions) => ReturnType<typeof obsWriteRegularFile>;
   readFileSync?: (path: string, encoding: "utf-8") => string;
   readdirSync?: (path: string) => string[];
   statSync?: (path: string) => { isFile(): boolean };
@@ -129,7 +120,7 @@ export interface SessionDescriptorPersistenceDeps {
  * The confined per-agent descriptors dir:
  * `<dataDir>/terminal-drive/<agentId>/descriptors` (the journal store's `journals/`
  * sibling). Path-traversal guarded by `safePath` (a degenerate `dataDir`/`agentId`
- * throws `PathTraversalError`, which the callers swallow best-effort).
+ * returns a failed persistence result while recovery and removal remain best-effort).
  */
 export function descriptorDir(dataDir: string, agentId: string): string {
   return safePath(dataDir, DRIVE_DIR_NAME, agentId, DESCRIPTORS_SUBDIR);
@@ -138,9 +129,7 @@ export function descriptorDir(dataDir: string, agentId: string): string {
 /**
  * Construct the daemon-side durable descriptor store bound to one `(dataDir, agentId)` —
  * the {@link SessionDescriptorStorePort} the registry deps inject. All
- * three methods are best-effort + total (never throw): `persist` swallows a write fault
- * (the registry handle is the runtime source of truth), `recover` skips a corrupt /
- * unreadable file (never crashes boot), `remove` is ENOENT-tolerant.
+ * recover skips corrupt or unreadable files and remove is ENOENT-tolerant.
  */
 export function createSessionDescriptorStore(deps: SessionDescriptorPersistenceDeps): SessionDescriptorStorePort {
   const ensure = deps.ensureContainedDir ?? obsEnsureContainedDir;
@@ -152,23 +141,30 @@ export function createSessionDescriptorStore(deps: SessionDescriptorPersistenceD
   const unlink = deps.unlinkSync ?? nodeUnlinkSync;
 
   return {
-    persist(descriptor: SessionDescriptor): void {
-      // Best-effort: a failure (a PathTraversalError from a degenerate dataDir/agentId,
-      // an unwritable target, a write fault) is SWALLOWED — it must not propagate off the
-      // registry's create path (the in-memory handle already exists). NEVER deletes.
-      try {
-        const dir = descriptorDir(deps.dataDir, deps.agentId);
-        ensure({ dir, mode: 0o700, confinedBaseDir: deps.dataDir });
-        const filePath = safePath(dir, `${descriptor.sessionId}.json`);
-        write({
-          path: filePath,
-          content: serializeDescriptor(descriptor),
-          confinedBaseDir: deps.dataDir,
-        });
-      } catch {
-        // Best-effort: a failed persist degrades to "this session is missed on the next
-        // recover" (flipped lost on boot), never a throw (mirrors the journal store).
+    persist(descriptor: SessionDescriptor): Result<void, Error> {
+      if (descriptor.owner.agentId !== deps.agentId) {
+        return err(new Error("terminal descriptor owner does not match its durable store"));
       }
+      const paths = tryCatch(() => {
+        const dir = descriptorDir(deps.dataDir, deps.agentId);
+        return { dir, filePath: safePath(dir, `${descriptor.sessionId}.json`) };
+      });
+      if (!paths.ok) return err(paths.error);
+      const ensured = tryCatch(() => ensure({
+        dir: paths.value.dir,
+        mode: 0o700,
+        confinedBaseDir: deps.dataDir,
+      }));
+      if (!ensured.ok) return err(ensured.error);
+      if (!ensured.value.ok) return err(ensured.value.error);
+      const written = tryCatch(() => write({
+        path: paths.value.filePath,
+        content: serializeDescriptor(descriptor),
+        confinedBaseDir: deps.dataDir,
+        fsyncBeforeSuccess: true,
+      }));
+      if (!written.ok) return err(written.error);
+      return written.value.ok ? ok(undefined) : err(written.value.error);
     },
 
     recover(): SessionDescriptor[] {
@@ -222,7 +218,7 @@ export function createSessionDescriptorStore(deps: SessionDescriptorPersistenceD
 
     remove(sessionId: string): void {
       // The DISTINCT explicit delete (persist/recover NEVER delete; only this does).
-      // ENOENT-tolerant; per the module's all-best-effort contract a genuine fault is
+      // ENOENT-tolerant; per the removal contract a genuine fault is
       // swallowed too (the lingering file is overwritten/skipped on the next boot).
       let filePath: string;
       try {

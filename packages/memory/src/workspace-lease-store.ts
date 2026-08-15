@@ -79,6 +79,16 @@ function parseStored(raw: string): Result<WorkspaceLeaseRecord, Error> {
 export function createSqliteWorkspaceLeaseStore(db: Database.Database): WorkspaceLeasePort {
   const selectLease = db.prepare("SELECT * FROM workspace_leases WHERE workspace_lease_id = ?");
   const selectLeaseByRun = db.prepare("SELECT * FROM workspace_leases WHERE managed_run_id = ?");
+  const selectActiveWorkspaceIdentity = db.prepare(`
+    SELECT * FROM workspace_leases
+    WHERE state = 'active' AND (
+      canonical_path = ? OR (
+        filesystem_device = ? AND filesystem_inode = ? AND filesystem_birthtime_ns = ?
+      )
+    )
+    ORDER BY workspace_lease_id ASC
+    LIMIT 1
+  `);
   const insertLease = db.prepare(`
     INSERT INTO workspace_leases (
       schema_version, workspace_lease_id, managed_run_id, service_instance_id,
@@ -119,6 +129,19 @@ export function createSqliteWorkspaceLeaseStore(db: Database.Database): Workspac
 
   function readRunRecord(managedRunId: string): Result<WorkspaceLeaseRecord | undefined, Error> {
     const row = leaseMapper.parseOptionalRow(selectLeaseByRun.get(managedRunId));
+    if (!row.ok) return err(new Error(row.error.message));
+    return row.value === undefined ? ok(undefined) : rowToRecord(row.value);
+  }
+
+  function readActiveWorkspaceIdentity(
+    record: WorkspaceLeaseRecord,
+  ): Result<WorkspaceLeaseRecord | undefined, Error> {
+    const row = leaseMapper.parseOptionalRow(selectActiveWorkspaceIdentity.get(
+      record.canonicalPath,
+      record.filesystemIdentity.device,
+      record.filesystemIdentity.inode,
+      record.filesystemIdentity.birthtimeNs,
+    ));
     if (!row.ok) return err(new Error(row.error.message));
     return row.value === undefined ? ok(undefined) : rowToRecord(row.value);
   }
@@ -168,6 +191,11 @@ export function createSqliteWorkspaceLeaseStore(db: Database.Database): Workspac
     const runLease = readRunRecord(record.managedRunId);
     if (!runLease.ok) return runLease;
     if (runLease.value !== undefined) return ok({ kind: "replay_conflict" });
+    if (parsed.value.state === "active") {
+      const workspaceIdentity = readActiveWorkspaceIdentity(parsed.value);
+      if (!workspaceIdentity.ok) return workspaceIdentity;
+      if (workspaceIdentity.value !== undefined) return ok({ kind: "replay_conflict" });
+    }
     insertLease.run(
       parsed.value.schemaVersion,
       parsed.value.workspaceLeaseId,

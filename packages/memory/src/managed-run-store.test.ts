@@ -176,6 +176,10 @@ describe("createSqliteManagedRunStore durable state machine", () => {
         table: "managed_run_continuation_claims",
         missing: "reduction_outcome",
       },
+      {
+        table: "managed_run_attention_operations",
+        missing: "tenant_id",
+      },
     ] as const) {
       const incompatibleDb = new Database(":memory:");
       incompatibleDb.exec(`CREATE TABLE ${fixture.table} (record_id TEXT)`);
@@ -506,6 +510,48 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     expect(await store.get(OWNER_SCOPE, "managed-run_a")).toMatchObject({
       ok: true,
       value: { openAttentionCount: 0 },
+    });
+  });
+
+  it("claims each owner response operation for only one attention handle", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    for (const [index, attentionId] of ["attention-operation-a", "attention-operation-b"].entries()) {
+      expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+        serviceReportId: `service-report_${attentionId}`,
+        contentRef: `report-content_${attentionId}`,
+        kind: "attention",
+        receivedAtMs: 1_800_000_000_100 + index,
+        retainedUntilMs: 1_802_592_000_100 + index,
+        attention: {
+          attentionId,
+          attentionRef: `report-content_${attentionId}`,
+          externalKey: `approval-${index}`,
+        },
+      }))).value?.kind).toBe("accepted");
+    }
+
+    const operationId = "attention-response-owner-unique";
+    expect((await store.claimAttentionResponse(OWNER_SCOPE, {
+      operationId,
+      attentionId: "attention-operation-a",
+      responseRef: "attention-response-content-a",
+      respondedAtMs: 1_800_000_000_200,
+    })).value?.kind).toBe("updated");
+    expect((await store.claimAttentionResponse(OWNER_SCOPE, {
+      operationId,
+      attentionId: "attention-operation-b",
+      responseRef: "attention-response-content-b",
+      respondedAtMs: 1_800_000_000_201,
+    })).value?.kind).toBe("replay_conflict");
+    expect(await store.getAttention(OWNER_SCOPE, "attention-operation-b")).toMatchObject({
+      ok: true,
+      value: { status: "open", responseRef: undefined },
+    });
+    expect(await store.getAttentionResponseByOperation(OWNER_SCOPE, operationId)).toMatchObject({
+      ok: true,
+      value: { attentionId: "attention-operation-a", responseRef: "attention-response-content-a" },
     });
   });
 

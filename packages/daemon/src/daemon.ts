@@ -115,6 +115,7 @@ import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-b
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir, type AppConfig } from "@comis/core";
 import { createWorkspacePolicyResolveDir } from "./wiring/workspace-policy-resolve-dir.js";
+import { resolveCapturedWorkspacePolicy } from "./wiring/workspace-policy-snapshot-resolution.js";
 import { createSchedulerCorePortBindings } from "./wiring/scheduler-core-port-bindings.js";
 import { setupProactiveSchedulers } from "./wiring/setup-proactive-schedulers.js";
 import { closePartialBootSchedulerAdmission } from "./wiring/daemon-utils.js";
@@ -2188,10 +2189,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
     resolveSessionManager: (agentId) => handle.piSessionAdapters.get(agentId),
     assembleToolsForAgent, adaptersByType, deliveryService,
     resolveWorkspacePolicy: async (agentId, policyHash) => {
-      const cached = container.workspacePolicyPort?.get(policyHash);
-      const loaded = cached?.ok
-        ? cached
-        : await container.workspacePolicyPort?.load(agentId);
+      const loaded = await resolveCapturedWorkspacePolicy(
+        container.workspacePolicyPort,
+        agentId,
+        policyHash,
+      );
       if (loaded === undefined || !loaded.ok) {
         return err(new Error("The captured immutable workspace policy snapshot is unavailable"));
       }
@@ -2232,10 +2234,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
       return readExecutionResultJournal(sessionManager, sessionKey, journalKey);
     },
     resolveWorkspacePolicy: async (agentId, policyHash) => {
-      const cached = container.workspacePolicyPort?.get(policyHash);
-      const loaded = cached?.ok
-        ? cached
-        : await container.workspacePolicyPort?.load(agentId);
+      const loaded = await resolveCapturedWorkspacePolicy(
+        container.workspacePolicyPort,
+        agentId,
+        policyHash,
+      );
       if (loaded === undefined || !loaded.ok) {
         return err(new Error("The captured immutable workspace policy snapshot is unavailable"));
       }

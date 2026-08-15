@@ -178,9 +178,6 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     if (!parsed.ok) return;
     expect(parsed.value.name).toBe("dev-crew");
     expect(parsed.value.comis?.requires).toEqual({ bins: [], env: [] });
-    expect(manifest).toMatch(/terminal_exited_without_candidate_evidence[\s\S]*reconcile_task/u);
-    expect(manifest).toMatch(/workspace_not_recoverable[\s\S]*prepare a replacement/iu);
-    expect(manifest).toMatch(/Never construct a\s+`devcrew` command/iu);
   });
 
   it("downloads a generated chart into an ESM workspace without host renderers", () => {

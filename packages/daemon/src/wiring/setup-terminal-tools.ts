@@ -339,7 +339,7 @@ export function buildTerminalEventHook(
           // A per-session PTY exit (the worker hosts other sessions — this is the signal).
           const state = p.state === "exited" ? "exited" : "lost";
           deps.eventBus.emit("terminal:session_state", { sessionId: frame.sessionId, agentId, state, durationMs: 0, timestamp });
-          publishManaged(frame.sessionId, state);
+          if (state === "lost") publishManaged(frame.sessionId, state);
           break;
         }
         case "terminal:escalated": {

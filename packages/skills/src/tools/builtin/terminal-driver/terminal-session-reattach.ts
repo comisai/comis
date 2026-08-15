@@ -68,8 +68,8 @@ import type { SessionHandle } from "./terminal-session-types.js";
  * ENOENT-tolerant (a double-remove on a gone session is a no-op, never a throw).
  */
 export interface SessionDescriptorStorePort {
-  /** Persist (or overwrite) the descriptor for a durable session. Best-effort; never throws. */
-  persist(descriptor: SessionDescriptor): void;
+  /** Persist (or overwrite) the descriptor for a durable session. */
+  persist(descriptor: SessionDescriptor): Result<void, Error>;
   /**
    * Scan the durable dir and return every well-formed persisted descriptor (a
    * corrupt-after-crash file is a corrupt-SKIP via `deserializeDescriptor`).
@@ -328,7 +328,7 @@ export interface TerminalDurabilityDeps {
     readonly workspaceLeaseId: string;
     readonly serviceInstanceId: string;
     readonly terminalSessionId: string;
-    readonly transition: "released";
+    readonly transition: "exited" | "released";
   }) => Promise<Result<void, Error>>;
   onReattached?: (info: { sessionId: string; agentId: string; managedRunId?: string; workspaceLeaseId?: string; serviceInstanceId?: string }) => void;
   onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string; managedRunId?: string; workspaceLeaseId?: string; serviceInstanceId?: string }) => void;
