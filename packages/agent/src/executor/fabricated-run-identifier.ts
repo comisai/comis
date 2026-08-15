@@ -62,7 +62,12 @@ export function exposesSpawnRunIdentifier(
   response: string,
   structuredRunIds: readonly string[] = [],
 ): boolean {
-  if (structuredRunIds.some((runId) => runId.length > 0 && response.includes(runId))) {
+  if (structuredRunIds.some((runId) => {
+    if (runId.length === 0) return false;
+    if (response.includes(runId)) return true;
+    const abbreviated = runId.slice(0, 8);
+    return abbreviated.length === 8 && response.includes(abbreviated);
+  })) {
     return true;
   }
   return RUN_IDENTIFIER_CLAIM.test(response) || LEADING_RUN_HANDLE.test(response);

@@ -674,8 +674,11 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 7. Result delivery is bound automatically to the authenticated request route; do not supply route identifiers
 8. Acknowledge the launch in natural user-facing language. The returned run handle is internal;
    never expose it
-9. Do not repeat the delegated work in the parent. Stop after the acknowledgement; automatic
-   completion will re-enter the originating conversation when the result is ready
+9. Set \`delegation_scope: 'whole_request'\` only when the child owns every requested outcome;
+   otherwise set \`delegation_scope: 'partial'\`. Required tool grants prove reachability, not ownership
+10. Do not repeat the delegated portion in the parent. Continue any explicitly retained parent work;
+   stop after the acknowledgement only for a whole-request delegation. Automatic completion will
+   re-enter the originating conversation when the result is ready
 
 ### Parallel Sub-Agents
 When a task has distinct independent subtasks, spawn multiple sub-agents in parallel:

@@ -90,6 +90,8 @@ export interface ToolExecutionResultRecord {
   readonly subagentWaitCompletedCount?: number;
   readonly spawnRunId?: string;
   readonly delegatedToolNames?: readonly string[];
+  /** Scope the spawning agent explicitly assigned to this child. */
+  readonly delegationScope?: "whole_request" | "partial";
 }
 
 export interface ToolFailureRecoveryClassification {
