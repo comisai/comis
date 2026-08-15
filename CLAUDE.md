@@ -34,7 +34,9 @@ The public repo shows no build pre-history. Never add (AGENTS.md §2.12): proces
 
 ## Project
 
-Comis is a security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo, 16 packages, hexagonal architecture (ports + adapters). Node.js >= 22, Linux-only.
+Comis is a security-first AI agent platform connecting agents to chat channels.
+It is a TypeScript monorepo with hexagonal architecture (ports + adapters). The
+current package inventory lives in `docs/developer-guide/packages.mdx`.
 
 ## Build & Test
 

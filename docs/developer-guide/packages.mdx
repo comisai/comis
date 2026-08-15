@@ -28,7 +28,7 @@ All packages use ES modules (`"type": "module"`), strict TypeScript with `compos
 | daemon | `@comis/daemon` | Orchestrator, observability, graph coordinator | `DaemonInstance`, wiring, graph coordinator |
 | observability | `@comis/observability` | Diagnostics substrate: queued writer, payload bounding, sanitization, cache-trace runtime, EventBus bridge, cache-stats aggregation and RPC | Diagnostics runtime, cache-trace recorder, stats aggregator |
 | observability-otel | `@comis/observability-otel` | Opt-in OpenTelemetry and Prometheus export extension | OTLP signals, Prometheus metrics exporter |
-| capability-service-sdk | `@comis/capability-service-sdk` | Private schemas and deterministic release artifacts for the capability-service protocol | Strict Zod contracts, JSON Schemas, conformance fixtures, bundle manifest |
+| capability-service-sdk | `@comis/capability-service-sdk` | Private schemas and deterministic artifacts for the capability-service protocol | Strict Zod contracts, JSON Schemas, conformance fixtures, bundle manifest |
 | orchestrator | `@comis/orchestrator` | Inbound pipeline, execution coordination, channel-manager, command queue, routing, and cross-session messaging | Pipeline coordinator, channel manager, command router |
 | comis | `comisai` | Umbrella package (namespace re-exports) and `comis` CLI bin | Namespace re-exports of all sub-packages |
 | web | `@comis/web` | Lit + Vite + Tailwind standalone SPA | Web dashboard views and components |
@@ -55,7 +55,7 @@ observability packages; it also manages startup, shutdown, and signals.
 **`@comis/web`** is a standalone single-page application built with Lit web components, Vite for bundling, and Tailwind CSS for styling. It communicates with the daemon exclusively through the gateway's HTTP and WebSocket APIs.
 
 <Note>
-The published umbrella package is named `comisai` on npm (the directory is `packages/comis/`). It bundles the runtime `@comis/*` workspace packages and exposes a `comis` CLI binary. Subpath imports such as `comisai/core` or `comisai/agent` are exposed via the umbrella's `exports` map. The private capability-service SDK is excluded from the npm umbrella and distributed as pinned release artifacts.
+The published umbrella package is named `comisai` on npm (the directory is `packages/comis/`). It bundles the runtime `@comis/*` workspace packages, including the private capability-service SDK needed by the daemon and skills packages, and exposes a `comis` CLI binary. Subpath imports such as `comisai/core` or `comisai/agent` are exposed via the umbrella's `exports` map. The SDK remains private and has no standalone npm publication or `comisai` subpath export.
 </Note>
 
 ## Dependency relationships
@@ -77,7 +77,8 @@ dependency graph. At a high level:
   standalone SPA; `comisai` is the umbrella package that re-exports the
   workspace packages.
 - `capability-service-sdk` owns strict protocol schemas and deterministic
-  cross-language artifacts without entering the runtime package graph.
+  cross-language artifacts. The daemon and skills packages consume its runtime
+  contracts, and `comisai` bundles it as an internal dependency.
 
 ## Package Boundary Rules
 

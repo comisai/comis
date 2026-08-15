@@ -46,12 +46,15 @@ data directory.
 │   └── trace-exports/       # comis trace export output — one comis-trace-<sid8>-<ts>/ dir per export
 ├── workspace-<agentId>/     # named-agent workspaces (one per extra agent)
 ├── terminal-drive/          # durable terminal-driver state (default; absent only with drive.durable: false)
-│   └── <agentId>/journals/<sessionId>.json
+│   └── <agentId>/
+│       ├── journals/<sessionId>.json
+│       └── descriptors/<sessionId>.json # recoverable session identity
+├── managed-runs/private/   # owner-private capability-service content (default path)
 ├── models/                  # auto-downloaded ML model caches
 │   └── whisper/             # local STT whisper model (downloaded once on first use, reused)
 ├── agents/                  # per-agent RPC state (subagent results, etc.)
 ├── background-tasks/        # background task state files
-├── skills/                  # seeded skill library — bundled claude-code/codex/skill-creator skills (re-seeded on version change) + any added skills
+├── skills/                  # seeded bundled skill library plus operator-added skills
 │   └── <name>/SKILL.md      # one dir per skill (the agent auto-discovers these by description)
 ├── identity/
 │   └── device.json          # Ed25519 device identity (auto-generated)
@@ -72,6 +75,7 @@ Some entries only appear under specific conditions.
 - `workspace/trace-exports/` — created only after the **first** `comis trace export` (or an owner `/export-trajectory`); each export writes one `comis-trace-<sid8>-<ts>/` directory under the agent's workspace. Absent until then.
 - Named workspaces like `workspace-myagent/` — appear only when you define more than one agent.
 - `terminal-drive/` — the per-agent **durable** terminal drive-state journals. A durable drive is the **default** (`drive.durable: true`), so this appears whenever an agent runs a terminal drive; absent only for an explicit `drive.durable: false` (non-durable) drive or on a tmux-less host.
+- `managed-runs/private/` — appears only after an enabled capability service creates owner-private managed-run content. A custom `capabilityServices.privateContentDirectory` replaces this default path.
 - `models/whisper/` — created only after the **first** voice transcription that uses the keyless in-process local STT engine (when `integrations.media.transcription.provider` resolves to `local` without a `local.baseUrl` server). Absent on a fresh install and whenever local STT never runs.
 - `models/tts/` — created only after the **first** voice reply that uses the keyless in-process offline TTS engine (when `integrations.media.tts.provider` resolves to `local`/`piper`). A separate subdir from `models/whisper/`. Absent on a fresh install and whenever local TTS never runs.
 </Note>
@@ -130,8 +134,10 @@ Never commit `.env` to version control. It contains unencrypted credentials. Com
 
 The main SQLite database. It stores conversation sessions, long-term memory entries, delivery queue state, observability rows, DAG context engine tables, embedding cache, and more. This is the most important file in the data directory.
 
-Capability-service managed runs also keep content-free report cursors and
-continuation claims here. A continuation execution failure reduces its exact
+Capability-service managed runs also keep their durable state transitions,
+content-free report/evidence indexes, attention and operation records,
+continuation claims, workspace leases, execution attachments, and managed
+terminal bindings here. A continuation execution failure reduces its exact
 accepted report interval to `unknown` and settles that interval without immediate
 replay. The same SQLite transaction records whether that reduced interval must
 settle as `completed` or `failed`, so restart recovery cannot recompute or change
@@ -141,23 +147,6 @@ continuation; an abandoned claim remains recoverable after restart.
 The observability rows live in the `obs_diagnostics` table, grouped by a `category` label. Among them, `model_health` is a one-shot diagnostic recorded once per boot that captures the daemon's load-level recall signals — whether an embedding provider is available, whether the GGUF reranker loaded, and whether the reranker model is present on disk. It carries booleans only (no model paths, no secrets) and lets the system health lens explain why recall was degraded on a given daemon without grepping the log.
 
 `config_posture` is likewise a one-shot snapshot recorded once per boot, capturing the daemon's security posture — whether the gateway is running without TLS, the per-family **counts** of stranded secrets (credentials left in the inactive store that the active `security.storage` mode cannot reach), and a canary-fallback aggregate (how many agents fall back to deterministic canary tokens because `CANARY_SECRET` is unset). It records counts and closed labels only — **never a secret value** — so the system health lens can surface a TLS-off / stranded-secret / canary posture without opening the log.
-
-### `managed-runs/private/`
-
-Private capability-service activation descriptors, report bodies, evidence bodies,
-and attention content. The path is relative to the data directory and is selected
-by `capabilityServices.privateContentDirectory`; `managed-runs/private` is the
-default. Comis creates the root and every scope directory with owner-only `0700`
-permissions. Scope and body filenames are SHA-256-derived, while `memory.db`
-stores the owner-scoped content-free index, content hash, byte length, retention,
-and relative path.
-
-**Written by:** linked capability-service activation, report, evidence, and
-attention flows.
-
-**Safe to delete?** No while managed runs remain active or recoverable. Missing or
-hash-mismatched bodies fail closed as unavailable evidence, so preserve this tree
-together with `memory.db` when backing up or restoring managed-run state.
 
 #### Video Job Store — Async Render Lifecycle
 
@@ -271,11 +260,11 @@ The SDK session JSONL is **disposable**. Deleting it directly (for any reason �
 
 ```bash
 # Reset a conversation (clears LCD history + session transcript — irreversible):
-comis sessions reset <sessionKey> --yes
+comis sessions reset <sessionKey> --tenant <tenantId> --agent <agentId> --yes
 # Also clear RAG memories for this session (the full-forget path):
-comis sessions reset <sessionKey> --memory --yes
+comis sessions reset <sessionKey> --tenant <tenantId> --agent <agentId> --memory --yes
 # Nuclear forget — also purge consolidated observations derived from this session:
-comis sessions reset <sessionKey> --memory --purge-derived --yes
+comis sessions reset <sessionKey> --tenant <tenantId> --agent <agentId> --memory --purge-derived --yes
 ```
 
 `sessions reset` clears two layers atomically: the LCD lossless-store history (dag mode) and the daemon sessionStore working transcript (both modes). A follow-up turn has no prior context regardless of which context engine the session uses.
@@ -284,6 +273,25 @@ See [CLI Reference](/reference/cli#comis-sessions) for the full command referenc
 
 **Written by:** the daemon continuously during operation.
 **Safe to delete?** Deleting it erases all conversation history, stored memories, pending deliveries, and cached embeddings. The daemon will recreate an empty database on next start, but you lose all data permanently.
+
+---
+
+### `managed-runs/private/`
+
+Private capability-service activation descriptors, report bodies, evidence bodies,
+and attention content. The path is relative to the data directory and is selected
+by `capabilityServices.privateContentDirectory`; `managed-runs/private` is the
+default. Comis creates the root and every scope directory with owner-only `0700`
+permissions. Scope and body filenames are SHA-256-derived, while `memory.db`
+stores the owner-scoped content-free index, content hash, byte length, retention,
+and relative path.
+
+**Written by:** linked capability-service activation, report, evidence, and
+attention flows.
+
+**Safe to delete?** No while managed runs remain active or recoverable. Missing or
+hash-mismatched bodies fail closed as unavailable evidence, so preserve this tree
+together with `memory.db` when backing up or restoring managed-run state.
 
 ---
 
@@ -600,11 +608,17 @@ tar -czf comis-backup.tar.gz \
   ~/.comis/config.yaml \
   ~/.comis/.env \
   ~/.comis/memory.db \
+  ~/.comis/managed-runs/private \
   ~/.comis/secrets.db \
   ~/.comis/workspace
 ```
 
 `config.last-good.yaml`, `logs/`, `traces/`, and `ecosystem.config.js` are machine-specific or regenerated and do not need to be included.
+
+If `capabilityServices.privateContentDirectory` uses a non-default relative
+path, include that path beneath the data directory instead. Restore it together
+with `memory.db`; the SQLite indexes and owner-private bodies are one durable
+managed-run state set.
 
 <Note>
 If you use `secrets.db`, make sure you also have your `SECRETS_MASTER_KEY` stored somewhere safe. Without it the database is unreadable, even with the file itself.
@@ -652,12 +666,18 @@ rm -rf ~/.comis
 node packages/cli/dist/cli.js init
 ```
 
-To reset only conversation history while keeping your config and credentials:
+To reset one conversation while keeping configuration, credentials, unrelated
+memory, and capability-service state:
 
 ```bash
-rm ~/.comis/memory.db
-# The daemon recreates an empty database on next start
+comis sessions reset <sessionKey> --tenant <tenantId> --agent <agentId> --yes
 ```
+
+Do not remove `memory.db` as a conversation-reset shortcut. It also contains
+long-term memory, delivery state, managed runs, leases, attachments, and terminal
+authority. If an intentional full workspace reset removes it, remove the
+configured `capabilityServices.privateContentDirectory` in the same reset so its
+owner-private bodies do not become orphaned.
 
 To reset logs only:
 

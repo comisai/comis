@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * @comis/skills terminal-driver barrel — the public surface the daemon wiring
- * (composition root, `setup-tools.ts`) consumes: the nine AgentTool factories
- * (eight implemented + one stub [`status`]), the `TerminalSessionRegistry`
- * constructor + its production worker-spawn helper, and the allowlist + IPC types
- * the wiring needs to map config → `AllowEntryLike` and to type the injected ports.
+ * consumes: nine AgentTool factories, the `TerminalSessionRegistry` constructor,
+ * its production worker-spawn helper, and the allowlist and IPC types needed to
+ * map configuration to `AllowEntryLike` and type the injected ports.
  *
  * Re-exported through `../../index.js` (the `./tools` subpath). The public-export
  * consumer is the daemon wiring (it constructs the registry + pushes the tools).
@@ -12,7 +11,7 @@
  * @module
  */
 
-// The eight implemented tools + their shared deps contract.
+// Eight tools and their shared dependency contract.
 export {
   createTerminalSessionCreateTool,
   createTerminalSessionReadTool,
@@ -30,9 +29,7 @@ export {
   type TerminalEvictedEvent,
 } from "./terminal-tools.js";
 
-// terminal_session_status is a REAL, classifier-backed, owner-scoped tool. Its body lives in
-// terminal-status-tool.ts; terminal-tools-stubs.ts re-exports it so this import path is unchanged.
-// Still never-export (the tool-metadata-registry entry is unchanged — default-deny preserved).
+// terminal_session_status is classifier-backed, owner-scoped, and never exported over MCP.
 export { createTerminalSessionStatusTool } from "./terminal-tools-stubs.js";
 export type { TerminalStatusView } from "./terminal-session-registry.js";
 

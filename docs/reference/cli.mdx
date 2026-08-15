@@ -1280,16 +1280,18 @@ Reset sessions, configuration, or the entire workspace. Requires explicit confir
 |------|------|---------|-------------|
 | `--yes` | `boolean` | `false` | Skip confirmation prompt |
 | `-c, --config <path>` | `string` | - | Config file path for resolving data directory |
+| `--tenant <tenantId>` | `string` | - | Required with the `sessions` target |
+| `--agent <agentId>` | `string` | - | Required with the `sessions` target |
 
-- **sessions** -- Deletes all conversation sessions (tries RPC first, falls back to direct database removal)
+- **sessions** -- Deletes conversation sessions in the required tenant/agent scope through the daemon. If the daemon is unreachable, the command warns and falls back to removing the entire `memory.db`, not just that scope.
 - **config** -- Removes `config.yaml` and `.env` from the config directory
 - **workspace** -- Removes the entire data directory and config files
 
 <Warning>The `workspace` target deletes all data including sessions, memory, logs, and configuration. This cannot be undone.</Warning>
 
 ```bash
-# Clear all sessions
-comis reset sessions --yes
+# Clear all sessions in one tenant/agent scope
+comis reset sessions --tenant default --agent default --yes
 
 # Full workspace reset
 comis reset workspace --yes
@@ -1496,6 +1498,8 @@ This is the correct command when you want the model to explicitly forget a conve
 |------|------|---------|-------------|
 | `--memory` | `boolean` | `false` | Also clear the conversation's RAG memories — the full-forget path. Deletes every memory row matching this session (both paired-conversation memories **and** LCD-distilled episodic memories) for the agent + tenant scope, then unlinks them from consolidated observations (an observation built only from this session is deleted; one corroborated by other sessions is kept with the reference removed). The CLI prints the deleted count. If the daemon has no memory store wired, the flag is reported as unavailable (a stderr warning) and only LCD history + the session transcript are cleared. |
 | `--purge-derived` | `boolean` | `false` | Only meaningful with `--memory`. Escalates to deleting **every** consolidated observation derived from this session — even those still corroborated by other sessions (nuclear forget). Destructive; use only when a complete erasure of anything learned from the session is required. |
+| `--tenant <tenantId>` | `string` | - | Required tenant scope |
+| `--agent <agentId>` | `string` | - | Required agent scope |
 | `--yes` | `boolean` | `false` | Required — skip the confirmation prompt (the command exits with an error if omitted) |
 
 <Warning>
@@ -1517,13 +1521,13 @@ comis sessions inspect "default:agent:default:user123:telegram"
 comis sessions delete "default:agent:default:user123:telegram" --yes
 
 # Full conversation reset (clears LCD history + session transcript — irreversible, requires --yes)
-comis sessions reset "default:agent:default:user123:telegram" --yes
+comis sessions reset "default:agent:default:user123:telegram" --tenant default --agent default --yes
 
 # Also clear RAG memories for this session (the full-forget path — prints deleted count)
-comis sessions reset "default:agent:default:user123:telegram" --memory --yes
+comis sessions reset "default:agent:default:user123:telegram" --tenant default --agent default --memory --yes
 
 # Nuclear forget — also purge consolidated observations derived from this session
-comis sessions reset "default:agent:default:user123:telegram" --memory --purge-derived --yes
+comis sessions reset "default:agent:default:user123:telegram" --tenant default --agent default --memory --purge-derived --yes
 ```
 
 #### `sessions backup`

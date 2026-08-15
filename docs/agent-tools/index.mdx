@@ -59,14 +59,14 @@ Interactive terminal sessions for driving allowlisted binaries. Requires an oper
 | Tool | Description | Guide |
 |------|-------------|-------|
 | `terminal_session_create` | Start an interactive terminal session driving an allowlisted binary. | [Built-in Tools](/skills/built-in-tools) |
-| `terminal_session_read` | Read buffered output from an active session (accumulated since last read). | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_read` | Read the redacted rendered screen and settled exit detail. | [Terminal Driver](/agent-tools/terminal-driver) |
 | `terminal_session_list` | List all active terminal sessions for the current agent. | [Built-in Tools](/skills/built-in-tools) |
 | `terminal_session_kill` | Terminate an active terminal session and free its resources. | [Built-in Tools](/skills/built-in-tools) |
 | `terminal_session_send_text` | Write text to a terminal session's stdin (optionally submit with Enter after a settle). | [Built-in Tools](/skills/built-in-tools) |
 | `terminal_session_send_key` | Send named key chords (e.g., Enter, Ctrl-C, S-Tab) to a terminal session. | [Built-in Tools](/skills/built-in-tools) |
 | `terminal_session_resize` | Resize a terminal session's pseudo-TTY (cols x rows). | [Built-in Tools](/skills/built-in-tools) |
 | `terminal_session_wait` | Wait for a terminal session to produce matching output or a timeout. | [Built-in Tools](/skills/built-in-tools) |
-| `terminal_session_status` | Registered with final schema; execute rejects with `[not_implemented]` (stub). | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_status` | Inspect classifier state, confidence, reason, and cursor. | [Terminal Driver](/agent-tools/terminal-driver) |
 
 ### Web & Browser (3 tools)
 

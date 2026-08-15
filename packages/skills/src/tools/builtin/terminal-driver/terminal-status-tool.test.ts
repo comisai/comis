@@ -1,19 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit test for the REAL `terminal_session_status` tool — the lone `not_implemented`
- * stub promoted to a classifier-backed, owner-scoped factory.
+ * Unit tests for the classifier-backed, owner-scoped
+ * `terminal_session_status` factory.
  *
- * RED on pre-patch: the stub takes NO deps and `execute()` throws `[not_implemented]`.
- * GREEN: `createTerminalSessionStatusTool(deps).execute(id, {sessionId})`
- * returns a jsonResult of the status view (state from the classifier, via
- * `registry.status`) for an owned session, and degrades to the not-found minimal view
- * for a non-owned session (owner-scoping is inherited from `registry.status`).
- *
- * Also asserts (architecture) that `terminal_session_status` stays
- * `mcpExportPolicy:"never-export"` — the default-deny that keeps a driven
- * session off any remote MCP surface.
- *
- * Pure-JS / macOS-green.
+ * The tool returns the status view from `registry.status` for an owned session,
+ * degrades to the minimal not-found view for a non-owned session, and remains
+ * excluded from remote MCP surfaces.
  *
  * @module
  */

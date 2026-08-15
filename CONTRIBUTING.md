@@ -212,28 +212,9 @@ Do **not** open public GitHub issues for security vulnerabilities. Instead, foll
 
 ## Project Structure
 
-Comis is a pnpm monorepo whose packages live in the `packages/` directory. Each package has its own `package.json`, source code, and tests. See the [package inventory](https://docs.comis.ai/developer-guide/packages) for package roles and dependencies.
-
-```
-comis/
-  packages/
-    core/          # Core domain logic, event bus, ports
-    shared/        # Shared types, utilities, constants
-    cli/           # Command-line interface
-    agent/         # AI execution, models, sessions, and safety
-    memory/        # Storage, embeddings, RAG
-    channels/      # Chat platform adapters
-    skills/        # Skill system and sandbox
-    gateway/       # HTTP gateway and API
-    daemon/        # Background process management
-    scheduler/     # Task scheduling
-    infra/         # Infrastructure utilities
-    web/           # Web UI
-    comis/         # Umbrella published package (bundles all @comis/* deps)
-    observability/      # Diagnostics and trace persistence
-    observability-otel/ # Optional OpenTelemetry and Prometheus exporters
-    orchestrator/       # Inbound and execution coordination
-```
+Comis is a pnpm monorepo whose packages live in the `packages/` directory. See
+the authoritative [package inventory](https://docs.comis.ai/developer-guide/packages)
+for current package roles and dependencies.
 
 ## License
 

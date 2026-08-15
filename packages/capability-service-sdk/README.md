@@ -1,9 +1,10 @@
 # Capability-service protocol artifacts
 
-`@comis/capability-service-sdk` is a private workspace package. It is not part
-of the `comisai` npm umbrella and is not published as a standalone npm package.
-External capability services consume the generated `protocol/` directory from
-pinned GitHub release artifacts.
+`@comis/capability-service-sdk` is a private workspace package. It is bundled
+inside `comisai` as an internal runtime dependency of the daemon and skills
+packages, but it is not published as a standalone npm package or exposed as a
+`comisai` subpath. External capability services consume the generated
+`protocol/` directory from a pinned Comis release source.
 
 The source of truth is the strict Zod schema set in `src/`. Regenerate and check
 the committed, language-neutral JSON bundle with:
@@ -26,7 +27,9 @@ decision key. The response remains `pending` until the owner replies; the first
 successful receive marks the private response delivered and returns it only on
 the authenticated owner-private control connection. A polling service mints a
 new operation ID for each attempt; replaying an operation ID returns that
-attempt's original response.
+attempt's original response. Once delivered, the owner-private body remains
+available for idempotent retries: a later operation for the same managed run and
+decision key returns the same response without deleting or re-consuming it.
 
 Fixtures carry `__BUNDLE_DIGEST__` where a wire example needs the enclosing
 bundle digest. A fixture host replaces that token with the manifest digest
