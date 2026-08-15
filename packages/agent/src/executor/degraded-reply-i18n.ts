@@ -99,7 +99,7 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   delegation_evidence_missing:
     "I did not successfully start the requested sub-agent in this turn, so I cannot claim a new independent check. Please retry the request.",
   delegation_evidence_started:
-    "I successfully started the requested sub-agent. Its result has not been verified in this turn yet.",
+    "I started a sub-agent for this request. Its result has not been verified in this turn yet.",
   persistent_action_evidence_missing:
     "I did not perform or verify the requested repeated action in this turn, so I cannot report it as successful. Please retry the request.",
   outbound_audio_evidence_missing:

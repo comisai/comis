@@ -34,6 +34,15 @@ const RUN_IDENTIFIER_CLAIM =
   /\brun[\s_-]?id\b\s*[:=]?\s*(?:<[^>]{1,40}>|["'`*]){0,4}\s*([0-9a-z][0-9a-z_-]{7,})/i;
 
 /**
+ * A model sometimes abbreviates a freshly returned UUID to its first eight
+ * hexadecimal characters and places that opaque handle on the first line.
+ * Restrict this shape to the leading line so ordinary hashes inside a result
+ * are not mistaken for a launch identifier.
+ */
+const LEADING_RUN_HANDLE =
+  /^\s*(?:<code>|[`*]){0,2}[0-9a-f]{8}(?:-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?(?:<\/code>|[`*]){0,2}\s*(?:\r?\n|$)/i;
+
+/**
  * Report whether a reply asserts a run identifier the execution cannot have.
  *
  * @param params.response - The reply text about to be delivered
@@ -46,4 +55,9 @@ export function assertsUnbackedRunIdentifier(params: {
 }): boolean {
   if (params.toolCallCount > 0) return false;
   return RUN_IDENTIFIER_CLAIM.test(params.response);
+}
+
+/** Detect an internal spawn handle in a pending launch response. */
+export function exposesSpawnRunIdentifier(response: string): boolean {
+  return RUN_IDENTIFIER_CLAIM.test(response) || LEADING_RUN_HANDLE.test(response);
 }

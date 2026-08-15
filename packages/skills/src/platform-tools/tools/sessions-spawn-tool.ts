@@ -109,7 +109,8 @@ export function createSessionsSpawnTool(rpcCall: RpcCall): AgentTool<typeof Sess
       name: "sessions_spawn",
       label: "Sessions Spawn",
       description:
-        "Start a background sub-agent and return its run ID immediately. " +
+        "Start a background sub-agent and return its internal run handle immediately. " +
+        "Keep the handle out of user-facing replies; completion returns automatically. " +
         "When the task requires named tools, bind them with required_tools and tool_groups; task prose alone cannot grant tools.",
       parameters: SessionsSpawnParams,
       rpcMethod: "session.spawn",

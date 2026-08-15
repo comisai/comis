@@ -158,10 +158,10 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // SYSTEM_PROMPT_GUIDES supplies the detailed procedure after the first
   // successful tool result.
   sessions_spawn:
-    "Spawn background sub-agent; returns run ID. Delegate >30s, media, 3+ files, research, or 4+"
-    + " steps. Spawn one; parallelize only distinct independent subtasks—never duplicate tasks."
-    + " Bind named tools via required_tools + tool_groups. Results announce automatically; do not"
-    + " call message.",
+    "Spawn background sub-agent; returns an internal handle—never expose it. Delegate >30s, media,"
+    + " 3+ files, research, or 4+ steps. Spawn one; parallelize only distinct independent"
+    + " subtasks—never duplicate. Bind required_tools + tool_groups. Results announce automatically;"
+    + " do not call message.",
   subagents: "List, wait for, steer, or kill sub-agent runs for this session.",
   pipeline: "Define, execute, monitor, and cancel multi-node DAG execution graphs.",
   session_status: "Show agent status card: usage, model, steps. Optional per-session model override.",
@@ -672,8 +672,10 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 5. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task
 6. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions
 7. Result delivery is bound automatically to the authenticated request route; do not supply route identifiers
-8. Tell the user the task is delegated and give them the runId
-9. Continue the conversation -- the result will be announced automatically when done
+8. Acknowledge the launch in natural user-facing language. The returned run handle is internal;
+   never expose it
+9. Do not repeat the delegated work in the parent. Stop after the acknowledgement; automatic
+   completion will re-enter the originating conversation when the result is ready
 
 ### Parallel Sub-Agents
 When a task has distinct independent subtasks, spawn multiple sub-agents in parallel:

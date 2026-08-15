@@ -27,7 +27,10 @@ import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { stripReasoningTagsFromText } from "../response-filter/reasoning-tags.js";
 import { isVisibleTextBlock } from "./phase-filter.js";
 import { isCompletionClaim } from "./critic-isolation.js";
-import { assertsUnbackedRunIdentifier } from "./fabricated-run-identifier.js";
+import {
+  assertsUnbackedRunIdentifier,
+  exposesSpawnRunIdentifier,
+} from "./fabricated-run-identifier.js";
 
 // ---------------------------------------------------------------------------
 // Current-turn delegation evidence
@@ -177,7 +180,10 @@ function containsUnnegatedEvidencePhrase(
 export interface DelegationEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
+  reason?:
+    | "missing_current_turn_spawn"
+    | "successful_spawn_response_internal_identifier"
+    | "successful_spawn_response_ungrounded";
 }
 
 /** Recognize runtime-owned envelopes that report settled asynchronous results. */
@@ -242,8 +248,6 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     request,
     EXPLICIT_DELEGATION_REQUEST_PHRASES,
   );
-  if (!requested) return { response: params.response, corrected: false };
-
   const successfulSpawn = (params.toolExecResults ?? []).some(
     (toolResult) =>
       toolResult.toolName === "sessions_spawn"
@@ -265,6 +269,16 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     if (completedSpawnResult) {
       return { response: params.response, corrected: false };
     }
+    // Spawn identifiers are internal coordination handles. Even a valid
+    // receipt does not make them useful channel content, and exposing one
+    // makes a natural launch acknowledgement read like a runtime envelope.
+    if (exposesSpawnRunIdentifier(params.response)) {
+      return {
+        response: params.verifiedSpawnResponse,
+        corrected: true,
+        reason: "successful_spawn_response_internal_identifier",
+      };
+    }
     if (
       containsEvidencePhrase(
         normalizedEvidenceWords(params.response),
@@ -279,6 +293,12 @@ export function enforceCurrentTurnDelegationEvidence(params: {
       reason: "successful_spawn_response_ungrounded",
     };
   }
+
+  // Runtime policy can require delegation even when the user did not name a
+  // helper. A successful spawn still has to take the receipt-backed branch
+  // above; only executions with no accepted delegation may bypass this guard
+  // for an ordinary request.
+  if (!requested) return { response: params.response, corrected: false };
 
   const claimsDelegation = containsEvidencePhrase(
     response,

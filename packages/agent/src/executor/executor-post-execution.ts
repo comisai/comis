@@ -1901,23 +1901,29 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   });
   if (delegationEvidence.corrected) {
     result.response = delegationEvidence.response;
+    const exposedInternalIdentifier =
+      delegationEvidence.reason === "successful_spawn_response_internal_identifier";
     deps.logger.warn(
       {
         step: "delegation-evidence",
         errorKind: "precondition" as const,
-        hint: delegationEvidence.reason === "successful_spawn_response_ungrounded"
-          ? "The response did not describe the successful sessions_spawn receipt; inspect the current request and response correction in comis explain."
-          : "The response was replaced because this execution had no successful sessions_spawn receipt; inspect the current tool inventory and sessions_spawn admission in comis explain.",
+        hint: exposedInternalIdentifier
+          ? "The response exposed an internal sessions_spawn handle; inspect the corrected launch reply in comis explain."
+          : delegationEvidence.reason === "successful_spawn_response_ungrounded"
+            ? "The response did not describe the successful sessions_spawn receipt; inspect the current request and response correction in comis explain."
+            : "The response was replaced because this execution had no successful sessions_spawn receipt; inspect the current tool inventory and sessions_spawn admission in comis explain.",
       },
-      "Unverified current-turn delegation claim replaced",
+      "Unsafe current-turn delegation response replaced",
     );
     deps.eventBus.emit("audit:event", {
       timestamp: deps.clock.now(),
       agentId: effectiveAgentId,
       tenantId: deps.tenantId,
-      actionType: delegationEvidence.reason === "successful_spawn_response_ungrounded"
-        ? "response.delegation_response_grounding_guard"
-        : "response.delegation_evidence_guard",
+      actionType: exposedInternalIdentifier
+        ? "response.delegation_internal_identifier_guard"
+        : delegationEvidence.reason === "successful_spawn_response_ungrounded"
+          ? "response.delegation_response_grounding_guard"
+          : "response.delegation_evidence_guard",
       kind: "audit",
       outcome: "denied",
       metadata: {
