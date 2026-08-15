@@ -148,7 +148,8 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     |-----------|------|----------|-------------|
     | `task` | string | Yes | Task description for the sub-agent |
     | `agent` | string | No | Target agent ID for cross-agent spawning (defaults to the current agent) |
-    | `async` | boolean | No | Accepted for explicit asynchronous intent; every spawn runs in the background and returns `runId` immediately. |
+    | `async` | boolean | No | Accepted for explicit asynchronous intent; every spawn runs in the background and returns an internal run handle immediately. |
+    | `delegation_scope` | `"whole_request"` or `"partial"` | No | Declares ownership assigned to the child. Use `whole_request` only when it owns every requested outcome; use `partial` when the parent retains distinct work. Omitting the field does not transfer whole-request ownership. |
     | `model` | string | No | Model override for the sub-agent |
     | `artifact_refs` | string[] | No | File paths for the sub-agent to reference in its workspace |
     | `tool_groups` | string[] | No | Tool group names for sub-agent tool filtering (e.g., `"coding"`, `"web"`). The default child profile excludes MCP tools and `message`; use `"full"` when the task genuinely requires those capabilities. |
@@ -398,8 +399,8 @@ agent: "coder"
 Spawn multiple sub-agents to work on different parts of a problem simultaneously. Each sub-agent runs independently, and the parent collects results when they finish.
 
 ```yaml
-# Spawn three researchers; every call returns a run ID immediately
-# Then use subagents wait with those run IDs to collect terminal results
+# Spawn three researchers; every call returns an internal run handle immediately
+# Then use subagents wait with those handles to collect terminal results
 ```
 
 ### When to use `sessions_spawn` vs. `pipeline`

@@ -49,6 +49,7 @@ The parent invokes the `sessions_spawn` tool:
   "tool": "sessions_spawn",
   "agent": "researcher",
   "task": "Search the web and summarize the three biggest quantum-computing breakthroughs of the last 12 months. Return a Markdown bullet list with sources.",
+  "delegation_scope": "partial",
   "objective": "Provide background facts for a 500-word brief.",
   "artifact_refs": [],
   "include_parent_history": "none"
@@ -335,7 +336,7 @@ The `subagents` tool's `steer` action redirects a sub-agent that is already runn
 
 - **`kill`** terminates the child and tears it down cleanly. The run ends with the `killed` end reason and its in-flight work is discarded.
 - **`steer`** sends a high-priority steering message to the child. *How* that message is delivered is gated behind [`security.agentToAgent.steerInject`](/reference/config-yaml#security) (default `false`):
-  - **Flag off (default)** -- `steer` falls back to **kill + respawn**: the running child is killed and a fresh run is spawned with the steering message as its new task. The prior transcript and progress are discarded, and the run gets a new `runId`. This is today's behavior, unchanged.
+  - **Flag off (default)** -- while the target remains running, `steer` falls back to **kill + respawn**: the child is killed and a fresh run is spawned with the steering message as its new task. The prior transcript and progress are discarded, and the run gets a new `runId`.
   - **Flag on** -- `steer` **injects** the message into the *running* child's live session, preserving its transcript and progress (no kill, no respawn; the same `runId` continues).
 
 **Next-step-boundary semantics (inject mode).** An injected steer is **not** a mid-tool-call interrupt. The child finishes its current step, the transcript for that step commits, and the steering message then lands as a user turn in the child's *next* context assembly. The child keeps everything it had done up to that boundary -- the steer adjusts course without throwing away work. (When the child is mid-stream the inject rides the streaming path; when it is idle it lands as a follow-up turn. The [`subagent:steered`](/developer-guide/event-bus) event records which via its `mode` field -- counts/ids/mode only, never the message body.)

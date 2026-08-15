@@ -27,8 +27,10 @@ const PRIOR_REQUEST_REFERENCE_PATTERN =
 const CONVERSATION_HISTORY_RECALL_PATTERN =
   /\bwhat\s+(?:did|have)\s+i\s+(?:say|tell|mention|ask)\b/iu;
 const WEB_EVIDENCE_EXCLUSION_PATTERN =
+  // eslint-disable-next-line security/detect-unsafe-regex -- repeated word spans are capped at eight and all other branches are linear
   /\b(?:(?:do\s+not|don't|never)\s+(?:(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:browsing|search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:browsing|search|fetch)|web_search|web_fetch))|(?:[\p{L}\p{N}_'-]+[\s,]+){1,8}(?:or|nor)\s+(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:browsing|search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:browsing|search|fetch)|web_search|web_fetch)))|without\s+(?:using\s+)?(?:the\s+)?(?:web(?:\s+(?:browsing|search|fetch|sources?|tools?))?|web_search|web_fetch)|no\s+(?:web(?:\s+(?:browsing|search|fetch|sources?|tools?))?|web_search|web_fetch))\b/iu;
 const COMPOUND_WEB_EVIDENCE_EXCLUSION_PATTERN =
+  // eslint-disable-next-line security/detect-unsafe-regex -- slash repetitions are capped at two and every remaining branch is linear
   /\b(?:(?:do\s+not|don't|never)\s+(?:use|call|invoke|rely\s+on)\s+|without\s+(?:using\s+)?)(?:any\s+)?(?:web(?:\/(?:search|fetch)){1,2}|web_search(?:\s*(?:\/|or|and)\s*web_fetch)?)(?:\s+tools?)?\b/iu;
 const DELEGATED_CHILD_ASSIGNMENT_PATTERN =
   /(?<!-)\b(?:(?:delegate|use|start|spawn|launch)\b(?=[^\n]{0,240}\b(?:sub-?agents?|child|children|coordinator|leaf)\b)|(?:ask|tell|instruct|require)\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf)\b|give\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf)\b[^.!?\n]{0,80}\btask\b|(?:call|invoke|use)\s+sessions_spawn\b[^.!?\n]{0,160}\btask\b)/iu;
