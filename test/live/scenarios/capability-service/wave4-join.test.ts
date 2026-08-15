@@ -43,6 +43,7 @@ const REVIEWED_CLAUDE_TOKEN = "wave4-claude-reviewed";
 const MIXED_WORKER_JOIN = process.env["COMIS_WAVE4_MIXED_WORKERS"] === "1";
 const isLiveLinux = process.env["COMIS_LIVE"] === "1" && process.platform === "linux";
 const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;
+const CANDIDATE_RELEASE_FILE = ".wave4-candidate-release";
 
 const CURRENT_MUTATION_BINDINGS = [
   {
@@ -1034,7 +1035,7 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
         await pollUntil(() => {
           status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
           return status.tasks.filter((task) => taskHandles.includes(task.taskHandle)).every((task) => task.state === "working");
-        }, REAL_WORKER_JOIN_TIMEOUT_MS, `joined working state; observed ${JSON.stringify(status.tasks)}; service stderr: ${service.stderr()}`);
+        }, REAL_WORKER_JOIN_TIMEOUT_MS, () => `joined working state; observed ${JSON.stringify(status.tasks)}; service stderr: ${service.stderr()}`);
       } catch (error) {
         let workerAView = "terminal read was not attempted";
         let workerBView = "terminal read was not attempted";
@@ -1068,6 +1069,8 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
           `${message}; durable: ${durableDiagnostic}; worker A context: ${runtimeContextDiagnostic(bindingA.canonical_path)}; worker B context: ${runtimeContextDiagnostic(bindingB.canonical_path)}; worker A client: ${clientDiagnostic(bindingA.canonical_path)}; worker B client: ${clientDiagnostic(bindingB.canonical_path)}; worker A reporter: ${reporterDiagnostic(bindingA.canonical_path)}; worker B reporter: ${reporterDiagnostic(bindingB.canonical_path)}; worker A terminal: ${workerAView}; worker B terminal: ${workerBView}`,
         );
       }
+      writeFileSync(join(bindingA.canonical_path, CANDIDATE_RELEASE_FILE), "release\n", { mode: 0o600 });
+      writeFileSync(join(bindingB.canonical_path, CANDIDATE_RELEASE_FILE), "release\n", { mode: 0o600 });
       await pollUntil(() => acceptedReportCounts(goDatabase, taskHandles).every((count) => count >= 2), 180_000, () =>
         `task-local progress and candidate reports; Go counts ${JSON.stringify(acceptedReportCounts(goDatabase, taskHandles))}; Comis counts ${JSON.stringify(reportCounts(canonicalDataDir, taskHandles))}; Go reports ${acceptedReportDiagnostic(goDatabase, taskHandles)}; worker A ${reporterDiagnostic(bindingA.canonical_path)}; worker B ${reporterDiagnostic(bindingB.canonical_path)}; service stderr ${service.stderr()}`);
 
