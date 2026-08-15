@@ -101,7 +101,7 @@ export function accumulateOutwardDelivery(
     ...(typeof data.platformMessageId === "string"
       ? { platformMessageId: data.platformMessageId }
       : {}),
-  };
+  } satisfies NonNullable<IncidentSignals["outwardDelivery"]>;
   acc.outwardDeliveryParts.set(partId, signal);
 
   const rootParts = [...acc.outwardDeliveryParts.values()]
