@@ -334,9 +334,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   /** Per-agent registries; closure-local and lazily built. */
   const terminalRegistries = new Map<string, TerminalSessionRegistry>();
   deps.capabilityServices.bindTerminalRevoker?.(createManagedTerminalRevoker(
-    terminalRegistries,
-    deps.capabilityServices.store,
-    () => deps.clock.now(),
+    terminalRegistries, deps.capabilityServices.store, () => deps.clock.now(),
   ));
   const terminalEgress = buildTerminalEgressDeps(skillsLogger, sandboxProvider); // built ONCE, injected per-agent
 

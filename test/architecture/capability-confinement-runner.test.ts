@@ -150,7 +150,8 @@ describe("capability-service Linux confinement runner", () => {
     expect(scenario).not.toContain("RESTART_DAEMON_AND_SERVICE_AFTER_DELIVERY");
     expect(scenario).toContain("process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET");
     expect(scenario).toContain('process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key"');
-    expect(scenario).toContain('normalizedMessage(`/attention ${attention.attentionId} ${E0_DECISION_ANSWER}`)');
+    expect(scenario).toContain("telegram.injectMessage(");
+    expect(scenario).toContain('`/attention ${attention.attentionId} ${E0_DECISION_ANSWER}`');
     expect(scenario).toContain('status === "response_pending"');
     expect(scenario).toContain('status === "resolved"');
     expect(scenario).toContain("handback_task");
