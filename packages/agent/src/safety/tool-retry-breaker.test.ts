@@ -411,6 +411,21 @@ describe("tool retry breaker", () => {
       expect(extractErrorTag(invalidParams)).toBe("validation_failed");
     });
 
+    it("classifies an unreachable spawn profile as caller-correctable validation", () => {
+      const unreachable = JSON.stringify({
+        content: [{
+          type: "text",
+          text:
+            "Required tools unreachable: read, web_fetch. "
+            + "Tools 'read', 'web_fetch' are outside this sub-agent's profile. "
+            + "Re-spawn with tool_groups:['minimal','web'].",
+        }],
+        details: {},
+      });
+
+      expect(extractErrorTag(unreachable)).toBe("validation_failed");
+    });
+
     it("fallback normalizes first 80 chars", () => {
       const tag = extractErrorTag("Something weird happened here!");
       expect(tag).toBe("something_weird_happened_here");
@@ -782,6 +797,36 @@ describe("tool retry breaker", () => {
       expect(transition).toBeUndefined();
       expect(breaker.getBlockedTools()).toEqual([]);
       expect(breaker.beforeToolCall("mcp__example--lookup", { query: "third" }).block).toBe(false);
+    });
+
+    it("keeps sessions_spawn available after repeated unreachable-profile corrections", () => {
+      const breaker = createToolRetryBreaker(cfg);
+      const unreachable = JSON.stringify({
+        content: [{
+          type: "text",
+          text:
+            "Required tools unreachable: read, web_search, web_fetch. "
+            + "Tools 'read', 'web_search', 'web_fetch' are outside this sub-agent's profile. "
+            + "Re-spawn with tool_groups:['minimal','web'].",
+        }],
+        details: {},
+      });
+
+      for (let i = 0; i < 6; i++) {
+        breaker.recordResult(
+          "sessions_spawn",
+          { task: `research ${i}`, tool_groups: ["finance", "web"] },
+          false,
+          unreachable,
+          { transportOk: false },
+        );
+      }
+
+      expect(breaker.getBlockedTools()).toEqual([]);
+      expect(breaker.beforeToolCall("sessions_spawn", {
+        task: "research with corrected groups",
+        tool_groups: ["minimal", "web"],
+      }).block).toBe(false);
     });
 
     it("still counts genuine tool failures (permission_denied, not_found)", () => {
