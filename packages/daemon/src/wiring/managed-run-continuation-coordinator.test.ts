@@ -359,6 +359,7 @@ describe("managed-run continuation coordination", () => {
         kind: "identical_replay",
         record: makeRecord(),
         reducedRecord,
+        reducedOutcome: "completed",
       }),
     });
 

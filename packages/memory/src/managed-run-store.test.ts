@@ -755,6 +755,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       throughReportSequence: 1,
       status: "active",
       statusReason: "report_activity",
+      continuationOutcome: "completed",
       committedAtMs: 1_800_000_000_300,
     })).value?.kind).toBe("updated");
     expect(await store.claimContinuation(OWNER_SCOPE, claim)).toMatchObject({
@@ -816,6 +817,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       throughReportSequence: claim.throughReportSequence,
       status: "unknown",
       statusReason: "service_state_unavailable",
+      continuationOutcome: "failed",
       committedAtMs: 1_800_000_000_300,
     })).value?.kind).toBe("updated");
     expect((await store.markContinuationOutcome(OWNER_SCOPE, {
@@ -1029,6 +1031,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       throughReportSequence: 1,
       status: "active",
       statusReason: "report_activity",
+      continuationOutcome: "completed",
       committedAtMs: 1_800_000_000_200,
     })).value?.kind).toBe("not_found");
     expect((await store.markContinuationOutcome(OWNER_SCOPE, {
@@ -1148,6 +1151,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       throughReportSequence: 1,
       status: "active" as const,
       statusReason: "report_activity" as const,
+      continuationOutcome: "completed" as const,
       committedAtMs: 1_800_000_000_300,
     };
     expect((await store.commitReducedState(OTHER_OWNER_SCOPE, reduction)).value?.kind).toBe("scope_mismatch");
@@ -1231,6 +1235,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       throughReportSequence: 1,
       status: "succeeded",
       statusReason: "outcome_verified",
+      continuationOutcome: "completed",
       terminalOutcome: { kind: "succeeded", recordedAtMs: 1_800_000_000_300 },
       committedAtMs: 1_800_000_000_300,
     });
@@ -1364,6 +1369,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       throughReportSequence: 1,
       status: "active",
       statusReason: "report_activity",
+      continuationOutcome: "completed",
       committedAtMs: 1_800_000_000_200,
     })).ok).toBe(false);
     expect((await store.markContinuationOutcome(OWNER_SCOPE, {

@@ -199,7 +199,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
   `);
   const recordReduction = db.prepare(`
     UPDATE managed_run_continuation_claims
-    SET reduction_hash = ?, reduction_result_record = ?
+    SET reduction_hash = ?, reduction_result_record = ?, reduction_outcome = ?
     WHERE claim_id = ? AND state = 'active' AND reduction_hash IS NULL
   `);
   const recordContinuationOutcome = db.prepare(`
@@ -631,8 +631,16 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
         return ok(resultRecord("identical_replay", record.value));
       }
       const reducedRecord = parseStoredManagedRunRecord(existing.value.reduction_result_record);
+      if (existing.value.reduction_outcome === null) {
+        return err(new Error("managed-run continuation reduction is missing its durable outcome"));
+      }
       return reducedRecord.ok
-        ? ok({ kind: "identical_replay", record: record.value, reducedRecord: reducedRecord.value })
+        ? ok({
+          kind: "identical_replay",
+          record: record.value,
+          reducedRecord: reducedRecord.value,
+          reducedOutcome: existing.value.reduction_outcome,
+        })
         : reducedRecord;
     }
     const current = readRecord(input.managedRunId);
@@ -677,10 +685,15 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       throughReportSequence: input.throughReportSequence,
       status: input.status,
       statusReason: input.statusReason,
+      continuationOutcome: input.continuationOutcome,
       terminalOutcome: input.terminalOutcome,
     });
     if (claim.value.reduction_hash !== null) {
-      if (claim.value.reduction_hash !== inputHash || claim.value.reduction_result_record === null) {
+      if (
+        claim.value.reduction_hash !== inputHash
+        || claim.value.reduction_result_record === null
+        || claim.value.reduction_outcome !== input.continuationOutcome
+      ) {
         return ok({ kind: "claim_mismatch" });
       }
       const original = parseStoredManagedRunRecord(claim.value.reduction_result_record);
@@ -710,7 +723,12 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     };
     const persisted = persistMutable(next);
     if (!persisted.ok) return persisted;
-    const reduced = recordReduction.run(inputHash, serializeManagedRunRecord(next), input.claimId);
+    const reduced = recordReduction.run(
+      inputHash,
+      serializeManagedRunRecord(next),
+      input.continuationOutcome,
+      input.claimId,
+    );
     return reduced.changes === 1
       ? ok(resultRecord("updated", next))
       : err(new Error("managed-run continuation reduction lost its claim"));
@@ -737,7 +755,11 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       const original = parseStoredManagedRunRecord(claim.value.outcome_result_record);
       return original.ok ? ok(resultRecord("identical_replay", original.value)) : original;
     }
-    if (claim.value.state !== "active" || claim.value.reduction_hash === null) {
+    if (
+      claim.value.state !== "active"
+      || claim.value.reduction_hash === null
+      || claim.value.reduction_outcome !== input.outcome
+    ) {
       return ok({ kind: "claim_mismatch" });
     }
     if (input.recordedAtMs < current.value.updatedAtMs) {

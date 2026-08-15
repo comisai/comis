@@ -97,6 +97,7 @@ export const ManagedRunContinuationClaimDbRowSchema = z.strictObject({
   claim_result_record: z.string(),
   reduction_hash: z.string().nullable(),
   reduction_result_record: z.string().nullable(),
+  reduction_outcome: z.enum(["completed", "failed", "abandoned"]).nullable(),
   outcome_hash: z.string().nullable(),
   outcome_result_record: z.string().nullable(),
   outcome_recorded_at_ms: z.number().int().nullable(),

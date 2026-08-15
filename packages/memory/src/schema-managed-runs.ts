@@ -20,6 +20,7 @@ const REQUIRED_MANAGED_RUN_COLUMNS = [
 
 const REQUIRED_WORKSPACE_LEASE_COLUMNS = ["filesystem_birthtime_ns"] as const;
 const REQUIRED_EXECUTION_ATTACHMENT_COLUMNS = ["source_filesystem_birthtime_ns"] as const;
+const REQUIRED_CONTINUATION_CLAIM_COLUMNS = ["reduction_outcome"] as const;
 
 /** Create the content-free managed-run authority, report, claim, and replay tables. */
 export function ensureManagedRunTables(db: Database.Database): void {
@@ -67,6 +68,22 @@ export function ensureManagedRunTables(db: Database.Database): void {
     if (missing.length > 0) {
       throw new Error(
         `execution_attachments database schema is incompatible: missing ${missing.join(", ")}. Back up the database, then recreate it with the current Comis schema.`,
+      );
+    }
+  }
+
+  const existingContinuationClaims = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'managed_run_continuation_claims'",
+  ).get() !== undefined;
+  if (existingContinuationClaims) {
+    const columns = new Set(requireTableInfoRows(
+      db.prepare("PRAGMA table_info(managed_run_continuation_claims)").all(),
+      "managed_run_continuation_claims",
+    ).map((row) => row.name));
+    const missing = REQUIRED_CONTINUATION_CLAIM_COLUMNS.filter((column) => !columns.has(column));
+    if (missing.length > 0) {
+      throw new Error(
+        `managed_run_continuation_claims database schema is incompatible: missing ${missing.join(", ")}. Back up the database, then recreate it with the current Comis schema.`,
       );
     }
   }
@@ -306,6 +323,7 @@ export function ensureManagedRunTables(db: Database.Database): void {
       claim_result_record TEXT NOT NULL,
       reduction_hash TEXT,
       reduction_result_record TEXT,
+      reduction_outcome TEXT CHECK(reduction_outcome IN ('completed','failed','abandoned')),
       outcome_hash TEXT,
       outcome_result_record TEXT,
       outcome_recorded_at_ms INTEGER

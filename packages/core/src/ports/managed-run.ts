@@ -254,6 +254,7 @@ export type ManagedRunContinuationClaimOutcome =
     readonly kind: "identical_replay";
     readonly record: ManagedRunRecord;
     readonly reducedRecord?: ManagedRunRecord;
+    readonly reducedOutcome?: ManagedRunContinuationOutcomeKind;
   }
   | { readonly kind: "not_found" }
   | { readonly kind: "scope_mismatch" }
@@ -267,6 +268,7 @@ export interface ManagedRunReducedStateInput {
   readonly throughReportSequence: number;
   readonly status: ManagedRunStatus;
   readonly statusReason: ManagedRunStatusReason;
+  readonly continuationOutcome: ManagedRunContinuationOutcomeKind;
   readonly committedAtMs: number;
   readonly terminalOutcome?: ManagedRunTerminalOutcome;
 }

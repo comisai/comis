@@ -133,7 +133,9 @@ The main SQLite database. It stores conversation sessions, long-term memory entr
 Capability-service managed runs also keep content-free report cursors and
 continuation claims here. A continuation execution failure reduces its exact
 accepted report interval to `unknown` and settles that interval without immediate
-replay. A later accepted report advances the cursor and schedules the next
+replay. The same SQLite transaction records whether that reduced interval must
+settle as `completed` or `failed`, so restart recovery cannot recompute or change
+the outcome. A later accepted report advances the cursor and schedules the next
 continuation; an abandoned claim remains recoverable after restart.
 
 The observability rows live in the `obs_diagnostics` table, grouped by a `category` label. Among them, `model_health` is a one-shot diagnostic recorded once per boot that captures the daemon's load-level recall signals — whether an embedding provider is available, whether the GGUF reranker loaded, and whether the reranker model is present on disk. It carries booleans only (no model paths, no secrets) and lets the system health lens explain why recall was degraded on a given daemon without grepping the log.

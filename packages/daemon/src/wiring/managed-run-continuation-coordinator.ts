@@ -175,10 +175,14 @@ export function createManagedRunContinuationCoordinator(
         return err(new Error(`Managed-run continuation claim failed: ${claimed.value.kind}`));
       }
       if (claimed.value.kind === "identical_replay" && claimed.value.reducedRecord !== undefined) {
+        const reducedOutcome = claimed.value.reducedOutcome;
+        if (reducedOutcome === undefined) {
+          return err(new Error("Managed-run continuation reduction is missing its durable outcome"));
+        }
         const settled = await invoke(() => deps.store.markContinuationOutcome(scope, {
           managedRunId,
           claimId: continuationClaimId,
-          outcome: "completed",
+          outcome: reducedOutcome,
           recordedAtMs: deps.nowMs(),
         }));
         if (!settled.ok) return settled;
@@ -345,6 +349,7 @@ export function createManagedRunContinuationCoordinator(
         throughReportSequence,
         status: finalReduction.status,
         statusReason: finalReduction.statusReason,
+        continuationOutcome: executionFailed ? "failed" : "completed",
         committedAtMs,
         ...(outcome === undefined ? {} : { terminalOutcome: outcome }),
       }));
