@@ -314,12 +314,12 @@ export function translatePayload(
     // refusal / dead-lettered delivery / per-node budget breach) join the SAME content-free,
     // orchestration-translator-delegated group.
     // capability:audited joins the orchestration-translator group (content-free: caps/tool-NAME/decision/lease-root ids ONLY, never args/body/secret).
-    // graph:node_spawned joins it too (content-free: graph/node ids + child agentId + rootRunId + token cap).
     case "pipeline:authored":
     case "graph:repaired":
     case "graph:synthesized_from_intent":
     case "session:sub_agent_spawned":
     case "session:sub_agent_completed":
+    case "durable:suspended":
     case "session:sub_agent_wait_finished":
     case "subagent:steered":
     case "subagent:killed": // Attributed kill — {runId, killedBy, runtimeMs, idleMs?, thresholdMs?}; the free-text reason never crosses the bus.
@@ -334,7 +334,6 @@ export function translatePayload(
     case "graph:node_spawned":
     case "orchestrate:run_summary": // A completed orchestrate run's content-free per-run summary — ids + the closed failureClass enum + counts + token estimates ONLY, never a stderr tail / script body / tool params.
       return translateOrchestrationPayload(eventName, payload);
-
     case "learning:outcome_observed": // trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only).
       return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };
     case "learning:memory_demoted":

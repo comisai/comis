@@ -22,8 +22,6 @@ import {
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { isSilentResponse } from "@comis/shared";
-import type { ExecutionPlan } from "../planner/types.js";
-import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { stripReasoningTagsFromText } from "../response-filter/reasoning-tags.js";
 import { isVisibleTextBlock } from "./phase-filter.js";
 import { isCompletionClaim } from "./critic-isolation.js";
@@ -970,50 +968,4 @@ function extractActionableArtifacts(
     }
   }
   return hits;
-}
-
-// ---------------------------------------------------------------------------
-// SEP plan extraction (extracted from execute() success path)
-// ---------------------------------------------------------------------------
-
-/**
- * Extract a structured execution plan from the first LLM response.
- * Returns the plan if extraction succeeded, undefined otherwise.
- */
-export function extractExecutionPlan(params: {
-  response: string;
-  messageText: string;
-  maxSteps: number;
-  minSteps: number;
-  executionStartMs: number;
-  agentId: string | undefined;
-  formattedKey: string;
-  eventBus: TypedEventBus;
-  logger: ComisLogger;
-  clock: ClockPort;
-}): ExecutionPlan | undefined {
-  const { response, messageText, maxSteps, minSteps, executionStartMs, agentId, formattedKey, eventBus, logger, clock } = params;
-
-  const steps = extractPlanFromResponse(response, maxSteps);
-  if (steps && steps.length >= minSteps) {
-    const plan: ExecutionPlan = {
-      active: true,
-      request: messageText.slice(0, 200),
-      steps,
-      completedCount: 0,
-      createdAtMs: clock.now(),
-    };
-    logger.info(
-      { agentId, stepCount: steps.length, durationMs: clock.now() - executionStartMs },
-      "SEP plan extracted",
-    );
-    eventBus.emit("sep:plan_extracted", {
-      agentId: agentId ?? "default",
-      sessionKey: formattedKey,
-      stepCount: steps.length,
-      timestamp: clock.now(),
-    });
-    return plan;
-  }
-  return undefined;
 }
