@@ -84,7 +84,7 @@ describe.skipIf(!canRunManagedGitJail())("managed linked-worktree Git jail", () 
       });
 
       expect(committed.status, committed.stderr).toBe(0);
-      expect(execFileSync("git", ["--git-dir", mounts.value.privateCommon.sourcePath, "rev-parse", "refs/heads/task-a"], { encoding: "utf8" }).trim()).not.toBe(sharedRefBefore.trim());
+      expect(readFileSync(join(mounts.value.privateCommon.sourcePath, "refs", "heads", "task-a"), "utf8").trim()).not.toBe(sharedRefBefore.trim());
       expect(readFileSync(sharedRef, "utf8")).toBe(sharedRefBefore);
       expect(readFileSync(join(commonDir, "config"), "utf8")).toBe(sharedConfigBefore);
       expect(readFileSync(join(gitDir, "index"))).toEqual(sharedIndexBefore);
