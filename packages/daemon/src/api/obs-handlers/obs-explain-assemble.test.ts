@@ -542,13 +542,13 @@ describe("assembleIncidentReport — durable outward delivery", () => {
       1,
     );
 
-    expect((report as unknown as { outwardDelivery?: unknown }).outwardDelivery).toEqual({
+    expect((report as unknown as { outwardDeliveries?: unknown }).outwardDeliveries).toEqual([{
       status: "committed",
       rootRunId: "root-attachment",
       stepIndex: 0,
       deliveryKind: "attachment",
       platformMessageId: "telegram-document-218",
-    });
+    }]);
   });
 
   it("preserves a committed receipt beside a later attachment preparation failure", () => {
@@ -587,13 +587,54 @@ describe("assembleIncidentReport — durable outward delivery", () => {
       2,
     );
 
-    expect(IncidentReportSchema.parse(report).outwardDelivery).toEqual({
+    expect((IncidentReportSchema.parse(report) as unknown as { outwardDeliveries?: unknown }).outwardDeliveries).toEqual([{
       status: "partial",
       rootRunId: "root-partial",
       stepIndex: 0,
       deliveryKind: "attachment",
       platformMessageId: "telegram-document-218",
-    });
+    }]);
+  });
+
+  it("retains a failed root when a different root commits later", () => {
+    const report = assembleIncidentReport(
+      toIncidentSignals([
+        {
+          traceSchema: "comis-trajectory",
+          type: "delivery.outward_ledger_transition",
+          seq: 1,
+          data: {
+            rootRunId: "root-failed",
+            stepIndex: 0,
+            transition: "mark_failed",
+            outcome: "failed",
+            deliveryKind: "attachment",
+          },
+        },
+        {
+          traceSchema: "comis-trajectory",
+          type: "delivery.outward_ledger_transition",
+          seq: 2,
+          data: {
+            rootRunId: "root-committed",
+            stepIndex: 0,
+            transition: "commit",
+            outcome: "committed",
+            deliveryKind: "text",
+            platformMessageId: "telegram-message-219",
+          },
+        },
+      ]),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      2,
+    );
+
+    expect((report as unknown as { outwardDeliveries?: unknown }).outwardDeliveries).toEqual([
+      expect.objectContaining({ rootRunId: "root-failed", status: "failed" }),
+      expect.objectContaining({ rootRunId: "root-committed", status: "committed" }),
+    ]);
   });
 });
 

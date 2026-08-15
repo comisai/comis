@@ -326,6 +326,7 @@ describe("completion announcement delivery wiring", () => {
   });
 
   it("delivers a validated generated file as the governed channel operation", async () => {
+    const emitSafely = vi.fn(() => ({ failures: [], pendingFailures: Promise.resolve([]) }));
     const ledger = makeLedger();
     const deliveryService = makeDeliveryService();
     vi.mocked(deliveryService.deliverToChannel).mockResolvedValue(ok({
@@ -354,7 +355,7 @@ describe("completion announcement delivery wiring", () => {
         sendAttachment,
       }]]),
       deliveryService,
-      eventBus,
+      eventBus: { emitSafely } as unknown as TypedEventBus,
       outwardLedger: ledger,
       resolveRootRunId: () => ({ ok: true, value: "root-1" }),
       prepareCompletionAttachment: vi.fn(async () => ok({
@@ -398,6 +399,17 @@ describe("completion announcement delivery wiring", () => {
     );
     expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
     expect(ledger.commit).toHaveBeenCalledWith("root-1", 0, "document-message");
+    expect(emitSafely).toHaveBeenCalledWith(
+      "delivery:outward_ledger_transition",
+      expect.objectContaining({
+        rootRunId: "root-1",
+        runId: "run-1",
+        sessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+        transition: "prepare",
+        outcome: "prepared",
+        deliveryKind: "attachment",
+      }),
+    );
     expect(cleanup).toHaveBeenCalledOnce();
   });
 

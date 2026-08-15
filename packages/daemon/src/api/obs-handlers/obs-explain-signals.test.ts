@@ -1472,7 +1472,15 @@ describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
         costUsd: 0.04,
         expectedOutputs: 2,
         verifiedOutputs: 1,
-        attachmentsPrepared: 1,
+        attachmentsPrepared: 0,
+      }),
+      event("delivery.outward_ledger_transition", 3, {
+        rootRunId: "root-session",
+        runId: "run-child",
+        partId: "attachment:0",
+        transition: "prepare",
+        outcome: "prepared",
+        deliveryKind: "attachment",
       }),
     ]);
 
@@ -1494,6 +1502,29 @@ describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
       completed: 1,
       failed: 1,
       lastFailedRunId: "run-child",
+    });
+  });
+
+  it("folds bounded suspend and resume evidence into one restart signal", () => {
+    const s = toIncidentSignals([
+      event("durable.suspended", 1, {
+        rootRunId: "root-restart",
+        checkpointId: "checkpoint-old",
+      }),
+      event("durable.resumed", 2, {
+        rootRunId: "root-restart",
+        sourceCheckpointId: "checkpoint-old",
+        checkpointId: "checkpoint-new",
+        sourceTerminalReason: "superseded",
+      }),
+    ]);
+
+    expect((s as unknown as { restartRecovery?: unknown }).restartRecovery).toEqual({
+      suspended: 1,
+      resumed: 1,
+      lastStatus: "resumed",
+      rootRunId: "root-restart",
+      checkpointId: "checkpoint-new",
     });
   });
 
