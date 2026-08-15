@@ -545,10 +545,12 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       responseRef: "attention-response-content-b",
       respondedAtMs: 1_800_000_000_201,
     })).value?.kind).toBe("replay_conflict");
-    expect(await store.getAttention(OWNER_SCOPE, "attention-operation-b")).toMatchObject({
+    const unclaimedAttention = await store.getAttention(OWNER_SCOPE, "attention-operation-b");
+    expect(unclaimedAttention).toMatchObject({
       ok: true,
-      value: { status: "open", responseRef: undefined },
+      value: { status: "open" },
     });
+    expect(unclaimedAttention.value).not.toHaveProperty("responseRef");
     expect(await store.getAttentionResponseByOperation(OWNER_SCOPE, operationId)).toMatchObject({
       ok: true,
       value: { attentionId: "attention-operation-a", responseRef: "attention-response-content-a" },
