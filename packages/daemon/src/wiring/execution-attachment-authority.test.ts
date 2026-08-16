@@ -398,6 +398,45 @@ describe("execution attachment authority coordinator", () => {
     }));
   });
 
+  it("reconciles only attachments owned by the authenticated service", async () => {
+    const otherAttachment = {
+      ...ATTACHMENT,
+      executionAttachmentId: "execution-attachment_b",
+      managedRunId: "managed-run_b",
+      workspaceLeaseId: "workspace-lease_b",
+      serviceInstanceId: "service-instance_b",
+      targetName: `attachment-${"b".repeat(32)}.sock`,
+    };
+    const reconcile = vi.fn(async () => ok({ kind: "recovered" as const, record: ATTACHMENT }));
+    const getRun = vi.fn(async () => ok({
+      managedRunId: ATTACHMENT.managedRunId,
+      workspaceLeaseId: ATTACHMENT.workspaceLeaseId,
+      serviceInstanceId: ATTACHMENT.serviceInstanceId,
+      tenantId: ATTACHMENT.tenantId,
+      agentId: ATTACHMENT.agentId,
+      executionAttachmentIds: [ATTACHMENT.executionAttachmentId],
+    }));
+    const deps = makeDeps({
+      runs: { get: getRun } as unknown as ManagedRunStorePort,
+      attachments: {
+        listRecoverable: vi.fn(async () => ok({ records: [ATTACHMENT, otherAttachment] })),
+        reconcile,
+      } as unknown as ExecutionAttachmentPort,
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    await expect(authority.reconcileService({
+      serviceInstanceId: "service-instance_a",
+      updatedBeforeMs: NOW_MS,
+      limit: 10,
+    })).resolves.toEqual({
+      ok: true,
+      value: { recovered: [ATTACHMENT.executionAttachmentId], preserved: [] },
+    });
+    expect(getRun).toHaveBeenCalledTimes(1);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
   it("reconciles every stable attachment recovery page", async () => {
     const second = {
       ...ATTACHMENT,

@@ -167,6 +167,7 @@ describe("daemon-owned capability-service Unix host", () => {
     evidenceBridge?: ManagedRunEvidenceBridge,
     releaseCoordinator?: ManagedRunReleaseCoordinator,
     attentionResponseBridge?: ManagedAttentionResponseBridge,
+    onAuthenticatedSession = vi.fn(async () => ok(undefined)),
   ) {
     const clock = createFakeClock(NOW_MS);
     const timers = createFakeTimers(NOW_MS);
@@ -231,6 +232,7 @@ describe("daemon-owned capability-service Unix host", () => {
       clock,
       timers,
       logger: makeLogger(),
+      onAuthenticatedSession,
     };
     return {
       clock,
@@ -777,6 +779,89 @@ describe("daemon-owned capability-service Unix host", () => {
       result: { acceptedSequence: 1 },
     });
     expect(reportBridge.ingestReport).toHaveBeenCalledOnce();
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
+
+  it("gates every authenticated reconnect on host recovery completion", async () => {
+    const root = makeRoot();
+    const releases: Array<() => void> = [];
+    const onAuthenticatedSession = vi.fn(async () => {
+      await new Promise<void>((resolve) => releases.push(resolve));
+      return ok(undefined);
+    });
+    const host = makeHost(
+      root.socketPath,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onAuthenticatedSession,
+    );
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+
+    const firstPeer = await connectPeer(root.socketPath);
+    peers.push(firstPeer);
+    firstPeer.send(handshake(BEARER));
+    const firstReply = firstPeer.next();
+    let firstSettled = false;
+    void firstReply.then(() => { firstSettled = true; });
+    await waitForTurn();
+    expect(onAuthenticatedSession).toHaveBeenNthCalledWith(1, "service-instance_a");
+    expect(firstSettled).toBe(false);
+    releases.shift()?.();
+    expect(await firstReply).toHaveProperty("result");
+    expect((await started).ok).toBe(true);
+
+    firstPeer.close();
+    await waitForTurn();
+    const secondPeer = await connectPeer(root.socketPath);
+    peers.push(secondPeer);
+    secondPeer.send(handshake(BEARER));
+    const secondReply = secondPeer.next();
+    let secondSettled = false;
+    void secondReply.then(() => { secondSettled = true; });
+    await waitForTurn();
+    expect(onAuthenticatedSession).toHaveBeenNthCalledWith(2, "service-instance_a");
+    expect(secondSettled).toBe(false);
+    releases.shift()?.();
+    expect(await secondReply).toHaveProperty("result");
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
+
+  it("rejects a session when authenticated host recovery fails", async () => {
+    const root = makeRoot();
+    const onAuthenticatedSession = vi.fn()
+      .mockResolvedValueOnce(err(new Error("attachment store unavailable")))
+      .mockResolvedValueOnce(ok(undefined));
+    const host = makeHost(
+      root.socketPath,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onAuthenticatedSession,
+    );
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+
+    const failedPeer = await connectPeer(root.socketPath);
+    peers.push(failedPeer);
+    failedPeer.send(handshake(BEARER));
+    expect(await failedPeer.next()).toMatchObject({ error: { kind: "internal_error" } });
+    failedPeer.close();
+    await waitForTurn();
+
+    const recoveredPeer = await connectPeer(root.socketPath);
+    peers.push(recoveredPeer);
+    recoveredPeer.send(handshake(BEARER));
+    expect(await recoveredPeer.next()).toHaveProperty("result");
+    expect((await started).ok).toBe(true);
+    expect(onAuthenticatedSession).toHaveBeenCalledTimes(2);
     expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
   });
 
