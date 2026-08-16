@@ -11,6 +11,7 @@ import type {
   AnnouncementProducerReservation,
   OutwardSendLedgerPort,
   OutwardSendRecord,
+  QuarantinedInvalidAnnouncementRecord,
 } from "@comis/core";
 import {
   createStableAnnouncementChunkOperationId,
@@ -110,6 +111,7 @@ export function createAnnouncementDeadLetterQueue(
   let producerReservations: ProducerReservationRecord[] = [];
   let producerHandoffs: AnnouncementProducerHandoffRecord[] = [];
   let invalidRecords: InvalidDeadLetterRecord[] = [];
+  let terminalInvalidRecords: QuarantinedInvalidAnnouncementRecord[] = [];
   const activeProducerKeys = new Set<string>();
   const emittedAdmissionKeys = new Set<string>();
   const terminalDecisionStore = createAnnouncementTerminalDecisionStore(filePath);
@@ -339,6 +341,30 @@ export function createAnnouncementDeadLetterQueue(
             "Completion attachment snapshots could not be reconciled",
           );
           return reconciled.ok ? reconciled.value : reconciled;
+        }
+      }
+      if (!outwardLedger) {
+        const terminalInvalid = await terminalDecisionStore.listInvalid();
+        if (!terminalInvalid.ok) {
+          logger?.error(
+            {
+              errorKind: "resource" as const,
+              hint: "restore terminal-decision storage before accepting ledgerless announcements",
+            },
+            "Terminal-decision quarantine could not be inspected",
+          );
+          return terminalInvalid;
+        }
+        terminalInvalidRecords = [...terminalInvalid.value];
+        if (terminalInvalidRecords.length > 0) {
+          logger?.warn(
+            {
+              invalidRecordCount: terminalInvalidRecords.length,
+              errorKind: "precondition" as const,
+              hint: "repair the quarantined terminal-decision records; unaffected delivery identities remain available",
+            },
+            "Invalid terminal-decision records quarantined",
+          );
         }
       }
       loaded = true;
@@ -688,7 +714,7 @@ export function createAnnouncementDeadLetterQueue(
     return classifyQuarantined({
       entries,
       reservations: decisionReservations,
-      invalidRecords,
+      invalidRecords: [...invalidRecords, ...terminalInvalidRecords],
       governed: outwardLedger !== undefined,
       maxRetries,
       maxAgeMs,
@@ -935,11 +961,13 @@ export function createAnnouncementDeadLetterQueue(
       return terminalized;
     }
     const resolved = await persist(entries, nextReservations, invalidRecords);
+    if (resolved.ok) {
+      decisionReservations = nextReservations;
+    }
     if (reservation.value.attachment?.kind === "snapshot") {
       await cleanupUnreferencedSnapshots([{ attachment: reservation.value.attachment }]);
     }
     if (resolved.ok) {
-      decisionReservations = nextReservations;
       return ok(true);
     }
     return err(resolved.error);
@@ -2764,7 +2792,8 @@ export function createAnnouncementDeadLetterQueue(
       + decisionReservations.length
       + producerHandoffs.length
       + producerReservations.length
-      + invalidRecords.length,
+      + invalidRecords.length
+      + terminalInvalidRecords.length,
     listQuarantined: () => serialize(async () => {
       // Load before projecting: the in-memory lists are empty until some
       // operation has faulted the file in, and `list` is usually the FIRST
@@ -2786,6 +2815,9 @@ export function createAnnouncementDeadLetterQueue(
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
       if (!quarantineClassification().actionableIds.has(id)) return ok(false);
+      if (terminalInvalidRecords.some((record) => record.id === id)) {
+        return err(new Error("Terminal-decision corruption requires storage repair"));
+      }
       const releasedEntry = entries.find((candidate) => candidate.id === id);
       const releasedReservation = decisionReservations.find((candidate) => candidate.id === id);
       const releasedDelivery = releasedEntry ?? releasedReservation;

@@ -244,7 +244,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         );
       }
       let reservedProducerKey: string | undefined;
-      let producerShouldRemain = true;
+      let producerShouldRemain = false;
       if (
         params.mode !== "fire-and-forget"
         && params.announceOperationId !== undefined
@@ -256,6 +256,12 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         && params.callerEndpoint !== undefined
         && deps.reserveAnnouncementProducer !== undefined
       ) {
+        if (
+          deps.releaseAnnouncementProducer === undefined
+          || deps.cancelAnnouncementProducer === undefined
+        ) {
+          throw new Error("Announcement producer lifecycle is incomplete");
+        }
         const callerSession = conversationScopeToSessionKey(
           params.callerConversation.conversationScope,
         );
@@ -366,7 +372,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         // 8. Wait mode: announce and return
         if (params.mode === "wait") {
           const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
-          if (hadSkip) producerShouldRemain = false;
+          producerShouldRemain = !hadSkip;
           const announced = hadSkip
             ? false
             : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
@@ -429,7 +435,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
 
         // 10. Announce final result
         const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
-        if (hadSkip) producerShouldRemain = false;
+        producerShouldRemain = !hadSkip;
         const announced = hadSkip
           ? false
           : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
@@ -447,8 +453,10 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         };
       } finally {
         if (reservedProducerKey !== undefined) {
-          if (!producerShouldRemain && deps.cancelAnnouncementProducer) {
-            await deps.cancelAnnouncementProducer(reservedProducerKey);
+          if (!producerShouldRemain) {
+            if (deps.cancelAnnouncementProducer) {
+              await deps.cancelAnnouncementProducer(reservedProducerKey);
+            }
           } else if (deps.releaseAnnouncementProducer) {
             await deps.releaseAnnouncementProducer(reservedProducerKey);
           }

@@ -14,10 +14,13 @@ import { ok, type Result } from "@comis/shared";
 import type {
   AnnouncementDeadLetterStatus,
   QuarantinedAnnouncement,
+  QuarantinedInvalidAnnouncementRecord,
   QuarantineReleaseOutcome,
 } from "@comis/core";
 import type { DeadLetterEntry, ParentDecisionReservationRecord } from "./announcement-dead-letter-file.js";
 import type { InvalidDeadLetterRecord } from "./announcement-dead-letter-invalid.js";
+
+type InvalidQuarantineEvidence = Omit<QuarantinedInvalidAnnouncementRecord, "kind">;
 
 /**
  * One quarantined announcement, as an operator sees it.
@@ -50,7 +53,7 @@ const GOVERNED_OPERATOR_ERRORS = new Set([
 export function classifyQuarantined(input: {
   readonly entries: readonly DeadLetterEntry[];
   readonly reservations: readonly ParentDecisionReservationRecord[];
-  readonly invalidRecords: readonly InvalidDeadLetterRecord[];
+  readonly invalidRecords: readonly InvalidQuarantineEvidence[];
   readonly governed: boolean;
   readonly maxRetries: number;
   readonly maxAgeMs: number;
@@ -89,7 +92,7 @@ export function classifyQuarantined(input: {
 export function projectQuarantined(
   entries: readonly DeadLetterEntry[],
   reservations: readonly ParentDecisionReservationRecord[],
-  invalidRecords: readonly InvalidDeadLetterRecord[],
+  invalidRecords: readonly InvalidQuarantineEvidence[],
 ): readonly QuarantinedAnnouncement[] {
   const rows: Array<{ readonly row: QuarantinedAnnouncement; readonly sortAt: number }> = [
     ...entries.map((entry) => ({

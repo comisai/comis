@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
+import { mkdir, open, readdir, rename, unlink } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import type {
   AnnouncementDeadLetterEntryInput,
   AnnouncementParentDecisionReservation,
   AnnouncementRetirementProducer,
+  QuarantinedInvalidAnnouncementRecord,
   QuarantineReleaseOutcome,
 } from "@comis/core";
 import { ConversationRefSchema, safePath, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import { announcementRecoveryKey } from "./announcement-dead-letter-identity.js";
+import { MAX_DEAD_LETTER_ROW_BYTES } from "./announcement-dead-letter-invalid.js";
 
 export type AnnouncementTerminalDecision = QuarantineReleaseOutcome | "no_reply";
 
@@ -37,6 +39,20 @@ type TerminalDecisionOwner = AnnouncementDeadLetterEntryInput
 
 interface TerminalDecisionStoreOptions {
   readonly syncDirectory?: (path: string) => Promise<Result<void, Error>>;
+}
+
+type TerminalRecordKind = "terminal_decision" | "terminal_retirement";
+
+interface TerminalStoreCorruption {
+  readonly row: QuarantinedInvalidAnnouncementRecord;
+  readonly kind: TerminalRecordKind;
+  readonly blockedDigests: ReadonlySet<string>;
+}
+
+interface LoadedTerminalCollection {
+  readonly decisions: ReadonlyMap<string, AnnouncementTerminalDecisionRecord>;
+  readonly retirements: ReadonlyMap<string, AnnouncementTerminalRetirementRecord>;
+  readonly corruptions: ReadonlyMap<string, TerminalStoreCorruption>;
 }
 
 export function terminalDecisionIdentity(owner: TerminalDecisionOwner): {
@@ -134,6 +150,90 @@ async function syncDirectory(path: string): Promise<Result<void, Error>> {
   const synced = await fromPromise(opened.value.sync());
   const closed = await fromPromise(opened.value.close());
   return synced.ok ? closed : synced;
+}
+
+function terminalCorruption(
+  kind: TerminalRecordKind,
+  relativePath: string,
+  reason: QuarantinedInvalidAnnouncementRecord["reason"],
+  rawBytes: number,
+  evidence: Uint8Array | string,
+  blockedDigests: readonly string[] = [],
+): Result<TerminalStoreCorruption, Error> {
+  return tryCatch(() => {
+    const rawDigest = createHash("sha256")
+      .update(kind, "utf8")
+      .update("\u0000", "utf8")
+      .update(relativePath, "utf8")
+      .update("\u0000", "utf8")
+      .update(String(rawBytes), "utf8")
+      .update("\u0000", "utf8")
+      .update(evidence)
+      .digest("hex");
+    const idDigest = createHash("sha256")
+      .update(`${kind}\u0000${relativePath}`, "utf8")
+      .digest("hex");
+    return {
+      kind,
+      row: {
+        id: `invalid:${idDigest}`,
+        kind: "invalid_record",
+        reason,
+        sourceLine: 1,
+        detectedAt: systemNowMs(),
+        rawDigest,
+        rawBytes,
+      },
+      blockedDigests: new Set(blockedDigests),
+    };
+  });
+}
+
+async function readBoundedTerminalRecord(path: string): Promise<Result<{
+  readonly content?: string;
+  readonly evidence: Uint8Array;
+  readonly rawBytes: number;
+  readonly oversized: boolean;
+}, Error>> {
+  const opened = await fromPromise(open(path, "r"));
+  if (!opened.ok) return opened;
+  const stats = await fromPromise(opened.value.stat());
+  if (!stats.ok) {
+    await fromPromise(opened.value.close());
+    return stats;
+  }
+  const readLimit = stats.value.size > MAX_DEAD_LETTER_ROW_BYTES
+    ? Math.min(4_096, stats.value.size)
+    : MAX_DEAD_LETTER_ROW_BYTES + 1;
+  const buffer = Buffer.alloc(readLimit);
+  let offset = 0;
+  let readFailure: Error | undefined;
+  while (offset < buffer.length) {
+    const next = await fromPromise(opened.value.read(
+      buffer,
+      offset,
+      buffer.length - offset,
+      offset,
+    ));
+    if (!next.ok) {
+      readFailure = next.error;
+      break;
+    }
+    if (next.value.bytesRead === 0) break;
+    offset += next.value.bytesRead;
+  }
+  const closed = await fromPromise(opened.value.close());
+  if (readFailure !== undefined) return err(readFailure);
+  if (!closed.ok) return closed;
+  const evidence = buffer.subarray(0, offset);
+  const rawBytes = Math.max(stats.value.size, offset);
+  const oversized = rawBytes > MAX_DEAD_LETTER_ROW_BYTES;
+  return ok({
+    ...(oversized ? {} : { content: evidence.toString("utf8") }),
+    evidence,
+    rawBytes,
+    oversized,
+  });
 }
 
 export function createTerminalDecisionRecord(
@@ -254,9 +354,11 @@ export function createAnnouncementTerminalDecisionStore(
       completionKeyDigests: readonly string[],
     ) => Result<boolean, Error>,
   ): Promise<Result<number, Error>>;
+  listInvalid(): Promise<Result<readonly QuarantinedInvalidAnnouncementRecord[], Error>>;
 } {
   const records = new Map<string, AnnouncementTerminalDecisionRecord>();
   const retirements = new Map<string, AnnouncementTerminalRetirementRecord>();
+  const corruptions = new Map<string, TerminalStoreCorruption>();
   let loaded = false;
   let operationTail: Promise<void> = Promise.resolve();
 
@@ -348,51 +450,175 @@ export function createAnnouncementTerminalDecisionStore(
 
   async function loadCollection(
     directory: string,
-    kind: "terminal_decision" | "terminal_retirement",
-  ): Promise<Result<void, Error>> {
+    kind: TerminalRecordKind,
+  ): Promise<Result<LoadedTerminalCollection, Error>> {
+    const nextDecisions = new Map<string, AnnouncementTerminalDecisionRecord>();
+    const nextRetirements = new Map<string, AnnouncementTerminalRetirementRecord>();
+    const nextCorruptions = new Map<string, TerminalStoreCorruption>();
+    const retainCorruption = (
+      relativePath: string,
+      reason: QuarantinedInvalidAnnouncementRecord["reason"],
+      rawBytes: number,
+      evidence: Uint8Array | string,
+      blockedDigests: readonly string[] = [],
+    ): Result<void, Error> => {
+      const created = terminalCorruption(
+        kind,
+        relativePath,
+        reason,
+        rawBytes,
+        evidence,
+        blockedDigests,
+      );
+      if (!created.ok) return created;
+      nextCorruptions.set(created.value.row.id, created.value);
+      return ok(undefined);
+    };
     const shards = await fromPromise(readdir(directory, { withFileTypes: true }));
-    if (!shards.ok) return isMissingFile(shards.error) ? ok(undefined) : shards;
+    if (!shards.ok) return isMissingFile(shards.error)
+      ? ok({
+          decisions: nextDecisions,
+          retirements: nextRetirements,
+          corruptions: nextCorruptions,
+        })
+      : shards;
     for (const shard of shards.value) {
       if (!shard.isDirectory() || !/^[a-f0-9]{2}$/u.test(shard.name)) {
-        return err(new Error("Announcement terminal decision store is invalid"));
+        const retained = retainCorruption(
+          shard.name,
+          "schema_mismatch",
+          0,
+          shard.name,
+        );
+        if (!retained.ok) return retained;
+        continue;
       }
       const shardPath = tryCatch(() => safePath(directory, shard.name));
       if (!shardPath.ok) return shardPath;
       const files = await fromPromise(readdir(shardPath.value, { withFileTypes: true }));
-      if (!files.ok) return files;
+      if (!files.ok) {
+        const retained = retainCorruption(
+          shard.name,
+          "schema_mismatch",
+          0,
+          files.error.message,
+        );
+        if (!retained.ok) return retained;
+        continue;
+      }
       for (const file of files.value) {
+        const relativePath = `${shard.name}/${file.name}`;
         if (/^[a-f0-9]{64}\.json\.[a-f0-9-]{36}\.tmp$/u.test(file.name)) {
           const temporaryPath = tryCatch(() => safePath(shardPath.value, file.name));
           if (!temporaryPath.ok) return temporaryPath;
           const removed = await fromPromise(unlink(temporaryPath.value));
-          if (!removed.ok && !isMissingFile(removed.error)) return removed;
+          if (!removed.ok && !isMissingFile(removed.error)) {
+            const retained = retainCorruption(
+              relativePath,
+              "schema_mismatch",
+              0,
+              file.name,
+            );
+            if (!retained.ok) return retained;
+          }
           continue;
         }
         if (!file.isFile() || !/^[a-f0-9]{64}\.json$/u.test(file.name)) {
-          return err(new Error("Announcement terminal decision store is invalid"));
+          const retained = retainCorruption(
+            relativePath,
+            "schema_mismatch",
+            0,
+            file.name,
+          );
+          if (!retained.ok) return retained;
+          continue;
         }
         const path = tryCatch(() => safePath(shardPath.value, file.name));
         if (!path.ok) return path;
-        const content = await fromPromise(readFile(path.value, "utf8"));
-        if (!content.ok) return content;
-        const parsed = tryCatch(() => JSON.parse(content.value) as unknown);
-        if (!parsed.ok) return err(new Error("Announcement terminal decision store is invalid"));
+        const fileDigest = file.name.slice(0, 64);
+        const content = await readBoundedTerminalRecord(path.value);
+        if (!content.ok) {
+          const retained = retainCorruption(
+            relativePath,
+            "schema_mismatch",
+            0,
+            content.error.message,
+            [fileDigest],
+          );
+          if (!retained.ok) return retained;
+          continue;
+        }
+        if (content.value.oversized) {
+          const retained = retainCorruption(
+            relativePath,
+            "oversized_row",
+            content.value.rawBytes,
+            content.value.evidence,
+            [fileDigest],
+          );
+          if (!retained.ok) return retained;
+          continue;
+        }
+        const parsed = tryCatch(() => JSON.parse(content.value.content!) as unknown);
+        if (!parsed.ok) {
+          const retained = retainCorruption(
+            relativePath,
+            "invalid_json",
+            content.value.rawBytes,
+            content.value.evidence,
+            [fileDigest],
+          );
+          if (!retained.ok) return retained;
+          continue;
+        }
         if (kind === "terminal_decision") {
           if (
             !isAnnouncementTerminalDecisionRecord(parsed.value)
             || file.name !== `${parsed.value.keyDigest}.json`
-          ) return err(new Error("Announcement terminal decision store is invalid"));
-          records.set(parsed.value.keyDigest, parsed.value);
+            || shard.name !== parsed.value.keyDigest.slice(0, 2)
+          ) {
+            const parsedDigest = isAnnouncementTerminalDecisionRecord(parsed.value)
+              ? parsed.value.keyDigest
+              : undefined;
+            const retained = retainCorruption(
+              relativePath,
+              "schema_mismatch",
+              content.value.rawBytes,
+              content.value.evidence,
+              parsedDigest === undefined ? [fileDigest] : [fileDigest, parsedDigest],
+            );
+            if (!retained.ok) return retained;
+            continue;
+          }
+          nextDecisions.set(parsed.value.keyDigest, parsed.value);
         } else {
           if (
             !isAnnouncementTerminalRetirementRecord(parsed.value)
             || file.name !== `${parsed.value.id.slice("retirement:".length)}.json`
-          ) return err(new Error("Announcement terminal retirement store is invalid"));
-          retirements.set(parsed.value.id, parsed.value);
+            || shard.name !== parsed.value.id.slice("retirement:".length, "retirement:".length + 2)
+          ) {
+            const parsedDigest = isAnnouncementTerminalRetirementRecord(parsed.value)
+              ? parsed.value.id.slice("retirement:".length)
+              : undefined;
+            const retained = retainCorruption(
+              relativePath,
+              "schema_mismatch",
+              content.value.rawBytes,
+              content.value.evidence,
+              parsedDigest === undefined ? [fileDigest] : [fileDigest, parsedDigest],
+            );
+            if (!retained.ok) return retained;
+            continue;
+          }
+          nextRetirements.set(parsed.value.id, parsed.value);
         }
       }
     }
-    return ok(undefined);
+    return ok({
+      decisions: nextDecisions,
+      retirements: nextRetirements,
+      corruptions: nextCorruptions,
+    });
   }
 
   async function load(): Promise<Result<void, Error>> {
@@ -403,8 +629,21 @@ export function createAnnouncementTerminalDecisionStore(
     if (!loadedDecisions.ok) return loadedDecisions;
     const loadedRetirements = await loadCollection(paths.value.retirements, "terminal_retirement");
     if (!loadedRetirements.ok) return loadedRetirements;
+    records.clear();
+    retirements.clear();
+    corruptions.clear();
+    for (const [digest, record] of loadedDecisions.value.decisions) records.set(digest, record);
+    for (const [id, record] of loadedRetirements.value.retirements) retirements.set(id, record);
+    for (const collection of [loadedDecisions.value, loadedRetirements.value]) {
+      for (const [id, corruption] of collection.corruptions) corruptions.set(id, corruption);
+    }
     loaded = true;
     return ok(undefined);
+  }
+
+  function isDigestBlocked(kind: TerminalRecordKind, digest: string): boolean {
+    return [...corruptions.values()].some((corruption) =>
+      corruption.kind === kind && corruption.blockedDigests.has(digest));
   }
 
   async function lookupLoaded(
@@ -414,6 +653,9 @@ export function createAnnouncementTerminalDecisionStore(
     if (!loadedIndex.ok) return loadedIndex;
     const expected = createTerminalDecisionRecord(owner, "no_reply", 0);
     if (!expected.ok) return expected;
+    if (isDigestBlocked("terminal_decision", expected.value.keyDigest)) {
+      return err(new Error("Announcement terminal decision record is invalid"));
+    }
     return ok(records.get(expected.value.keyDigest)?.outcome);
   }
 
@@ -444,6 +686,9 @@ export function createAnnouncementTerminalDecisionStore(
       if (!loadedIndex.ok) return loadedIndex;
       const created = createTerminalDecisionRecord(owner, outcome, systemNowMs());
       if (!created.ok) return created;
+      if (isDigestBlocked("terminal_decision", created.value.keyDigest)) {
+        return err(new Error("Announcement terminal decision record is invalid"));
+      }
       const existing = records.get(created.value.keyDigest);
       if (existing !== undefined) {
         return existing.outcome === outcome
@@ -504,6 +749,9 @@ export function createAnnouncementTerminalDecisionStore(
       }
       const id = retirementIntentId(producer, completionKeyDigests);
       if (!id.ok) return id;
+      if (isDigestBlocked("terminal_retirement", id.value.slice("retirement:".length))) {
+        return err(new Error("Announcement terminal retirement record is invalid"));
+      }
       if (retirements.has(id.value)) return ok(undefined);
       const record: AnnouncementTerminalRetirementRecord = {
         recordType: "terminal_retirement",
@@ -549,6 +797,31 @@ export function createAnnouncementTerminalDecisionStore(
         if (!removed.ok) return removed;
       }
       return ok(collectable.length);
+    }),
+    listInvalid: () => serialize(async () => {
+      if (loaded) {
+        return ok([...corruptions.values()]
+          .map((corruption) => corruption.row)
+          .sort((left, right) => left.id.localeCompare(right.id)));
+      }
+      const paths = decisionStoragePaths(filePath);
+      if (!paths.ok) return paths;
+      const inspectedDecisions = await loadCollection(
+        paths.value.decisions,
+        "terminal_decision",
+      );
+      if (!inspectedDecisions.ok) return inspectedDecisions;
+      const inspectedRetirements = await loadCollection(
+        paths.value.retirements,
+        "terminal_retirement",
+      );
+      if (!inspectedRetirements.ok) return inspectedRetirements;
+      return ok([
+        ...inspectedDecisions.value.corruptions.values(),
+        ...inspectedRetirements.value.corruptions.values(),
+      ]
+        .map((corruption) => corruption.row)
+        .sort((left, right) => left.id.localeCompare(right.id)));
     }),
   };
 }

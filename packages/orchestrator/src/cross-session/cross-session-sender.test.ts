@@ -319,12 +319,14 @@ describe("createCrossSessionSender", () => {
     }));
     const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
     const prepareAnnouncementRetirement = vi.fn(async () => ok(undefined));
     const sender = createCrossSessionSender({
       ...deps,
       sendRecoverableAnnouncement,
       reserveAnnouncementProducer,
       releaseAnnouncementProducer,
+      cancelAnnouncementProducer,
       prepareAnnouncementRetirement,
     });
     const params: CrossSessionSendParams = {
@@ -369,6 +371,42 @@ describe("createCrossSessionSender", () => {
     }));
     expect(releaseAnnouncementProducer).toHaveBeenCalledWith("announce-tool-call-direct");
     expect(deps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("cancels producer ownership when ping-pong fails before completion", async () => {
+    const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
+    vi.mocked(deps.executeInSession)
+      .mockResolvedValueOnce({
+        response: "continue",
+        tokensUsed: { total: 10 },
+        cost: { total: 0.001 },
+      })
+      .mockRejectedValueOnce(new Error("ping-pong execution failed"));
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer,
+      releaseAnnouncementProducer,
+      cancelAnnouncementProducer,
+    });
+
+    await expect(sender.send({
+      target: QUERY_ONE,
+      text: "question",
+      mode: "ping-pong",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "failed-ping-pong-tool-call",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    })).rejects.toThrow("ping-pong execution failed");
+
+    expect(cancelAnnouncementProducer).toHaveBeenCalledWith("failed-ping-pong-tool-call");
+    expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------------

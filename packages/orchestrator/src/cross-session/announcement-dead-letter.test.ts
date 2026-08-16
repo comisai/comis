@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   chmod,
+  mkdir,
   mkdtemp,
   open,
   readFile,
@@ -34,7 +35,10 @@ import {
 } from "./announcement-dead-letter.js";
 import type { DeadLetterWriteOperations } from "./announcement-dead-letter-file.js";
 import { isSameAnnouncementRecovery } from "./announcement-dead-letter-identity.js";
-import { createAnnouncementTerminalDecisionStore } from "./announcement-dead-letter-terminal-decision.js";
+import {
+  createAnnouncementTerminalDecisionStore,
+  createTerminalDecisionRecord,
+} from "./announcement-dead-letter-terminal-decision.js";
 import type { RecoveryDeliveryOptions } from "./announcement-dead-letter-types.js";
 import { createMockLogger as _createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
@@ -847,6 +851,84 @@ describe("AnnouncementDeadLetterQueue", () => {
     const released = await dlq.release(quarantined[0]!.id, "discarded");
     expect(released).toMatchObject({ ok: true, value: true });
     expect(dlq.size()).toBe(0);
+  });
+
+  it("isolates invalid terminal records without disabling valid identities", async () => {
+    const terminalInput = (idempotencyKey: string, runId: string) => ({
+      idempotencyKey,
+      agentId: "agent-a",
+      runId,
+      sessionKey: "default:agent-a:telegram:chat-123:user_a",
+      announcementText: "terminal decision input",
+      channelType: "telegram" as const,
+      channelId: "chat-123",
+      failedAt: 100,
+      rootRunId: `root-${runId}`,
+      deliveryAuthority: makeDeliveryAuthority("agent-a"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-123"),
+      completionKeys: [idempotencyKey],
+    });
+    const validDecision = terminalInput("valid-terminal-operation", "valid-terminal-run");
+    const malformedDecision = terminalInput(
+      "malformed-terminal-operation",
+      "malformed-terminal-run",
+    );
+    const oversizedDecision = terminalInput(
+      "oversized-terminal-operation",
+      "oversized-terminal-run",
+    );
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+    await expect(store.record(validDecision, "delivered")).resolves.toEqual(ok(undefined));
+    const malformed = createTerminalDecisionRecord(malformedDecision, "discarded", 1);
+    const oversized = createTerminalDecisionRecord(oversizedDecision, "no_reply", 1);
+    if (!malformed.ok) throw malformed.error;
+    if (!oversized.ok) throw oversized.error;
+    const terminalRoot = `${filePath}.terminal-decisions`;
+    const malformedDirectory = join(
+      terminalRoot,
+      "decisions",
+      malformed.value.keyDigest.slice(0, 2),
+    );
+    const oversizedDirectory = join(
+      terminalRoot,
+      "decisions",
+      oversized.value.keyDigest.slice(0, 2),
+    );
+    await mkdir(malformedDirectory, { recursive: true });
+    await mkdir(oversizedDirectory, { recursive: true });
+    await writeFile(
+      join(malformedDirectory, `${malformed.value.keyDigest}.json`),
+      "{malformed",
+    );
+    await writeFile(
+      join(oversizedDirectory, `${oversized.value.keyDigest}.json`),
+      Buffer.alloc(1_048_577, 120),
+    );
+    await writeFile(join(terminalRoot, "decisions", "stray.json"), "stray");
+
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    await expect(queue.durableStatus()).resolves.toEqual(ok({
+      activeRecoveryCount: 0,
+      quarantinedCount: 3,
+    }));
+    expect(await listQuarantined(queue)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "invalid_record", reason: "invalid_json" }),
+      expect.objectContaining({ kind: "invalid_record", reason: "oversized_row" }),
+      expect.objectContaining({ kind: "invalid_record", reason: "schema_mismatch" }),
+    ]));
+    await expect(queue.reserveDecision(validDecision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "delivered",
+    }));
+    await expect(queue.reserveDecision(malformedDecision)).resolves.toMatchObject({ ok: false });
+    await expect(queue.reserveDecision(terminalInput(
+      "unrelated-terminal-operation",
+      "unrelated-terminal-run",
+    ))).resolves.toEqual(ok({ created: true }));
   });
 
   it("concurrent drain calls are serialized", async () => {
@@ -2050,6 +2132,28 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       .resolves.toEqual(ok(true));
     expect(cleanupAttachment).toHaveBeenCalledOnce();
     expect(cleanupAttachment).toHaveBeenCalledWith(sharedAttachment);
+  });
+
+  it("cleans an attachment snapshot after no-reply settlement", async () => {
+    const cleanupAttachment = vi.fn(async () => ok(undefined));
+    const attachment = snapshotAttachment("worker-a", "no-reply.csv");
+    const decision = decisionInput({
+      idempotencyKey: "no-reply-attachment",
+      runId: "no-reply-attachment-run",
+      attachment,
+      completionKeys: ["no-reply-attachment"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      cleanupAttachment,
+    });
+    await queue.replaceDecisions([], [decision]);
+
+    await expect(queue.resolveDecision(decision.idempotencyKey, "no_reply"))
+      .resolves.toEqual(ok(true));
+    expect(cleanupAttachment).toHaveBeenCalledOnce();
+    expect(cleanupAttachment).toHaveBeenCalledWith(attachment);
   });
 
   it("atomically replaces parent decisions with exact outward operations", async () => {
