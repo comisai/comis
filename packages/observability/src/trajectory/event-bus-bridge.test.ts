@@ -759,7 +759,9 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
 
     bus.emit("delivery:outward_ledger_transition", {
       rootRunId: "root-1",
+      runId: "run-1",
       stepIndex: 7,
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
       transition: "park",
       outcome: "parked",
       timestamp: 1_000,
@@ -769,9 +771,39 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
       type: "delivery.outward_ledger_transition",
       data: {
         rootRunId: "root-1",
+        runId: "run-1",
         stepIndex: 7,
         transition: "park",
         outcome: "parked",
+      },
+      parentEntryId: undefined,
+    }]);
+  });
+
+  it("preserves a committed outward attachment receipt without its body", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("delivery:outward_ledger_transition", {
+      rootRunId: "root-attachment",
+      stepIndex: 0,
+      transition: "commit",
+      outcome: "committed",
+      deliveryKind: "attachment",
+      platformMessageId: "telegram-document-218",
+      timestamp: 1_000,
+    } as never);
+
+    expect(recorder.calls).toEqual([{
+      type: "delivery.outward_ledger_transition",
+      data: {
+        rootRunId: "root-attachment",
+        stepIndex: 0,
+        transition: "commit",
+        outcome: "committed",
+        deliveryKind: "attachment",
+        platformMessageId: "telegram-document-218",
       },
       parentEntryId: undefined,
     }]);
@@ -1532,7 +1564,9 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     },
     "delivery:outward_ledger_transition": {
       rootRunId: "root-1",
+      runId: "run-1",
       stepIndex: 7,
+      sessionKey: "t1:u1:c1",
       transition: "park",
       outcome: "parked",
       timestamp: 1000,
@@ -2133,6 +2167,20 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       runtimeMs: 12_000,
       tokensUsed: 2_500,
       cost: 0.04,
+      timestamp: 0,
+    },
+    "durable:suspended": {
+      rootRunId: "root-session-1",
+      checkpointId: "run-child-1",
+      sessionKey: "child-session",
+      timestamp: 0,
+    },
+    "durable:resumed": {
+      rootRunId: "root-session-1",
+      sourceCheckpointId: "run-child-1",
+      checkpointId: "run-child-2",
+      sourceTerminalReason: "superseded",
+      sessionKey: "child-session",
       timestamp: 0,
     },
     "session:sub_agent_wait_finished": {
@@ -4722,7 +4770,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(147);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(149);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
@@ -5215,6 +5263,65 @@ describe("attachTrajectoryToEventBus ownerSessionKey scoping", () => {
     });
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0]!.type).toBe("tool.call");
+  });
+
+  it("routes off-turn restart and delivery evidence only to their owning session", () => {
+    const bus = makeBus();
+    const ownerRecorder = createCaptureRecorder();
+    const otherRecorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder: ownerRecorder, ownerSessionKey: OWNER });
+    attachTrajectoryToEventBus({ eventBus: bus, recorder: otherRecorder, ownerSessionKey: OTHER });
+
+    (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
+      "durable:suspended",
+      {
+        rootRunId: "root-owner",
+        checkpointId: "checkpoint-owner",
+        sessionKey: OWNER,
+        timestamp: 1,
+      },
+    );
+    (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
+      "delivery:outward_ledger_transition",
+      {
+        rootRunId: "root-owner",
+        stepIndex: 0,
+        transition: "commit",
+        outcome: "committed",
+        sessionKey: OWNER,
+        timestamp: 2,
+      },
+    );
+
+    expect(ownerRecorder.calls.map((call) => call.type)).toEqual([
+      "durable.suspended",
+      "delivery.outward_ledger_transition",
+    ]);
+    expect(otherRecorder.calls).toHaveLength(0);
+  });
+
+  it("drops an explicitly unscoped off-turn delivery from every session recorder", () => {
+    const bus = makeBus();
+    const ownerRecorder = createCaptureRecorder();
+    const otherRecorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder: ownerRecorder, ownerSessionKey: OWNER });
+    attachTrajectoryToEventBus({ eventBus: bus, recorder: otherRecorder, ownerSessionKey: OTHER });
+
+    (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
+      "delivery:outward_ledger_transition",
+      {
+        rootRunId: "root-recovery",
+        stepIndex: 0,
+        transition: "park",
+        outcome: "parked",
+        sessionKey: null,
+        runId: null,
+        timestamp: 2,
+      },
+    );
+
+    expect(ownerRecorder.calls).toHaveLength(0);
+    expect(otherRecorder.calls).toHaveLength(0);
   });
 
   it("binds session-less payloads via the ALS request context", async () => {

@@ -675,9 +675,18 @@ describe("createSubagentHandlers", () => {
     ).rejects.toThrow("Rate limited: wait 2s between steers to same target");
   });
 
-  it("subagent.steer throws when kill fails", async () => {
+  it("subagent.steer returns a no-op when the child completes before kill", async () => {
+    vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
+      runId: "steer-fail",
+      status: "running",
+      agentId: "researcher",
+      task: "old task",
+      sessionKey: "default:sub-agent-steer-fail:sub-agent:steer-fail",
+      startedAt: Date.now() - 1_000,
+    } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);
     vi.mocked(deps.subAgentRunner.killRun).mockReturnValue({
       killed: false,
+      terminalStatus: "completed",
       error: "Run steer-fail is not running (status: completed)",
     });
 
@@ -686,7 +695,12 @@ describe("createSubagentHandlers", () => {
         target: "steer-fail",
         message: "new task",
       }),
-    ).rejects.toThrow("Run steer-fail is not running (status: completed)");
+    ).resolves.toEqual({
+      status: "already_terminal",
+      runId: "steer-fail",
+      terminalStatus: "completed",
+    });
+    expect(deps.subAgentRunner.spawn).not.toHaveBeenCalled();
   });
 
   it("subagent.steer throws when target missing", async () => {
@@ -902,12 +916,55 @@ describe("createSubagentHandlers", () => {
       expect(deps.subAgentRunner.steerRun).not.toHaveBeenCalled();
     });
 
-    // The inject path must mirror killRun's status guard.
-    // getRunStatus returns a run for ANY status inside the retention window, so a
-    // completed/failed/queued target would otherwise proceed to steerRun, find no
-    // live handle, and throw the generic "No live session" — a worse, less
-    // actionable error than kill's "is not running (status: X)".
-    it.each(["completed", "failed", "queued"] as const)(
+    it("returns a successful no-op when the child completed before the steer arrived", async () => {
+      vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
+        runId: "run-completed",
+        status: "completed",
+        agentId: "researcher",
+        task: "t",
+        sessionKey: "default:sub-agent-run-completed:sub-agent:run-completed",
+        startedAt: Date.now() - 5_000,
+        completedAt: Date.now(),
+      } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);
+
+      await expect(
+        handlers["subagent.steer"]!({ target: "run-completed", message: "adjust" }),
+      ).resolves.toEqual({
+        status: "already_terminal",
+        runId: "run-completed",
+        terminalStatus: "completed",
+      });
+      expect(deps.subAgentRunner.steerRun).not.toHaveBeenCalled();
+      expect(deps.subAgentRunner.killRun).not.toHaveBeenCalled();
+      expect(deps.subAgentRunner.spawn).not.toHaveBeenCalled();
+      expect(deps.eventBus!.emit).not.toHaveBeenCalled();
+    });
+
+    it("returns a successful no-op when the child completes before steerRun", async () => {
+      mockRunningRun("run-completed-during-inject");
+      vi.mocked(deps.subAgentRunner.steerRun).mockResolvedValue({
+        steered: false,
+        terminalStatus: "completed",
+        error: "Run run-completed-during-inject is not running (status: completed)",
+      });
+
+      await expect(
+        handlers["subagent.steer"]!({
+          target: "run-completed-during-inject",
+          message: "adjust",
+        }),
+      ).resolves.toEqual({
+        status: "already_terminal",
+        runId: "run-completed-during-inject",
+        terminalStatus: "completed",
+      });
+      expect(deps.subAgentRunner.spawn).not.toHaveBeenCalled();
+      expect(deps.logger!.warn).not.toHaveBeenCalled();
+    });
+
+    // Failed and queued runs cannot accept a live steer and do not represent a
+    // successfully completed target, so they remain actionable errors.
+    it.each(["failed", "queued"] as const)(
       "throws an actionable status error (not the generic 'No live session') for a %s run, and does NOT call steerRun",
       async (status) => {
         vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
@@ -917,7 +974,7 @@ describe("createSubagentHandlers", () => {
           task: "t",
           sessionKey: `default:sub-agent-run-${status}:sub-agent:run-${status}`,
           startedAt: Date.now() - 5_000,
-          ...(status === "completed" || status === "failed"
+          ...(status === "failed"
             ? { completedAt: Date.now() }
             : {}),
         } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);

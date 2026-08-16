@@ -136,6 +136,7 @@ describe("runPrompt observable boundaries", () => {
           toolName: "sessions_spawn",
           success: true,
           durationMs: 5,
+          delegationScope: "whole_request",
         }],
       },
       messages: [
@@ -173,6 +174,7 @@ describe("runPrompt observable boundaries", () => {
           toolName: "sessions_spawn",
           success: true,
           durationMs: 5,
+          delegationScope: "whole_request",
         }],
       },
       messages: [
@@ -208,6 +210,42 @@ describe("runPrompt observable boundaries", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("does not duplicate an explicitly push-delivered background task in the parent", async () => {
+    const { params, prompt } = makeParams({
+      bridgeResult: {
+        llmCalls: 1,
+        stepsExecuted: 1,
+        textEmitted: true,
+        finishReason: "stop",
+        toolExecResults: [{
+          toolName: "sessions_spawn",
+          success: true,
+          durationMs: 5,
+          delegatedToolNames: ["web_search", "web_fetch"],
+          delegationScope: "whole_request",
+        }],
+      },
+      messages: [
+        { role: "user", content: [{ type: "text", text: "start background research" }] },
+        { role: "assistant", content: [{ type: "text", text: "Started; I will send it when complete." }] },
+      ],
+      requestRelevantPromptSkillNames: ["deep-research"],
+    });
+    params.msg.text = [
+      "Start one durable background research task.",
+      "Acknowledge once now, then deliver the completed report here without me polling.",
+    ].join(" ");
+    params.requestRelevantToolNames = ["read", "web_search", "web_fetch"];
+    params.requestRelevantPromptSkillLocations = ["/skills/deep-research/SKILL.md"];
+    params.requestRelevantPromptSkillWorkflowToolNames = ["web_search", "web_fetch"];
+
+    await runPrompt(params);
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(params.result.requestToolNudge).toBeUndefined();
+    expect(params.result.response).toContain("send it when complete");
+  });
+
   it("continues a separate parent skill after accepting delegated work", async () => {
     const { params, prompt } = makeParams({
       bridgeResult: {
@@ -219,6 +257,8 @@ describe("runPrompt observable boundaries", () => {
           toolName: "sessions_spawn",
           success: true,
           durationMs: 5,
+          delegatedToolNames: ["exec"],
+          delegationScope: "partial",
         }],
       },
       messages: [

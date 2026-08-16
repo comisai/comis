@@ -27,6 +27,7 @@ import {
   backgroundRecoveryScanEventToRow,
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
+  outwardAttachmentFailureEventToRow,
   nodeBudgetExceededEventToRow,
   subagentKilledEventToRow,
   durableOrphanedEventToRow,
@@ -1495,6 +1496,35 @@ describe("deliveryDeadletteredEventToRow", () => {
   });
 });
 
+describe("outwardAttachmentFailureEventToRow", () => {
+  it("maps an attachment allocation failure to a warning health signal", () => {
+    const row = outwardAttachmentFailureEventToRow({
+      rootRunId: "root-output",
+      runId: "run-output",
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
+      partId: "attachment:0",
+      transition: "allocate",
+      outcome: "blocked",
+      deliveryKind: "attachment",
+      timestamp: 8_250,
+    });
+
+    expect(row).toMatchObject({
+      category: "health_signal",
+      severity: "warning",
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
+      message: "delivery:outward_attachment_failed",
+    });
+    expect(JSON.parse(row.details ?? "{}")).toEqual({
+      signal: "outward_attachment_failed",
+      transition: "allocate",
+      outcome: "blocked",
+    });
+    expect(JSON.stringify(row)).not.toContain("run-output");
+    expect(JSON.stringify(row)).not.toContain("root-output");
+  });
+});
+
 describe("deliverySkippedEventToRow", () => {
   it("maps a missing sub-agent completion route to a content-free warning health signal", () => {
     const mapper = (
@@ -2060,6 +2090,16 @@ describe("setupObsPersistence", () => {
     eventBus.emit("subagent:delivery_deadlettered", {
       runId: "run-x", channelType: "telegram", attempt: 3, transient: true, timestamp: 1007,
     });
+    eventBus.emit("delivery:outward_ledger_transition", {
+      rootRunId: "root-output",
+      runId: "run-output",
+      sessionKey: "sk-1",
+      partId: "attachment:0",
+      transition: "prepare",
+      outcome: "failed",
+      deliveryKind: "attachment",
+      timestamp: 1007,
+    } as never);
     // i. A per-node token-budget breach.
     eventBus.emit("subagent:budget_exceeded", {
       graphId: "g", nodeId: "greedy", agentId: "researcher", tokenBudget: 5000, tokensUsed: 17770, capSource: "node", timestamp: 1008,
@@ -2068,6 +2108,7 @@ describe("setupObsPersistence", () => {
     eventBus.emit("durable:orphaned", { rootRunId: "root-1", reason: "not_resumable", timestamp: 1009 });
     eventBus.emit("durable:resumed", {
       rootRunId: "root-2",
+      sessionKey: "sk-1",
       sourceCheckpointId: "checkpoint-2",
       checkpointId: "checkpoint-3",
       sourceTerminalReason: "superseded",
@@ -2121,12 +2162,12 @@ describe("setupObsPersistence", () => {
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per degraded event (18 total), each with the right message.
+    // Exactly one health_signal row per degraded event (19 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(18);
+    expect(healthRows).toHaveLength(19);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
       "autonomy:denial_breaker_tripped",
@@ -2136,6 +2177,7 @@ describe("setupObsPersistence", () => {
       "context:dag_degraded",
       "context:script_zero_hit",
       "context:summary_language_mismatch",
+      "delivery:outward_attachment_failed",
       "durable:orphaned",
       "durable:resumed",
       "health:budget_exceeded",

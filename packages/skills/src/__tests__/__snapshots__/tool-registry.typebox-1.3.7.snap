@@ -3711,6 +3711,19 @@
           "description": "Optional explicit async intent; every spawn returns runId immediately",
           "type": "boolean"
         },
+        "delegation_scope": {
+          "anyOf": [
+            {
+              "const": "whole_request",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "type": "string"
+            }
+          ],
+          "description": "Ownership assigned to this child. Use whole_request only when it owns every requested outcome; use partial when the parent must continue any distinct requested work."
+        },
         "domain_knowledge": {
           "description": "Domain knowledge entries for the sub-agent",
           "items": {

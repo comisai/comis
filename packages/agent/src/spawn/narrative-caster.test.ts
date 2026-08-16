@@ -75,6 +75,19 @@ describe("NarrativeCaster", () => {
     expect(output).toContain("Level 2");
   });
 
+  it("preserves verified expected-output evidence for the parent rewrite", () => {
+    const caster = createNarrativeCaster({ enabled: true, tagPrefix: "Subagent Result" });
+    const params = {
+      ...makeCastParams(),
+      outputValidation: { expected: 1, verified: 1 },
+    } as CastParams;
+
+    const output = caster.cast(params);
+
+    expect(output).toContain("Outputs: 1/1 verified");
+    expect(output).toContain("governed delivery");
+  });
+
   it("includes full result disk path", () => {
     const caster = createNarrativeCaster({ enabled: true, tagPrefix: "Subagent Result" });
     const output = caster.cast(makeCastParams());

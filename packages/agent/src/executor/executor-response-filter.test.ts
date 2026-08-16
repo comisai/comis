@@ -897,6 +897,7 @@ type DelegationEvidenceGuard = (params: {
     success: boolean;
     backgrounded?: boolean;
     subagentWaitCompletedCount?: number;
+    spawnRunId?: string;
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
@@ -904,7 +905,10 @@ type DelegationEvidenceGuard = (params: {
 }) => {
   response: string;
   corrected: boolean;
-  reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
+  reason?:
+    | "missing_current_turn_spawn"
+    | "successful_spawn_response_internal_identifier"
+    | "successful_spawn_response_ungrounded";
 };
 
 function delegationEvidenceGuard(): DelegationEvidenceGuard {
@@ -971,6 +975,82 @@ describe("current-turn delegation evidence guard", () => {
       response: falseClaim,
       corrected: false,
     });
+  });
+
+  it("replaces an unsolicited partial answer while its spawned result is pending", () => {
+    const verifiedSpawnResponse =
+      "I started a sub-agent for this request. Its result is still pending.";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "Scan a liquid US-equity universe and rank five short-term candidates using current data.",
+      response: [
+        "The supporting research workflow is complete.",
+        "The five-stock ranking itself is not yet evidenced, so I will not invent candidates.",
+      ].join("\n"),
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+        { toolName: "web_search", success: true },
+      ],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_ungrounded",
+    });
+  });
+
+  it("replaces a launch acknowledgement that exposes the internal spawn identifier", () => {
+    const verifiedSpawnResponse =
+      "I started a sub-agent for this request. Its result is still pending.";
+    const guarded = delegationEvidenceGuard()({
+      request: "ask a background helper to review the full inventory",
+      response: [
+        "I started the full-inventory review.",
+        "Run ID: 8dc57d7f-0071-45cb-bdaf-23d47ecead39",
+        "I will share the result when it completes.",
+      ].join("\n\n"),
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+      ],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_internal_identifier",
+    });
+  });
+
+  it.each([
+    "Started. Internal run handle: 8dc57d7f-0071-45cb-bdaf-23d47ecead39",
+    "Started. Internal run handle: 8dc57d7f",
+    '{"runId":"8dc57d7f-0071-45cb-bdaf-23d47ecead39","status":"started"}',
+  ])("removes the exact structured spawn handle from a launch reply", (response) => {
+    const verifiedSpawnResponse =
+      "I started a sub-agent for this request. Its result is still pending.";
+    const guarded = delegationEvidenceGuard()({
+      request: "ask a background helper to review the full inventory",
+      response,
+      toolExecResults: [{
+        toolName: "sessions_spawn",
+        success: true,
+        spawnRunId: "8dc57d7f-0071-45cb-bdaf-23d47ecead39",
+      }],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_internal_identifier",
+    });
+    expect(guarded.response).not.toContain("8dc57d7f-0071-45cb-bdaf-23d47ecead39");
   });
 
   // A spawn receipt proves only that delegation started. It cannot establish
@@ -1140,6 +1220,24 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
+  it("quarantines an internal handle from a runtime completion report", () => {
+    const runId = "8dc57d7f-0071-45cb-bdaf-23d47ecead39";
+    const guarded = delegationEvidenceGuard()({
+      request: "[Background Task] completion",
+      response: `Internal run handle: ${runId}\n\nThe inventory review found three missing records.`,
+      toolExecResults: [],
+      runtimeCompletion: true,
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: "Internal run handle: [internal]\n\nThe inventory review found three missing records.",
+      corrected: true,
+      reason: "successful_spawn_response_internal_identifier",
+    });
+    expect(guarded.response).not.toContain(runId);
+  });
+
   it("still guards the same delegation prose when it is an ordinary request", () => {
     const guarded = delegationEvidenceGuard()({
       request: "use another agent for an independent check",
@@ -1244,6 +1342,33 @@ describe("current-turn delegation evidence guard", () => {
     expect(guarded).toEqual({
       response: completedResult,
       corrected: false,
+    });
+  });
+
+  it("quarantines an internal handle from a completed child wait", () => {
+    const runId = "8dc57d7f-0071-45cb-bdaf-23d47ecead39";
+    const guarded = delegationEvidenceGuard()({
+      request: "use sessions_spawn for one nested child and return its result",
+      response: `Run ID: ${runId}\nversion: 1\nNESTED_LEAF`,
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true, spawnRunId: runId },
+        {
+          toolName: "subagents",
+          action: "wait",
+          success: true,
+          subagentWaitCompletedCount: 1,
+        },
+      ],
+      honestResponse,
+      verifiedSpawnResponse:
+        "I successfully started the requested sub-agent. Its result is still pending.",
+    });
+
+    expect(guarded.response).toContain("version: 1\nNESTED_LEAF");
+    expect(guarded.response).not.toContain(runId);
+    expect(guarded).toMatchObject({
+      corrected: true,
+      reason: "successful_spawn_response_internal_identifier",
     });
   });
 
@@ -2362,6 +2487,36 @@ describe("active-model self-status grounding guard", () => {
       provider: "provider_a",
       modelId: "model_a",
     })).toEqual({ response, corrected: false });
+  });
+
+  it("does not combine scattered current-model words across a research request", () => {
+    const request = [
+      "Research three AI-agent security branches: model-provider guidance,",
+      "application-security standards, and real incident lessons.",
+      "Each branch must use current web evidence and state which branches completed.",
+    ].join(" ");
+    const response = "All three research branches completed with current citations.";
+
+    expect(activeModelSelfStatusGuard()({
+      request,
+      response,
+      provider: "provider_a",
+      modelId: "model_a",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("grounds a later direct self-status query after an unrelated model query", () => {
+    expect(activeModelSelfStatusGuard()({
+      request:
+        "What model architecture does the paper use? Which current model are you using?",
+      response: "The paper uses a transformer, and my model is unspecified.",
+      provider: "provider_a",
+      modelId: "model_a",
+    })).toEqual({
+      response: "provider_a / model_a",
+      corrected: true,
+      reason: "active_model_status_mismatch",
+    });
   });
 });
 

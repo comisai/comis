@@ -63,6 +63,8 @@ const CHILD_RUN_ID = "32e91601-c71e-4386-bc16-f87867ca6aff";
 const CHILD_TRACE_ID = "f1b3491e-54ae-4aca-bb92-f6dec86a6134";
 const CHILD_SESSION_KEY =
   `default:agent:default:user_a:sub-agent:runtime:${CHILD_RUN_ID}:peer:user_a`;
+const RECOVERY_ROOT_RUN_ID =
+  `root-session-244cd6a3-0a81-48b1-a4f1-2e24375a6b35-default-${SESSION_KEY}`;
 
 // Every temp dir created — torn down in afterEach so no temp tree leaks.
 const tmpDirs: string[] = [];
@@ -854,6 +856,75 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     expect(report.toolStats.web_fetch).toMatchObject({ ok: 0, failed: 1 });
     expect(report.coverage?.trajectory).toEqual({ found: true, records: 4 });
     expect(report.coverage?.rollup).toEqual({ present: true });
+  });
+
+  it("joins child recovery evidence for parent session and root reports", async () => {
+    const dataDir = tmpDataDir();
+    const parentSessionFile = buildRealSessionFile(dataDir);
+    const parentRuntimeFile = `${parentSessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(parentRuntimeFile, [
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "subagent.spawned",
+        ts: "2026-08-15T10:00:00.000Z",
+        seq: 1,
+        data: { runId: CHILD_RUN_ID, rootRunId: RECOVERY_ROOT_RUN_ID },
+      },
+    ].map((record) => JSON.stringify(record)).join("\n") + "\n", "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile: parentSessionFile,
+      sessionId: SESSION_KEY,
+      runtimeFile: parentRuntimeFile,
+    });
+
+    const childSessionFile = buildChildSessionFile(dataDir);
+    const childRuntimeFile = `${childSessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(childRuntimeFile, [
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "durable.suspended",
+        ts: "2026-08-15T10:01:00.000Z",
+        seq: 1,
+        data: { rootRunId: RECOVERY_ROOT_RUN_ID, checkpointId: "checkpoint-a" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "durable.resumed",
+        ts: "2026-08-15T10:02:00.000Z",
+        seq: 2,
+        data: { rootRunId: RECOVERY_ROOT_RUN_ID, checkpointId: "checkpoint-b" },
+      },
+    ].map((record) => JSON.stringify(record)).join("\n") + "\n", "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile: childSessionFile,
+      sessionId: CHILD_SESSION_KEY,
+      runtimeFile: childRuntimeFile,
+    });
+
+    const reader = makeRealReader(dataDir);
+    const sessionReport = await assembleIncidentReportFromSources(
+      reader,
+      dataDir,
+      { sessionKey: SESSION_KEY, depth: "summary" },
+    );
+    const rootReport = await assembleIncidentReportFromSources(
+      reader,
+      dataDir,
+      { rootRunId: RECOVERY_ROOT_RUN_ID, depth: "summary" },
+    );
+
+    const expected = {
+      suspended: 1,
+      resumed: 1,
+      lastStatus: "resumed",
+      rootRunId: RECOVERY_ROOT_RUN_ID,
+      checkpointId: "checkpoint-b",
+    };
+    expect(sessionReport.restartRecovery).toEqual(expected);
+    expect(rootReport.restartRecovery).toEqual(expected);
   });
 
   it("diagnoses a provider tool-identity rejection from the real nested session layout", async () => {

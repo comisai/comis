@@ -403,9 +403,24 @@ export interface OrchestrationEvents {
    */
   "durable:resumed": {
     rootRunId: string;
+    /** Routes this boot-time recovery record to its resumed session. */
+    sessionKey: string;
     sourceCheckpointId: string;
     checkpointId: string;
     sourceTerminalReason: "superseded";
+    timestamp: number;
+  };
+
+  /**
+   * A checkpoint-admitted sub-agent remained in flight when the daemon's
+   * graceful drain expired. The old process stopped its local execution while
+   * preserving the running checkpoint for the boot resume pass. Counts/ids
+   * only: task content and provider output never cross this event.
+   */
+  "durable:suspended": {
+    rootRunId: string;
+    checkpointId: string;
+    sessionKey: string;
     timestamp: number;
   };
 

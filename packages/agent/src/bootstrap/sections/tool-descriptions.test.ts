@@ -475,6 +475,15 @@ describe("SYSTEM_PROMPT_GUIDES", () => {
     expect(SYSTEM_PROMPT_GUIDES.sessions_spawn).not.toContain("announce_channel_type");
     expect(SYSTEM_PROMPT_GUIDES.sessions_spawn).not.toContain("announce_channel_id");
   });
+
+  it("keeps sub-agent run handles and duplicate work out of launch replies", () => {
+    const guide = SYSTEM_PROMPT_GUIDES.sessions_spawn;
+    expect(guide).not.toMatch(/give them the runId/i);
+    expect(guide).toMatch(/run (?:handle|id).*internal/i);
+    expect(guide).toMatch(/do not repeat the delegated portion/i);
+    expect(guide).toMatch(/continue.*explicitly retained.*parent/i);
+    expect(guide).toContain("delegation_scope");
+  });
 });
 
 describe("key set parity", () => {
@@ -835,6 +844,12 @@ describe("SYSTEM_PROMPT_GUIDES trigger reachability", () => {
     const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
     expect(lean as string).toMatch(/result.*automatic/i);
     expect(lean as string).toMatch(/do not.*message/i);
+  });
+
+  it("marks the returned spawn handle as internal before the first spawn", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(lean as string).not.toMatch(/returns run ID/i);
+    expect(lean as string).toMatch(/internal/i);
   });
 });
 

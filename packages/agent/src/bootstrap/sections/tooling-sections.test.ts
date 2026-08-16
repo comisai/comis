@@ -296,6 +296,13 @@ describe("buildTaskDelegationSection", () => {
     expect(joined).not.toContain("announce_channel_id");
   });
 
+  it("keeps spawn handles internal and stops duplicate parent execution", () => {
+    const joined = buildTaskDelegationSection(["sessions_spawn"], false).join("\n");
+    expect(joined).not.toMatch(/give them the runId/i);
+    expect(joined).toMatch(/run (?:handle|id).*internal/i);
+    expect(joined).toMatch(/do not repeat the delegated work/i);
+  });
+
   it("includes parallel sub-agent guidance", () => {
     const result = buildTaskDelegationSection(["sessions_spawn"], false);
     const joined = result.join("\n");

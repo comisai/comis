@@ -148,7 +148,8 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     |-----------|------|----------|-------------|
     | `task` | string | Yes | Task description for the sub-agent |
     | `agent` | string | No | Target agent ID for cross-agent spawning (defaults to the current agent) |
-    | `async` | boolean | No | Accepted for explicit asynchronous intent; every spawn runs in the background and returns `runId` immediately. |
+    | `async` | boolean | No | Accepted for explicit asynchronous intent; every spawn runs in the background and returns an internal run handle immediately. |
+    | `delegation_scope` | `"whole_request"` or `"partial"` | No | Declares ownership assigned to the child. Use `whole_request` only when it owns every requested outcome; use `partial` when the parent retains distinct work. Omitting the field does not transfer whole-request ownership. |
     | `model` | string | No | Model override for the sub-agent |
     | `artifact_refs` | string[] | No | File paths for the sub-agent to reference in its workspace |
     | `tool_groups` | string[] | No | Tool group names for sub-agent tool filtering (e.g., `"coding"`, `"web"`). The default child profile excludes MCP tools and `message`; use `"full"` when the task genuinely requires those capabilities. |
@@ -156,9 +157,9 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     | `objective` | string | No | Objective statement that survives context compaction |
     | `include_parent_history` | `"none"` or `"summary"` | No | Include a condensed summary of the parent conversation (default: `"none"`) |
     | `domain_knowledge` | string[] | No | Domain knowledge entries to pass to the sub-agent |
-    | `expected_outputs` | string[] | No | File paths the sub-agent must produce. Validated after execution: a run that stops cleanly without writing every listed path is reported to the parent as **failed** (`errorKind: validation`), not completed, and the missing paths ride the announcement. Declaring outputs is therefore how you stop a child from silently returning nothing. |
+    | `expected_outputs` | string[] | No | File paths the sub-agent must produce. Validated after execution: a run that stops cleanly without writing every listed path is reported to the parent as **failed** (`errorKind: validation`), not completed, and the missing paths ride the announcement. Files that pass validation are scheduled as governed completion attachments when automatic channel delivery owns the result, including when another declared output is missing. Declaring outputs is therefore how you stop a child from silently returning nothing and request delivery of its verified files. |
     | `max_steps` | integer | No | Maximum execution steps (floor of 30, default 50, capped at config default) |
-    `sessions_spawn` never blocks for the child result. It returns the run ID and a background-running marker immediately; a queued spawn additionally returns `queued: true`. The result is delivered to the immutable originating conversation, so the model-facing tool cannot select an announcement channel. Use `subagents` with `action: wait` to await owned children without polling.
+    `sessions_spawn` never blocks for the child result. Its tool result returns an internal run handle and a background-running marker immediately; a queued spawn additionally returns `queued: true`. The handle is for later `subagents` calls and is not copied into the user-facing launch acknowledgement. Absent an active parent wait, the completion is delivered automatically to the immutable originating conversation, so the model-facing tool cannot select an announcement channel. When that automatic completion route is available, accepting the spawn ends the foreground workflow with a neutral pending acknowledgement instead of repeating the delegated work or emitting a second terminal completion. Use `subagents` with `action: wait` to make the current parent turn own the result without polling.
 
     **When the agent reaches for it.** An agent that has `sessions_spawn` on its surface receives a concise delegation directive in its initial system prompt: delegate rather than work inline whenever a task needs more than ~30 seconds of tool time, generates media, writes three or more files, requires deep research, or runs four or more dependent steps. Independent subtasks are spawned as multiple calls in one response and run in parallel. The fuller guide (goal-oriented task phrasing, child tool-profile guidance, and what not to delegate) follows the first successful tool result and is delivered only once.
 
@@ -398,8 +399,8 @@ agent: "coder"
 Spawn multiple sub-agents to work on different parts of a problem simultaneously. Each sub-agent runs independently, and the parent collects results when they finish.
 
 ```yaml
-# Spawn three researchers; every call returns a run ID immediately
-# Then use subagents wait with those run IDs to collect terminal results
+# Spawn three researchers; every call returns an internal run handle immediately
+# Then use subagents wait with those handles to collect terminal results
 ```
 
 ### When to use `sessions_spawn` vs. `pipeline`

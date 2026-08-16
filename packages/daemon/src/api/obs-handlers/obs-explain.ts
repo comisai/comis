@@ -36,7 +36,12 @@ import { toIncidentSignals } from "./obs-explain-signals.js";
 import { assembleIncidentReport } from "./obs-explain-assemble.js";
 import { rootCause } from "./obs-explain-heuristics.js";
 import { boundIncidentReport } from "./obs-explain-bound.js";
-import { joinBackgroundTaskFollowups } from "./obs-explain-background-trace.js";
+import {
+  latestPromptTraceId,
+  recordHasTraceId,
+  recordsForExecution,
+  spawnedRootRunIds,
+} from "./obs-explain-background-trace.js";
 import {
   completionEvidenceGuardShouldOverride, completionEvidenceGuardVerdict,
   outboundAudioEvidenceGuardVerdict,
@@ -88,56 +93,6 @@ export interface AssembleIncidentReportParams {
    * (absent/`false`) excludes synthetic rows from the by-traceId resolution.
    */
   readonly includeSynthetic?: boolean;
-}
-
-function recordHasTraceId(record: Record<string, unknown>, traceId: string): boolean {
-  return record.traceId === traceId;
-}
-
-/** Select one prompt-anchored execution, including same-trace preparation
- * before the prompt and settlement rows whose ended request context carries
- * the session fallback trace. */
-function recordsForExecution(
-  records: ReadonlyArray<Record<string, unknown>>,
-  traceId: string,
-): Array<Record<string, unknown>> {
-  const start = records.findIndex(
-    (record) => record.type === "prompt.submitted" && recordHasTraceId(record, traceId),
-  );
-  if (start < 0) {
-    return joinBackgroundTaskFollowups(
-      records,
-      records.filter((record) => recordHasTraceId(record, traceId)),
-    );
-  }
-  const relativeEnd = records.slice(start + 1).findIndex(
-    (record) => record.type === "prompt.submitted",
-  );
-  const end = relativeEnd < 0 ? records.length : start + 1 + relativeEnd;
-  const preparationRecords = records
-    .slice(0, start)
-    .filter((record) => recordHasTraceId(record, traceId));
-  const settlementRecords = records
-    .slice(end)
-    .filter((record) => recordHasTraceId(record, traceId));
-  return joinBackgroundTaskFollowups(
-    records,
-    [...preparationRecords, ...records.slice(start, end), ...settlementRecords],
-  );
-}
-
-function latestPromptTraceId(
-  records: ReadonlyArray<Record<string, unknown>>,
-): string | undefined {
-  const latestPrompt = [...records].reverse().find(
-    (record) =>
-      record.type === "prompt.submitted"
-      && typeof record.traceId === "string"
-      && record.traceId.length > 0,
-  );
-  return typeof latestPrompt?.traceId === "string"
-    ? latestPrompt.traceId
-    : undefined;
 }
 
 function recordData(record: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -479,6 +434,13 @@ export async function assembleIncidentReportFromSources(
     : executionTraceId === undefined
       ? sessionRecords
       : recordsForExecution(sessionRecords, executionTraceId);
+  const recoveryRootRunIds = params.rootRunId === undefined
+    ? spawnedRootRunIds(selectedRecords)
+    : [params.rootRunId];
+  const rootRecoveryRecords =
+    recoveryRootRunIds.length === 0 || reader.readRootRecoveryRecords === undefined
+      ? []
+      : await reader.readRootRecoveryRecords(recoveryRootRunIds);
   const losslessEvidence =
     taskCheck === null &&
       executionTraceId === undefined &&
@@ -537,7 +499,12 @@ export async function assembleIncidentReportFromSources(
 
   // Normalize both shapes → uniform signals; assemble the report;
   // stamp the deterministic root cause; bound to the depth budget.
-  const signals = toIncidentSignals([...sessionIdentityRecords, ...records, ...cache]);
+  const signals = toIncidentSignals([
+    ...sessionIdentityRecords,
+    ...records,
+    ...rootRecoveryRecords,
+    ...cache,
+  ]);
   // ZERO-RECORD MISS → "did you mean …?": a lossy/partial key (e.g.
   // `telegram:<chatId>` instead of the formatted `<agent>:<chatId>:<chatId>:peer:
   // <chatId>`) resolves nothing. Enumerate the closest REAL keys so the operator

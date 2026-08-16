@@ -258,6 +258,13 @@ export const SpawnTreeNodeSchema = z.object({
   runtimeMs: z.number().nonnegative().optional(),
   tokensUsed: z.number().nonnegative().optional(),
   costUsd: z.number().nonnegative().optional(),
+  outputValidation: z
+    .object({
+      expected: z.number().int().nonnegative(),
+      verified: z.number().int().nonnegative(),
+      attachmentsPrepared: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 /** One spawn-tree node (see {@link SpawnTreeNodeSchema}). */

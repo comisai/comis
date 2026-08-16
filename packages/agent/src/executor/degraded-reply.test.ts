@@ -122,6 +122,29 @@ describe("persistent action evidence reply", () => {
   });
 });
 
+describe("tool invocation stall no-receipt reply", () => {
+  it("describes missing tool evidence without claiming a repeated action", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildToolInvocationStallNoReceiptReply;
+    expect(candidate).toBeTypeOf("function");
+    const build = candidate as (
+      language?: string,
+      catalog?: ReturnType<typeof catalogFromLocalePacks>,
+    ) => string;
+    const catalog = catalogFromLocalePacks({
+      he: {
+        tool_invocation_stall_no_receipt:
+          "לא הצלחתי להשלים את הבקשה כי לא התקבל אישור הצלחה מכלי מתאים.",
+      },
+    });
+
+    expect(build()).toContain("no matching tool action succeeded");
+    expect(build()).not.toContain("repeated action");
+    expect(build("he", catalog)).toContain("לא התקבל אישור הצלחה");
+    expect(LOCALE_MESSAGE_IDS).toContain("tool_invocation_stall_no_receipt");
+  });
+});
+
 describe("outbound audio evidence reply", () => {
   it("is deterministic and can be replaced by an operator locale pack", () => {
     const candidate = (degradedReply as Record<string, unknown>)

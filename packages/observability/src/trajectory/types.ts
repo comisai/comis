@@ -136,6 +136,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   // A direct child's terminal outcome routed to the parent trajectory.
   // Content-free: run/agent ids, success, duration, tokens, and cost only.
   "subagent.completed",
+  // A checkpoint-backed child suspended during graceful restart.
+  "durable.suspended",
+  "durable.resumed",
   // A synchronous parent wait finished for one target. Content-free: parent/
   // child ids, closed outcome, optional success, and duration budgets only.
   "subagent.wait_finished",

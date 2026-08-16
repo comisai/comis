@@ -12106,6 +12106,32 @@ export const CONTRACTS = {
               "costUsd": {
                 "type": "number",
                 "minimum": 0
+              },
+              "outputValidation": {
+                "type": "object",
+                "properties": {
+                  "expected": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "verified": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "attachmentsPrepared": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "expected",
+                  "verified",
+                  "attachmentsPrepared"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -13053,6 +13079,100 @@ export const CONTRACTS = {
           },
           "required": [
             "messageIds"
+          ],
+          "additionalProperties": false
+        },
+        "outwardDeliveries": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "prepared",
+                  "blocked",
+                  "in_flight",
+                  "committed",
+                  "failed",
+                  "parked",
+                  "partial"
+                ]
+              },
+              "rootRunId": {
+                "type": "string"
+              },
+              "stepIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "prepare",
+                  "allocate",
+                  "lookup",
+                  "begin",
+                  "mark_unknown",
+                  "commit",
+                  "mark_failed",
+                  "park"
+                ]
+              },
+              "deliveryKind": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "attachment"
+                ]
+              },
+              "platformMessageId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "rootRunId",
+              "transition"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "restartRecovery": {
+          "type": "object",
+          "properties": {
+            "suspended": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "resumed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "lastStatus": {
+              "type": "string",
+              "enum": [
+                "suspended",
+                "resumed"
+              ]
+            },
+            "rootRunId": {
+              "type": "string"
+            },
+            "checkpointId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "suspended",
+            "resumed",
+            "lastStatus",
+            "rootRunId",
+            "checkpointId"
           ],
           "additionalProperties": false
         },
@@ -17120,6 +17240,28 @@ export const CONTRACTS = {
           "required": [
             "status",
             "runId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "already_terminal"
+            },
+            "runId": {
+              "type": "string"
+            },
+            "terminalStatus": {
+              "type": "string",
+              "const": "completed"
+            }
+          },
+          "required": [
+            "status",
+            "runId",
+            "terminalStatus"
           ],
           "additionalProperties": false
         }

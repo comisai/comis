@@ -1316,7 +1316,7 @@ describe("createSubAgentRunner", () => {
     expect(lifecycle).toEqual(["enqueue", "batcher.shutdown"]);
   });
 
-  it("enqueues verified expected outputs as generated file references", async () => {
+  it("does not claim queued output references were already prepared", async () => {
     vi.useRealTimers();
     const outputDir = await mkdtemp(join(tmpdir(), "completion-output-test-"));
     const outputPath = join(outputDir, "monthly.csv");
@@ -1350,6 +1350,14 @@ describe("createSubAgentRunner", () => {
     expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
       attachments: [{ sourceAgentId: "report-agent", path: outputPath }],
     }));
+    await vi.waitFor(() => expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_completed",
+      expect.objectContaining({
+        expectedOutputs: 1,
+        verifiedOutputs: 1,
+        attachmentsPrepared: 0,
+      }),
+    ));
     await runner.shutdown();
     fs.rmSync(outputDir, { recursive: true, force: true });
   });

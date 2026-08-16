@@ -121,9 +121,13 @@ dependency order is stable:
 7. **Close stores** -- Closes security stores and releases the data-directory lock; the shared memory database is always last.
 
 <Info>
-The daemon waits up to 45 seconds for everything to stop cleanly. Active
-conversations will finish processing before shutdown completes. If a component
-takes too long, the daemon logs a timeout warning and forces an exit.
+The daemon waits up to 45 seconds for everything to stop cleanly. Work that
+settles inside its component grace period finishes normally. A durable
+sub-agent whose provider turn is still in flight after its 30-second drain is
+suspended and re-executes its protected task from the validated restart
+boundary after boot; it does not resume a half-finished provider turn. If
+another component takes too long, the daemon logs a timeout warning and forces
+an exit.
 </Info>
 
 The final log line confirms a clean shutdown:

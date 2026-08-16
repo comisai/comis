@@ -340,22 +340,28 @@ export function enforceSchedulerStateEvidence(params: {
   honestResponse: string;
   pendingConfirmationResponse?: string;
 }): SchedulerStateEvidenceGuardResult {
-  const normalizedResponse = normalizedEvidenceText(params.response);
-  const explicitStateClaim = SCHEDULER_STATE_SUBJECTS.some(
-    (subject) => SCHEDULER_STATE_PREDICATES.some(
-      (predicate) => SCHEDULER_STATE_TERMINATORS.some(
-        (terminator) => normalizedResponse.includes(` ${subject}${predicate}${terminator}`),
+  const claimSegments = params.response
+    .split(/(?<!\b(?:[A-Za-z]\.){2})(?<=[.!?])\s+|\n+/u)
+    .map(normalizedEvidenceText);
+  const explicitStateClaim = claimSegments.some((segment) =>
+    SCHEDULER_STATE_SUBJECTS.some(
+      (subject) => SCHEDULER_STATE_PREDICATES.some(
+        (predicate) => SCHEDULER_STATE_TERMINATORS.some(
+          (terminator) => segment.includes(` ${subject}${predicate}${terminator}`),
+        ),
       ),
     ),
   );
-  const futureBehaviorClaim =
-    SCHEDULER_MUTATION_CONFIRMATION.test(normalizedResponse)
-    && SCHEDULER_FUTURE_BEHAVIOR.test(normalizedResponse)
-    && SCHEDULER_TEMPORAL_CONTEXT.test(normalizedResponse);
-  const temporalPolicyConfirmation =
-    SCHEDULER_DIRECT_CONFIRMATION.test(normalizedResponse)
-    && SCHEDULER_POLICY_TEMPORAL_CONTEXT.test(normalizedResponse);
-  const policyClaims = schedulerPolicyClaims(normalizedResponse);
+  const futureBehaviorClaim = claimSegments.some((segment) =>
+    SCHEDULER_MUTATION_CONFIRMATION.test(segment)
+    && SCHEDULER_FUTURE_BEHAVIOR.test(segment)
+    && SCHEDULER_TEMPORAL_CONTEXT.test(segment)
+  );
+  const temporalPolicyConfirmation = claimSegments.some((segment) =>
+    SCHEDULER_DIRECT_CONFIRMATION.test(segment)
+    && SCHEDULER_POLICY_TEMPORAL_CONTEXT.test(segment)
+  );
+  const policyClaims = [...new Set(claimSegments.flatMap(schedulerPolicyClaims))];
   const claimsCurrentSchedulerState =
     explicitStateClaim
     || futureBehaviorClaim
@@ -899,17 +905,39 @@ export function enforceActiveModelSelfStatus(params: {
   provider: string;
   modelId: string;
 }): ActiveModelSelfStatusGuardResult {
-  const tokens = new Set(params.request.toLocaleLowerCase().match(/[a-z0-9]+/gu) ?? []);
-  const asksModel = tokens.has("model")
-    && containsAnyToken(tokens, ["what", "which"]);
-  const explicitCurrent = containsAnyToken(tokens, ["active", "current", "currently", "now"]);
-  const selfUse = containsAnyToken(tokens, ["u", "ur", "you", "your"])
-    && containsAnyToken(tokens, ["running", "use", "using"]);
-  const actuallySelfUse = containsAnyToken(tokens, ["actual", "actually"]) && selfUse;
-  const requestsChoice = containsAnyToken(tokens, [
-    "better", "change", "cheaper", "choose", "pick", "recommend", "recommended", "should", "switch",
-  ]);
-  if (!asksModel || (!explicitCurrent && !actuallySelfUse) || requestsChoice) {
+  const requestTokens = params.request.toLocaleLowerCase().match(/[a-z0-9]+/gu) ?? [];
+  const tokenPositions = requestTokens.map((token, index) => ({ token, index }));
+  const modelQueries = tokenPositions.filter((position) =>
+    position.token === "model"
+    && tokenPositions.some((candidate) =>
+      (candidate.token === "what" || candidate.token === "which")
+      && Math.abs(candidate.index - position.index) <= 4
+    )
+  );
+  const hasNearModelQuery = (
+    modelQuery: { token: string; index: number },
+    candidates: readonly string[],
+    distance: number,
+  ): boolean => tokenPositions.some((position) =>
+      candidates.includes(position.token)
+      && Math.abs(position.index - modelQuery.index) <= distance
+    );
+  const asksActiveModel = modelQueries.some((modelQuery) => {
+    const explicitCurrent = hasNearModelQuery(
+      modelQuery,
+      ["active", "current", "currently", "now"],
+      6,
+    );
+    const selfUse = hasNearModelQuery(modelQuery, ["u", "ur", "you", "your"], 8)
+      && hasNearModelQuery(modelQuery, ["running", "use", "using"], 8);
+    const actuallySelfUse = hasNearModelQuery(modelQuery, ["actual", "actually"], 8)
+      && selfUse;
+    const requestsChoice = hasNearModelQuery(modelQuery, [
+      "better", "change", "cheaper", "choose", "pick", "recommend", "recommended", "should", "switch",
+    ], 8);
+    return (explicitCurrent || actuallySelfUse) && !requestsChoice;
+  });
+  if (!asksActiveModel) {
     return { response: params.response, corrected: false };
   }
 

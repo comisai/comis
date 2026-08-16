@@ -152,8 +152,14 @@ export function extractErrorTag(errorText: string): string {
   const bracketMatch = /\[(\w+)\]/.exec(unwrapped);
   if (bracketMatch) return bracketMatch[1]!;
 
-  // 2. Caller-correctable schema/argument validation failures.
-  if (isMcpValidationError(unwrapped)) return "validation_failed";
+  // 2. Caller-correctable schema/argument validation failures. Spawn profile
+  //    reachability rejects the caller's required_tools/tool_groups pairing
+  //    before a child starts; it is repair guidance, not evidence that
+  //    sessions_spawn itself is unavailable.
+  if (
+    isMcpValidationError(unwrapped)
+    || /\brequired tools unreachable\s*:/iu.test(unwrapped)
+  ) return "validation_failed";
 
   // 3. Fallback: normalize first 80 chars of the unwrapped text
   return unwrapped

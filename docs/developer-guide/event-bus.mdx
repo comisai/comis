@@ -97,8 +97,8 @@ Message lifecycle, session management, subagent lifecycle, compaction, context e
 | `session:expired` | sessionKey, reason |
 | `session:cross_send` | fromSessionKey, toSessionKey, mode, timestamp |
 | `session:ping_pong_turn` | fromSessionKey, toSessionKey, turnNumber, totalTurns, tokensUsed, timestamp |
-| `session:sub_agent_spawned` | runId, parentSessionKey, agentId, task, timestamp |
-| `session:sub_agent_completed` | runId, agentId, success, runtimeMs, tokensUsed, cost, timestamp, cacheReadTokens, cacheWriteTokens |
+| `session:sub_agent_spawned` | runId, parentSessionKey, agentId, rootRunId, parentRunId, parentLeaseId, caps, timestamp |
+| `session:sub_agent_completed` | runId, parentSessionKey, agentId, success, runtimeMs, tokensUsed, cost, timestamp, cacheReadTokens, cacheWriteTokens, expectedOutputs, verifiedOutputs, attachmentsPrepared |
 | `session:sub_agent_archived` | runId, sessionKey, ageMs, timestamp |
 | `session:sub_agent_spawn_prepared` | runId, parentSessionKey, agentId, task, depth, maxDepth, artifactCount, timestamp |
 | `session:sub_agent_spawn_queued` | runId, parentSessionKey, agentId, task, queuePosition, activeChildren, maxChildren, timestamp |
@@ -132,6 +132,8 @@ Skill lifecycle, tool execution, audit logging, observability (tokens and latenc
 | `graph:node_updated` | graphId, nodeId, status, previousStatus, durationMs, error, tokensUsed, cost, timestamp |
 | `graph:completed` | graphId, status, durationMs, nodeCount, nodesCompleted, nodesFailed, nodesSkipped, cancelReason, timestamp, graphCacheReadTokens, graphCacheWriteTokens, graphCacheEffectiveness, nodeEffectiveness, nodeTokenSpend, nodeCost |
 | `graph:driver_lifecycle` | graphId, nodeId, typeId, phase |
+| `durable:resumed` | rootRunId, sessionKey, sourceCheckpointId, checkpointId, sourceTerminalReason, timestamp |
+| `durable:suspended` | rootRunId, checkpointId, sessionKey, timestamp |
 | `pipeline:authored` | action, capabilityClass, schemaValid, repaired, agentId, sessionKey, timestamp |
 | `graph:repaired` | pattern, nodeCount, capabilityClass, agentId, sessionKey, timestamp |
 | `graph:synthesized_from_intent` | pattern, nodeCount, agentId, sessionKey, timestamp |
@@ -238,6 +240,7 @@ Channel registration, sender blocking, command queuing, streaming delivery, typi
 | `delivery:failed` | entryId, channelId, channelType, error, reason, timestamp |
 | `delivery:hook_cancelled` | channelId, channelType, reason, origin, timestamp |
 | `delivery:nacked` | entryId, channelId, channelType, error, attemptCount, nextRetryAt, timestamp |
+| `delivery:outward_ledger_transition` | rootRunId, runId, sessionKey, stepIndex, partId, transition, outcome, deliveryKind, platformMessageId, timestamp |
 | `delivery:queue_drained` | entriesAttempted, entriesDelivered, entriesFailed, durationMs, timestamp |
 | `elevated:model_routed` | sessionKey, senderTrustLevel, modelRoute, agentId, timestamp |
 | `followup:depth_exceeded` | sessionKey, chainId, maxDepth, timestamp |

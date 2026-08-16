@@ -788,6 +788,30 @@ When a grounded answer was preserved but the routed workflow still stalled,
 the report retains the specific `tool_invocation_stall` diagnosis instead of
 overwriting it with the later completion-evidence guard.
 
+Background completion delivery is likewise reconstructable without a raw-log
+join. The optional `outwardDeliveries` array carries one bounded durable
+completion-send disposition per root: `{ status, rootRunId, transition,
+stepIndex?, deliveryKind?, platformMessageId? }`. `deliveryKind` distinguishes text from a verified-file
+attachment, and a committed platform receipt is retained as
+`platformMessageId`. `status: "partial"` means at least one completion part
+committed while another part did not; `blocked`, `in_flight`, `failed`, and
+`parked` preserve the corresponding durable-ledger state without claiming the
+user received the whole completion.
+
+Direct children in `spawnTree` also carry terminal execution evidence when it
+was recorded: `terminalOutcome`, `runtimeMs`, `tokensUsed`, `costUsd`, and an
+optional `outputValidation: { expected, verified, attachmentsPrepared }`.
+These are content-free counts. They show whether declared files existed and
+entered governed attachment preparation, while `outwardDeliveries` supplies the
+separate platform-delivery receipt.
+
+Graceful restart recovery is reconstructed in the optional
+`restartRecovery: { suspended, resumed, lastStatus, rootRunId, checkpointId }`
+block. The assembler folds recovery evidence for the selected session and its
+spawned roots, so the same suspension or boot resume is visible when explaining
+the parent session or drilling into the affected `rootRunId`. The block carries
+counts and identifiers only, never task or provider output.
+
 The same one-call diagnosis applies to bounded execution stalls. A local MCP
 queue refusal produces `mcp_queue_contention` with the resolved concurrency and
 queue/deadline budgets; a detector-owned repeating-call abort produces
@@ -897,7 +921,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 |----------|-------|
 | **Scope** | `rpc` route plus admin trust. A gateway token needs both `rpc` and `admin` (or `*`); the handler rejects non-admin trust. |
 | **Parameters** | `{ sessionKey?: string, traceId?: string, rootRunId?: string, graphId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` / `rootRunId` / `graphId` required. `traceId` accepts a trace ID or a sub-agent run ID and canonicalizes either to the indexed session. `rootRunId` is an autonomy run's id, canonicalized to its session before assembly (a `root-session-` synthetic root carries a generated UUID and a validated base64url session key; a real spawned root resolves by a session-index scan) and renders the run's `spawnTree`. `graphId` is a terminal execution-graph run's id, canonicalized to its caller session through the persisted run metadata and rendered with the `graph` section. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
-| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], requestRelevantToolNames?: string[], requestRelevantPromptSkillNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated, recallDisposition? }, requestClarification?: { reason, inputChars }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, graph?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], spawnTree?, outwardDeliveries?: Array<{ rootRunId, status, transition, stepIndex?, deliveryKind?, platformMessageId? }>, restartRecovery?: { suspended, resumed, lastStatus, rootRunId, checkpointId }, requestRelevantToolNames?: string[], requestRelevantPromptSkillNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated, recallDisposition? }, requestClarification?: { reason, inputChars }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, graph?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -953,6 +977,13 @@ Assemble a bounded, redaction-safe **cross-session** system-health triage (a `Sy
 `degradedByCause` is the system-level **degradation detector**: a bounded `{ <endReason>: count }` map (counts only) over the degraded sessions in the window, keyed by the named terminal cause -- e.g. `{ "context_exhausted": 5, "output_starved": 2 }` answers "how many sessions degraded, and *why*" at a glance. Only degraded sessions contribute; a session whose cause is missing folds into `"unknown"`. Two named degradation causes are worth calling out -- `context_exhausted` (the context-window pre-flight guard aborted the run; run `obs.explain` on the session for the numbers-backed `contextBudget` verdict) and `output_starved` (the final response was truncated at a length limit -- run `obs.explain` on the session, whose `output_starved` WARN names which of the three causes applies) -- both named here and in [`obs.explain`](#obs-explain)'s `outcome.endReason` + `likelyRootCause`, so neither collapses into a generic `error`.
 
 `likelyRootCause` ranks **acute over chronic**: any degraded session with a named cause (`system_acute_degradation`, naming the dominant `degradedByCause` entry) out-ranks the standing config-posture (`system_config_posture`) and recurring-health-signal (`system_recurring_health_signal`) verdicts; only a deployment-wide degradation spike (`system_high_degraded_rate`) ranks above it. A degraded **autonomy** run (an unattended run orphaned on restart, revoked/killed, or aborted by the capability-denial breaker) ranks **first** of all -- `system_autonomy_degradation` names the worst run's `rootRunId` so you can paste it straight into `comis explain` (the unattended-mode signal out-prioritizes the session-level rules). Routine `session_rebase` continuations (a restart resuming at the store's max seq) ingest at `info` severity, so they never inflate the warning findings.
+
+A governed completion attachment whose preparation or durable send becomes
+failed, blocked, or parked contributes the counted
+`health_signal:outward_attachment_failed` finding. This is the cross-session
+warning surface for attachment-delivery failures; use `obs.explain` on an
+affected session or root to inspect its content-free validation and delivery
+evidence.
 
 The boot-time `config_posture` diagnostic row carries `servedBelowConfiguredCount` in its details JSON -- the number of providers whose Ollama-served window (`num_ctx`) was below the configured `contextWindow` at that boot (a **count only**, never provider names; the posture record severity is `warning` when it is > 0). When the **latest** posture row's count is non-zero, `findings[]` gains the dedicated `config_posture:served_below_configured` code with that count -- latest-row semantics because posture is standing state, not cumulative (a healthy restart clears the finding). The hint names the `OLLAMA_CONTEXT_LENGTH` / Modelfile `PARAMETER num_ctx` knobs; a malformed posture row (or one missing the count field) folds to 0 defensively (no finding, never an assembly error). For triaging this finding on a local deployment -- model choice, window sizing, and the full knob map -- see the [Local models playbook](/operations/local-models).
 
@@ -4268,14 +4299,15 @@ Agent callers may kill an owned direct child. The reserved target `tree` hard-st
 |----------|-------|
 | **Scope** | `rpc`, `admin` |
 | **Parameters** | `{ target: string, message: string }` -- `target` is the sub-agent `runId` |
-| **Returns** | `{ status: "steered", oldRunId, newRunId } \| { status: "steered_inject", runId }` |
+| **Returns** | `{ status: "steered", oldRunId, newRunId } \| { status: "steered_inject", runId } \| { status: "already_terminal", runId, terminalStatus: "completed" }` |
 
 Agent callers may steer only an owned direct child; admins may target any run. Behavior is gated on [`security.agentToAgent.steerInject`](/reference/config-yaml#security), which defaults to `false`:
 
-The `status` discriminator is `steered` with `oldRunId` and `newRunId`, or `steered_inject` with `runId`.
+The `status` discriminator is `steered` with `oldRunId` and `newRunId`, `steered_inject` with `runId`, or `already_terminal` with `runId` and `terminalStatus: "completed"`.
 
 - **Flag off (default)** -- kills the current run and respawns a new run with `message` as its task. The continuation preserves the original spawn tree, agent, capabilities, and parent lease, but receives a new run ID and discards the prior live transcript and progress. Returns `{ status: "steered", oldRunId, newRunId }`.
 - **Flag on** -- requires `target` to be `running` and injects `message` into the live child at its next step boundary. It preserves the transcript and progress, performs no kill or respawn, and continues with the same run ID. Returns `{ status: "steered_inject", runId }`. Injection does not interrupt a tool call mid-execution.
+- **Completed race** -- if the child reaches `completed` before either mode can act, the handler preserves that terminal result and returns `{ status: "already_terminal", runId, terminalStatus: "completed" }`. This is a successful no-op, not a failed steer or a respawn.
 
 Both modes share a per-controller, per-`target` rate limit of one steer every 2 seconds. The `message` is framed as untrusted external content and cannot grant capabilities or bypass the child's tool restrictions.
 

@@ -156,6 +156,8 @@ export const SubagentKillContract = defineContract({
  *   - flag ON: inject the message into the RUNNING child's live SDK session at
  *     its next step boundary (transcript + progress preserved, same runId; no
  *     kill, no respawn) → `{ status: "steered_inject", runId }`.
+ *   - a child that completed before the inject arrived returns a successful
+ *     no-op receipt instead of misclassifying the terminal race as a failure.
  * Rate-limited at 2s per target (shared across both branches).
  * Agent callers may steer only an exact direct child; admins may steer any
  * selected run. The handler frames the new task as untrusted external text.
@@ -173,7 +175,8 @@ export const SubagentKillContract = defineContract({
  * Request: `{ target, message }`.
  * Response: discriminated union on `status` —
  *   `{ status: "steered", oldRunId, newRunId }` (kill+respawn) |
- *   `{ status: "steered_inject", runId }` (live inject).
+ *   `{ status: "steered_inject", runId }` (live inject) |
+ *   `{ status: "already_terminal", runId, terminalStatus: "completed" }` (no-op).
  */
 export const SubagentSteerContract = defineContract({
   method: "subagent.steer",
@@ -190,6 +193,11 @@ export const SubagentSteerContract = defineContract({
     z.object({
       status: z.literal("steered_inject"),
       runId: z.string(),
+    }),
+    z.object({
+      status: z.literal("already_terminal"),
+      runId: z.string(),
+      terminalStatus: z.literal("completed"),
     }),
   ]),
   scopes: ["rpc", "admin"] as const,

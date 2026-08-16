@@ -31,6 +31,16 @@ const SessionsSpawnParams = Type.Object({
   async: Type.Optional(
     Type.Boolean({ description: "Optional explicit async intent; every spawn returns runId immediately" }),
   ),
+  delegation_scope: Type.Optional(
+    Type.Union(
+      [Type.Literal("whole_request"), Type.Literal("partial")],
+      {
+        description:
+          "Ownership assigned to this child. Use whole_request only when it owns every requested outcome; "
+          + "use partial when the parent must continue any distinct requested work.",
+      },
+    ),
+  ),
   agent: Type.Optional(
     Type.String({ description: "Target agent ID for cross-agent spawning" }),
   ),
@@ -109,7 +119,8 @@ export function createSessionsSpawnTool(rpcCall: RpcCall): AgentTool<typeof Sess
       name: "sessions_spawn",
       label: "Sessions Spawn",
       description:
-        "Start a background sub-agent and return its run ID immediately. " +
+        "Start a background sub-agent and return its internal run handle immediately. " +
+        "Keep the handle out of user-facing replies; completion returns automatically. " +
         "When the task requires named tools, bind them with required_tools and tool_groups; task prose alone cannot grant tools.",
       parameters: SessionsSpawnParams,
       rpcMethod: "session.spawn",
@@ -130,6 +141,9 @@ export function createSessionsSpawnTool(rpcCall: RpcCall): AgentTool<typeof Sess
           model: readStringParam(p, "model", false),
           agent: readStringParam(p, "agent", false),
           async: p.async === true,
+          ...(p.delegation_scope === undefined
+            ? {}
+            : { delegation_scope: p.delegation_scope }),
           max_steps: typeof p.max_steps === "number" ? p.max_steps : undefined,
           expected_outputs: Array.isArray(p.expected_outputs) ? p.expected_outputs : undefined,
           artifact_refs: Array.isArray(p.artifact_refs) ? p.artifact_refs : undefined,

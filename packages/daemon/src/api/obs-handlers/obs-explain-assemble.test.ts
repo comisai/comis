@@ -520,6 +520,157 @@ describe("assembleIncidentReport — spawnTree", () => {
   });
 });
 
+describe("assembleIncidentReport — durable outward delivery", () => {
+  it("surfaces an attachment allocation block without a ledger step", () => {
+    const report = assembleIncidentReport(
+      toIncidentSignals([{
+        traceSchema: "comis-trajectory",
+        type: "delivery.outward_ledger_transition",
+        seq: 1,
+        data: {
+          rootRunId: "root-allocation",
+          runId: "run-allocation",
+          partId: "attachment:0",
+          transition: "allocate",
+          outcome: "blocked",
+          deliveryKind: "attachment",
+        },
+      }]),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      1,
+    );
+
+    expect(IncidentReportSchema.parse(report).outwardDeliveries).toEqual([{
+      status: "blocked",
+      rootRunId: "root-allocation",
+      transition: "allocate",
+      deliveryKind: "attachment",
+    }]);
+  });
+
+  it("surfaces the committed attachment receipt from the outward ledger transition", () => {
+    const report = assembleIncidentReport(
+      toIncidentSignals([{
+        traceSchema: "comis-trajectory",
+        type: "delivery.outward_ledger_transition",
+        seq: 1,
+        data: {
+          rootRunId: "root-attachment",
+          stepIndex: 0,
+          transition: "commit",
+          outcome: "committed",
+          deliveryKind: "attachment",
+          platformMessageId: "telegram-document-218",
+        },
+      }]),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      1,
+    );
+
+    expect((report as unknown as { outwardDeliveries?: unknown }).outwardDeliveries).toEqual([{
+      status: "committed",
+      rootRunId: "root-attachment",
+      stepIndex: 0,
+      transition: "commit",
+      deliveryKind: "attachment",
+      platformMessageId: "telegram-document-218",
+    }]);
+  });
+
+  it("preserves a committed receipt beside a later attachment preparation failure", () => {
+    const report = assembleIncidentReport(
+      toIncidentSignals([
+        {
+          traceSchema: "comis-trajectory",
+          type: "delivery.outward_ledger_transition",
+          seq: 1,
+          data: {
+            rootRunId: "root-partial",
+            runId: "run-committed",
+            stepIndex: 0,
+            partId: "attachment:0",
+            transition: "commit",
+            outcome: "committed",
+            deliveryKind: "attachment",
+            platformMessageId: "telegram-document-218",
+          },
+        },
+        {
+          traceSchema: "comis-trajectory",
+          type: "delivery.outward_ledger_transition",
+          seq: 2,
+          data: {
+            rootRunId: "root-partial",
+            runId: "run-failed",
+            partId: "attachment:0",
+            transition: "prepare",
+            outcome: "failed",
+            deliveryKind: "attachment",
+          },
+        },
+      ]),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      2,
+    );
+
+    expect((IncidentReportSchema.parse(report) as unknown as { outwardDeliveries?: unknown }).outwardDeliveries).toEqual([{
+      status: "partial",
+      rootRunId: "root-partial",
+      stepIndex: 0,
+      transition: "prepare",
+      deliveryKind: "attachment",
+      platformMessageId: "telegram-document-218",
+    }]);
+  });
+
+  it("retains a failed root when a different root commits later", () => {
+    const report = assembleIncidentReport(
+      toIncidentSignals([
+        {
+          traceSchema: "comis-trajectory",
+          type: "delivery.outward_ledger_transition",
+          seq: 1,
+          data: {
+            rootRunId: "root-failed",
+            stepIndex: 0,
+            transition: "mark_failed",
+            outcome: "failed",
+            deliveryKind: "attachment",
+          },
+        },
+        {
+          traceSchema: "comis-trajectory",
+          type: "delivery.outward_ledger_transition",
+          seq: 2,
+          data: {
+            rootRunId: "root-committed",
+            stepIndex: 0,
+            transition: "commit",
+            outcome: "committed",
+            deliveryKind: "text",
+            platformMessageId: "telegram-message-219",
+          },
+        },
+      ]),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      2,
+    );
+
+    expect((report as unknown as { outwardDeliveries?: unknown }).outwardDeliveries).toEqual([
+      expect.objectContaining({ rootRunId: "root-failed", status: "failed" }),
+      expect.objectContaining({ rootRunId: "root-committed", status: "committed" }),
+    ]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The orchestrate? section — one entry per run, folded from
 // orchestrate.run_summary records with per-run toolCalls joined by the child

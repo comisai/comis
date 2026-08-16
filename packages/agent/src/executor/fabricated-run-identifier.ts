@@ -31,7 +31,21 @@
  * quoting are allowed between the two, which is how a formatted reply renders.
  */
 const RUN_IDENTIFIER_CLAIM =
-  /\brun[\s_-]?id\b\s*[:=]?\s*(?:<[^>]{1,40}>|["'`*]){0,4}\s*([0-9a-z][0-9a-z_-]{7,})/i;
+  // eslint-disable-next-line security/detect-unsafe-regex -- bounded markup and identifier branches are linear despite the plugin's nested-quantifier heuristic
+  /\brun(?:[\s_-]?id|[\s_-]+(?:handle|identifier))\b\s*[:=]?\s*(?:<[^>]{1,40}>|["'`*]){0,4}\s*([0-9a-z][0-9a-z_-]{7,})/i;
+const RUN_IDENTIFIER_CLAIMS =
+  // eslint-disable-next-line security/detect-unsafe-regex -- bounded markup and identifier branches are linear despite the plugin's nested-quantifier heuristic
+  /\brun(?:[\s_-]?id|[\s_-]+(?:handle|identifier))\b\s*[:=]?\s*(?:<[^>]{1,40}>|["'`*]){0,4}\s*([0-9a-z][0-9a-z_-]{7,})/gi;
+
+/**
+ * A model sometimes abbreviates a freshly returned UUID to its first eight
+ * hexadecimal characters and places that opaque handle on the first line.
+ * Restrict this shape to the leading line so ordinary hashes inside a result
+ * are not mistaken for a launch identifier.
+ */
+const LEADING_RUN_HANDLE =
+  // eslint-disable-next-line security/detect-unsafe-regex -- anchored UUID shape uses bounded repetitions and linear whitespace scans
+  /^\s*(?:<code>|[`*]){0,2}[0-9a-f]{8}(?:-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?(?:<\/code>|[`*]){0,2}\s*(?:\r?\n|$)/i;
 
 /**
  * Report whether a reply asserts a run identifier the execution cannot have.
@@ -46,4 +60,40 @@ export function assertsUnbackedRunIdentifier(params: {
 }): boolean {
   if (params.toolCallCount > 0) return false;
   return RUN_IDENTIFIER_CLAIM.test(params.response);
+}
+
+/** Detect an internal spawn handle in a pending launch response. */
+export function exposesSpawnRunIdentifier(
+  response: string,
+  structuredRunIds: readonly string[] = [],
+): boolean {
+  if (structuredRunIds.some((runId) => {
+    if (runId.length === 0) return false;
+    if (response.includes(runId)) return true;
+    const abbreviated = runId.slice(0, 8);
+    return abbreviated.length === 8 && response.includes(abbreviated);
+  })) {
+    return true;
+  }
+  return RUN_IDENTIFIER_CLAIM.test(response) || LEADING_RUN_HANDLE.test(response);
+}
+
+export function quarantineSpawnRunIdentifiers(
+  response: string,
+  structuredRunIds: readonly string[] = [],
+): string {
+  let quarantined = response;
+  for (const runId of structuredRunIds) {
+    if (runId.length === 0) continue;
+    quarantined = quarantined.split(runId).join("[internal]");
+    const abbreviated = runId.slice(0, 8);
+    if (abbreviated.length === 8) {
+      quarantined = quarantined.split(abbreviated).join("[internal]");
+    }
+  }
+  quarantined = quarantined.replace(
+    RUN_IDENTIFIER_CLAIMS,
+    (claim, identifier: string) => claim.replace(identifier, "[internal]"),
+  );
+  return quarantined.replace(LEADING_RUN_HANDLE, "").trimStart();
 }

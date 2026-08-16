@@ -270,6 +270,25 @@ export interface Acc {
   deliveryAborts?: { events: number; chunksNotSent: number };
   /** The LAST valid `delivery.dispatched` terminal outcome. */
   deliveryDispatch?: IncidentSignals["deliveryDispatch"];
+  /** One bounded terminal snapshot per outward-delivery root. */
+  outwardDeliveriesByRoot: Map<
+    string,
+    NonNullable<IncidentSignals["outwardDeliveries"]>[number]
+  >;
+  outwardDeliveryParts: Map<
+    string,
+    {
+      status: "prepared" | "blocked" | "in_flight" | "committed" | "failed" | "parked";
+      rootRunId: string;
+      stepIndex?: number;
+      transition: "prepare" | "allocate" | "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
+      deliveryKind?: "text" | "attachment";
+      platformMessageId?: string;
+    }
+  >;
+  /** Prepared attachment parts already credited to a child output contract. */
+  preparedAttachmentParts: Set<string>;
+  restartRecovery?: NonNullable<IncidentSignals["restartRecovery"]>;
   /** Bounded platform response IDs from `delivery.reply_bound` records. */
   deliveryMessageIds: string[];
   /** Selected-turn runtime-recovery fold from `execution.recovery_attempted` and

@@ -25,6 +25,8 @@ export type OrchestrationBridgedEventName =
   | "graph:synthesized_from_intent"
   | "session:sub_agent_spawned"
   | "session:sub_agent_completed"
+  | "durable:suspended"
+  | "durable:resumed"
   | "session:sub_agent_wait_finished"
   | "subagent:steered"
   // An attributed sub-agent kill (parent / health_monitor / operator /
@@ -98,6 +100,29 @@ export function translateOrchestrationPayload(
         costUsd: payload.cost,
         unresolvedBackgroundProcesses: payload.unresolvedBackgroundProcesses,
         failedBackgroundProcesses: payload.failedBackgroundProcesses,
+        ...(payload.expectedOutputs !== undefined
+          ? { expectedOutputs: payload.expectedOutputs }
+          : {}),
+        ...(payload.verifiedOutputs !== undefined
+          ? { verifiedOutputs: payload.verifiedOutputs }
+          : {}),
+        ...(payload.attachmentsPrepared !== undefined
+          ? { attachmentsPrepared: payload.attachmentsPrepared }
+          : {}),
+      };
+
+    case "durable:suspended":
+      return {
+        rootRunId: payload.rootRunId,
+        checkpointId: payload.checkpointId,
+      };
+
+    case "durable:resumed":
+      return {
+        rootRunId: payload.rootRunId,
+        sourceCheckpointId: payload.sourceCheckpointId,
+        checkpointId: payload.checkpointId,
+        sourceTerminalReason: payload.sourceTerminalReason,
       };
 
     case "session:sub_agent_wait_finished":

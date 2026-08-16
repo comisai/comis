@@ -153,6 +153,10 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // A child's terminal result occurs off-turn. The required parentSessionKey
   // routes it to the parent recorder; the translator strips that key.
   "session:sub_agent_completed": "subagent.completed",
+  // A graceful restart suspended a checkpoint-backed child for boot-time
+  // resumption. Content-free run/checkpoint identifiers only.
+  "durable:suspended": "durable.suspended",
+  "durable:resumed": "durable.resumed",
   // A synchronous wait completes in the active parent turn. Keep this
   // observation distinct from the child's lifecycle transition so downstream
   // consumers can diagnose the waiting trace without replaying lifecycle work.
@@ -570,8 +574,9 @@ export interface AttachTrajectoryParams {
  * `sessionKey` string wins; otherwise the emitting turn's ALS context.
  * Returns undefined for daemon-global events (no session identity anywhere).
  */
-function resolveEventSessionKey(payload: unknown): string | undefined {
+function resolveEventSessionKey(payload: unknown): string | null | undefined {
   const own = (payload as { sessionKey?: unknown } | undefined)?.sessionKey;
+  if (own === null) return null;
   if (typeof own === "string" && own.length > 0) return own;
   const parent = (payload as { parentSessionKey?: unknown } | undefined)?.parentSessionKey;
   if (typeof parent === "string" && parent.length > 0) return parent;
@@ -618,6 +623,7 @@ export function attachTrajectoryToEventBus(
       // recorder (see AttachTrajectoryParams.ownerSessionKey).
       if (ownerSessionKey !== undefined) {
         const eventSessionKey = resolveEventSessionKey(payload);
+        if (eventSessionKey === null) return;
         if (eventSessionKey !== undefined && eventSessionKey !== ownerSessionKey) return;
       }
       if (

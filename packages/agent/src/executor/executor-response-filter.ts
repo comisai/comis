@@ -22,12 +22,14 @@ import {
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { isSilentResponse } from "@comis/shared";
-import type { ExecutionPlan } from "../planner/types.js";
-import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { stripReasoningTagsFromText } from "../response-filter/reasoning-tags.js";
 import { isVisibleTextBlock } from "./phase-filter.js";
 import { isCompletionClaim } from "./critic-isolation.js";
-import { assertsUnbackedRunIdentifier } from "./fabricated-run-identifier.js";
+import {
+  assertsUnbackedRunIdentifier,
+  exposesSpawnRunIdentifier,
+  quarantineSpawnRunIdentifiers,
+} from "./fabricated-run-identifier.js";
 
 // ---------------------------------------------------------------------------
 // Current-turn delegation evidence
@@ -177,7 +179,10 @@ function containsUnnegatedEvidencePhrase(
 export interface DelegationEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
+  reason?:
+    | "missing_current_turn_spawn"
+    | "successful_spawn_response_internal_identifier"
+    | "successful_spawn_response_ungrounded";
 }
 
 /** Recognize runtime-owned envelopes that report settled asynchronous results. */
@@ -211,11 +216,38 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     success: boolean;
     backgrounded?: boolean;
     subagentWaitCompletedCount?: number;
+    spawnRunId?: string;
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
   verifiedSpawnResponse: string;
 }): DelegationEvidenceGuardResult {
+  const successfulSpawn = (params.toolExecResults ?? []).some(
+    (toolResult) =>
+      toolResult.toolName === "sessions_spawn"
+      && toolResult.success
+      && toolResult.backgrounded !== true,
+  );
+  const completedSpawnResult = (params.toolExecResults ?? []).some(
+    (toolResult) =>
+      toolResult.toolName === "subagents"
+      && toolResult.action === "wait"
+      && toolResult.success
+      && (toolResult.subagentWaitCompletedCount ?? 0) > 0,
+  );
+  const structuredRunIds = (params.toolExecResults ?? []).flatMap(
+    (toolResult) => toolResult.spawnRunId === undefined ? [] : [toolResult.spawnRunId],
+  );
+  if (
+    (params.runtimeCompletion === true || (successfulSpawn && completedSpawnResult))
+    && exposesSpawnRunIdentifier(params.response, structuredRunIds)
+  ) {
+    return {
+      response: quarantineSpawnRunIdentifiers(params.response, structuredRunIds),
+      corrected: true,
+      reason: "successful_spawn_response_internal_identifier",
+    };
+  }
   if (params.runtimeCompletion === true) {
     return { response: params.response, corrected: false };
   }
@@ -242,21 +274,6 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     request,
     EXPLICIT_DELEGATION_REQUEST_PHRASES,
   );
-  if (!requested) return { response: params.response, corrected: false };
-
-  const successfulSpawn = (params.toolExecResults ?? []).some(
-    (toolResult) =>
-      toolResult.toolName === "sessions_spawn"
-      && toolResult.success
-      && toolResult.backgrounded !== true,
-  );
-  const completedSpawnResult = (params.toolExecResults ?? []).some(
-    (toolResult) =>
-      toolResult.toolName === "subagents"
-      && toolResult.action === "wait"
-      && toolResult.success
-      && (toolResult.subagentWaitCompletedCount ?? 0) > 0,
-  );
   const response = normalizedEvidenceText(params.response);
   if (successfulSpawn) {
     // A completed wait is structural evidence that the model received a
@@ -264,6 +281,16 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     // report that result directly without repeating launch vocabulary.
     if (completedSpawnResult) {
       return { response: params.response, corrected: false };
+    }
+    // Spawn identifiers are internal coordination handles. Even a valid
+    // receipt does not make them useful channel content, and exposing one
+    // makes a natural launch acknowledgement read like a runtime envelope.
+    if (exposesSpawnRunIdentifier(params.response, structuredRunIds)) {
+      return {
+        response: params.verifiedSpawnResponse,
+        corrected: true,
+        reason: "successful_spawn_response_internal_identifier",
+      };
     }
     if (
       containsEvidencePhrase(
@@ -279,6 +306,12 @@ export function enforceCurrentTurnDelegationEvidence(params: {
       reason: "successful_spawn_response_ungrounded",
     };
   }
+
+  // Runtime policy can require delegation even when the user did not name a
+  // helper. A successful spawn still has to take the receipt-backed branch
+  // above; only executions with no accepted delegation may bypass this guard
+  // for an ordinary request.
+  if (!requested) return { response: params.response, corrected: false };
 
   const claimsDelegation = containsEvidencePhrase(
     response,
@@ -950,50 +983,4 @@ function extractActionableArtifacts(
     }
   }
   return hits;
-}
-
-// ---------------------------------------------------------------------------
-// SEP plan extraction (extracted from execute() success path)
-// ---------------------------------------------------------------------------
-
-/**
- * Extract a structured execution plan from the first LLM response.
- * Returns the plan if extraction succeeded, undefined otherwise.
- */
-export function extractExecutionPlan(params: {
-  response: string;
-  messageText: string;
-  maxSteps: number;
-  minSteps: number;
-  executionStartMs: number;
-  agentId: string | undefined;
-  formattedKey: string;
-  eventBus: TypedEventBus;
-  logger: ComisLogger;
-  clock: ClockPort;
-}): ExecutionPlan | undefined {
-  const { response, messageText, maxSteps, minSteps, executionStartMs, agentId, formattedKey, eventBus, logger, clock } = params;
-
-  const steps = extractPlanFromResponse(response, maxSteps);
-  if (steps && steps.length >= minSteps) {
-    const plan: ExecutionPlan = {
-      active: true,
-      request: messageText.slice(0, 200),
-      steps,
-      completedCount: 0,
-      createdAtMs: clock.now(),
-    };
-    logger.info(
-      { agentId, stepCount: steps.length, durationMs: clock.now() - executionStartMs },
-      "SEP plan extracted",
-    );
-    eventBus.emit("sep:plan_extracted", {
-      agentId: agentId ?? "default",
-      sessionKey: formattedKey,
-      stepCount: steps.length,
-      timestamp: clock.now(),
-    });
-    return plan;
-  }
-  return undefined;
 }

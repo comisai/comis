@@ -59,6 +59,7 @@ interface SteerRunLogger {
  */
 export interface SteerableRun {
   runId: string;
+  status: "queued" | "running" | "completed" | "failed";
   agentId: string;
   sessionKey: string;
   conversationRef: ConversationRef;
@@ -115,6 +116,17 @@ export interface SteerRunResult {
   mode?: "steer" | "followup";
   /** Set when no live handle / not running — the WARN-able failure branch. */
   error?: string;
+  terminalStatus?: "completed";
+}
+
+function completedRunResult(deps: SteerRunDeps, runId: string): SteerRunResult | undefined {
+  return deps.runs.get(runId)?.status === "completed"
+    ? {
+        steered: false,
+        terminalStatus: "completed",
+        error: `Run ${runId} is not running (status: completed)`,
+      }
+    : undefined;
 }
 
 /**
@@ -135,11 +147,30 @@ export async function steerRun(
   if (!run) {
     return { steered: false, error: `Unknown run ID: ${runId}` };
   }
+  if (run.status === "completed") {
+    return {
+      steered: false,
+      terminalStatus: "completed",
+      error: `Run ${runId} is not running (status: completed)`,
+    };
+  }
 
   // Resolve the live handle via the composite lookup (the same lookup
   // killRun uses for abort), falling back to the by-sessionKey registry.
-  const handle = deps.sessionResolver?.resolveActiveSession(run.conversationRef);
+  let handle: RunHandle | undefined;
+  try {
+    handle = deps.sessionResolver?.resolveActiveSession(run.conversationRef);
+  } catch {
+    const terminal = completedRunResult(deps, runId);
+    if (terminal !== undefined) return terminal;
+    return {
+      steered: false,
+      error: `Live session resolution failed for run ${runId}.`,
+    };
+  }
   if (!handle) {
+    const terminal = completedRunResult(deps, runId);
+    if (terminal !== undefined) return terminal;
     return {
       steered: false,
       error: `No live session for run ${runId} — cannot inject (use kill, or the run is not running).`,
@@ -149,10 +180,19 @@ export async function steerRun(
   // Channel-path streaming-aware branch (setup-and-route.ts:267): steer when
   // the child is mid-stream, else queue a follow-up. Both land at the next step
   // boundary after transcript commit — NO kill, NO respawn, NO state mutation.
-  if (handle.isStreaming() && !handle.isCompacting()) {
-    await handle.steer(message);
-    return { steered: true, mode: "steer" };
+  try {
+    if (handle.isStreaming() && !handle.isCompacting()) {
+      await handle.steer(message);
+      return { steered: true, mode: "steer" };
+    }
+    await handle.followUp(message);
+    return { steered: true, mode: "followup" };
+  } catch {
+    const terminal = completedRunResult(deps, runId);
+    if (terminal !== undefined) return terminal;
+    return {
+      steered: false,
+      error: `Live session injection failed for run ${runId}.`,
+    };
   }
-  await handle.followUp(message);
-  return { steered: true, mode: "followup" };
 }

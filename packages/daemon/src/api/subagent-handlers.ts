@@ -312,9 +312,31 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
 
       const userParams = stripInternalFields(rawParams);
       SubagentSteerContract.request.parse(userParams);
+      const steerStartedAt = systemNowMs();
+
+      const alreadyTerminal = (agentId: string) => {
+        const result = {
+          status: "already_terminal" as const,
+          runId: target,
+          terminalStatus: "completed" as const,
+        };
+        deps.logger?.info(
+          {
+            runId: target,
+            agentId,
+            durationMs: Math.max(0, systemNowMs() - steerStartedAt),
+          },
+          "Sub-agent steer skipped because the child already completed",
+        );
+        if (IS_DEV) SubagentSteerContract.response.parse(result);
+        return result;
+      };
 
       const run = deps.subAgentRunner.getRunStatus(target);
       assertSubagentTargetAuthorized(controller, run);
+      if (run?.status === "completed") {
+        return alreadyTerminal(run.agentId);
+      }
 
       // Rate limit: 2s between steers by the same controller to the same target.
       const rateKey = subagentControllerRateKey(controller, target);
@@ -354,6 +376,9 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
         }
         const steerResult = await deps.subAgentRunner.steerRun(target, framedMessage);
         if (!steerResult.steered) {
+          if (steerResult.terminalStatus === "completed") {
+            return alreadyTerminal(run.agentId);
+          }
           // The inject-failure branch is a path an operator must
           // diagnose. Log a WARN with an actionable hint + errorKind before the
           // throw (which the @allow-throw dispatcher converts to a JSON-RPC
@@ -391,6 +416,9 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
       // Kill the current run
       const killResult = deps.subAgentRunner.killRun(target);
       if (!killResult.killed) {
+        if (killResult.terminalStatus === "completed" && run) {
+          return alreadyTerminal(run.agentId);
+        }
         throw new Error(killResult.error!);
       }
 

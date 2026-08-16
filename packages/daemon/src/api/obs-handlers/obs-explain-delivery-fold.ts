@@ -10,6 +10,7 @@ import type { IncidentSignals } from "@comis/core";
 import type { Acc } from "./obs-explain-signals-acc.js";
 
 const DELIVERY_MESSAGE_ID_CAP = 100;
+const OUTWARD_DELIVERY_PART_CAP = 100;
 
 function count(value: unknown): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
@@ -51,4 +52,101 @@ export function accumulateDeliveryReplyBound(
     acc.deliveryMessageIds.length >= DELIVERY_MESSAGE_ID_CAP
   ) return;
   acc.deliveryMessageIds.push(messageId);
+}
+
+/** Fold one valid durable completion-delivery transition. */
+export function accumulateOutwardDelivery(
+  acc: Acc,
+  data: Record<string, unknown>,
+): void {
+  const outcome = data.outcome;
+  const transition = data.transition;
+  const rootRunId = data.rootRunId;
+  const stepIndex = data.stepIndex;
+  const hasStepIndex = Number.isSafeInteger(stepIndex) && (stepIndex as number) >= 0;
+  if (
+    (outcome !== "prepared"
+      && outcome !== "blocked"
+      && outcome !== "in_flight"
+      && outcome !== "committed"
+      && outcome !== "failed"
+      && outcome !== "parked")
+    || (transition !== "prepare"
+      && transition !== "allocate"
+      && transition !== "lookup"
+      && transition !== "begin"
+      && transition !== "mark_unknown"
+      && transition !== "commit"
+      && transition !== "mark_failed"
+      && transition !== "park")
+    || typeof rootRunId !== "string"
+    || (transition !== "prepare" && transition !== "allocate" && !hasStepIndex)
+  ) return;
+  const deliveryKind = data.deliveryKind;
+  const runId = typeof data.runId === "string" ? data.runId : undefined;
+  const rawPartId = typeof data.partId === "string" && data.partId.length > 0
+    ? data.partId
+    : hasStepIndex ? String(stepIndex) : "prepare";
+  if (
+    transition === "prepare"
+    && outcome === "prepared"
+    && deliveryKind === "attachment"
+    && runId !== undefined
+  ) {
+    const preparedKey = runId + ":" + rawPartId;
+    const node = acc.spawnNodesByLease.get(runId);
+    if (node?.outputValidation !== undefined && !acc.preparedAttachmentParts.has(preparedKey)) {
+      acc.preparedAttachmentParts.add(preparedKey);
+      node.outputValidation.attachmentsPrepared = Math.min(
+        node.outputValidation.verified,
+        node.outputValidation.attachmentsPrepared + 1,
+      );
+    }
+  }
+  const partId = JSON.stringify([rootRunId, runId ?? null, rawPartId]);
+  if (
+    !acc.outwardDeliveryParts.has(partId)
+    && acc.outwardDeliveryParts.size >= OUTWARD_DELIVERY_PART_CAP
+  ) return;
+  const signal = {
+    status: outcome,
+    rootRunId,
+    transition,
+    ...(hasStepIndex ? { stepIndex: stepIndex as number } : {}),
+    ...(deliveryKind === "text" || deliveryKind === "attachment"
+      ? { deliveryKind }
+      : {}),
+    ...(typeof data.platformMessageId === "string"
+      ? { platformMessageId: data.platformMessageId }
+      : {}),
+  } satisfies NonNullable<IncidentSignals["outwardDeliveries"]>[number];
+  acc.outwardDeliveryParts.set(partId, signal);
+
+  const rootParts = [...acc.outwardDeliveryParts.values()]
+    .filter((part) => part.rootRunId === rootRunId);
+  const committed = rootParts.filter((part) => part.status === "committed");
+  const terminalFailures = rootParts.filter(
+    (part) => part.status === "failed" || part.status === "blocked" || part.status === "parked",
+  );
+  if (committed.length > 0 && terminalFailures.length > 0) {
+    const receipt = committed.at(-1)!;
+    acc.outwardDeliveriesByRoot.set(rootRunId, {
+      status: "partial",
+      rootRunId,
+      transition,
+      ...(receipt.stepIndex === undefined ? {} : { stepIndex: receipt.stepIndex }),
+      ...(receipt.deliveryKind === undefined
+        ? {}
+        : { deliveryKind: receipt.deliveryKind }),
+      ...(receipt.platformMessageId === undefined
+        ? {}
+        : { platformMessageId: receipt.platformMessageId }),
+    });
+    return;
+  }
+  if (terminalFailures.length > 0) {
+    acc.outwardDeliveriesByRoot.set(rootRunId, terminalFailures.at(-1)!);
+    return;
+  }
+  acc.outwardDeliveriesByRoot.set(rootRunId, signal);
 }

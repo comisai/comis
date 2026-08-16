@@ -6,8 +6,8 @@
  * processing (empty-recovery, SEP extraction, post-batch continuation,
  * budget continuation), and failure-path overflow recovery lives in the
  * underlying module tests:
- *   - executor-response-filter.test.ts (recoverEmptyFinalResponse,
- *     extractExecutionPlan, scanWithOutputGuard)
+ *   - executor-response-filter.test.ts (recoverEmptyFinalResponse, scanWithOutputGuard)
+ *   - executor-plan-extraction.test.ts
  *   - post-batch-continuation.test.ts
  *   - overflow-recovery.test.ts
  *   - error-classifier.test.ts (classifyError, classifyPromptTimeout)

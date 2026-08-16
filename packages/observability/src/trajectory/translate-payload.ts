@@ -51,7 +51,6 @@ export function translatePayload(
         toolCallId: payload.toolCallId,
         ...(payload.description !== undefined ? { description: payload.description } : {}),
       };
-
     case "tool:executed":
       return {
         toolName: payload.toolName,
@@ -82,7 +81,6 @@ export function translatePayload(
         ...(payload.resultCount !== undefined ? { resultCount: payload.resultCount } : {}),
         ...(payload.domains !== undefined ? { domains: payload.domains } : {}),
       };
-
     case "tool:timeout":
       return {
         toolName: payload.toolName,
@@ -314,12 +312,13 @@ export function translatePayload(
     // refusal / dead-lettered delivery / per-node budget breach) join the SAME content-free,
     // orchestration-translator-delegated group.
     // capability:audited joins the orchestration-translator group (content-free: caps/tool-NAME/decision/lease-root ids ONLY, never args/body/secret).
-    // graph:node_spawned joins it too (content-free: graph/node ids + child agentId + rootRunId + token cap).
     case "pipeline:authored":
     case "graph:repaired":
     case "graph:synthesized_from_intent":
     case "session:sub_agent_spawned":
     case "session:sub_agent_completed":
+    case "durable:suspended":
+    case "durable:resumed":
     case "session:sub_agent_wait_finished":
     case "subagent:steered":
     case "subagent:killed": // Attributed kill — {runId, killedBy, runtimeMs, idleMs?, thresholdMs?}; the free-text reason never crosses the bus.
@@ -334,7 +333,6 @@ export function translatePayload(
     case "graph:node_spawned":
     case "orchestrate:run_summary": // A completed orchestrate run's content-free per-run summary — ids + the closed failureClass enum + counts + token estimates ONLY, never a stderr tail / script body / tool params.
       return translateOrchestrationPayload(eventName, payload);
-
     case "learning:outcome_observed": // trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only).
       return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };
     case "learning:memory_demoted":
@@ -386,15 +384,17 @@ export function translatePayload(
       // terminal sessionId, agentId, and raw timestamp are envelope/correlation ids
       // (the recorder envelope carries the agent session) — never echoed.
       return { reason: payload.reason, durationMs: payload.durationMs };
-
     case "delivery:outward_ledger_transition":
       return {
         rootRunId: payload.rootRunId,
-        stepIndex: payload.stepIndex,
+        ...(payload.runId !== null ? { runId: payload.runId } : {}),
+        ...(payload.stepIndex !== undefined ? { stepIndex: payload.stepIndex } : {}),
         transition: payload.transition,
         outcome: payload.outcome,
+        ...(payload.partId !== undefined ? { partId: payload.partId } : {}),
+        ...(payload.deliveryKind !== undefined ? { deliveryKind: payload.deliveryKind } : {}),
+        ...(payload.platformMessageId !== undefined ? { platformMessageId: payload.platformMessageId } : {}),
       };
-
     case "delivery:enqueued":
       return {
         entryId: payload.entryId,
@@ -957,7 +957,7 @@ export function translatePayload(
     case "observability:spend_unpriceable":
       return translateSpendPayload(eventName, payload);
 
-    // ---- Image generation ---- delegated to translate-image-payload.ts (file-size split; content-free + envelope-stripped, the precedent the vision/video/voice arms below mirror — image was the last media lifecycle still inline).
+    // ---- Image generation ---- delegated to translate-image-payload.ts (content-free + envelope-stripped, mirroring the media lifecycle arms below).
     case "image:requested":
     case "image:generated":
     case "image:delivered":

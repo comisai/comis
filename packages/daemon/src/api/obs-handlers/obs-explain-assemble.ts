@@ -654,6 +654,12 @@ export function assembleIncidentReport(
     ...(signals.deliveryDispatch?.messageIds !== undefined
       ? { deliveryReceipt: { messageIds: signals.deliveryDispatch.messageIds } }
       : {}),
+    ...(signals.outwardDeliveries !== undefined
+      ? { outwardDeliveries: signals.outwardDeliveries }
+      : {}),
+    ...(signals.restartRecovery !== undefined
+      ? { restartRecovery: signals.restartRecovery }
+      : {}),
     ...(signals.deliveryAborts !== undefined
       ? { deliverySkipped: { events: signals.deliveryAborts.events, chunksNotSent: signals.deliveryAborts.chunksNotSent } }
       : {}),
