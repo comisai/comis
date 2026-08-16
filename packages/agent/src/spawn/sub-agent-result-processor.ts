@@ -38,6 +38,7 @@ import type {
   CompletionAttachmentShape,
   SendGovernedCompletionAnnouncement,
 } from "./announcement-ports.js";
+import { createCompletionAnnouncementOperationPlan } from "./completion-announcement-operations.js";
 import { buildAnnounceKey, type DeliveryDedup } from "./announce-key.js";
 import { ANNOUNCE_PARENT_TIMEOUT_MS, type SubAgentRunnerDeps, type SubAgentRunnerLogger } from "./sub-agent-runner.js";
 import {
@@ -651,18 +652,27 @@ export async function deliverAnnouncement(params: {
   ) {
     const callerConversation = params.callerConversation;
     const destinationEndpoint = params.destinationEndpoint;
+    const operationPlan = createCompletionAnnouncementOperationPlan(
+      finalText,
+      params.attachments ?? [],
+    );
+    if (operationPlan.pathReplacements > 0) {
+      deps.logger?.debug({
+        runId,
+        replacements: operationPlan.pathReplacements,
+        step: "completion-caption-egress",
+      }, "Attached file paths replaced before completion delivery");
+    }
     const operations: Array<{
       text: string;
       partId?: string;
       attachment?: CompletionAttachmentShape;
       reservationKey?: string;
-    }> = params.attachments?.length
-      ? params.attachments.map((attachment, index) => ({
-          text: index === 0 ? finalText : "",
-          partId: `attachment:${index}`,
-          attachment,
-        }))
-      : [{ text: finalText }];
+    }> = operationPlan.operations.map((operation) => ({
+      text: operation.text,
+      ...(operation.partId ? { partId: operation.partId } : {}),
+      ...(operation.attachment ? { attachment: operation.attachment } : {}),
+    }));
     const reservationRoot = resolveReservationRoot(
       deps.resolveRootRunId,
       callerAgentId,
@@ -745,6 +755,7 @@ export async function deliverAnnouncement(params: {
       }
       const outcome = boundary.value.value;
       if (!outcome.delivered) {
+        if ("terminalDecision" in outcome) continue;
         delivered = false;
         lastError = outcome.failure;
         break;

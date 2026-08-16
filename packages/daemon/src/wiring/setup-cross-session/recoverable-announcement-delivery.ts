@@ -216,16 +216,14 @@ export function createRecoverableAnnouncementDelivery(
       );
       if (!reserveBoundary.ok) return err(reserveBoundary.error);
       if (!reserveBoundary.value.ok) return reserveBoundary.value;
-      if (!reserveBoundary.value.value.created) {
-        return ok({ delivered: false, failure: "operation_retained" });
-      }
     }
     const sendBoundary = await fromPromise(deps.send(request));
     if (!sendBoundary.ok) return err(sendBoundary.error);
     if (!sendBoundary.value.ok) return sendBoundary.value;
     const outcome = sendBoundary.value.value;
-    if (!outcome.delivered && outcome.failure !== "operation_validation_blocked") {
-      return ok(outcome);
+    if (!outcome.delivered) {
+      if ("terminalDecision" in outcome) return ok(outcome);
+      if (outcome.failure !== "operation_validation_blocked") return ok(outcome);
     }
     const resolution = await fromPromise(deps.deadLetterQueue.resolveDecision(
       operationId,

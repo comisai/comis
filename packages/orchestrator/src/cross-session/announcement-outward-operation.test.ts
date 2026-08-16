@@ -58,7 +58,7 @@ describe("governed announcement sender", () => {
 
     expect(result).toEqual({
       ok: true,
-      value: { delivered: false, failure: "operation_retained" },
+      value: { delivered: false, terminalDecision: "discarded" },
     });
     expect(ledger.allocateStep).not.toHaveBeenCalled();
     expect(sendToPlatform).not.toHaveBeenCalled();

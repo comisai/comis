@@ -9,11 +9,12 @@ import {
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import type {
   AnnouncementDeliveryOptions,
+  GovernedAnnouncementFailure,
   GovernedAnnouncementSendOutcome,
   SendGovernedCompletionAnnouncement,
 } from "@comis/orchestrator";
 
-export type GraphAnnouncementSettlement = "committed" | "retained";
+export type GraphAnnouncementSettlement = "committed" | "retained" | "suppressed";
 
 interface GraphAnnouncementDeliveryParams {
   graphId: string;
@@ -99,6 +100,9 @@ export async function deliverGovernedGraphAnnouncement(
   }
   const outcome = boundary.value.value;
   if (outcome.delivered) return ok("committed");
+  if ("terminalDecision" in outcome) {
+    return ok(outcome.terminalDecision === "delivered" ? "committed" : "suppressed");
+  }
 
   const retained = hasRetainedOperationEvidence(outcome);
   deps.logger?.error({
@@ -116,7 +120,7 @@ export async function deliverGovernedGraphAnnouncement(
 }
 
 function hasRetainedOperationEvidence(
-  outcome: Extract<GovernedAnnouncementSendOutcome, { delivered: false }>,
+  outcome: Extract<GovernedAnnouncementSendOutcome, { failure: GovernedAnnouncementFailure }>,
 ): boolean {
   if (outcome.identity === undefined) return false;
   switch (outcome.failure) {

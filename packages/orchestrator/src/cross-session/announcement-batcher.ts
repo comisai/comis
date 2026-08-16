@@ -22,6 +22,7 @@ import {
 import { err, fromPromise, ok, TimeoutError, withTimeout, type Result } from "@comis/shared";
 import {
   buildAnnouncementRewriteInput,
+  createCompletionAnnouncementOperationPlan,
   createDeliveryDedup,
   enforceAnnouncementTerminalOutcome,
   type AnnouncementTerminalOutcome,
@@ -177,24 +178,6 @@ function stripSubagentResultMarkers(text: string): string {
   return parts.join("");
 }
 
-function replaceAttachedFilePaths(
-  text: string,
-  attachments: readonly CompletionAttachmentRef[],
-): { text: string; replacements: number } {
-  let sanitized = text;
-  let replacements = 0;
-
-  for (const attachment of attachments) {
-    const fileName = attachment.path.split(/[\\/]/).filter(Boolean).at(-1);
-    if (!fileName || !sanitized.includes(attachment.path)) continue;
-    const parts = sanitized.split(attachment.path);
-    replacements += parts.length - 1;
-    sanitized = parts.join(fileName);
-  }
-
-  return { text: sanitized, replacements };
-}
-
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -244,6 +227,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     partId?: string,
   ): Promise<{
     delivered: boolean;
+    terminalDecision?: boolean;
     lastError?: string;
     identity?: AnnouncementOperationIdentity;
     failure?: GovernedAnnouncementFailure;
@@ -269,6 +253,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       const outcome = boundary.value.value;
       if (outcome.delivered) {
         return { delivered: true, identity: outcome.identity };
+      }
+      if ("terminalDecision" in outcome) {
+        return { delivered: true, terminalDecision: true };
       }
       return {
         delivered: false,
@@ -374,39 +361,37 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     const attachments = items.flatMap((item) =>
       (item.attachments ?? []).map((attachment, index) => ({ item, attachment, index })),
     );
-    const sanitizedCaption = replaceAttachedFilePaths(
+    const operationPlan = createCompletionAnnouncementOperationPlan(
       text,
       attachments.map((entry) => entry.attachment),
     );
-    if (sanitizedCaption.replacements > 0) {
+    if (operationPlan.pathReplacements > 0) {
       deps.logger?.debug(
         {
           batchKey: key,
           runId: first.runId,
-          replacements: sanitizedCaption.replacements,
+          replacements: operationPlan.pathReplacements,
           step: "completion-caption-egress",
         },
         "Attached file paths replaced before completion delivery",
       );
     }
-    const operations: AnnouncementBatchOperation[] = attachments.length === 0
-      ? [{ item: first, text: sanitizedCaption.text, completionItems: items }]
-      : [
-          ...(sanitizedCaption.text.length > 0
-            ? [{
-                item: first,
-                text: sanitizedCaption.text,
-                partId: "summary",
-                completionItems: items,
-              }]
-            : []),
-          ...attachments.map((entry) => ({
-            ...entry,
-            text: "",
-            partId: `attachment:${entry.index}`,
-            completionItems: items,
-          })),
-        ];
+    const operations: AnnouncementBatchOperation[] = operationPlan.operations.map((operation) => {
+      const attachmentEntry = operation.attachmentIndex === undefined
+        ? undefined
+        : attachments[operation.attachmentIndex];
+      return {
+        item: attachmentEntry?.item ?? first,
+        text: operation.text,
+        completionItems: items,
+        ...(attachmentEntry
+          ? { partId: `attachment:${attachmentEntry.index}` }
+          : operation.partId
+            ? { partId: operation.partId }
+            : {}),
+        ...(operation.attachment ? { attachment: operation.attachment } : {}),
+      };
+    });
 
     if (deps.sendGovernedAnnouncement) {
       const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
@@ -474,7 +459,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         failedOperationIndex = operationIndex;
         break;
       }
-      if (operation.reservationKey) {
+      if (operation.reservationKey && !outcome.terminalDecision) {
         await resolveDecisionKeys(
           [operation.reservationKey],
           "receipt_committed",
@@ -542,7 +527,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     const failedCompletionKeys = items.flatMap((item) =>
       item.idempotencyKey ? [item.idempotencyKey] : []);
     const queued = await deps.deadLetterQueue.enqueue({
-      announcementText: sanitizedCaption.text,
+      announcementText: operationPlan.operations[0]?.text ?? "",
       channelType: first.announceChannelType,
       channelId: first.announceChannelId,
       agentId: first.callerAgentId,
@@ -859,24 +844,18 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         params.terminalOutcome,
       );
       const fallbackText = fallbackDisclosure.text ?? safeFallback;
+      const attachmentPlanSource = createCompletionAnnouncementOperationPlan(
+        params.suppressText ? "" : fallbackText,
+        params.attachments ?? [],
+      );
       const attachmentOperations: AnnouncementBatchOperation[] = hasAttachments
-        ? [
-            ...(params.suppressText
-              ? []
-              : [{
-                  item: params,
-                  text: fallbackText,
-                  partId: "summary",
-                  completionItems: [params],
-                }]),
-            ...(params.attachments ?? []).map((attachment, index) => ({
-              item: params,
-              text: "",
-              attachment,
-              partId: `attachment:${index}`,
-              completionItems: [params],
-            })),
-          ]
+        ? attachmentPlanSource.operations.map((operation) => ({
+            item: params,
+            text: operation.text,
+            completionItems: [params],
+            ...(operation.partId ? { partId: operation.partId } : {}),
+            ...(operation.attachment ? { attachment: operation.attachment } : {}),
+          }))
         : [];
       const attachmentPlan = attachmentOperations.length > 0
         ? createAnnouncementReservationPlan(attachmentOperations)

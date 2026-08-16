@@ -58,6 +58,7 @@ export type { AnnouncementTerminalOutcome } from "./sub-agent-announcement-conte
 // own tests via relative import) — not re-exported, to avoid a dead public export.
 export { createDeliveryDedup } from "./announce-key.js";
 export type { DeliveryDedup } from "./announce-key.js";
+export { createCompletionAnnouncementOperationPlan } from "./completion-announcement-operations.js";
 
 // Pure sandbox-posture primitive. The comparator + resolver are a
 // @comis/agent leaf; the daemon wiring injects a resolver closure over

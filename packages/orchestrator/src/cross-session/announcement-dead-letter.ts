@@ -368,7 +368,10 @@ export function createAnnouncementDeadLetterQueue(
   async function parkGovernedEntry(
     ledger: OutwardSendLedgerPort,
     entry: DeadLetterEntry,
-    identity: GovernedDeadLetterIdentity,
+    identity: Pick<
+      GovernedDeadLetterIdentity,
+      "rootRunId" | "stepIndex" | "runId" | "sessionKey"
+    >,
   ): Promise<void> {
     const parked = await ledger.parkUncertain(identity.rootRunId, identity.stepIndex);
     if (!parked.ok) {

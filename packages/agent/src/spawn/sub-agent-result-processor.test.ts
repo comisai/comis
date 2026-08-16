@@ -939,11 +939,17 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     expect(deliveryDedup.has(`${callerSessionKey}::run-rewrite`)).toBe(true);
   });
 
-  it("settles direct attachment operation reservations incrementally", async () => {
+  it("separates and sanitizes direct attachment operations before incremental settlement", async () => {
     const deadLetterQueue = makeDecisionDeadLetterQueue();
     const callerSessionKey = formatSessionKey({
       tenantId: "default", agentId: "agent-main", userId: "user_a", channelId: "chat_a",
     });
+    const summaryKey = createStableAnnouncementOperationId(
+      "agent-main",
+      callerSessionKey,
+      "run-attachments",
+      "summary",
+    );
     const firstKey = createStableAnnouncementOperationId(
       "agent-main",
       callerSessionKey,
@@ -962,13 +968,17 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 1 },
       }))
       .mockResolvedValueOnce(ok({
-        delivered: false as const,
+        delivered: true as const,
         identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 2 },
+      }))
+      .mockResolvedValueOnce(ok({
+        delivered: false as const,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 3 },
         failure: "transport_uncertain",
       }));
 
     await deliverAnnouncement({
-      announcementText: "[System Message]\nResult: files ready",
+      announcementText: `[System Message]\nResult: files ready at /workspace/files/first.txt ${"x".repeat(1_100)}`,
       terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
@@ -978,7 +988,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       destinationEndpoint: makeCallerEndpoint(),
       runId: "run-attachments",
       attachments: [
-        { sourceAgentId: "worker-a", path: "first.txt" },
+        { sourceAgentId: "worker-a", path: "/workspace/files/first.txt" },
         { sourceAgentId: "worker-a", path: "second.txt" },
       ],
     }, {
@@ -990,20 +1000,44 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
 
     expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith([], [
       expect.objectContaining({
+        idempotencyKey: summaryKey,
+        partId: "summary",
+        announcementText: expect.stringContaining("files ready at first.txt"),
+        completionKeys: [`${callerSessionKey}::run-attachments`],
+      }),
+      expect.objectContaining({
         idempotencyKey: firstKey,
         partId: "attachment:0",
-        attachment: { sourceAgentId: "worker-a", path: "first.txt" },
+        announcementText: "",
+        attachment: { sourceAgentId: "worker-a", path: "/workspace/files/first.txt" },
         completionKeys: [`${callerSessionKey}::run-attachments`],
       }),
       expect.objectContaining({
         idempotencyKey: secondKey,
         partId: "attachment:1",
+        announcementText: "",
         attachment: { sourceAgentId: "worker-a", path: "second.txt" },
         completionKeys: [`${callerSessionKey}::run-attachments`],
       }),
     ]);
-    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledOnce();
-    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+    expect(sendGovernedAnnouncement).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      partId: "summary",
+      text: expect.stringContaining("files ready at first.txt"),
+    }));
+    expect(sendGovernedAnnouncement.mock.calls[0]?.[0]).not.toHaveProperty("attachment");
+    expect(sendGovernedAnnouncement).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      partId: "attachment:0",
+      text: "",
+      attachment: { sourceAgentId: "worker-a", path: "/workspace/files/first.txt" },
+    }));
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledTimes(2);
+    expect(deadLetterQueue.resolveDecision).toHaveBeenNthCalledWith(
+      1,
+      summaryKey,
+      "receipt_committed",
+    );
+    expect(deadLetterQueue.resolveDecision).toHaveBeenNthCalledWith(
+      2,
       firstKey,
       "receipt_committed",
     );

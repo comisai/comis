@@ -217,6 +217,7 @@ export const IncidentGraphRunSchema = z.object({
     "unavailable",
     "committed",
     "retained",
+    "suppressed",
     "failed",
   ]),
   startedAt: z.string().optional(),

@@ -109,4 +109,30 @@ describe("recoverable completion announcement delivery", () => {
     expect(result).toMatchObject({ ok: false });
     expect(send).not.toHaveBeenCalled();
   });
+
+  it("returns terminal settlement evidence when durable admission is already decided", async () => {
+    const send = vi.fn(async () => ok({
+      delivered: false as const,
+      terminalDecision: "discarded" as const,
+    }));
+    const deadLetterQueue = {
+      lookupDecision: vi.fn(async () => ok(undefined)),
+      reserveDecision: vi.fn(async () => ok({ created: false })),
+      resolveDecision: vi.fn(async () => ok(false)),
+    };
+    const delivery = createRecoverableAnnouncementDelivery({
+      adaptersByType: new Map([
+        ["telegram", { channelId: "telegram-primary", channelType: "telegram" }],
+      ]),
+      deadLetterQueue,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
+      send,
+    });
+
+    const result = await delivery(makeRequest());
+
+    expect(result).toEqual(ok({ delivered: false, terminalDecision: "discarded" }));
+    expect(send).toHaveBeenCalledOnce();
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
+  });
 });

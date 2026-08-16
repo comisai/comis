@@ -10,6 +10,7 @@ import {
   type ConversationLocator,
   type OutwardSendLedgerPort,
   type OutwardSendRecord,
+  type OutwardTerminalDecision,
   type TypedEventBus,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
@@ -82,6 +83,7 @@ export type GovernedAnnouncementFailure =
 
 export type GovernedAnnouncementSendOutcome =
   | { delivered: true; identity: AnnouncementOperationIdentity }
+  | { delivered: false; terminalDecision: OutwardTerminalDecision }
   | {
       delivered: false;
       identity?: AnnouncementOperationIdentity;
@@ -413,7 +415,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       return ok({ delivered: false, failure: "lookup_blocked" });
     }
     if (terminalDecision.value !== undefined) {
-      return ok({ delivered: false, failure: "operation_retained" });
+      return ok({ delivered: false, terminalDecision: terminalDecision.value });
     }
     const allocated = await deps.ledger.allocateStep(request.rootRunId, request.operationId);
     if (!allocated.ok) {

@@ -84,6 +84,28 @@ describe("governed graph announcement delivery", () => {
     );
   });
 
+  it.each([
+    ["delivered", "committed"],
+    ["discarded", "suppressed"],
+    ["no_reply", "suppressed"],
+  ] as const)("terminalizes an authoritative %s decision as %s", async (
+    terminalDecision,
+    settlement,
+  ) => {
+    const send = vi.fn(async () => ok({
+      delivered: false as const,
+      terminalDecision,
+    }));
+
+    const result = await deliverGovernedGraphAnnouncement(
+      { send, logger: logger() },
+      params(),
+    );
+
+    expect(result).toEqual(ok(settlement));
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it("keeps a lost boundary response content-safe and does not retry", async () => {
     const log = logger();
     const send = vi.fn(async () => err(new Error("token=PRIVATE_GRAPH_TOKEN")));

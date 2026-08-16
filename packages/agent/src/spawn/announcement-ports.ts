@@ -7,6 +7,7 @@ import type {
   ChannelEndpoint,
   CitationEvidence,
   ConversationLocator,
+  OutwardTerminalDecision,
 } from "@comis/core";
 import type { AnnouncementTerminalOutcome } from "./sub-agent-announcement-content.js";
 
@@ -39,6 +40,7 @@ export interface CompletionAttachmentShape {
 
 export type GovernedCompletionAnnouncementOutcome =
   | { delivered: true; identity: AnnouncementOperationIdentity }
+  | { delivered: false; terminalDecision: OutwardTerminalDecision }
   | {
       delivered: false;
       identity?: AnnouncementOperationIdentity;

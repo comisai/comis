@@ -285,7 +285,7 @@ export async function handleGraphCompletion(
   // 4. Deliver deterministic graph output through one stable, receipt-aware
   // outward operation. Parent execution is intentionally outside this terminal
   // boundary because replaying it could repeat arbitrary tool effects.
-  let announcementDelivery: "not-requested" | "unavailable" | "committed" | "retained" | "failed" =
+  let announcementDelivery: "not-requested" | "unavailable" | "committed" | "retained" | "suppressed" | "failed" =
     hasAnyAnnouncementRoute && deps.sendGovernedAnnouncement === undefined
       ? "unavailable"
       : "not-requested";
@@ -647,7 +647,7 @@ export function writeRunMetadata(
   deps: Pick<GraphCoordinatorDeps, "logger">,
   gs: GraphRunState,
   graphStatus: GraphStatus,
-  announcementDelivery: "not-requested" | "unavailable" | "committed" | "retained" | "failed",
+  announcementDelivery: "not-requested" | "unavailable" | "committed" | "retained" | "suppressed" | "failed",
 ): void {
   try {
     const snap = gs.stateMachine.snapshot();
