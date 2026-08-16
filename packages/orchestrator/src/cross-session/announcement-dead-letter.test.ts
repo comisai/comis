@@ -30,6 +30,7 @@ import {
   type AnnouncementLogger,
 } from "./announcement-dead-letter.js";
 import type { DeadLetterWriteOperations } from "./announcement-dead-letter-file.js";
+import { isSameAnnouncementRecovery } from "./announcement-dead-letter-identity.js";
 import { createMockLogger as _createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 
@@ -174,6 +175,51 @@ describe("AnnouncementDeadLetterQueue", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
     expect(typeof parsed.lastAttemptAt).toBe("number");
+  });
+
+  it("compares two ungoverned recovery rows without inventing route authority", () => {
+    const existing = makeFullEntry({
+      runId: "run-ungoverned-identity",
+      idempotencyKey: "recovery-ungoverned-identity",
+    });
+    const candidate = makeEntry({
+      runId: "run-ungoverned-identity",
+      idempotencyKey: "recovery-ungoverned-identity",
+    });
+    delete existing.deliveryAuthority;
+    delete existing.destinationEndpoint;
+    delete candidate.deliveryAuthority;
+    delete candidate.destinationEndpoint;
+
+    expect(isSameAnnouncementRecovery(existing, candidate)).toEqual(ok(true));
+  });
+
+  it("rejects a recovery comparison when persisted options are not JSON values", () => {
+    const existing = makeFullEntry({
+      runId: "run-invalid-persisted-options",
+      idempotencyKey: "recovery-invalid-persisted-options",
+      extra: { unsafe: 1n },
+    });
+    const candidate = makeEntry({
+      runId: "run-invalid-persisted-options",
+      idempotencyKey: "recovery-invalid-persisted-options",
+    });
+
+    expect(isSameAnnouncementRecovery(existing, candidate)).toMatchObject({ ok: false });
+  });
+
+  it("rejects a recovery comparison when retried options are not JSON values", () => {
+    const existing = makeFullEntry({
+      runId: "run-invalid-retried-options",
+      idempotencyKey: "recovery-invalid-retried-options",
+    });
+    const candidate = makeEntry({
+      runId: "run-invalid-retried-options",
+      idempotencyKey: "recovery-invalid-retried-options",
+      extra: { unsafe: 1n },
+    });
+
+    expect(isSameAnnouncementRecovery(existing, candidate)).toMatchObject({ ok: false });
   });
 
   it("enqueue emits announcement:dead_lettered event after persistence", async () => {
