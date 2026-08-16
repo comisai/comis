@@ -125,4 +125,19 @@ describe("generic runtime specialization boundary", () => {
       expect(text).not.toMatch(/unescapeXml|extractUserLanguage|preferred-language field|reply-language tier/iu);
     }
   });
+
+  it("owns the dead-letter delivery contract in one core port", () => {
+    const contract = source("packages/core/src/ports/announcement-dead-letter.ts");
+    const agentPort = source("packages/agent/src/spawn/announcement-ports.ts");
+    const orchestratorQueue = source(
+      "packages/orchestrator/src/cross-session/announcement-dead-letter.ts",
+    );
+
+    expect(contract).toContain("sessionKey: string");
+    expect(contract).toContain("AnnouncementDeadLetterQueuePort");
+    expect(agentPort).toContain("AnnouncementDeadLetterQueuePort");
+    expect(agentPort).not.toContain("interface DeadLetterEntryShape");
+    expect(orchestratorQueue).toContain("AnnouncementDeadLetterQueuePort");
+    expect(orchestratorQueue).not.toContain("interface AnnouncementDeadLetterQueue");
+  });
 });
