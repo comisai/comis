@@ -731,6 +731,7 @@ export async function deliverAnnouncement(params: {
         channelType: announceChannelType,
         channelId: announceChannelId,
         text: operation.text,
+        completionKeys: [announceKey],
         ...(operation.partId ? { partId: operation.partId } : {}),
         ...(operation.attachment ? { attachment: operation.attachment } : {}),
         ...(threadId ? { options: { threadId } } : {}),
@@ -922,6 +923,9 @@ async function deliverFailureNotificationOnce(
   let delivered: boolean;
   let sendErr: Error | undefined;
   if (deps.sendGovernedAnnouncement) {
+    if (!announceKey) {
+      return Promise.reject(new Error("Governed failure notification requires a completion key"));
+    }
     const boundary = await fromPromise(deps.sendGovernedAnnouncement({
       agentId: params.callerAgentId!,
       callerSessionKey: params.callerSessionKey!,
@@ -931,6 +935,7 @@ async function deliverFailureNotificationOnce(
       channelType: params.channelType,
       channelId: params.channelId,
       text: message,
+      completionKeys: [announceKey],
       ...(threadId ? { options: { threadId } } : {}),
     }));
     delivered = boundary.ok && boundary.value.ok && boundary.value.value.delivered;

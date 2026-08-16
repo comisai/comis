@@ -126,6 +126,7 @@ interface ParentDecisionReservationStoreDeps {
   persist(
     reservations: readonly ParentDecisionReservationRecord[],
   ): Promise<Result<void, Error>>;
+  canPersistReservationCount(count: number): boolean;
   replaceReservations(reservations: readonly ParentDecisionReservationRecord[]): void;
   logger?: StorageLogger;
 }
@@ -248,6 +249,9 @@ export function createParentDecisionReservationStore(
       ...deps.getReservations(),
       { ...entry, recordType: "parent_decision_reservation" as const, id: id.value },
     ];
+    if (!deps.canPersistReservationCount(next.length)) {
+      return err(new Error("Dead-letter quarantine capacity exhausted"));
+    }
     const persisted = await deps.persist(next);
     if (!persisted.ok) {
       deps.logger?.error?.(
@@ -351,6 +355,9 @@ export function createParentDecisionReservationStore(
     }
 
     const retained = current.filter((reservation) => !expected.has(reservation.idempotencyKey));
+    if (!deps.canPersistReservationCount(retained.length + operations.length)) {
+      return err(new Error("Dead-letter quarantine capacity exhausted"));
+    }
     const records: ParentDecisionReservationRecord[] = [];
     for (const operation of operations) {
       const id = tryCatch(() => randomUUID());

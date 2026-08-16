@@ -276,7 +276,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
   });
 
-  it("retains every entry when the review threshold is exceeded", async () => {
+  it("backpressures new admissions when retained storage reaches capacity", async () => {
     const eventBus = createMockEventBus();
     const logger = createMockLogger();
     const dlq = createAnnouncementDeadLetterQueue({
@@ -289,17 +289,52 @@ describe("AnnouncementDeadLetterQueue", () => {
     await dlq.enqueue(makeEntry({ runId: "run-1" }));
     await dlq.enqueue(makeEntry({ runId: "run-2" }));
     await dlq.enqueue(makeEntry({ runId: "run-3" }));
-    await dlq.enqueue(makeEntry({ runId: "run-4" }));
+    const overflow = await dlq.enqueue(makeEntry({ runId: "run-4" }));
 
-    expect(dlq.size()).toBe(4);
+    expect(overflow).toMatchObject({ ok: false });
+    expect(dlq.size()).toBe(3);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
-        entryCount: 4,
+        entryCount: 3,
+        maxEntries: 3,
         errorKind: "resource",
-        hint: "resolve retained dead letters; delivery evidence is never capacity-evicted",
       }),
-      "Dead-letter quarantine exceeds its review threshold",
+      "Dead-letter quarantine capacity exhausted",
     );
+  });
+
+  it("emits a fresh admission after a matching quarantine row is released", async () => {
+    const eventBus = createMockEventBus();
+    const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus });
+    const entry = makeEntry({ runId: "run-released-and-readmitted" });
+
+    await dlq.enqueue(entry);
+    const id = (await listQuarantined(dlq))[0]!.id;
+    await dlq.release(id, "discarded");
+    await dlq.enqueue(entry);
+
+    expect(eventBus.emit).toHaveBeenCalledTimes(2);
+    expect(dlq.size()).toBe(1);
+  });
+
+  it("emits a fresh admission after a matching quarantine row is delivered", async () => {
+    const eventBus = createMockEventBus();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus,
+      retryIntervalMs: 0,
+    });
+    const entry = makeEntry({ runId: "run-delivered-and-readmitted" });
+
+    await dlq.enqueue(entry);
+    await dlq.drain(vi.fn().mockResolvedValue(true));
+    await dlq.enqueue(entry);
+
+    const admissions = vi.mocked(eventBus.emit).mock.calls.filter(
+      ([eventName]) => eventName === "announcement:dead_lettered",
+    );
+    expect(admissions).toHaveLength(2);
+    expect(dlq.size()).toBe(1);
   });
 
   it("drain retries delivery via sendToChannel", async () => {
@@ -1063,6 +1098,35 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await restarted.drain(sendToChannel);
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(restarted.size()).toBe(1);
+  });
+
+  it("blocks reservation growth without evicting an existing completion owner", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    const completionKey = decisionInput().idempotencyKey;
+    await expect(queue.reserveDecision(decisionInput())).resolves.toEqual(
+      ok({ created: true }),
+    );
+
+    await expect(queue.reserveDecision(decisionInput({
+      idempotencyKey: "second-completion",
+      runId: "run-parent-2",
+      completionKeys: ["second-completion"],
+    }))).resolves.toMatchObject({ ok: false });
+    await expect(queue.replaceDecisions([completionKey], [
+      decisionInput({ idempotencyKey: "operation-summary", completionKeys: [completionKey] }),
+      decisionInput({
+        idempotencyKey: "operation-attachment",
+        partId: "attachment:0",
+        completionKeys: [completionKey],
+      }),
+    ])).resolves.toMatchObject({ ok: false });
+
+    await expect(queue.lookupDecision(completionKey)).resolves.toEqual(ok(decisionInput()));
+    expect(queue.size()).toBe(1);
   });
 
   it("atomically replaces parent decisions with exact outward operations", async () => {
@@ -2120,7 +2184,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(dlq.size()).toBe(1);
   });
 
-  it("never age-expires, attempt-drops, or capacity-evicts governed quarantine evidence", async () => {
+  it("never age-expires or attempt-drops governed evidence and backpressures overflow", async () => {
     const eventBus = createMockEventBus();
     const entryA = makeFullEntry({
       runId: "run-quarantine-a",
@@ -2156,8 +2220,9 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       outwardLedger: ledger,
     });
 
+    const admissions = [];
     for (const entry of [entryA, entryB]) {
-      await dlq.enqueue({
+      admissions.push(await dlq.enqueue({
         announcementText: entry.announcementText,
         channelType: entry.channelType,
         channelId: entry.channelId,
@@ -2170,17 +2235,19 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
         stepIndex: entry.stepIndex,
         deliveryAuthority: entry.deliveryAuthority,
         destinationEndpoint: entry.destinationEndpoint,
-      });
+      }));
     }
-    expect(dlq.size()).toBe(2);
+    expect(admissions[0]).toEqual(ok(undefined));
+    expect(admissions[1]).toMatchObject({ ok: false });
+    expect(dlq.size()).toBe(1);
 
     const sendToChannel = vi.fn().mockResolvedValue(true);
     await dlq.drain(sendToChannel);
 
     expect(sendToChannel).not.toHaveBeenCalled();
-    expect(dlq.size()).toBe(2);
+    expect(dlq.size()).toBe(1);
     const persisted = (await readFile(filePath, "utf-8")).trim().split("\n");
-    expect(persisted).toHaveLength(2);
+    expect(persisted).toHaveLength(1);
   });
 
   it("no ledger wired → drain delivers normally (pass-through, unchanged behavior)", async () => {

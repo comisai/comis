@@ -198,17 +198,20 @@ persistent dead-letter queue backed by a JSONL file at
   content-free `comis quarantine list` control plane
 - **Invalid rows:** A malformed, incompatible, truncated, or oversized row is
   isolated as bounded non-replayable evidence. It cannot block valid rows or
-  new admissions and requires an explicit release
-- **Capacity:** `maxEntries` is an operator-review threshold, not an eviction
-  limit. Crossing it emits a warning without dropping retained evidence
+  their recovery, contributes to retained capacity, and requires an explicit
+  release
+- **Capacity:** `maxEntries` is a hard retained-item limit. New reservations
+  and failed-delivery rows are rejected before they would exceed it; existing
+  evidence is never evicted, and same-size recovery transitions remain allowed
 - **File lifetime:** the JSONL is a snapshot of the queue, not an append-only
   log — it is rewritten on every change and removed once the queue drains. An
   absent file means nothing is pending, so a quarantine WARN with no file means
   that quarantine already resolved
 
-The dead-letter queue ensures that transient failures do not cause permanent
-message loss. Even during extended provider outages, announcements remain
-preserved until delivery is proven or an operator records a decision.
+The dead-letter queue ensures that admitted transient failures do not cause
+permanent message loss. During extended provider outages, retained
+announcements remain preserved until delivery is proven or an operator records
+a decision, while new governed sends are backpressured at capacity.
 
 ### Delivery idempotency
 

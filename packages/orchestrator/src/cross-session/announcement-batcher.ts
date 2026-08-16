@@ -239,6 +239,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   async function sendOnce(
     item: QueuedAnnouncement,
     text: string,
+    completionKeys: readonly string[],
     attachment?: CompletionAttachmentRef,
     partId?: string,
   ): Promise<{
@@ -257,6 +258,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         channelType: item.announceChannelType,
         channelId: item.announceChannelId,
         text,
+        completionKeys,
         ...(partId ? { partId } : {}),
         ...(attachment ? { attachment } : {}),
         ...(item.announceThreadId ? { options: { threadId: item.announceThreadId } } : {}),
@@ -404,7 +406,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
               ...entry,
               text: "",
               partId: `attachment:${entry.index}`,
-              completionItems: [entry.item],
+              completionItems: items,
             })),
           ];
 
@@ -457,6 +459,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       const outcome = await sendOnce(
         operation.item,
         operation.text,
+        operation.completionItems.flatMap((item) =>
+          item.idempotencyKey ? [item.idempotencyKey] : []),
         operation.attachment,
         operation.partId,
       );
@@ -783,6 +787,17 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     const reservationRootRunId = params.reservationRootRunId;
     if (idempotencyKey && (deliveredKeys.has(idempotencyKey) || retainedKeys.has(idempotencyKey))) {
       return ok("retained");
+    }
+    if ((params.attachments?.length ?? 0) > 0 && !deps.sendGovernedAnnouncement) {
+      deps.logger?.warn(
+        {
+          runId: params.runId,
+          errorKind: "precondition" as const,
+          hint: "Enable receipt-aware governed attachment delivery before retrying the completion",
+        },
+        "Generated completion file has no governed delivery boundary",
+      );
+      return err(new Error("Generated completion attachment delivery unavailable"));
     }
 
     const reserveDecision = deps.deadLetterQueue?.reserveDecision;

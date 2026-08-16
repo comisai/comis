@@ -97,7 +97,7 @@ describe("completion announcement delivery wiring", () => {
       outwardLedger: ledger,
     });
 
-    const result = await delivery.sendGovernedAnnouncement?.({
+    const result = await delivery.sendLedgerAnnouncement?.({
       agentId: "agent-1",
       callerSessionKey: "default:user1:chan1",
       runId: "run-1",
@@ -157,7 +157,7 @@ describe("completion announcement delivery wiring", () => {
       text: "completion",
       options: { threadId: "topic-7" },
     };
-    const result = await delivery.sendGovernedAnnouncement?.(request);
+    const result = await delivery.sendLedgerAnnouncement?.(request);
 
     expect(result?.ok && result.value.delivered).toBe(true);
     expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
@@ -213,7 +213,7 @@ describe("completion announcement delivery wiring", () => {
       resolveRootRunId: () => ({ ok: true, value: "root-uncertain" }),
     });
 
-    const result = await delivery.sendGovernedAnnouncement?.({
+    const result = await delivery.sendLedgerAnnouncement?.({
       agentId: "agent-1",
       callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
       callerConversation: caller.locator,
@@ -261,7 +261,7 @@ describe("completion announcement delivery wiring", () => {
       text: "must not send",
       options: { threadId: "topic-7" },
     };
-    const result = await delivery.sendGovernedAnnouncement?.(request);
+    const result = await delivery.sendLedgerAnnouncement?.(request);
 
     expect(result).toEqual(ok({ delivered: false, failure: "operation_validation_blocked" }));
     expect(ledger.allocateStep).not.toHaveBeenCalled();
@@ -303,7 +303,7 @@ describe("completion announcement delivery wiring", () => {
       })),
     });
 
-    const result = await delivery.sendGovernedAnnouncement?.({
+    const result = await delivery.sendLedgerAnnouncement?.({
       agentId: "agent-1",
       callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
       callerConversation: caller.locator,
@@ -369,7 +369,7 @@ describe("completion announcement delivery wiring", () => {
     });
 
     const caller = makeChannelPrincipalCaller();
-    const result = await delivery.sendGovernedAnnouncement?.({
+    const result = await delivery.sendLedgerAnnouncement?.({
       agentId: "agent-1",
       callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
       callerConversation: caller.locator,
@@ -436,7 +436,7 @@ describe("completion announcement delivery wiring", () => {
       prepareCompletionAttachment: vi.fn(async () => err(new Error("invalid output"))),
     });
 
-    const result = await delivery.sendGovernedAnnouncement?.({
+    const result = await delivery.sendLedgerAnnouncement?.({
       agentId: "agent-1",
       callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
       callerConversation: caller.locator,

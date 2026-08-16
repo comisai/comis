@@ -28,6 +28,7 @@ export interface GovernedCompletionAnnouncementRequest {
   options?: { threadId?: string };
   partId?: string;
   attachment?: CompletionAttachmentShape;
+  completionKeys?: readonly string[];
 }
 
 /** Generated-file reference; daemon wiring validates and snapshots it before egress. */

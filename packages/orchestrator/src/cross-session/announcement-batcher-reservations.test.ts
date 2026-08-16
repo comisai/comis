@@ -52,7 +52,7 @@ describe("announcement batch operation reservations", () => {
       text: "",
       partId: "attachment:0",
       attachment: { sourceAgentId: "worker-a", path: "report.txt" },
-      completionItems: [second],
+      completionItems: [first, second],
     };
 
     const plan = createAnnouncementReservationPlan([summary, attachment]);
@@ -65,7 +65,7 @@ describe("announcement batch operation reservations", () => {
           { partId: "summary", completionKeys: ["completion-1", "completion-2"] },
           {
             partId: "attachment:0",
-            completionKeys: ["completion-2"],
+            completionKeys: ["completion-1", "completion-2"],
             attachment: { sourceAgentId: "worker-a", path: "report.txt" },
           },
         ],

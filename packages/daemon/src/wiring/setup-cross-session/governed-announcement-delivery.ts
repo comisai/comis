@@ -2,8 +2,6 @@
 /** Receipt-aware completion-announcement delivery wiring. */
 
 import {
-  ChannelEndpointSchema,
-  ConversationLocatorSchema,
   conversationScopeToSessionKey,
   createStableAnnouncementOperationId,
   emitObservationalEventSafely,
@@ -28,6 +26,7 @@ import {
   type SendGovernedCompletionAnnouncement,
 } from "@comis/orchestrator";
 import type { PreparedCompletionAttachment } from "./completion-attachment.js";
+import { validateCompletionAnnouncementRoute } from "./completion-announcement-route.js";
 
 interface AnnouncementChannelAdapter {
   readonly channelId: string;
@@ -58,39 +57,6 @@ interface AnnouncementDeliveryDeps {
 }
 
 type AnnouncementDeliveryOptions = Omit<DeliverToChannelOptions, "completionMode">;
-type ConversationPartition = import("@comis/core").ConversationLocator["conversationScope"]["partition"];
-
-function endpointsEqual(left: ChannelEndpoint, right: ChannelEndpoint): boolean {
-  return left.channelType === right.channelType
-    && left.channelInstanceId === right.channelInstanceId
-    && left.conversationId === right.conversationId
-    && left.threadId === right.threadId
-    && left.conversationKind === right.conversationKind;
-}
-
-function partitionMatchesEndpoint(
-  partition: ConversationPartition,
-  endpoint: ChannelEndpoint,
-): boolean {
-  switch (partition.kind) {
-    case "agent":
-    case "principal":
-      return endpoint.conversationKind === "direct";
-    case "channel-principal":
-      return endpoint.conversationKind === "direct"
-        && partition.channelType === endpoint.channelType;
-    case "endpoint-conversation":
-      return endpoint.conversationKind === "shared"
-        && endpointsEqual(partition.endpoint, endpoint);
-    case "endpoint-conversation-principal":
-      return endpoint.conversationKind === "direct"
-        && endpointsEqual(partition.endpoint, endpoint);
-    default: {
-      const _exhaustive: never = partition;
-      return _exhaustive;
-    }
-  }
-}
 
 export interface AnnouncementDelivery {
   sendToChannelWithReceipt(
@@ -113,7 +79,7 @@ export interface AnnouncementDelivery {
     destinationEndpoint: ChannelEndpoint,
     options?: AnnouncementDeliveryOptions,
   ): Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
-  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendLedgerAnnouncement?: SendGovernedCompletionAnnouncement;
 }
 
 export function createAnnouncementDelivery(
@@ -288,7 +254,7 @@ export function createAnnouncementDelivery(
     };
   }
 
-  const sendGovernedAnnouncement: SendGovernedCompletionAnnouncement = async (request) => {
+  const sendLedgerAnnouncement: SendGovernedCompletionAnnouncement = async (request) => {
     const resolveRootRunId = deps.resolveRootRunId;
     if (!resolveRootRunId) {
       deps.logger?.error(
@@ -301,9 +267,11 @@ export function createAnnouncementDelivery(
       );
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
-    const parsedCaller = ConversationLocatorSchema.safeParse(request.callerConversation);
-    const parsedEndpoint = ChannelEndpointSchema.safeParse(request.destinationEndpoint);
-    if (!parsedCaller.success || !parsedEndpoint.success) {
+    const route = validateCompletionAnnouncementRoute(
+      request,
+      deps.adaptersByType.get(request.channelType),
+    );
+    if (!route.valid && route.failure === "allocation_blocked") {
       deps.logger?.error(
         {
           errorKind: "validation" as const,
@@ -314,29 +282,7 @@ export function createAnnouncementDelivery(
       );
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
-    const callerConversation = parsedCaller.data;
-    const callerScope = callerConversation.conversationScope;
-    const destinationEndpoint = parsedEndpoint.data;
-    const callerPartition = callerScope.partition;
-    const partitionChannelType = callerPartition.kind === "channel-principal"
-      ? callerPartition.channelType
-      : callerPartition.kind === "endpoint-conversation"
-        || callerPartition.kind === "endpoint-conversation-principal"
-        ? callerPartition.endpoint.channelType
-        : undefined;
-    if (
-      callerScope.agentId !== request.agentId
-      || !partitionMatchesEndpoint(callerPartition, destinationEndpoint)
-      || (partitionChannelType !== undefined && partitionChannelType !== destinationEndpoint.channelType)
-      || destinationEndpoint.channelType !== request.channelType
-      || destinationEndpoint.conversationId !== request.channelId
-      || destinationEndpoint.threadId !== request.options?.threadId
-      || (request.attachment !== undefined
-        && (
-          deps.adaptersByType.get(request.channelType)?.channelType !== destinationEndpoint.channelType
-          || deps.adaptersByType.get(request.channelType)?.channelId !== destinationEndpoint.channelInstanceId
-        ))
-    ) {
+    if (!route.valid) {
       deps.logger?.error(
         {
           errorKind: "precondition" as const,
@@ -347,6 +293,9 @@ export function createAnnouncementDelivery(
       );
       return ok({ delivered: false, failure: "operation_validation_blocked" });
     }
+    const callerConversation = route.callerConversation;
+    const callerScope = callerConversation.conversationScope;
+    const destinationEndpoint = route.destinationEndpoint;
     const deliveryAuthority = {
       tenantId: callerScope.tenantId,
       agentId: callerScope.agentId,
@@ -487,6 +436,6 @@ export function createAnnouncementDelivery(
     sendToChannelWithReceipt,
     sendToChannel,
     sendPreparedAttachmentToChannelWithReceipt,
-    sendGovernedAnnouncement,
+    sendLedgerAnnouncement,
   };
 }

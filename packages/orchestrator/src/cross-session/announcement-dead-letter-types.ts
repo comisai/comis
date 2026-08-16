@@ -44,7 +44,7 @@ export interface AnnouncementDeadLetterQueueOptions {
   retryIntervalMs?: number;
   /** Age after which an entry requires an operator decision (default: 3_600_000). */
   maxAgeMs?: number;
-  /** Retained-item threshold for operator alerts (default: 100). */
+  /** Maximum retained items admitted before producers are backpressured (default: 100). */
   maxEntries?: number;
   /** Event bus for emitting dead-letter events. */
   eventBus: TypedEventBus;

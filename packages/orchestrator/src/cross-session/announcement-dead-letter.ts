@@ -158,6 +158,22 @@ export function createAnnouncementDeadLetterQueue(
     return err(written.error.error);
   }
 
+  function canPersistCounts(nextEntryCount: number, nextReservationCount: number): boolean {
+    const currentCount = entries.length + decisionReservations.length + invalidRecords.length;
+    const nextCount = nextEntryCount + nextReservationCount + invalidRecords.length;
+    if (nextCount <= maxEntries || nextCount <= currentCount) return true;
+    logger?.warn(
+      {
+        entryCount: currentCount,
+        maxEntries,
+        errorKind: "resource" as const,
+        hint: "release retained dead letters before admitting new completion operations; existing evidence remains intact",
+      },
+      "Dead-letter quarantine capacity exhausted",
+    );
+    return false;
+  }
+
   const decisionStore = createParentDecisionReservationStore({
     load: loadFromDisk,
     hasDeliveryKey: (idempotencyKey) =>
@@ -166,6 +182,7 @@ export function createAnnouncementDeadLetterQueue(
         || entry.completionKeys?.includes(idempotencyKey) === true),
     getReservations: () => decisionReservations,
     persist: (nextReservations) => persist(entries, nextReservations),
+    canPersistReservationCount: (count) => canPersistCounts(entries.length, count),
     replaceReservations: (nextReservations) => {
       decisionReservations = [...nextReservations];
     },
@@ -656,6 +673,9 @@ export function createAnnouncementDeadLetterQueue(
       ? decisionReservations.filter((candidate) => candidate.id !== reservation.id)
       : decisionReservations;
     nextEntries.push(fullEntry);
+    if (!canPersistCounts(nextEntries.length, nextReservations.length)) {
+      return err(new Error("Dead-letter quarantine capacity exhausted"));
+    }
     const persisted = await persist(nextEntries, nextReservations);
     if (!persisted.ok) {
       logger?.error(
@@ -669,17 +689,6 @@ export function createAnnouncementDeadLetterQueue(
     }
     entries = nextEntries;
     decisionReservations = nextReservations;
-    const retainedCount = entries.length + decisionReservations.length + invalidRecords.length;
-    if (retainedCount > maxEntries) {
-      logger?.warn(
-        {
-          entryCount: retainedCount,
-          errorKind: "resource" as const,
-          hint: "resolve retained dead letters; delivery evidence is never capacity-evicted",
-        },
-        "Dead-letter quarantine exceeds its review threshold",
-      );
-    }
     emitAdmission(fullEntry);
     return ok(undefined);
   }
@@ -855,6 +864,9 @@ export function createAnnouncementDeadLetterQueue(
       return;
     }
     entries = nextEntries;
+    for (const delivered of deliveredEntries) {
+      emittedAdmissionKeys.delete(announcementRecoveryKey(delivered.entry));
+    }
     const settledCompletionKeys = new Set<string>();
     for (const delivered of deliveredEntries) {
       const { entry, outcome, durationMs } = delivered;
@@ -953,7 +965,8 @@ export function createAnnouncementDeadLetterQueue(
     release: (id, outcome) => serialize(async () => {
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
-      return releaseQuarantined({
+      const releasedEntry = entries.find((candidate) => candidate.id === id);
+      const released = await releaseQuarantined({
         id,
         outcome,
         entries,
@@ -970,6 +983,10 @@ export function createAnnouncementDeadLetterQueue(
           return written;
         },
       });
+      if (released.ok && released.value && releasedEntry) {
+        emittedAdmissionKeys.delete(announcementRecoveryKey(releasedEntry));
+      }
+      return released;
     }),
   };
 }

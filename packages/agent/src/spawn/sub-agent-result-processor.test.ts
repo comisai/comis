@@ -312,6 +312,7 @@ describe("deliverFailureNotification", () => {
       channelType: "telegram",
       channelId: "chat-1",
       options: { threadId: "topic-1" },
+      completionKeys: ["default:user_a:chat-1::run-1"],
     }));
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(deliveryDedup.has("default:user_a:chat-1::run-1")).toBe(true);

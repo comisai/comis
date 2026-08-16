@@ -107,6 +107,7 @@ export interface CompletionAnnouncementSendRequest {
   /** Distinguishes independently governed files emitted by the same run. */
   partId?: string;
   attachment?: CompletionAttachmentRef;
+  completionKeys?: readonly string[];
 }
 
 export type SendGovernedCompletionAnnouncement = (

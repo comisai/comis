@@ -145,6 +145,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       channelType,
       channelId,
       text,
+      completionKeys: [announceOperationId],
     }));
     if (!boundary.ok || !boundary.value.ok) {
       deps.logger?.error(

@@ -85,6 +85,7 @@ export async function deliverGovernedGraphAnnouncement(
     channelType: params.channelType,
     channelId: params.channelId,
     text: scrubbed.text,
+    completionKeys: [params.graphId],
     ...(params.options ? { options: params.options } : {}),
   }));
   if (!boundary.ok || !boundary.value.ok) {

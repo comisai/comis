@@ -714,6 +714,25 @@ describe("AnnouncementBatcher", () => {
     );
   });
 
+  it("rejects generated files before parent rewriting without governed delivery", async () => {
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("caption"),
+      sendToChannel: vi.fn().mockResolvedValue(true),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    const result = await batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "file-without-governance",
+      attachments: [{ sourceAgentId: "report-agent", path: "/workspace/report.csv" }],
+    }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(deps.announceToParent).not.toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(batcher.pending).toBe(0);
+  });
+
   it("does not ask the parent to rewrite a silent child completion into an attachment caption", async () => {
     const announceToParent = vi.fn().mockResolvedValue(
       "The attachment was created successfully and delivered.",
@@ -904,12 +923,12 @@ describe("AnnouncementBatcher", () => {
         expect.objectContaining({
           idempotencyKey: firstAttachmentKey,
           attachment: first.attachments?.[0],
-          completionKeys: ["completion-a"],
+          completionKeys: ["completion-a", "completion-b"],
         }),
         expect.objectContaining({
           idempotencyKey: secondAttachmentKey,
           attachment: second.attachments?.[0],
-          completionKeys: ["completion-b"],
+          completionKeys: ["completion-a", "completion-b"],
         }),
       ]),
     );
@@ -1446,7 +1465,7 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     expect(batcher.hasDelivered("ambiguous-parent")).toBe(false);
   });
 
-  it("persists the governed operation identity after a blocked direct fallback", async () => {
+  it("retains the governed operation reservation after a blocked direct fallback", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const enqueue = deadLetterQueue.enqueue;
     const sendGovernedAnnouncement = vi.fn().mockResolvedValue({
@@ -1477,17 +1496,19 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deps.sendToChannel).not.toHaveBeenCalled();
-    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: "agent-main",
-      rootRunId: "root-run-1",
-      stepIndex: 7,
-      deliveryAuthority: {
-        tenantId: "default",
-        agentId: "agent-main",
-        conversationRef: announcement.callerConversation.conversationRef,
-      },
-      destinationEndpoint: announcement.destinationEndpoint,
-    }));
+    expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith(
+      ["default:user1:chan1::run-1"],
+      [expect.objectContaining({
+        idempotencyKey: createStableAnnouncementOperationId(
+          "agent-main",
+          announcement.callerSessionKey,
+          announcement.runId,
+        ),
+        completionKeys: ["default:user1:chan1::run-1"],
+      })],
+    );
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
     expect(batcher.hasDelivered("default:user1:chan1::run-1")).toBe(false);
   });
 });

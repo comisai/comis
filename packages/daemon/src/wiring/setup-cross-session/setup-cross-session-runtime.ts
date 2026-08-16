@@ -38,6 +38,7 @@ import { err, ok } from "@comis/shared";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
+import { createRecoverableAnnouncementDelivery } from "./recoverable-announcement-delivery.js";
 import { createCompletionAttachmentPreparer } from "./completion-attachment.js";
 import { createAnnouncementFailureNoticeRenderer } from "./announcement-failure-locale.js";
 import { resolvePreservedCrossSessionRoute } from "./cross-session-route.js";
@@ -268,7 +269,7 @@ export function setupCrossSession(deps: {
     sendToChannelWithReceipt,
     sendToChannel,
     sendPreparedAttachmentToChannelWithReceipt,
-    sendGovernedAnnouncement,
+    sendLedgerAnnouncement,
   } = createAnnouncementDelivery({
     adaptersByType,
     deliveryService: deps.deliveryService,
@@ -292,17 +293,6 @@ export function setupCrossSession(deps: {
     // request is honestly skipped when there is no git seam.
     ...(deps.worktreeGitExec ? { worktreeGitExec: deps.worktreeGitExec } : {}),
     ...(deps.worktreeRegistry ? { worktreeRegistry: deps.worktreeRegistry } : {}),
-  });
-
-  // Cross-session sender — fire-and-forget, wait, or ping-pong messaging
-  const crossSessionSender = createCrossSessionSender({
-    sessionStore,
-    executeInSession,
-    sendToChannel,
-    eventBus: container.eventBus,
-    config: container.config.security.agentToAgent,
-    logger: deps.logger,
-    ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
   });
 
   // Ask the parent agent to rewrite an announcement. The irreversible platform
@@ -435,6 +425,25 @@ export function setupCrossSession(deps: {
     ...(deps.ensureDeadLetterRecoveryObservation
       ? { ensureSessionObservation: deps.ensureDeadLetterRecoveryObservation }
       : {}),
+  });
+
+  const sendGovernedAnnouncement = sendLedgerAnnouncement
+    ? createRecoverableAnnouncementDelivery({
+        adaptersByType,
+        deadLetterQueue,
+        send: sendLedgerAnnouncement,
+        ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
+        ...(deps.logger ? { logger: deps.logger } : {}),
+      })
+    : undefined;
+  const crossSessionSender = createCrossSessionSender({
+    sessionStore,
+    executeInSession,
+    sendToChannel,
+    eventBus: container.eventBus,
+    config: container.config.security.agentToAgent,
+    logger: deps.logger,
+    ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
   });
 
   // ONE bounded delivered-key store shared across every
