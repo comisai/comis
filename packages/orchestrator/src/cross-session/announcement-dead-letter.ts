@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import type {
   AnnouncementDeadLetterEntryInput,
   AnnouncementDeadLetterQueuePort,
+  ChannelEndpoint,
+  DeliveryAuthority,
   TypedEventBus,
   OutwardSendLedgerPort,
   OutwardSendRecord,
@@ -46,6 +48,11 @@ export type {
   QuarantineReleaseOutcome,
 } from "./announcement-dead-letter-quarantine.js";
 
+type RecoveryDeliveryOptions = AnnouncementDeliveryOptions & {
+  authority?: DeliveryAuthority;
+  destinationEndpoint?: ChannelEndpoint;
+};
+
 /** Minimal structural logger accepted from the daemon composition root. */
 export interface AnnouncementLogger {
   info(obj: Record<string, unknown>, msg: string): void;
@@ -86,7 +93,7 @@ interface AnnouncementDeadLetterQueueOptions {
     type: ChannelType,
     id: string,
     text: string,
-    options?: AnnouncementDeliveryOptions,
+    options?: RecoveryDeliveryOptions,
   ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   fileOperations?: DeadLetterWriteOperations;
 }
@@ -218,6 +225,8 @@ export function createAnnouncementDeadLetterQueue(
     sessionKey: string;
     contentDigest: string;
     operationFingerprint: string;
+    deliveryAuthority: DeliveryAuthority;
+    destinationEndpoint: ChannelEndpoint;
   }
   type LedgerTransition = "lookup" | "begin" | "mark_unknown" | "commit" | "park";
   type LedgerOutcome = "blocked" | "in_flight" | "committed" | "failed" | "parked";
@@ -303,6 +312,8 @@ export function createAnnouncementDeadLetterQueue(
       || entry.stepIndex < 0
       || typeof entry.agentId !== "string"
       || entry.agentId.length === 0
+      || entry.deliveryAuthority === undefined
+      || entry.destinationEndpoint === undefined
     ) {
       return err("identity_incomplete" as const);
     }
@@ -329,6 +340,8 @@ export function createAnnouncementDeadLetterQueue(
       sessionKey: entry.sessionKey,
       contentDigest,
       operationFingerprint,
+      deliveryAuthority: entry.deliveryAuthority,
+      destinationEndpoint: entry.destinationEndpoint,
     });
   }
 
@@ -564,12 +577,12 @@ export function createAnnouncementDeadLetterQueue(
         entry.channelType,
         entry.channelId,
         entry.announcementText,
-        entry.threadId || entry.extra
-          ? {
-              ...(entry.threadId ? { threadId: entry.threadId } : {}),
-              ...(entry.extra ? { extra: entry.extra } : {}),
-            }
-          : undefined,
+        {
+          ...(entry.threadId ? { threadId: entry.threadId } : {}),
+          ...(entry.extra ? { extra: entry.extra } : {}),
+          authority: identity.deliveryAuthority,
+          destinationEndpoint: identity.destinationEndpoint,
+        },
       ),
     );
     entry.attemptCount++;
@@ -772,6 +785,8 @@ export function createAnnouncementDeadLetterQueue(
         idempotencyKey: reservation.idempotencyKey,
         rootRunId: reservation.rootRunId,
         stepIndex: step.value.value,
+        deliveryAuthority: reservation.deliveryAuthority,
+        destinationEndpoint: reservation.destinationEndpoint,
         ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
       } as DeadLetterEntry);
       settled.push(reservation.idempotencyKey);
@@ -794,7 +809,7 @@ export function createAnnouncementDeadLetterQueue(
   }
 
   async function drainSerialized(
-    sendToChannel: (type: ChannelType, id: string, text: string, options?: AnnouncementDeliveryOptions) => Promise<boolean>,
+    sendToChannel: (type: ChannelType, id: string, text: string, options?: RecoveryDeliveryOptions) => Promise<boolean>,
     onDelivered?: (idempotencyKey: string) => void,
   ): Promise<void> {
     const load = await loadFromDisk();
@@ -854,10 +869,12 @@ export function createAnnouncementDeadLetterQueue(
         entry.channelType,
         entry.channelId,
         entry.announcementText,
-        entry.threadId || entry.extra
+        entry.threadId || entry.extra || entry.deliveryAuthority || entry.destinationEndpoint
           ? {
               ...(entry.threadId ? { threadId: entry.threadId } : {}),
               ...(entry.extra ? { extra: entry.extra } : {}),
+              ...(entry.deliveryAuthority ? { authority: entry.deliveryAuthority } : {}),
+              ...(entry.destinationEndpoint ? { destinationEndpoint: entry.destinationEndpoint } : {}),
             }
           : undefined,
       ));

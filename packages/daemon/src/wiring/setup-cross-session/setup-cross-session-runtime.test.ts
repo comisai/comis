@@ -3969,6 +3969,7 @@ describe("setupCrossSession durable-store injection", () => {
       },
       runId: "completion-run-1",
       idempotencyKey: "default:agent:agent-1:user1:chan1::completion-run-1",
+      reservationRootRunId: "root-completion",
     });
     await result.announcementBatcher.flush();
 
@@ -4069,6 +4070,7 @@ describe("setupCrossSession durable-store injection", () => {
       },
       runId: `completion-${mode}`,
       idempotencyKey: `default:agent:agent-1:user1:chan1::completion-${mode}`,
+      reservationRootRunId: "root-retained",
     });
     await result.announcementBatcher.flush();
 
@@ -4149,17 +4151,30 @@ describe("setupCrossSession durable-store injection", () => {
     // so the subsequent in-memory enqueue is not clobbered by a re-read on drain.
     await dlq!.drain(sendSpy as any);
     const onDelivered = vi.fn();
+    const callerConversation = makeConversation("default", "parent-agent");
     await dlq!.enqueue({
       announcementText,
       channelType: "telegram",
       channelId: "chat-1",
       agentId: "parent-agent",
       runId: "run-dlq",
+      sessionKey: "default:u1:c1",
       failedAt: Date.now(),
       attemptCount: 0,
       idempotencyKey: "default:u1:c1::run-dlq",
       rootRunId: "root-dlq",
       stepIndex: 3,
+      deliveryAuthority: {
+        tenantId: "default",
+        agentId: "parent-agent",
+        conversationRef: callerConversation.conversationRef,
+      },
+      destinationEndpoint: {
+        channelType: "telegram",
+        channelInstanceId: "test-instance",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
     });
 
     // The entry's lastAttemptAt is set to now by enqueue; the daemon DLQ uses a

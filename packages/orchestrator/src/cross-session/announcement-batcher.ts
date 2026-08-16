@@ -556,6 +556,12 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         rootRunId: failure.identity.rootRunId,
         stepIndex: failure.identity.stepIndex,
       } : {}),
+      deliveryAuthority: {
+        tenantId: first.callerConversation.conversationScope.tenantId,
+        agentId: first.callerAgentId,
+        conversationRef: first.callerConversation.conversationRef,
+      },
+      destinationEndpoint: first.destinationEndpoint,
     });
     if (!queued?.ok) {
       deps.logger?.warn(
@@ -839,6 +845,12 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         channelId: params.announceChannelId,
         failedAt: systemNowMs(),
         rootRunId: reservationRootRunId,
+        deliveryAuthority: {
+          tenantId: params.callerConversation.conversationScope.tenantId,
+          agentId: params.callerAgentId,
+          conversationRef: params.callerConversation.conversationRef,
+        },
+        destinationEndpoint: params.destinationEndpoint,
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!boundary.ok) {

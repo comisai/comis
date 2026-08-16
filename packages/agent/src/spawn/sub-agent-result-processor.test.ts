@@ -1075,6 +1075,8 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         failure: "operation_retained",
       },
     });
+    const callerConversation = makeCallerConversation();
+    const destinationEndpoint = makeCallerEndpoint("telegram", "chat-governed");
 
     await deliverAnnouncement(
       {
@@ -1084,8 +1086,8 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         announceChannelId: "chat-governed",
         callerAgentId: "agent-main",
         callerSessionKey: "default:u6:c6",
-        callerConversation: makeCallerConversation(),
-        destinationEndpoint: makeCallerEndpoint("telegram", "chat-governed"),
+        callerConversation,
+        destinationEndpoint,
         runId: "r-governed",
       },
       {
@@ -1104,6 +1106,12 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       agentId: "agent-main",
       rootRunId: "root-r-governed",
       stepIndex: 11,
+      deliveryAuthority: {
+        tenantId: "default",
+        agentId: "agent-main",
+        conversationRef: callerConversation.conversationRef,
+      },
+      destinationEndpoint,
     }));
   });
 });

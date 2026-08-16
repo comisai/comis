@@ -4,6 +4,8 @@
 import type {
   AnnouncementDeadLetterEntry,
   AnnouncementDeadLetterEntryInput,
+  ChannelEndpoint,
+  DeliveryAuthority,
 } from "@comis/core";
 import { ok, type Result } from "@comis/shared";
 import { createAnnouncementOperationDigests } from "./announcement-outward-operation.js";
@@ -34,6 +36,28 @@ function operationFingerprint(
   return digests.ok ? ok(digests.value.operationFingerprint) : digests;
 }
 
+function sameDeliveryAuthority(
+  left: DeliveryAuthority | undefined,
+  right: DeliveryAuthority | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.tenantId === right.tenantId
+    && left.agentId === right.agentId
+    && left.conversationRef === right.conversationRef;
+}
+
+function sameDestinationEndpoint(
+  left: ChannelEndpoint | undefined,
+  right: ChannelEndpoint | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
+}
+
 export function isSameAnnouncementRecovery(
   existing: AnnouncementDeadLetterEntry,
   candidate: AnnouncementDeadLetterEntryInput,
@@ -48,6 +72,8 @@ export function isSameAnnouncementRecovery(
     && existing.sessionKey === candidate.sessionKey
     && existing.rootRunId === candidate.rootRunId
     && existing.stepIndex === candidate.stepIndex
+    && sameDeliveryAuthority(existing.deliveryAuthority, candidate.deliveryAuthority)
+    && sameDestinationEndpoint(existing.destinationEndpoint, candidate.destinationEndpoint)
     && existingFingerprint.value === candidateFingerprint.value,
   );
 }

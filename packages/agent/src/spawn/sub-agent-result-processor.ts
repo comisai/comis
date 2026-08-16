@@ -510,6 +510,15 @@ export async function deliverAnnouncement(params: {
         }, "Sub-agent parent decision has no adjudicable ledger root");
         return;
       }
+      const destinationEndpoint = params.destinationEndpoint;
+      if (!destinationEndpoint) {
+        deps.logger?.warn({
+          runId,
+          hint: "Bind the completion to its authenticated destination before reserving its parent decision",
+          errorKind: "precondition" as const,
+        }, "Sub-agent parent decision has no recovery endpoint");
+        return;
+      }
       const reservationBoundary = await fromPromise(deps.deadLetterQueue.reserveDecision({
         idempotencyKey: announceKey,
         agentId: callerAgentId,
@@ -520,6 +529,12 @@ export async function deliverAnnouncement(params: {
         channelId: announceChannelId,
         failedAt: systemNowMs(),
         rootRunId: reservationRoot,
+        deliveryAuthority: {
+          tenantId: params.callerConversation.conversationScope.tenantId,
+          agentId: callerAgentId,
+          conversationRef: params.callerConversation.conversationRef,
+        },
+        destinationEndpoint,
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!reservationBoundary.ok || !reservationBoundary.value.ok) {
@@ -718,6 +733,14 @@ export async function deliverAnnouncement(params: {
       ...(identity ? {
         rootRunId: identity.rootRunId,
         stepIndex: identity.stepIndex,
+      } : {}),
+      ...(params.callerConversation && params.destinationEndpoint ? {
+        deliveryAuthority: {
+          tenantId: params.callerConversation.conversationScope.tenantId,
+          agentId: identity?.agentId ?? callerAgentId,
+          conversationRef: params.callerConversation.conversationRef,
+        },
+        destinationEndpoint: params.destinationEndpoint,
       } : {}),
     });
     if (!queued?.ok) {

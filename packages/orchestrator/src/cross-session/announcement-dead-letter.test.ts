@@ -14,12 +14,13 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok, type Result } from "@comis/shared";
-import type {
-  ChannelEndpoint,
-  DeliveryAuthority,
-  OutwardSendLedgerPort,
-  OutwardSendRecord,
-  OutwardSendState,
+import {
+  createConversationLocator,
+  type ChannelEndpoint,
+  type DeliveryAuthority,
+  type OutwardSendLedgerPort,
+  type OutwardSendRecord,
+  type OutwardSendState,
 } from "@comis/core";
 
 import {
@@ -37,35 +38,79 @@ const createMockLogger = (): AnnouncementLogger => _createMockLogger() as unknow
 
 // ---------------------------------------------------------------------------
 // Test helpers
+function makeDeliveryAuthority(agentId = "agent-a"): DeliveryAuthority {
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId,
+    partition: { kind: "agent" },
+  });
+  if (!locator.ok) throw locator.error;
+  return {
+    tenantId: "default",
+    agentId,
+    conversationRef: locator.value.conversationRef,
+  };
+}
+
+function makeDestinationEndpoint(
+  channelType: string,
+  channelId: string,
+  threadId?: string,
+): ChannelEndpoint {
+  return {
+    channelType,
+    channelInstanceId: "test-instance",
+    conversationId: channelId,
+    conversationKind: "direct",
+    ...(threadId === undefined ? {} : { threadId }),
+  };
+}
+
 function makeEntry(
   overrides: Partial<Omit<DeadLetterEntry, "id" | "lastAttemptAt">> = {},
 ): Omit<DeadLetterEntry, "id" | "lastAttemptAt"> {
-  return {
+  const entry = {
     announcementText: "Task completed successfully",
     channelType: "telegram",
     channelId: "chat-123",
+    agentId: "agent-a",
     runId: `run-${Math.random().toString(36).slice(2, 8)}`,
     sessionKey: "default:agent-a:telegram:chat-123:user_a",
     failedAt: Date.now(),
     attemptCount: 0,
     ...overrides,
   };
+  return {
+    ...entry,
+    deliveryAuthority: overrides.deliveryAuthority
+      ?? makeDeliveryAuthority(entry.agentId ?? "agent-a"),
+    destinationEndpoint: overrides.destinationEndpoint
+      ?? makeDestinationEndpoint(entry.channelType, entry.channelId, entry.threadId),
+  };
 }
 
 function makeFullEntry(
   overrides: Partial<DeadLetterEntry> = {},
 ): DeadLetterEntry {
-  return {
+  const entry = {
     id: crypto.randomUUID(),
     announcementText: "Task completed successfully",
     channelType: "telegram",
     channelId: "chat-123",
+    agentId: "agent-a",
     runId: `run-${Math.random().toString(36).slice(2, 8)}`,
     sessionKey: "default:agent-a:telegram:chat-123:user_a",
     failedAt: Date.now() - 120_000,
     attemptCount: 0,
     lastAttemptAt: Date.now() - 120_000,
     ...overrides,
+  };
+  return {
+    ...entry,
+    deliveryAuthority: overrides.deliveryAuthority
+      ?? makeDeliveryAuthority(entry.agentId ?? "agent-a"),
+    destinationEndpoint: overrides.destinationEndpoint
+      ?? makeDestinationEndpoint(entry.channelType, entry.channelId, entry.threadId),
   };
 }
 
@@ -227,7 +272,10 @@ describe("AnnouncementDeadLetterQueue", () => {
       "telegram",
       "chat-456",
       "Retry this message",
-      undefined,
+      {
+        authority: entry.deliveryAuthority,
+        destinationEndpoint: entry.destinationEndpoint,
+      },
     );
     expect(dlq.size()).toBe(0);
   });
@@ -257,7 +305,11 @@ describe("AnnouncementDeadLetterQueue", () => {
       "telegram",
       "chat-789",
       "Threaded retry",
-      { threadId: "topic-42" },
+      {
+        threadId: "topic-42",
+        authority: entry.deliveryAuthority,
+        destinationEndpoint: entry.destinationEndpoint,
+      },
     );
     expect(dlq.size()).toBe(0);
   });
@@ -667,6 +719,32 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
   });
 
+  it("rejects one recovery key reused for a different authenticated endpoint", async () => {
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    const original = makeEntry({
+      runId: "run-route-owner",
+      idempotencyKey: "session-a::run-route-owner",
+    });
+    await dlq.enqueue(original);
+
+    const conflict = await dlq.enqueue({
+      ...original,
+      destinationEndpoint: {
+        ...makeDestinationEndpoint("telegram", "chat-123"),
+        channelInstanceId: "other-instance",
+      },
+    });
+    if (conflict.ok) {
+      throw new Error("route identity conflict was admitted");
+    }
+
+    expect(conflict.error.message).toContain("identity mismatch");
+    expect(dlq.size()).toBe(1);
+  });
+
   it("serializes enqueue behind an active drain and persists the post-drain state", async () => {
     const eventBus = createMockEventBus();
     const original = makeFullEntry({
@@ -733,7 +811,10 @@ describe("AnnouncementDeadLetterQueue", () => {
       "msteams",
       "19:meeting@thread.v2",
       "Task completed successfully",
-      undefined,
+      {
+        authority: parsed.deliveryAuthority,
+        destinationEndpoint: parsed.destinationEndpoint,
+      },
     );
     expect(dlq.size()).toBe(0);
   });
@@ -888,6 +969,8 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       failedAt: 100,
       threadId: "topic-1",
       rootRunId: "root-parent-1",
+      deliveryAuthority: makeDeliveryAuthority("parent-agent"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1", "topic-1"),
       ...overrides,
     };
   }
@@ -945,6 +1028,21 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     });
 
     const result = await queue.reserveDecision(decisionInput({ rootRunId: undefined }));
+
+    expect(result).toMatchObject({ ok: false });
+    expect(queue.size()).toBe(0);
+  });
+
+  it("rejects a parent decision that has no durable recovery route", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    const result = await queue.reserveDecision(decisionInput({
+      deliveryAuthority: undefined,
+      destinationEndpoint: undefined,
+    }));
 
     expect(result).toMatchObject({ ok: false });
     expect(queue.size()).toBe(0);
@@ -1342,11 +1440,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
   it("commits a receipt-aware absent-row delivery before removing the dead letter", async () => {
     const eventBus = createMockEventBus();
     const logger = createMockLogger();
-    const deliveryAuthority = {
-      tenantId: "default",
-      agentId: "parent-agent",
-      conversationRef: "cv_1234567890123456789012345678901234567890123",
-    } as DeliveryAuthority;
+    const deliveryAuthority = makeDeliveryAuthority("parent-agent");
     const destinationEndpoint = {
       channelType: "telegram",
       channelInstanceId: "telegram-bot-a",
@@ -1743,13 +1837,15 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(sendToChannel).not.toHaveBeenCalled();
   });
 
-  it("fails closed when a ledger-wired entry lacks its complete governed operation identity", async () => {
+  it("isolates a governed row that lacks its complete recovery route", async () => {
     const eventBus = createMockEventBus();
     const entry = makeFullEntry({
       runId: "run-incomplete-identity",
       rootRunId: "root-incomplete-identity",
       stepIndex: 11,
     });
+    delete entry.deliveryAuthority;
+    delete entry.destinationEndpoint;
     await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
 
     const { ledger, lookupCalls } = makeStubLedger();
@@ -1764,15 +1860,10 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
 
     expect(lookupCalls).toEqual([]);
     expect(sendToChannel).not.toHaveBeenCalled();
-    expect(eventBus.emit).toHaveBeenCalledWith(
-      "delivery:outward_ledger_transition",
-      expect.objectContaining({
-        rootRunId: "root-incomplete-identity",
-        stepIndex: 11,
-        transition: "lookup",
-        outcome: "blocked",
-      }),
-    );
+    expect(await dlq.listQuarantined()).toMatchObject([{
+      kind: "invalid_record",
+      reason: "schema_mismatch",
+    }]);
     expect(dlq.size()).toBe(1);
   });
 
@@ -1824,6 +1915,8 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
         attemptCount: entry.attemptCount,
         rootRunId: entry.rootRunId,
         stepIndex: entry.stepIndex,
+        deliveryAuthority: entry.deliveryAuthority,
+        destinationEndpoint: entry.destinationEndpoint,
       });
     }
     expect(dlq.size()).toBe(2);

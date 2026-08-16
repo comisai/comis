@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createConversationLocator } from "@comis/core";
 import type { DeadLetterEntry } from "./announcement-dead-letter.js";
 import {
   isAnnouncementChannelType,
@@ -19,16 +20,34 @@ vi.mock("node:crypto", async (importOriginal) => ({
 }));
 
 function makeEntry(): DeadLetterEntry {
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId: "agent-a",
+    partition: { kind: "agent" },
+  });
+  if (!locator.ok) throw locator.error;
   return {
     id: "entry-1",
     announcementText: "sensitive completion",
     channelType: "telegram",
     channelId: "chat-1",
+    agentId: "agent-a",
     runId: "run-1",
     sessionKey: "default:agent-a:telegram:chat-1:user_a",
     failedAt: 1,
     attemptCount: 0,
     lastAttemptAt: 1,
+    deliveryAuthority: {
+      tenantId: "default",
+      agentId: "agent-a",
+      conversationRef: locator.value.conversationRef,
+    },
+    destinationEndpoint: {
+      channelType: "telegram",
+      channelInstanceId: "test-instance",
+      conversationId: "chat-1",
+      conversationKind: "direct",
+    },
   };
 }
 
@@ -333,5 +352,25 @@ describe("announcement dead-letter file", () => {
       }],
     });
     expect(await readFile(filePath, "utf8")).toBe("{}\n");
+  });
+
+  it("isolates a governed row whose authenticated recovery route is incomplete", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    const entry = {
+      ...makeEntry(),
+      rootRunId: "root-1",
+      stepIndex: 1,
+    };
+    delete (entry as Partial<DeadLetterEntry>).destinationEndpoint;
+    await writeFile(filePath, `${JSON.stringify(entry)}\n`, { encoding: "utf8", mode: 0o600 });
+
+    await expect(readDeadLetterEntries(filePath)).resolves.toMatchObject({
+      ok: true,
+      value: [{
+        recordType: "invalid_record",
+        reason: "schema_mismatch",
+      }],
+    });
   });
 });

@@ -493,7 +493,8 @@ describe("AnnouncementBatcher", () => {
     const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
     const batcher = createAnnouncementBatcher(deps);
 
-    const enqueue = batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-1" }));
+    const announcement = makeAnnouncement({ idempotencyKey: "decision-1" });
+    const enqueue = batcher.enqueue(announcement);
     await vi.advanceTimersByTimeAsync(2_000);
     expect(deps.announceToParent).not.toHaveBeenCalled();
 
@@ -507,6 +508,12 @@ describe("AnnouncementBatcher", () => {
       runId: "run-1",
       channelType: "discord",
       channelId: "chan-123",
+      deliveryAuthority: {
+        tenantId: "default",
+        agentId: "agent-main",
+        conversationRef: announcement.callerConversation.conversationRef,
+      },
+      destinationEndpoint: announcement.destinationEndpoint,
     }));
     expect(deps.announceToParent).toHaveBeenCalledOnce();
   });
@@ -1345,9 +1352,10 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     } as Partial<AnnouncementBatcherDeps>);
     const batcher = createAnnouncementBatcher(deps);
 
-    batcher.enqueue(makeAnnouncement({
+    const announcement = makeAnnouncement({
       idempotencyKey: "default:user1:chan1::run-1",
-    }));
+    });
+    batcher.enqueue(announcement);
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
@@ -1356,6 +1364,12 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
       agentId: "agent-main",
       rootRunId: "root-run-1",
       stepIndex: 7,
+      deliveryAuthority: {
+        tenantId: "default",
+        agentId: "agent-main",
+        conversationRef: announcement.callerConversation.conversationRef,
+      },
+      destinationEndpoint: announcement.destinationEndpoint,
     }));
     expect(batcher.hasDelivered("default:user1:chan1::run-1")).toBe(false);
   });

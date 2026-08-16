@@ -2,6 +2,8 @@
 /** Type-only port for durable completion-announcement recovery. */
 
 import type { Result } from "@comis/shared";
+import type { ChannelEndpoint } from "../domain/conversation-scope.js";
+import type { DeliveryAuthority } from "./delivery-queue.js";
 
 /** Channel contribution identifier. Open because deployments can register channels. */
 export type AnnouncementChannelType = string;
@@ -9,6 +11,8 @@ export type AnnouncementChannelType = string;
 interface AnnouncementDeadLetterDeliveryOptions {
   readonly threadId?: string;
   readonly extra?: Record<string, unknown>;
+  readonly authority?: DeliveryAuthority;
+  readonly destinationEndpoint?: ChannelEndpoint;
 }
 
 /** Failed completion admitted to durable delivery recovery. */
@@ -27,6 +31,10 @@ export interface AnnouncementDeadLetterEntryInput {
   idempotencyKey?: string;
   rootRunId?: string;
   stepIndex?: number;
+  /** Canonical conversation authority retained for delivery mirroring. */
+  deliveryAuthority?: DeliveryAuthority;
+  /** Immutable destination retained with the failed platform operation. */
+  destinationEndpoint?: ChannelEndpoint;
 }
 
 /** Persisted form of a failed completion. */
@@ -47,6 +55,8 @@ export interface AnnouncementParentDecisionReservation {
   failedAt: number;
   threadId?: string;
   rootRunId: string;
+  deliveryAuthority: DeliveryAuthority;
+  destinationEndpoint: ChannelEndpoint;
 }
 
 export interface AnnouncementParentDecisionReservationRecord

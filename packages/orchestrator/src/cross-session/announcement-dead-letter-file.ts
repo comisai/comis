@@ -5,11 +5,15 @@ import { chmod, open, readFile, rename, unlink } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import {
+  ChannelEndpointSchema,
+  ConversationRefSchema,
   toSafeErrorLogString,
   type AnnouncementChannelType,
   type AnnouncementDeadLetterEntry,
   type AnnouncementParentDecisionReservation,
   type AnnouncementParentDecisionReservationRecord,
+  type ChannelEndpoint,
+  type DeliveryAuthority,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
@@ -33,6 +37,57 @@ export function isAnnouncementChannelType(value: string): value is ChannelType {
 export type DeadLetterEntry = AnnouncementDeadLetterEntry;
 export type ParentDecisionReservation = AnnouncementParentDecisionReservation;
 export type ParentDecisionReservationRecord = AnnouncementParentDecisionReservationRecord;
+
+function isDeliveryAuthority(value: unknown): value is DeliveryAuthority {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).length === 3
+    && typeof record.tenantId === "string"
+    && record.tenantId.length > 0
+    && typeof record.agentId === "string"
+    && record.agentId.length > 0
+    && ConversationRefSchema.safeParse(record.conversationRef).success;
+}
+
+function isRecoveryRoute(
+  record: Record<string, unknown>,
+): record is Record<string, unknown> & {
+  agentId: string;
+  deliveryAuthority: DeliveryAuthority;
+  destinationEndpoint: ChannelEndpoint;
+} {
+  if (
+    typeof record.agentId !== "string"
+    || !isDeliveryAuthority(record.deliveryAuthority)
+  ) return false;
+  const parsedEndpoint = ChannelEndpointSchema.safeParse(record.destinationEndpoint);
+  if (!parsedEndpoint.success) return false;
+  const endpoint = parsedEndpoint.data;
+  return record.deliveryAuthority.agentId === record.agentId
+    && endpoint.channelType === record.channelType
+    && endpoint.conversationId === record.channelId
+    && endpoint.threadId === record.threadId;
+}
+
+function sameDeliveryAuthority(
+  left: DeliveryAuthority,
+  right: DeliveryAuthority,
+): boolean {
+  return left.tenantId === right.tenantId
+    && left.agentId === right.agentId
+    && left.conversationRef === right.conversationRef;
+}
+
+function sameChannelEndpoint(
+  left: ChannelEndpoint,
+  right: ChannelEndpoint,
+): boolean {
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
+}
 
 export type StoredDeadLetterEntry =
   | DeadLetterEntry
@@ -69,6 +124,8 @@ function publicDecision(
     failedAt: record.failedAt,
     ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
     rootRunId: record.rootRunId,
+    deliveryAuthority: record.deliveryAuthority,
+    destinationEndpoint: record.destinationEndpoint,
   };
 }
 
@@ -84,7 +141,9 @@ function sameDecision(
     && left.channelType === right.channelType
     && left.channelId === right.channelId
     && left.threadId === right.threadId
-    && left.rootRunId === right.rootRunId;
+    && left.rootRunId === right.rootRunId
+    && sameDeliveryAuthority(left.deliveryAuthority, right.deliveryAuthority)
+    && sameChannelEndpoint(left.destinationEndpoint, right.destinationEndpoint);
 }
 
 function validDecision(entry: ParentDecisionReservation): boolean {
@@ -105,7 +164,8 @@ function validDecision(entry: ParentDecisionReservation): boolean {
     && Number.isFinite(entry.failedAt)
     && (entry.threadId === undefined || typeof entry.threadId === "string")
     && typeof entry.rootRunId === "string"
-    && entry.rootRunId.length > 0;
+    && entry.rootRunId.length > 0
+    && isRecoveryRoute(entry as unknown as Record<string, unknown>);
 }
 
 export function createParentDecisionReservationStore(
@@ -268,7 +328,8 @@ function isParentDecisionReservationRecord(
     && Number.isFinite(record.failedAt)
     && isOptionalString(record.threadId)
     && typeof record.rootRunId === "string"
-    && record.rootRunId.length > 0;
+    && record.rootRunId.length > 0
+    && isRecoveryRoute(record);
 }
 
 function isDeadLetterEntry(
@@ -276,6 +337,10 @@ function isDeadLetterEntry(
 ): value is DeadLetterEntry {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
+  const carriesGovernedIdentity = record.rootRunId !== undefined
+    || record.stepIndex !== undefined;
+  const carriesRecoveryRoute = record.deliveryAuthority !== undefined
+    || record.destinationEndpoint !== undefined;
   return record.recordType === undefined
     && typeof record.id === "string"
     && typeof record.announcementText === "string"
@@ -304,7 +369,9 @@ function isDeadLetterEntry(
     && (
       record.extra === undefined
       || (typeof record.extra === "object" && record.extra !== null && !Array.isArray(record.extra))
-    );
+    )
+    && (!carriesGovernedIdentity || carriesRecoveryRoute)
+    && (!carriesRecoveryRoute || isRecoveryRoute(record));
 }
 
 export function isParentDecisionReservation(
