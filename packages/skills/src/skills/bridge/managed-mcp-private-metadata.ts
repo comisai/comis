@@ -129,7 +129,8 @@ const COMMANDABLE_RUN_STATUSES = new Set<ManagedRunRecord["status"]>([
   "candidate_complete",
 ]);
 
-const TERMINAL_RUN_STATUSES = new Set<ManagedRunRecord["status"]>([
+const DESTRUCTIVE_COMMAND_RUN_STATUSES = new Set<ManagedRunRecord["status"]>([
+  "unknown",
   "succeeded",
   "failed",
   "cancelled",
@@ -140,7 +141,10 @@ function runCommandAllowedForStatus(
   status: ManagedRunRecord["status"],
 ): boolean {
   return COMMANDABLE_RUN_STATUSES.has(status)
-    || (binding.actionClassification === "destructive" && TERMINAL_RUN_STATUSES.has(status));
+    || (
+      binding.actionClassification === "destructive"
+      && DESTRUCTIVE_COMMAND_RUN_STATUSES.has(status)
+    );
 }
 
 function callKey(input: McpPrivateMetadataCall): string {
