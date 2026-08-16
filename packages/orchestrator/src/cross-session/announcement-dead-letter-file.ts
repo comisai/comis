@@ -4,7 +4,13 @@
 import { chmod, open, readFile, rename, unlink } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
 import { dirname } from "node:path";
-import { toSafeErrorLogString } from "@comis/core";
+import {
+  toSafeErrorLogString,
+  type AnnouncementChannelType,
+  type AnnouncementDeadLetterEntry,
+  type AnnouncementParentDecisionReservation,
+  type AnnouncementParentDecisionReservationRecord,
+} from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
 interface StorageLogger {
@@ -16,78 +22,15 @@ export class MalformedDeadLetterFileError extends Error {
   override readonly name = "MalformedDeadLetterFileError";
 }
 
-export type ChannelType =
-  | "discord"
-  | "telegram"
-  | "slack"
-  | "whatsapp"
-  | "imessage"
-  | "signal"
-  | "irc"
-  | "line"
-  | "email"
-  | "msteams"
-  | "echo";
+export type ChannelType = AnnouncementChannelType;
 
 export function isAnnouncementChannelType(value: string): value is ChannelType {
-  switch (value) {
-    case "discord":
-    case "telegram":
-    case "slack":
-    case "whatsapp":
-    case "imessage":
-    case "signal":
-    case "irc":
-    case "line":
-    case "email":
-    case "msteams":
-    case "echo":
-      return true;
-    default:
-      return false;
-  }
+  return value.length > 0 && value.length <= 128;
 }
 
-export interface DeadLetterEntry {
-  id: string;
-  announcementText: string;
-  channelType: ChannelType;
-  channelId: string;
-  agentId?: string;
-  runId: string;
-  sessionKey: string;
-  failedAt: number;
-  attemptCount: number;
-  lastAttemptAt: number;
-  lastError?: string;
-  threadId?: string;
-  extra?: Record<string, unknown>;
-  idempotencyKey?: string;
-  rootRunId?: string;
-  stepIndex?: number;
-}
-
-export interface ParentDecisionReservation {
-  idempotencyKey: string;
-  agentId: string;
-  runId: string;
-  announcementText: string;
-  channelType: ChannelType;
-  channelId: string;
-  failedAt: number;
-  threadId?: string;
-  /** Outward-ledger tree root for this announcement. Present, it makes a parked
-   *  reservation ADJUDICABLE: `allocateStep(rootRunId, idempotencyKey)` is
-   *  idempotent by that pair, so the drain can recover the exact step the send
-   *  would have used and ask the ledger whether it ever happened. Absent (a
-   *  record written before this field existed) the reservation stays parked. */
-  rootRunId?: string;
-}
-
-export interface ParentDecisionReservationRecord extends ParentDecisionReservation {
-  recordType: "parent_decision_reservation";
-  id: string;
-}
+export type DeadLetterEntry = AnnouncementDeadLetterEntry;
+export type ParentDecisionReservation = AnnouncementParentDecisionReservation;
+export type ParentDecisionReservationRecord = AnnouncementParentDecisionReservationRecord;
 
 export type StoredDeadLetterEntry = DeadLetterEntry | ParentDecisionReservationRecord;
 
@@ -109,11 +52,13 @@ function publicDecision(
     idempotencyKey: record.idempotencyKey,
     agentId: record.agentId,
     runId: record.runId,
+    sessionKey: record.sessionKey,
     announcementText: record.announcementText,
     channelType: record.channelType,
     channelId: record.channelId,
     failedAt: record.failedAt,
     ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
+    ...(record.rootRunId !== undefined ? { rootRunId: record.rootRunId } : {}),
   };
 }
 
@@ -124,10 +69,12 @@ function sameDecision(
   return left.idempotencyKey === right.idempotencyKey
     && left.agentId === right.agentId
     && left.runId === right.runId
+    && left.sessionKey === right.sessionKey
     && left.announcementText === right.announcementText
     && left.channelType === right.channelType
     && left.channelId === right.channelId
-    && left.threadId === right.threadId;
+    && left.threadId === right.threadId
+    && left.rootRunId === right.rootRunId;
 }
 
 function validDecision(entry: ParentDecisionReservation): boolean {
@@ -137,6 +84,8 @@ function validDecision(entry: ParentDecisionReservation): boolean {
     && entry.agentId.length > 0
     && typeof entry.runId === "string"
     && entry.runId.length > 0
+    && typeof entry.sessionKey === "string"
+    && entry.sessionKey.length > 0
     && typeof entry.announcementText === "string"
     && typeof entry.channelType === "string"
     && isAnnouncementChannelType(entry.channelType)
@@ -297,6 +246,8 @@ function isParentDecisionReservationRecord(
     && typeof record.agentId === "string"
     && record.agentId.length > 0
     && typeof record.runId === "string"
+    && typeof record.sessionKey === "string"
+    && record.sessionKey.length > 0
     && typeof record.announcementText === "string"
     && typeof record.channelType === "string"
     && isAnnouncementChannelType(record.channelType)

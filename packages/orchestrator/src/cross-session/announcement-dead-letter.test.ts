@@ -799,6 +799,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       idempotencyKey: "default:user:telegram:chat-1::run-parent-1",
       agentId: "parent-agent",
       runId: "run-parent-1",
+      sessionKey: "default:user:telegram:chat-1",
       announcementText: "scrubbed parent decision input",
       channelType: "telegram" as const,
       channelId: "chat-1",

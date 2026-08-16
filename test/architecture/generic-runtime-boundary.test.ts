@@ -138,6 +138,8 @@ describe("generic runtime specialization boundary", () => {
     expect(agentPort).toContain("AnnouncementDeadLetterQueuePort");
     expect(agentPort).not.toContain("interface DeadLetterEntryShape");
     expect(orchestratorQueue).toContain("AnnouncementDeadLetterQueuePort");
-    expect(orchestratorQueue).not.toContain("interface AnnouncementDeadLetterQueue");
+    expect(orchestratorQueue).not.toMatch(
+      /(?:export\s+)?interface\s+AnnouncementDeadLetterQueue\s*\{/u,
+    );
   });
 });

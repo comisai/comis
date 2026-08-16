@@ -11,7 +11,11 @@
  */
 
 import { ok, type Result } from "@comis/shared";
-import type { ChannelType, DeadLetterEntry, ParentDecisionReservationRecord } from "./announcement-dead-letter-file.js";
+import type {
+  QuarantinedAnnouncement,
+  QuarantineReleaseOutcome,
+} from "@comis/core";
+import type { DeadLetterEntry, ParentDecisionReservationRecord } from "./announcement-dead-letter-file.js";
 
 /**
  * One quarantined announcement, as an operator sees it.
@@ -21,27 +25,7 @@ import type { ChannelType, DeadLetterEntry, ParentDecisionReservationRecord } fr
  * quarantined precisely because it was NOT delivered to its intended reader —
  * an operator deciding its fate needs the route and the reason, not the message.
  */
-export interface QuarantinedAnnouncement {
-  readonly id: string;
-  /** `entry` — a failed delivery. `parent_decision` — a parked adjudication. */
-  readonly kind: "entry" | "parent_decision";
-  readonly runId: string;
-  readonly agentId?: string;
-  readonly channelType: ChannelType;
-  readonly channelId: string;
-  readonly threadId?: string;
-  readonly failedAt: number;
-  readonly attemptCount: number;
-  readonly lastAttemptAt?: number;
-  /** Why it is parked (e.g. `outward_operation_unresolved`). */
-  readonly lastError?: string;
-  readonly idempotencyKey?: string;
-  /** Size of the withheld announcement text, in characters. */
-  readonly announcementChars: number;
-}
-
-/** What an operator decided about a quarantined announcement. */
-export type QuarantineReleaseOutcome = "delivered" | "discarded";
+export type { QuarantinedAnnouncement, QuarantineReleaseOutcome } from "@comis/core";
 
 
 /**

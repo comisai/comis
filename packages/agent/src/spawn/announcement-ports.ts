@@ -1,28 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Structural port interfaces for the announcement layer consumed by the
- * sub-agent runner and result processor.
- *
- * These types intentionally mirror the public shape of
- * `AnnouncementBatcher` and `AnnouncementDeadLetterQueue` from
- * `@comis/orchestrator/cross-session/`. They are inlined here to keep
- * `@comis/agent` free of a back-edge to `@comis/orchestrator` (which already
- * depends on `@comis/agent` — a direct dependency would close a cycle).
- *
- * The pattern matches the existing inlining in
- * `packages/orchestrator/src/cross-session/announcement-dead-letter.ts`,
- * which inlined the structural shape of `SubAgentRunnerLogger` to break
- * the inverse back-edge.
- *
- * Concrete orchestrator instances (returned by `createAnnouncementBatcher` /
- * `createAnnouncementDeadLetterQueue`) are structurally assignable to these
- * port types, so daemon-side wiring continues to work unchanged.
- *
- * @module
- */
+/** Agent-facing announcement contracts without an orchestrator back-edge. */
 
 import type { Result } from "@comis/shared";
-import type { ChannelEndpoint, CitationEvidence, ConversationLocator } from "@comis/core";
+import type {
+  AnnouncementDeadLetterQueuePort,
+  ChannelEndpoint,
+  CitationEvidence,
+  ConversationLocator,
+} from "@comis/core";
 import type { AnnouncementTerminalOutcome } from "./sub-agent-announcement-content.js";
 
 export interface AnnouncementOperationIdentity {
@@ -123,76 +108,8 @@ export interface AnnouncementBatcher {
   hasPending?(key: string): boolean;
 }
 
-/**
- * Single dead-letter-queue entry shape. Mirrors `DeadLetterEntry` from
- * `packages/orchestrator/src/cross-session/announcement-dead-letter.ts`.
- */
-export interface DeadLetterEntryShape {
-  id: string;
-  announcementText: string;
-  channelType: string;
-  channelId: string;
-  agentId?: string;
-  runId: string;
-  /** Formatted caller session key used for trajectory routing and durable authority. */
-  sessionKey: string;
-  failedAt: number;
-  attemptCount: number;
-  lastAttemptAt: number;
-  lastError?: string;
-  threadId?: string;
-  extra?: Record<string, unknown>;
-  /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors DeadLetterEntry.idempotencyKey — keep in lockstep. */
-  idempotencyKey?: string;
-  rootRunId?: string;
-  stepIndex?: number;
-}
-
-/**
- * Dead-letter-queue port: persists failed announcements for retry. Concrete
- * impl lives in `@comis/orchestrator`
- * (`createAnnouncementDeadLetterQueue`).
- */
-export interface AnnouncementDeadLetterQueue {
-  enqueue(entry: Omit<DeadLetterEntryShape, "id" | "lastAttemptAt">): Promise<Result<void, Error>>;
-  reserveDecision(entry: {
-    idempotencyKey: string;
-    agentId: string;
-    runId: string;
-    announcementText: string;
-    channelType: string;
-    channelId: string;
-    failedAt: number;
-    threadId?: string;
-  }): Promise<Result<{ created: boolean }, Error>>;
-  lookupDecision(idempotencyKey: string): Promise<Result<{
-    idempotencyKey: string;
-    agentId: string;
-    runId: string;
-    announcementText: string;
-    channelType: string;
-    channelId: string;
-    failedAt: number;
-    threadId?: string;
-  } | undefined, Error>>;
-  resolveDecision(
-    idempotencyKey: string,
-    outcome: "receipt_committed" | "no_reply",
-  ): Promise<Result<boolean, Error>>;
-  drain(
-    sendToChannel: (
-      type: string,
-      id: string,
-      text: string,
-      options?: { threadId?: string },
-    ) => Promise<boolean>,
-    /**
-     * Invoked with the entry's `idempotencyKey` after a SUCCESSFUL
-     * re-delivery so the caller can mark the recovered key delivered (shared
-     * deliveredKeys set) — otherwise a later failure sweep double-notifies.
-     * Mirrors the orchestrator DLQ signature — keep in lockstep.
-     */
-    onDelivered?: (idempotencyKey: string) => void,
-  ): Promise<void>;
-  size(): number;
-}
+/** Agent-facing name for the core-owned durable recovery port. */
+export type AnnouncementDeadLetterQueue = Pick<
+  AnnouncementDeadLetterQueuePort,
+  "enqueue" | "reserveDecision" | "lookupDecision" | "resolveDecision" | "drain" | "size"
+>;

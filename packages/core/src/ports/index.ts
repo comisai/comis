@@ -215,6 +215,17 @@ export type {
   DeliveryMirrorRecordInput,
 } from "./delivery-mirror.js";
 export type {
+  AnnouncementChannelType,
+  AnnouncementDeadLetterDeliveryOptions,
+  AnnouncementDeadLetterEntryInput,
+  AnnouncementDeadLetterEntry,
+  AnnouncementParentDecisionReservation,
+  AnnouncementParentDecisionReservationRecord,
+  QuarantinedAnnouncement,
+  QuarantineReleaseOutcome,
+  AnnouncementDeadLetterQueuePort,
+} from "./announcement-dead-letter.js";
+export type {
   ToolCapabilityPort,
   PromptSkillCapability,
   CapabilitySourceRef,

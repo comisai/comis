@@ -9,7 +9,21 @@
  * @module
  */
 
-import { conversationScopeToSessionKey, scrubSecretsFromText, toSafeErrorLogString, type ChannelEndpoint, type CitationEvidence, type ConversationLocator, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout, type TypedEventBus } from "@comis/core";
+import {
+  conversationScopeToSessionKey,
+  scrubSecretsFromText,
+  toSafeErrorLogString,
+  systemNowMs,
+  systemSetTimeout,
+  systemClearTimeout,
+  systemScheduleTimeout,
+  type AnnouncementDeadLetterQueuePort,
+  type ChannelEndpoint,
+  type CitationEvidence,
+  type ConversationLocator,
+  type SessionKey,
+  type TypedEventBus,
+} from "@comis/core";
 import { err, fromPromise, ok, TimeoutError, withTimeout, type Result } from "@comis/shared";
 import {
   buildAnnouncementRewriteInput,
@@ -92,39 +106,10 @@ export interface AnnouncementBatcherDeps {
   };
   debounceMs?: number;
   /** Durable decision reservation and failed-delivery quarantine. */
-  deadLetterQueue?: {
-    enqueue(entry: {
-      announcementText: string;
-      channelType: ChannelType;
-      channelId: string;
-      /** Framework-authenticated owner of the persisted outward operation. */
-      agentId: string;
-      runId: string;
-      sessionKey: string;
-      failedAt: number;
-      attemptCount: number;
-      lastError?: string;
-      threadId?: string;
-      /** Idempotency key `${callerSessionKey}::${runId}`, carried onto the dead-letter entry. */
-      idempotencyKey?: string;
-      rootRunId?: string;
-      stepIndex?: number;
-    }): Promise<Result<void, Error>>;
-    reserveDecision(entry: {
-      idempotencyKey: string;
-      agentId: string;
-      runId: string;
-      announcementText: string;
-      channelType: ChannelType;
-      channelId: string;
-      failedAt: number;
-      threadId?: string;
-    }): Promise<Result<{ created: boolean }, Error>>;
-    resolveDecision(
-      idempotencyKey: string,
-      outcome: "receipt_committed" | "no_reply",
-    ): Promise<Result<boolean, Error>>;
-  };
+  deadLetterQueue?: Pick<
+    AnnouncementDeadLetterQueuePort,
+    "enqueue" | "reserveDecision" | "resolveDecision"
+  >;
   /** Durable single-attempt sender for the irreversible final delivery. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   /**
@@ -833,6 +818,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         idempotencyKey,
         agentId: params.callerAgentId,
         runId: params.runId,
+        sessionKey: params.callerSessionKey,
         announcementText: fallbackDisclosure.text ?? safeFallback,
         channelType: params.announceChannelType,
         channelId: params.announceChannelId,

@@ -506,6 +506,7 @@ export async function deliverAnnouncement(params: {
         idempotencyKey: announceKey,
         agentId: callerAgentId,
         runId,
+        sessionKey: callerSessionKey,
         announcementText,
         channelType: announceChannelType,
         channelId: announceChannelId,

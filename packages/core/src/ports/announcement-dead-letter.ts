@@ -1,0 +1,108 @@
+// SPDX-License-Identifier: Apache-2.0
+/** Type-only port for durable completion-announcement recovery. */
+
+import type { Result } from "@comis/shared";
+
+/** Channel contribution identifier. Open because deployments can register channels. */
+export type AnnouncementChannelType = string;
+
+export interface AnnouncementDeadLetterDeliveryOptions {
+  readonly threadId?: string;
+  readonly extra?: Record<string, unknown>;
+}
+
+/** Failed completion admitted to durable delivery recovery. */
+export interface AnnouncementDeadLetterEntryInput {
+  announcementText: string;
+  channelType: AnnouncementChannelType;
+  channelId: string;
+  agentId?: string;
+  runId: string;
+  sessionKey: string;
+  failedAt: number;
+  attemptCount: number;
+  lastError?: string;
+  threadId?: string;
+  extra?: Record<string, unknown>;
+  idempotencyKey?: string;
+  rootRunId?: string;
+  stepIndex?: number;
+}
+
+/** Persisted form of a failed completion. */
+export interface AnnouncementDeadLetterEntry extends AnnouncementDeadLetterEntryInput {
+  id: string;
+  lastAttemptAt: number;
+}
+
+/** Durable ownership record written before a parent rewrite is attempted. */
+export interface AnnouncementParentDecisionReservation {
+  idempotencyKey: string;
+  agentId: string;
+  runId: string;
+  sessionKey: string;
+  announcementText: string;
+  channelType: AnnouncementChannelType;
+  channelId: string;
+  failedAt: number;
+  threadId?: string;
+  rootRunId?: string;
+}
+
+export interface AnnouncementParentDecisionReservationRecord
+  extends AnnouncementParentDecisionReservation {
+  recordType: "parent_decision_reservation";
+  id: string;
+}
+
+/** Content-free operator projection of a retained announcement. */
+export interface QuarantinedAnnouncement {
+  readonly id: string;
+  readonly kind: "entry" | "parent_decision";
+  readonly runId: string;
+  readonly agentId?: string;
+  readonly channelType: AnnouncementChannelType;
+  readonly channelId: string;
+  readonly threadId?: string;
+  readonly failedAt: number;
+  readonly attemptCount: number;
+  readonly lastAttemptAt?: number;
+  readonly lastError?: string;
+  readonly idempotencyKey?: string;
+  readonly announcementChars: number;
+}
+
+export type QuarantineReleaseOutcome = "delivered" | "discarded";
+
+/**
+ * Durable completion-delivery recovery boundary shared by producers and the
+ * orchestrator adapter.
+ */
+export interface AnnouncementDeadLetterQueuePort {
+  enqueue(entry: AnnouncementDeadLetterEntryInput): Promise<Result<void, Error>>;
+  reserveDecision(
+    entry: AnnouncementParentDecisionReservation,
+  ): Promise<Result<{ created: boolean }, Error>>;
+  lookupDecision(
+    idempotencyKey: string,
+  ): Promise<Result<AnnouncementParentDecisionReservation | undefined, Error>>;
+  resolveDecision(
+    idempotencyKey: string,
+    outcome: "receipt_committed" | "no_reply",
+  ): Promise<Result<boolean, Error>>;
+  drain(
+    sendToChannel: (
+      type: AnnouncementChannelType,
+      id: string,
+      text: string,
+      options?: AnnouncementDeadLetterDeliveryOptions,
+    ) => Promise<boolean>,
+    onDelivered?: (idempotencyKey: string) => void,
+  ): Promise<void>;
+  size(): number;
+  listQuarantined(): Promise<readonly QuarantinedAnnouncement[]>;
+  release(
+    id: string,
+    outcome: QuarantineReleaseOutcome,
+  ): Promise<Result<boolean, Error>>;
+}

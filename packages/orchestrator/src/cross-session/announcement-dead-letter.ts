@@ -2,7 +2,13 @@
 /** Durable retry and uncertainty quarantine for failed announcements. */
 
 import { randomUUID } from "node:crypto";
-import type { TypedEventBus, OutwardSendLedgerPort, OutwardSendRecord } from "@comis/core";
+import type {
+  AnnouncementDeadLetterEntryInput,
+  AnnouncementDeadLetterQueuePort,
+  TypedEventBus,
+  OutwardSendLedgerPort,
+  OutwardSendRecord,
+} from "@comis/core";
 import { emitObservationalEventSafely, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
@@ -19,7 +25,6 @@ import {
   type ChannelType,
   type DeadLetterEntry,
   type DeadLetterWriteOperations,
-  type ParentDecisionReservation,
   type ParentDecisionReservationRecord,
 } from "./announcement-dead-letter-file.js";
 export { isAnnouncementChannelType } from "./announcement-dead-letter-file.js";
@@ -29,10 +34,6 @@ export type {
   ParentDecisionReservation,
 } from "./announcement-dead-letter-file.js";
 import { projectQuarantined, releaseQuarantined } from "./announcement-dead-letter-quarantine.js";
-import type {
-  QuarantinedAnnouncement,
-  QuarantineReleaseOutcome,
-} from "./announcement-dead-letter-quarantine.js";
 export type {
   QuarantinedAnnouncement,
   QuarantineReleaseOutcome,
@@ -46,72 +47,7 @@ export interface AnnouncementLogger {
   debug(obj: Record<string, unknown>, msg: string): void;
 }
 
-/** Dead-letter queue interface for announcement retry management. */
-export interface AnnouncementDeadLetterQueue {
-  /**
-   * Persist a failed announcement to the dead-letter queue.
-   * Resolves only after the queue state is durable. A failed persistence never
-   * mutates the in-memory queue and never emits a queued event.
-   */
-  enqueue(
-    entry: Omit<DeadLetterEntry, "id" | "lastAttemptAt">,
-  ): Promise<Result<void, Error>>;
-  reserveDecision(
-    entry: ParentDecisionReservation,
-  ): Promise<Result<{ created: boolean }, Error>>;
-  lookupDecision(
-    idempotencyKey: string,
-  ): Promise<Result<ParentDecisionReservation | undefined, Error>>;
-  resolveDecision(
-    idempotencyKey: string,
-    outcome: "receipt_committed" | "no_reply",
-  ): Promise<Result<boolean, Error>>;
-  /**
-   * Process queued entries via the provided sendToChannel callback. Ungoverned
-   * entries are retried. Governed unresolved/ambiguous entries remain parked
-   * for operator review and never reach the callback; a committed receipt
-   * removes the entry without sending.
-   *
-   * `onDelivered` (optional) is invoked with the entry's
-   * `idempotencyKey` after a SUCCESSFUL re-delivery, so the caller can record
-   * the recovered key in the shared deliveredKeys set (deliveryDedup.mark /
-   * batcher.markDelivered). Without it, a DLQ-recovered announcement is never
-   * marked delivered and a later sweep double-notifies the same run. Only fired
-   * for keyed entries on success; never on failure (the key must stay open).
-   */
-  drain(
-    sendToChannel: (type: ChannelType, id: string, text: string, options?: AnnouncementDeliveryOptions) => Promise<boolean>,
-    onDelivered?: (idempotencyKey: string) => void,
-  ): Promise<void>;
-  /** Return the current number of entries in the queue. */
-  size(): number;
-  /**
-   * Every parked announcement, content-free, for operator review. Ordered
-   * oldest-first so the longest-stuck item leads.
-   *
-   * ASYNC because the queue loads from disk lazily: a freshly-started daemon
-   * has not drained yet, so a synchronous read of the in-memory lists reports
-   * an empty queue while the JSONL holds a stuck item — precisely the state an
-   * operator runs this to discover. It loads first, then projects.
-   */
-  listQuarantined(): Promise<readonly QuarantinedAnnouncement[]>;
-  /**
-   * Record an operator's decision about one parked announcement and drop it.
-   *
-   * `delivered` — the reader already has it (verified out of band); `discarded`
-   * — it is not worth sending. Both remove the item: the queue's job is to hold
-   * an undecided announcement, and a decided one is finished either way. The
-   * distinction rides the audit trail, not the queue.
-   *
-   * Resolves `false` for an unknown id rather than failing — releasing the same
-   * id twice is an operator retrying, not an error. Persists before mutating
-   * the in-memory state, so a failed write leaves the item parked.
-   */
-  release(
-    id: string,
-    outcome: QuarantineReleaseOutcome,
-  ): Promise<Result<boolean, Error>>;
-}
+export type AnnouncementDeadLetterQueue = AnnouncementDeadLetterQueuePort;
 
 /** Configuration options for the dead-letter queue factory. */
 interface AnnouncementDeadLetterQueueOptions {
@@ -645,7 +581,7 @@ export function createAnnouncementDeadLetterQueue(
   }
 
   async function enqueueDurably(
-    entry: Omit<DeadLetterEntry, "id" | "lastAttemptAt">,
+    entry: AnnouncementDeadLetterEntryInput,
   ): Promise<Result<void, Error>> {
     const load = await loadFromDisk();
     if (!load.ok) return load;
@@ -810,6 +746,7 @@ export function createAnnouncementDeadLetterQueue(
         channelId: reservation.channelId,
         agentId: reservation.agentId,
         runId: reservation.runId,
+        sessionKey: reservation.sessionKey,
         failedAt: reservation.failedAt,
         attemptCount: 0,
         lastAttemptAt: 0,
