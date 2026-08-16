@@ -612,10 +612,15 @@ describe("AnnouncementDeadLetterQueue", () => {
       fileOperations,
     } as Parameters<typeof createAnnouncementDeadLetterQueue>[0]);
 
-    const first = await dlq.enqueue(makeEntry({ runId: "run-visible-a" }));
+    const visibleEntry = makeEntry({
+      runId: "run-visible-a",
+      idempotencyKey: "session-a::run-visible-a",
+    });
+    const first = await dlq.enqueue(visibleEntry);
     expect(first).toMatchObject({ ok: false });
     expect(dlq.size()).toBe(1);
 
+    await expect(dlq.enqueue(visibleEntry)).resolves.toEqual(ok(undefined));
     await expect(
       dlq.enqueue(makeEntry({ runId: "run-following-b" })),
     ).resolves.toEqual(ok(undefined));
@@ -628,6 +633,36 @@ describe("AnnouncementDeadLetterQueue", () => {
       "run-following-b",
     ]);
     expect(dlq.size()).toBe(2);
+  });
+
+  it("rejects one recovery key reused for different announcement content", async () => {
+    const logger = createMockLogger();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger,
+    });
+    const original = makeEntry({
+      runId: "run-key-owner",
+      idempotencyKey: "session-a::run-key-owner",
+      announcementText: "first completion",
+    });
+    await dlq.enqueue(original);
+
+    const conflict = await dlq.enqueue({
+      ...original,
+      announcementText: "different completion",
+    });
+
+    expect(conflict).toMatchObject({ ok: false });
+    expect(dlq.size()).toBe(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "validation",
+        hint: "reuse a dead-letter recovery key only for its exact original owner, destination, and content",
+      }),
+      "Dead-letter recovery key identity mismatch",
+    );
   });
 
   it("serializes enqueue behind an active drain and persists the post-drain state", async () => {

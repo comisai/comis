@@ -30,6 +30,10 @@ import {
   isInvalidDeadLetterRecord,
   type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
+import {
+  announcementRecoveryKey,
+  isSameAnnouncementRecovery,
+} from "./announcement-dead-letter-identity.js";
 export { isAnnouncementChannelType } from "./announcement-dead-letter-file.js";
 export type {
   ChannelType,
@@ -107,12 +111,30 @@ export function createAnnouncementDeadLetterQueue(
   let entries: DeadLetterEntry[] = [];
   let decisionReservations: ParentDecisionReservationRecord[] = [];
   let invalidRecords: InvalidDeadLetterRecord[] = [];
+  const emittedAdmissionKeys = new Set<string>();
   let loaded = false;
   let operationTail: Promise<void> = Promise.resolve();
   function serialize<T>(operation: () => Promise<T>): Promise<T> {
     const result = operationTail.then(operation, operation);
     operationTail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  function emitAdmission(entry: DeadLetterEntry): void {
+    const key = announcementRecoveryKey(entry);
+    if (emittedAdmissionKeys.has(key)) return;
+    emittedAdmissionKeys.add(key);
+    emitObservationalEventSafely(
+      { eventBus, logger },
+      "announcement:dead_lettered",
+      {
+        runId: entry.runId,
+        sessionKey: entry.sessionKey,
+        channelType: entry.channelType,
+        reason: "delivery_failed",
+        timestamp: systemNowMs(),
+      },
+    );
   }
   async function loadFromDisk(): Promise<Result<void, Error>> {
     if (loaded) return ok(undefined);
@@ -608,10 +630,26 @@ export function createAnnouncementDeadLetterQueue(
   ): Promise<Result<void, Error>> {
     const load = await loadFromDisk();
     if (!load.ok) return load;
-    const keyedEntry = entry.idempotencyKey !== undefined
-      ? entries.find((candidate) => candidate.idempotencyKey === entry.idempotencyKey)
-      : undefined;
-    if (keyedEntry) return ok(undefined);
+    const entryRecoveryKey = announcementRecoveryKey(entry);
+    const keyedEntry = entries.find(
+      (candidate) => announcementRecoveryKey(candidate) === entryRecoveryKey,
+    );
+    if (keyedEntry) {
+      const same = isSameAnnouncementRecovery(keyedEntry, entry);
+      if (!same.ok) return same;
+      if (!same.value) {
+        logger?.error(
+          {
+            errorKind: "validation" as const,
+            hint: "reuse a dead-letter recovery key only for its exact original owner, destination, and content",
+          },
+          "Dead-letter recovery key identity mismatch",
+        );
+        return err(new Error("Dead-letter recovery key identity mismatch"));
+      }
+      emitAdmission(keyedEntry);
+      return ok(undefined);
+    }
     const reservation = entry.idempotencyKey !== undefined
       ? decisionReservations.find(
           (candidate) => candidate.idempotencyKey === entry.idempotencyKey,
@@ -682,17 +720,7 @@ export function createAnnouncementDeadLetterQueue(
         "Dead-letter quarantine exceeds its review threshold",
       );
     }
-    emitObservationalEventSafely(
-      { eventBus, logger },
-      "announcement:dead_lettered",
-      {
-        runId: fullEntry.runId,
-        sessionKey: fullEntry.sessionKey,
-        channelType: fullEntry.channelType,
-        reason: "delivery_failed",
-        timestamp: systemNowMs(),
-      },
-    );
+    emitAdmission(fullEntry);
     return ok(undefined);
   }
 
