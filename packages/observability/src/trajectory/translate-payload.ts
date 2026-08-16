@@ -308,8 +308,8 @@ export function translatePayload(
       return translateCacheBreakPayload(payload);
 
     // ---- Authoring / sub-agent orchestration ---- delegated to translate-orchestration-payload.ts (file-size split; content-free + envelope-stripped — closed enums + numbers/booleans + a run id ONLY, never a graph body, the synthesis INTENT TEXT, or the steer MESSAGE BODY).
-    // Three sub-agent-lifecycle events (sandbox-downgrade
-    // refusal / dead-lettered delivery / per-node budget breach) join the SAME content-free,
+    // Sub-agent-lifecycle events (sandbox-downgrade refusal / missing route /
+    // per-node budget breach) join the SAME content-free,
     // orchestration-translator-delegated group.
     // capability:audited joins the orchestration-translator group (content-free: caps/tool-NAME/decision/lease-root ids ONLY, never args/body/secret).
     case "pipeline:authored":
@@ -325,8 +325,6 @@ export function translatePayload(
     case "subagent:routed_child_preserved":
     case "subagent:background_processes_abandoned":
     case "security:sandbox_downgrade_refused":
-    case "subagent:delivery_deadlettered":
-    case "subagent:delivery_retried": // The self-healing transient retry (sibling of delivery_deadlettered) — content-free {runId, channelType, attempt, transient}
     case "subagent:delivery_skipped": // Terminal result had no route — content-free {runId, reason}.
     case "subagent:budget_exceeded":
     case "capability:audited":

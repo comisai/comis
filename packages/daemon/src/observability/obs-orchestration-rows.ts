@@ -2,8 +2,8 @@
 /**
  * Orchestration-observability row-builders.
  *
- * Sub-agent lifecycle failures — sandbox-downgrade refusal, dead-lettered or
- * unroutable delivery, per-node budget breach, and attributed kill — map to content-free
+ * Sub-agent lifecycle failures — sandbox-downgrade refusal, unroutable delivery,
+ * per-node budget breach, and attributed kill — map to content-free
  * `health_signal` diagnostic rows (a new `signal:` label rides
  * the EXISTING `obs_diagnostics` category, NO migration). Extracted from
  * `obs-persistence-wiring.ts` to keep that file under the 800-line cap.
@@ -40,34 +40,6 @@ export function sandboxDowngradeRefusedEventToRow(
     details: JSON.stringify({
       signal: "sandbox_downgrade_refused",
       dimensions: payload.violatedDimensions,
-    }),
-    traceId: undefined,
-  };
-}
-
-/**
- * Map a `subagent:delivery_deadlettered` event to a `health_signal` diagnostic row.
- * A dead-lettered (permanently dropped) sub-agent completion is a SILENT degradation:
- * the graph reports "completed" while a node's result never reached the parent, with
- * no system signal today. `details` carries the closed `channelType` (which channel is
- * dropping) + the `transient` tag (retries-exhausted vs immediate-permanent) ONLY —
- * NEVER the runId, the announcement body, or the error string (AGENTS.md §2.7).
- * severity:"warning" (a dropped delivery).
- */
-export function deliveryDeadletteredEventToRow(
-  payload: EventMap["subagent:delivery_deadlettered"],
-): DiagnosticRow {
-  return {
-    timestamp: payload.timestamp,
-    category: "health_signal",
-    severity: "warning",
-    agentId: undefined,
-    sessionKey: undefined,
-    message: "subagent:delivery_deadlettered",
-    details: JSON.stringify({
-      signal: "delivery_deadlettered",
-      channelType: payload.channelType,
-      transient: payload.transient,
     }),
     traceId: undefined,
   };

@@ -308,11 +308,10 @@ classifier does a case-insensitive substring match on the failure message:
   `budget` / "cost limit", `killed`, context-exhausted (`context` + `exhaust`) /
   `loop`, `max steps` / "step limit", and anything otherwise unclassified.
 
-- **What the operator sees:** a `subagent:delivery_retried` event per retry
-  attempt and a `subagent:delivery_deadlettered` event when a delivery is finally
-  dead-lettered (its `transient` flag records whether retries were exhausted or
-  the failure was permanent). Both carry counts and ids only — never the
-  announcement text or the error string. See the
+- **What the operator sees:** retry-stage DEBUG logs, followed by an
+  `announcement:dead_lettered` event only after the completion is durably
+  retained. The event carries session attribution and a closed admission reason,
+  never announcement text or an error string. See the
   [Event Bus reference](/developer-guide/event-bus) for the exact payloads.
 
 This is a two-tier delivery path — announcement through the parent, then a

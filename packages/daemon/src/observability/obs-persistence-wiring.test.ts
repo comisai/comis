@@ -26,7 +26,6 @@ import {
   backgroundRecoveryEventToRow,
   backgroundRecoveryScanEventToRow,
   sandboxDowngradeRefusedEventToRow,
-  deliveryDeadletteredEventToRow,
   outwardAttachmentFailureEventToRow,
   nodeBudgetExceededEventToRow,
   subagentKilledEventToRow,
@@ -1458,44 +1457,6 @@ describe("sandboxDowngradeRefusedEventToRow", () => {
   });
 });
 
-describe("deliveryDeadletteredEventToRow", () => {
-  it("maps a subagent:delivery_deadlettered payload to a warning health_signal row (channelType + transient tag only)", () => {
-    const row = deliveryDeadletteredEventToRow({
-      runId: "run-abc",
-      channelType: "telegram",
-      attempt: 3,
-      transient: true,
-      timestamp: 8000,
-    });
-
-    expect(row.timestamp).toBe(8000);
-    expect(row.category).toBe("health_signal");
-    expect(row.severity).toBe("warning");
-    expect(row.message).toBe("subagent:delivery_deadlettered");
-    expect(row.traceId).toBeUndefined();
-
-    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
-    expect(details.signal).toBe("delivery_deadlettered");
-    expect(details.channelType).toBe("telegram");
-    expect(details.transient).toBe(true);
-  });
-
-  it("NO-LEAK (§2.7): never carries the runId, the announcement body, or the error string", () => {
-    const row = deliveryDeadletteredEventToRow({
-      runId: "secret-run-id-12345",
-      channelType: "discord",
-      attempt: 0,
-      transient: false,
-      timestamp: 1,
-    });
-    const serialized = JSON.stringify(row);
-    expect(serialized).not.toContain("secret-run-id-12345");
-    expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual(["signal", "channelType", "transient"]);
-    // A permanent dead-letter (immediate, transient:false) is recorded honestly.
-    expect(JSON.parse(row.details ?? "{}").transient).toBe(false);
-  });
-});
-
 describe("outwardAttachmentFailureEventToRow", () => {
   it("maps an attachment allocation failure to a warning health signal", () => {
     const row = outwardAttachmentFailureEventToRow({
@@ -2030,9 +1991,8 @@ describe("setupObsPersistence", () => {
     expect(eventBus.on).toHaveBeenCalledWith("pipeline:authored", expect.any(Function));
     // The orchestrate run-summary efficiency subscription (beside pipeline:authored).
     expect(eventBus.on).toHaveBeenCalledWith("orchestrate:run_summary", expect.any(Function));
-    // The three previously-dark daemon-side orchestration subscriptions.
+    // Daemon-side orchestration subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("security:sandbox_downgrade_refused", expect.any(Function));
-    expect(eventBus.on).toHaveBeenCalledWith("subagent:delivery_deadlettered", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("subagent:delivery_skipped", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("subagent:budget_exceeded", expect.any(Function));
 
@@ -2085,10 +2045,6 @@ describe("setupObsPersistence", () => {
     eventBus.emit("security:sandbox_downgrade_refused", {
       timestamp: 1006, parentAgentId: "researcher", childAgentId: "unconfined-child",
       violatedDimensions: ["exec"], parentPosture: { exec: "always" }, childPosture: { exec: "never" },
-    });
-    // h. A dead-lettered sub-agent delivery.
-    eventBus.emit("subagent:delivery_deadlettered", {
-      runId: "run-x", channelType: "telegram", attempt: 3, transient: true, timestamp: 1007,
     });
     eventBus.emit("delivery:outward_ledger_transition", {
       rootRunId: "root-output",
@@ -2167,7 +2123,7 @@ describe("setupObsPersistence", () => {
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(19);
+    expect(healthRows).toHaveLength(18);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
       "autonomy:denial_breaker_tripped",
@@ -2187,7 +2143,6 @@ describe("setupObsPersistence", () => {
       "pipeline:authored",
       "security:sandbox_downgrade_refused",
       "subagent:budget_exceeded",
-      "subagent:delivery_deadlettered",
       "trajectory_resume_failed",
     ]);
     const channelRow = healthRows.find((row) => row.message === "channel:health_changed")!;
@@ -2223,9 +2178,8 @@ describe("setupObsPersistence", () => {
       failureKind: "invalid_jsonl",
     });
     expect(orchRow.details ?? "").not.toContain("orch-1");
-    // The three ORCH-OBS rows carry their closed signal labels.
+    // The orchestration rows carry their closed signal labels.
     expect(JSON.parse(healthRows.find((r) => r.message === "security:sandbox_downgrade_refused")!.details ?? "{}").signal).toBe("sandbox_downgrade_refused");
-    expect(JSON.parse(healthRows.find((r) => r.message === "subagent:delivery_deadlettered")!.details ?? "{}").signal).toBe("delivery_deadlettered");
     expect(JSON.parse(healthRows.find((r) => r.message === "subagent:budget_exceeded")!.details ?? "{}").signal).toBe("node_budget_exceeded");
 
     // The MCP row never carries the error body (bounded payload).

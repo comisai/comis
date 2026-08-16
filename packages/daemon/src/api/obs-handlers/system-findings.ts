@@ -26,7 +26,6 @@ import {
   cronTimerDegradationFromRow,
   unresolvedModelFromRow,
   DEDICATED_SCRIPT_SIGNALS,
-  deliveryDeadletteredFromRow,
   flaggedPostureKeys,
   healthSignalLabel,
   healthSignalReason,
@@ -457,30 +456,6 @@ export function buildFindings(
           : `${sandboxRefusedCount} sub-agent spawn(s) refused for sandbox downgrade`,
       count: sandboxRefusedCount,
       hint: "a sub-agent was configured LESS confined than its spawner on the named dimension(s); align the child's skills.execSandbox posture with (or stricter than) the parent's, or remove the offending agent-to-agent spawn. run `comis explain` on the spawner's session",
-    });
-  }
-
-  // Dedicated delivery_deadlettered finding — the count of sub-agent
-  // completions PERMANENTLY DROPPED (self-healing delivery exhausted retries, or an
-  // immediate permanent failure). This is a SILENT degradation today (the graph
-  // reports completed while a node's result never reached the parent). Counts + the
-  // transient/permanent split ONLY — never a runId, an announcement body, or an error
-  // string. Zero-traffic guard.
-  let deadletterCount = 0;
-  let deadletterTransient = 0;
-  for (const row of healthSignals) {
-    const parsed = deliveryDeadletteredFromRow(row);
-    if (parsed === null) continue;
-    deadletterCount += 1;
-    if (parsed.transient) deadletterTransient += 1;
-  }
-  if (deadletterCount > 0) {
-    const permanent = deadletterCount - deadletterTransient;
-    findings.push({
-      code: "delivery_deadlettered",
-      detail: `${deadletterCount} sub-agent completion(s) dead-lettered (dropped): ${deadletterTransient} after retries, ${permanent} permanent`,
-      count: deadletterCount,
-      hint: "a sub-agent result was permanently dropped before reaching its parent (the graph still reports completed); run `comis explain` on the affected session and check the delivery channel health / retry budget (security.agentToAgent.delivery)",
     });
   }
 

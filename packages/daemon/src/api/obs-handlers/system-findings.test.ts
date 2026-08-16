@@ -664,54 +664,6 @@ describe("buildFindings — sandbox_downgrade_refused finding", () => {
   });
 });
 
-/** A `health_signal` row labelled `delivery_deadlettered`. */
-function deadletterRow(ts: number, channelType: string, transient: boolean): DiagnosticRow {
-  return {
-    timestamp: ts,
-    category: "health_signal",
-    severity: "warning",
-    message: "subagent:delivery_deadlettered",
-    details: JSON.stringify({ signal: "delivery_deadlettered", channelType, transient }),
-  };
-}
-
-describe("buildFindings — delivery_deadlettered finding", () => {
-  const CODE = "delivery_deadlettered";
-
-  it("emits ONE finding with the dropped count + the transient/permanent split", () => {
-    const findings = buildFindings(
-      [deadletterRow(1, "telegram", true), deadletterRow(2, "discord", true), deadletterRow(3, "slack", false)],
-      [],
-      [],
-    );
-    const f = findings.filter((x) => x.code === CODE);
-    expect(f).toHaveLength(1);
-    expect(f[0]!.count).toBe(3);
-    expect(f[0]!.detail).toMatch(/3 sub-agent completion\(s\) dead-lettered/);
-    // 2 after-retries (transient) + 1 permanent (immediate) split is named.
-    expect(f[0]!.detail).toMatch(/2 .*retr/i);
-    expect(f[0]!.detail).toMatch(/1 permanent/i);
-    expect(f[0]!.hint).toMatch(/comis explain|deliver/i);
-  });
-
-  it("does NOT emit on zero deadletter rows (zero-traffic guard)", () => {
-    const findings = buildFindings(
-      [{ timestamp: 1, category: "health_signal", severity: "warning", message: "h", details: JSON.stringify({ signal: "lcd_divergence" }) }],
-      [],
-      [],
-    );
-    expect(findings.some((x) => x.code === CODE)).toBe(false);
-  });
-
-  it("is SAFE TO PASTE — no runId, no announcement body, no error string", () => {
-    const f = buildFindings([deadletterRow(1, "telegram", false)], [], []).find((x) => x.code === CODE)!;
-    for (const text of [f.detail, f.hint]) {
-      expect(text).not.toMatch(/run-|Error:|at .*\.ts:/);
-      expect(text).not.toMatch(/https?:\/\//);
-    }
-  });
-});
-
 /** A `health_signal` row labelled `node_budget_exceeded`, carrying the closed capSource. */
 function budgetRow(ts: number, capSource: string): DiagnosticRow {
   return {

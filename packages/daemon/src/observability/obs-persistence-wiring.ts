@@ -21,7 +21,6 @@ import { wireAuditSink } from "./obs-audit-sink.js";
 // so the public API stays byte-identical.
 import {
   sandboxDowngradeRefusedEventToRow,
-  deliveryDeadletteredEventToRow,
   outwardAttachmentFailureEventToRow,
   deliverySkippedEventToRow,
   nodeBudgetExceededEventToRow,
@@ -268,7 +267,6 @@ export {
 // public API + the test imports stay byte-identical.
 export {
   sandboxDowngradeRefusedEventToRow,
-  deliveryDeadletteredEventToRow,
   outwardAttachmentFailureEventToRow,
   deliverySkippedEventToRow,
   nodeBudgetExceededEventToRow,
@@ -643,9 +641,6 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   // body, no per-node token numbers — AGENTS.md §2.7).
   eventBus.on("security:sandbox_downgrade_refused", (payload) => {
     diagnosticBuffer.push(sandboxDowngradeRefusedEventToRow(payload));
-  });
-  eventBus.on("subagent:delivery_deadlettered", (payload) => {
-    diagnosticBuffer.push(deliveryDeadletteredEventToRow(payload));
   });
   eventBus.on("subagent:delivery_skipped", (payload) => {
     diagnosticBuffer.push(deliverySkippedEventToRow(payload));

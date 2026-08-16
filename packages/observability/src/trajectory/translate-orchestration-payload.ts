@@ -36,12 +36,10 @@ export type OrchestrationBridgedEventName =
   | "subagent:killed"
   | "subagent:routed_child_preserved"
   | "subagent:background_processes_abandoned"
-  // Three sub-agent-lifecycle
+  // Sub-agent-lifecycle
   // events bridged for per-session `comis explain` visibility (the subagent:steered
   // daemon-side precedent). Content-free: closed labels/ids/numbers ONLY.
   | "security:sandbox_downgrade_refused"
-  | "subagent:delivery_deadlettered"
-  | "subagent:delivery_retried"
   | "subagent:delivery_skipped"
   | "subagent:budget_exceeded"
   // The per-cap authorization decision
@@ -169,19 +167,6 @@ export function translateOrchestrationPayload(
       // that would leak the operator's sandbox topology. parent/child agent ids +
       // timestamp are envelope-only and stripped.
       return { dimensions: payload.violatedDimensions };
-
-    case "subagent:delivery_deadlettered":
-      // The dropped run id + the closed channelType + the transient
-      // (retries-exhausted vs immediate-permanent) tag ONLY — NEVER the announcement body or
-      // the error string. timestamp envelope-only.
-      return { runId: payload.runId, channelType: payload.channelType, transient: payload.transient };
-
-    case "subagent:delivery_retried":
-      // The self-healing transient retry — run id + closed channelType +
-      // the 1-based attempt count + the transient tag ONLY (the `explain` view wants the attempt
-      // number so an operator can see HOW MANY retries a completion took before it landed) —
-      // NEVER the announcement body or the error string. timestamp envelope-only.
-      return { runId: payload.runId, channelType: payload.channelType, attempt: payload.attempt, transient: payload.transient };
 
     case "subagent:delivery_skipped":
       // The affected run and the closed missing-route reason only. The child

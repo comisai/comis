@@ -2238,20 +2238,6 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       childPosture: { exec: "never" },
       timestamp: 0,
     },
-    "subagent:delivery_deadlettered": {
-      runId: "run-dl",
-      channelType: "telegram",
-      attempt: 3,
-      transient: true,
-      timestamp: 0,
-    },
-    "subagent:delivery_retried": {
-      runId: "run-rt",
-      channelType: "telegram",
-      attempt: 2,
-      transient: true,
-      timestamp: 0,
-    },
     "subagent:delivery_skipped": {
       runId: "run-route-lost",
       agentId: "agent-1",
@@ -2717,7 +2703,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (operator visibility)", 
 });
 
 // ---------------------------------------------------------------------------
-// Three sub-agent-lifecycle
+// Sub-agent-lifecycle
 // events bridged for per-session `comis explain` visibility (the subagent:steered
 // daemon-side precedent). Content-free: closed labels/ids/numbers ONLY — never a
 // path/host/uid value (sandbox), an announcement/error body (delivery), or a task
@@ -2725,19 +2711,12 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (operator visibility)", 
 // ---------------------------------------------------------------------------
 
 describe("TRAJECTORY_BRIDGE_MAPPING -- sub-agent lifecycle (operator visibility)", () => {
-  it("maps the five events to their reserved trajectory types (arch closure)", () => {
+  it("maps the active events to their reserved trajectory types (arch closure)", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["security:sandbox_downgrade_refused"]).toBe("security.sandbox_downgrade_refused");
-    expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_deadlettered"]).toBe("subagent.delivery_deadlettered");
-    // delivery_retried is emitted (announcement-batcher) via `?.emit`. It is the
-    // sibling of delivery_deadlettered and must be reconstructable in `comis explain`
-    // (the self-healing retry visibility).
-    expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_retried"]).toBe("subagent.delivery_retried");
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_skipped"]).toBe("subagent.delivery_skipped");
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:budget_exceeded"]).toBe("subagent.budget_exceeded");
     const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
     expect(allTypes.has("security.sandbox_downgrade_refused")).toBe(true);
-    expect(allTypes.has("subagent.delivery_deadlettered")).toBe(true);
-    expect(allTypes.has("subagent.delivery_retried")).toBe(true);
     expect(allTypes.has("subagent.delivery_skipped")).toBe(true);
     expect(allTypes.has("subagent.budget_exceeded")).toBe(true);
   });
@@ -2766,50 +2745,6 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- sub-agent lifecycle (operator visibility)
     expect(data.parentPosture).toBeUndefined();
     expect(data.childPosture).toBeUndefined();
     expect(data.parentAgentId).toBeUndefined();
-  });
-
-  it("translates subagent:delivery_deadlettered to runId/channelType/transient ONLY (no announcement/error body)", () => {
-    const bus = makeBus();
-    const recorder = createCaptureRecorder();
-    attachTrajectoryToEventBus({ eventBus: bus, recorder });
-
-    bus.emit("subagent:delivery_deadlettered", {
-      runId: "run-dl",
-      channelType: "telegram",
-      attempt: 3,
-      transient: true,
-      timestamp: 1000,
-    });
-
-    expect(recorder.calls).toHaveLength(1);
-    expect(recorder.calls[0]!.type).toBe("subagent.delivery_deadlettered");
-    const data = recorder.calls[0]!.data as Record<string, unknown>;
-    expect(data).toEqual({ runId: "run-dl", channelType: "telegram", transient: true });
-    for (const forbidden of ["message", "text", "body", "content", "error"]) {
-      expect(data[forbidden]).toBeUndefined();
-    }
-  });
-
-  it("translates subagent:delivery_retried to runId/channelType/attempt/transient ONLY (no announcement/error body)", () => {
-    const bus = makeBus();
-    const recorder = createCaptureRecorder();
-    attachTrajectoryToEventBus({ eventBus: bus, recorder });
-
-    bus.emit("subagent:delivery_retried", {
-      runId: "run-rt",
-      channelType: "telegram",
-      attempt: 2,
-      transient: true,
-      timestamp: 1000,
-    });
-
-    expect(recorder.calls).toHaveLength(1);
-    expect(recorder.calls[0]!.type).toBe("subagent.delivery_retried");
-    const data = recorder.calls[0]!.data as Record<string, unknown>;
-    expect(data).toEqual({ runId: "run-rt", channelType: "telegram", attempt: 2, transient: true });
-    for (const forbidden of ["message", "text", "body", "content", "error"]) {
-      expect(data[forbidden]).toBeUndefined();
-    }
   });
 
   it("translates subagent:delivery_skipped to runId/reason only and strips child routing identity", () => {
@@ -4770,7 +4705,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(149);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(147);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
