@@ -687,6 +687,70 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     }));
   });
 
+  it("shutdown hands a non-durable completion to retained delivery ownership", async () => {
+    const callerConversation = createConversationLocator({
+      tenantId: "default",
+      agentId: "parent-agent",
+      partition: { kind: "agent" },
+    });
+    if (!callerConversation.ok) throw callerConversation.error;
+    let releaseAdmission!: (value: Result<"queued" | "retained", Error>) => void;
+    const enqueue = vi.fn(() => new Promise<Result<"queued" | "retained", Error>>((resolve) => {
+      releaseAdmission = resolve;
+    }));
+    const batcher = {
+      enqueue,
+      flush: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => {
+        releaseAdmission(ok("retained"));
+      }),
+      pending: 0,
+      hasDelivered: vi.fn(() => false),
+      markDelivered: vi.fn(),
+    } as NonNullable<SubAgentRunnerDeps["batcher"]>;
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const runner = createSubAgentRunner(createDeps({
+      batcher,
+      sendToChannel,
+      executeAgent: vi.fn().mockResolvedValue({
+        response: "done",
+        tokensUsed: { total: 10 },
+        cost: { total: 0 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+      }),
+    }));
+    const runId = runner.spawn({
+      task: "retain a non-durable completion",
+      agentId: "worker",
+      rootRunId: "root-nondurable-backpressure",
+      workspacePolicyHash: POLICY_HASH,
+      callerType: "control-plane",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:parent-agent:telegram:chat-b:user_a",
+      callerConversation: callerConversation.value,
+      callerEndpoint: {
+        channelType: "telegram",
+        channelInstanceId: "telegram-primary",
+        conversationId: "chat-b",
+        conversationKind: "direct",
+      },
+      announceChannelType: "telegram",
+      announceChannelId: "chat-b",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(enqueue).toHaveBeenCalledOnce();
+
+    const shutdown = runner.shutdown();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(0);
+    await shutdown;
+
+    expect(batcher.shutdown).toHaveBeenCalledOnce();
+    expect(runner.getRunStatus(runId)?.status).toBe("completed");
+    expect(sendToChannel).not.toHaveBeenCalled();
+  });
+
   it("watchdog immediately closes durable resources when execution ignores abort", async () => {
     const store = createRecordingStore();
     const closeTrajectory = vi.fn(async () => undefined);

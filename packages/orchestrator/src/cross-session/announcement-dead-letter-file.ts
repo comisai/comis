@@ -254,6 +254,7 @@ export function createParentDecisionReservationStore(
 ): {
   reserve(
     entry: ParentDecisionReservation,
+    allowCapacityOverflow?: boolean,
   ): Promise<Result<{ created: boolean }, Error>>;
   lookup(
     idempotencyKey: string,
@@ -270,6 +271,7 @@ export function createParentDecisionReservationStore(
 } {
   async function reserve(
     entry: ParentDecisionReservation,
+    allowCapacityOverflow: boolean = false,
   ): Promise<Result<{ created: boolean }, Error>> {
     const load = await deps.load();
     if (!load.ok) return load;
@@ -300,7 +302,7 @@ export function createParentDecisionReservationStore(
       ...deps.getReservations(),
       { ...entry, recordType: "parent_decision_reservation" as const, id: id.value },
     ];
-    if (!deps.canPersistReservationCount(next.length)) {
+    if (!allowCapacityOverflow && !deps.canPersistReservationCount(next.length)) {
       return err(new Error("Dead-letter quarantine capacity exhausted"));
     }
     const persisted = await deps.persist(next);
@@ -392,6 +394,9 @@ export function createParentDecisionReservationStore(
       ...settledCompletionKeys,
     ]);
     const operationKeys = new Set(operations.map((operation) => operation.idempotencyKey));
+    const replacementReservationKeys = new Set(
+      [...expected].filter((key) => operationKeys.has(key)),
+    );
     const ownerCompletionKeys = new Set(
       [...completionKeys].filter((key) => !operationKeys.has(key)),
     );
@@ -418,7 +423,9 @@ export function createParentDecisionReservationStore(
     }
     if (expectedKeys.length > 0) {
       const expectedCompletionKeys = new Set(
-        expectedReservations.flatMap((reservation) => reservation.completionKeys),
+        expectedReservations
+          .flatMap((reservation) => reservation.completionKeys)
+          .filter((key) => !replacementReservationKeys.has(key)),
       );
       if (
         ownerCompletionKeys.size !== expectedCompletionKeys.size

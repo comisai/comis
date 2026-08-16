@@ -406,6 +406,39 @@ describe("deliverFailureNotification", () => {
     expect(sendToChannel).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["governed", "discarded"],
+    ["recoverable", "no_reply"],
+  ] as const)(
+    "treats a %s terminal %s failure notice as settled suppression",
+    async (boundaryKind, terminalDecision) => {
+      const sendToChannel = vi.fn().mockResolvedValue(true);
+      const deliveryDedup = createDeliveryDedup();
+      const terminalBoundary = vi.fn().mockResolvedValue(ok({
+        delivered: false as const,
+        terminalDecision,
+      }));
+      const boundary = boundaryKind === "governed"
+        ? { sendGovernedAnnouncement: terminalBoundary }
+        : { sendRecoverableAnnouncement: terminalBoundary };
+
+      await expect(deliverFailureNotification({
+        channelType: "telegram",
+        channelId: "chat-1",
+        task: "failed child task",
+        runtimeMs: 1_000,
+        runId: `run-terminal-${boundaryKind}`,
+        callerAgentId: "parent-agent",
+        callerSessionKey: "default:user_a:chat-1",
+        callerConversation: makeCallerConversation("parent-agent"),
+        destinationEndpoint: makeCallerEndpoint(),
+      }, { sendToChannel, deliveryDedup, ...boundary })).resolves.toBeUndefined();
+
+      expect(sendToChannel).not.toHaveBeenCalled();
+      expect(deliveryDedup.size).toBe(0);
+    },
+  );
+
   it("joins concurrent governed failure notices onto one operation", async () => {
     let settle!: (value: ReturnType<typeof ok>) => void;
     const sendGovernedAnnouncement = vi.fn().mockReturnValue(new Promise((resolve) => {

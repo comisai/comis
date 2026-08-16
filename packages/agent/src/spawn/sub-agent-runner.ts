@@ -4707,10 +4707,24 @@ function classifyCompletionErrorKind(
     sweepInterval.cancel();
     deps.eventBus.off("tool:executed", observeChildToolOutcome);
 
-    const activeSettled = await waitForTrackedPromises(
+    let activeSettled = await waitForTrackedPromises(
       activePromises,
       SHUTDOWN_ACTIVE_GRACE_MS,
     );
+    let batcherShutdown: Promise<void> | undefined;
+    if (
+      !activeSettled
+      && [...deliveryAdmissionRunIds].some((runId) =>
+        providerSettledRunIds.has(runId) && !durableAdmittedRunIds.has(runId))
+      && deps.batcher
+    ) {
+      batcherShutdown = deps.batcher.shutdown();
+      await batcherShutdown;
+      activeSettled = await waitForTrackedPromises(
+        activePromises,
+        SHUTDOWN_NOTICE_GRACE_MS,
+      );
+    }
     if (!activeSettled) {
       const remaining = new Set(activeRunIds);
       let suspendedRunCount = 0;
@@ -4852,7 +4866,7 @@ function classifyCompletionErrorKind(
     // The batcher closes its own admission and waits any reservation already
     // admitted before this final drain. Stopped runs are status-gated from
     // producing a late success when their underlying provider call returns.
-    await deps.batcher?.shutdown();
+    await (batcherShutdown ?? deps.batcher?.shutdown());
 
     // Batcher delivery may have persisted a dead letter, so drain it last.
     if (deps.deadLetterQueue) {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -58,5 +58,25 @@ describe("announcement terminal decisions", () => {
     await store.record(owner, "no_reply");
 
     await expect(store.record(owner, "discarded")).resolves.toMatchObject({ ok: false });
+  });
+
+  it("compacts the ledgerless decision index to its replay horizon", async () => {
+    const store = createAnnouncementTerminalDecisionStore(filePath, { maxRecords: 2 });
+    const second = { ...owner, runId: "run-2", idempotencyKey: "operation-2" };
+    const third = { ...owner, runId: "run-3", idempotencyKey: "operation-3" };
+
+    await store.record(owner, "delivered");
+    await store.record(second, "discarded");
+    await store.record(third, "no_reply");
+
+    await expect(store.lookup(owner)).resolves.toEqual({ ok: true, value: undefined });
+    await expect(store.lookup(second)).resolves.toEqual({ ok: true, value: "discarded" });
+    await expect(store.lookup(third)).resolves.toEqual({ ok: true, value: "no_reply" });
+    expect(await readdir(directory)).toEqual(["dead-letters.jsonl.terminal-decisions.jsonl"]);
+    const rows = (await readFile(
+      join(directory, "dead-letters.jsonl.terminal-decisions.jsonl"),
+      "utf8",
+    )).trim().split("\n");
+    expect(rows).toHaveLength(2);
   });
 });

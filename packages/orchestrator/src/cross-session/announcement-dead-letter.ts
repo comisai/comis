@@ -156,6 +156,7 @@ export function createAnnouncementDeadLetterQueue(
   async function admitWithBackpressure<T>(
     operation: () => Promise<Result<T, Error>>,
     signal?: AbortSignal,
+    retainOnCancellation?: () => Promise<Result<T, Error>>,
   ): Promise<Result<T, Error>> {
     while (true) {
       const version = capacityVersion;
@@ -164,7 +165,9 @@ export function createAnnouncementDeadLetterQueue(
         return result;
       }
       if (!await waitForCapacity(version, signal)) {
-        return err(new Error("Dead-letter admission cancelled"));
+        return retainOnCancellation
+          ? serializeStateChange(retainOnCancellation)
+          : err(new Error("Dead-letter admission cancelled"));
       }
     }
   }
@@ -2037,62 +2040,72 @@ export function createAnnouncementDeadLetterQueue(
     }
   }
 
+  async function reserveDecisionDurably(
+    entry: AnnouncementParentDecisionReservation,
+    allowCapacityOverflow: boolean = false,
+  ) {
+    const loaded = await loadFromDisk();
+    if (!loaded.ok) return loaded;
+    const terminalDecision = await lookupTerminalDecision(entry);
+    if (!terminalDecision.ok) return terminalDecision;
+    if (terminalDecision.value !== undefined) {
+      const reconciled = await terminalizeOwner(
+        entry,
+        terminalDecision.value,
+        entries,
+        decisionReservations,
+      );
+      if (!reconciled.ok) return reconciled;
+      return ok({ created: false, terminalDecision: terminalDecision.value });
+    }
+    const existing = await decisionStore.lookup(entry.idempotencyKey);
+    if (!existing.ok) return existing;
+    const prepared = await prepareReservedAttachment(
+      entry,
+      existing.value ? [existing.value] : [],
+    );
+    if (!prepared.ok) return prepared;
+    const reserved = await decisionStore.reserve(
+      prepared.value.entry as AnnouncementParentDecisionReservation,
+      allowCapacityOverflow,
+    );
+    if (
+      (!reserved.ok || !reserved.value.created)
+      && prepared.value.cleanup
+      && prepared.value.entry.attachment?.kind === "snapshot"
+    ) {
+      await cleanupUnreferencedSnapshots([{
+        attachment: prepared.value.entry.attachment,
+        cleanup: prepared.value.cleanup,
+      }]);
+    }
+    if (reserved.ok && reserved.value.created) {
+      emitObservationalEventSafely(
+        { eventBus, logger },
+        "announcement:dead_lettered",
+        {
+          runId: entry.runId,
+          sessionKey: entry.sessionKey,
+          channelType: entry.channelType,
+          reason: "parent_decision_reserved",
+          timestamp: systemNowMs(),
+        },
+      );
+    }
+    return reserved;
+  }
+
   return {
     enqueue: (entry, signal) => admitWithBackpressure(() => enqueueDurably(entry), signal),
     beginDeliveryAttempt: (entry, signal) =>
       admitWithBackpressure(() => beginDeliveryAttemptDurably(entry), signal),
     settleDeliveryAttempt: (idempotencyKey, outcome) =>
       serializeStateChange(() => settleDeliveryAttemptDurably(idempotencyKey, outcome)),
-    reserveDecision: (entry, signal) => admitWithBackpressure(async () => {
-      const loaded = await loadFromDisk();
-      if (!loaded.ok) return loaded;
-      const terminalDecision = await lookupTerminalDecision(entry);
-      if (!terminalDecision.ok) return terminalDecision;
-      if (terminalDecision.value !== undefined) {
-        const reconciled = await terminalizeOwner(
-          entry,
-          terminalDecision.value,
-          entries,
-          decisionReservations,
-        );
-        if (!reconciled.ok) return reconciled;
-        return ok({ created: false, terminalDecision: terminalDecision.value });
-      }
-      const existing = await decisionStore.lookup(entry.idempotencyKey);
-      if (!existing.ok) return existing;
-      const prepared = await prepareReservedAttachment(
-        entry,
-        existing.value ? [existing.value] : [],
-      );
-      if (!prepared.ok) return prepared;
-      const reserved = await decisionStore.reserve(
-        prepared.value.entry as AnnouncementParentDecisionReservation,
-      );
-      if (
-        (!reserved.ok || !reserved.value.created)
-        && prepared.value.cleanup
-        && prepared.value.entry.attachment?.kind === "snapshot"
-      ) {
-        await cleanupUnreferencedSnapshots([{
-          attachment: prepared.value.entry.attachment,
-          cleanup: prepared.value.cleanup,
-        }]);
-      }
-      if (reserved.ok && reserved.value.created) {
-        emitObservationalEventSafely(
-          { eventBus, logger },
-          "announcement:dead_lettered",
-          {
-            runId: entry.runId,
-            sessionKey: entry.sessionKey,
-            channelType: entry.channelType,
-            reason: "parent_decision_reserved",
-            timestamp: systemNowMs(),
-          },
-        );
-      }
-      return reserved;
-    }, signal),
+    reserveDecision: (entry, signal) => admitWithBackpressure(
+      () => reserveDecisionDurably(entry),
+      signal,
+      () => reserveDecisionDurably(entry, true),
+    ),
     lookupDecision: (idempotencyKey) =>
       serialize(() => decisionStore.lookup(idempotencyKey)),
     lookupDecisionTextChunks: (completionKey) =>

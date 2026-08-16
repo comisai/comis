@@ -1279,14 +1279,14 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       runId: "run-parent-a",
       partId: "attachment:0",
       attachment: snapshotAttachment("worker-a", "a.csv"),
-      completionKeys: ["completion-a"],
+      completionKeys: ["attachment-operation-a", "completion-a"],
     });
     const secondOperation = decisionInput({
       idempotencyKey: "attachment-operation-b",
       runId: "run-parent-b",
       partId: "attachment:0",
       attachment: snapshotAttachment("worker-b", "b.csv"),
-      completionKeys: ["completion-b"],
+      completionKeys: ["attachment-operation-b", "completion-b"],
     });
 
     await expect(queue.replaceDecisions([], [firstOperation, secondOperation]))
@@ -1294,10 +1294,44 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(queue.replaceDecisions(
       [firstOperation.idempotencyKey, secondOperation.idempotencyKey],
       [
-        { ...firstOperation, announcementText: "combined", completionKeys: ["completion-a", "completion-b"] },
-        { ...secondOperation, completionKeys: ["completion-a", "completion-b"] },
+        {
+          ...firstOperation,
+          announcementText: "combined",
+          completionKeys: ["attachment-operation-a", "completion-a", "completion-b"],
+        },
+        {
+          ...secondOperation,
+          completionKeys: ["attachment-operation-b", "completion-a", "completion-b"],
+        },
       ],
     )).resolves.toEqual(ok({ created: true }));
+    expect(queue.size()).toBe(2);
+  });
+
+  it("retains a cancelled capacity waiter as a durable producer reservation", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    await expect(queue.reserveDecision(decisionInput())).resolves.toEqual(
+      ok({ created: true }),
+    );
+    const controller = new AbortController();
+    const retained = queue.reserveDecision(decisionInput({
+      idempotencyKey: "shutdown-handoff",
+      runId: "run-shutdown-handoff",
+      completionKeys: ["shutdown-handoff"],
+    }), controller.signal);
+
+    await delay(10);
+    controller.abort();
+
+    await expect(retained).resolves.toEqual(ok({ created: true }));
+    await expect(queue.lookupDecision("shutdown-handoff")).resolves.toMatchObject({
+      ok: true,
+      value: { idempotencyKey: "shutdown-handoff" },
+    });
     expect(queue.size()).toBe(2);
   });
 

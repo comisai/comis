@@ -971,6 +971,7 @@ async function deliverFailureNotificationOnce(
 
   let delivered: boolean;
   let sendErr: Error | undefined;
+  let terminallySuppressed = false;
   if (deps.sendGovernedAnnouncement) {
     if (!announceKey) {
       return Promise.reject(new Error("Governed failure notification requires a completion key"));
@@ -990,6 +991,10 @@ async function deliverFailureNotificationOnce(
     delivered = boundary.ok
       && boundary.value.ok
       && isGovernedCompletionAnnouncementConfirmedDelivered(boundary.value.value);
+    terminallySuppressed = boundary.ok
+      && boundary.value.ok
+      && "terminalDecision" in boundary.value.value
+      && boundary.value.value.terminalDecision !== "delivered";
   } else if (deps.sendRecoverableAnnouncement) {
     if (!announceKey) {
       return Promise.reject(new Error("Recoverable failure notification requires a completion key"));
@@ -1009,6 +1014,10 @@ async function deliverFailureNotificationOnce(
     delivered = boundary.ok
       && boundary.value.ok
       && isRecoverableCompletionAnnouncementConfirmedDelivered(boundary.value.value);
+    terminallySuppressed = boundary.ok
+      && boundary.value.ok
+      && "terminalDecision" in boundary.value.value
+      && boundary.value.value.terminalDecision !== "delivered";
     if (!boundary.ok) {
       sendErr = boundary.error;
     } else if (!boundary.value.ok) {
@@ -1025,6 +1034,13 @@ async function deliverFailureNotificationOnce(
     ));
     delivered = boundary.ok && boundary.value;
     sendErr = boundary.ok ? new Error("sendToChannel returned false") : boundary.error;
+  }
+  if (terminallySuppressed) {
+    deps.logger?.debug(
+      { runId: params.runId },
+      "Failure notification suppressed by terminal delivery decision",
+    );
+    return;
   }
   if (!delivered) {
     sendErr ??= new Error("Governed failure notification was not confirmed");
