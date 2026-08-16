@@ -452,6 +452,33 @@ describe("managed MCP private metadata boundary", () => {
     },
   );
 
+  it("resolves destructive run commands for unknown managed-run records", async () => {
+    const unknownRecord = {
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationRef.value,
+      status: "unknown",
+    } as ManagedRunRecord;
+    const bridge = createManagedMcpPrivateMetadataBridge(makeDeps({
+      activeView: makeView("run_command", "destructive"),
+      getManagedRunByExternalRef: vi.fn(async () => ok(unknownRecord)),
+      getCapturedToolIds: () => ["mcp:fixture-service/send_command"],
+    }));
+
+    const request = await runWithContext(makeContext(), () => bridge.createRequestMeta(
+      makeCall("send_command", { run_handle: "external-run_a", command: "release" }),
+    ));
+
+    expect(request.ok).toBe(true);
+    if (!request.ok) return;
+    expect(request.value?.[MCP_CAPABILITY_CALL_CONTEXT_KEY]).toMatchObject({
+      managedRunId: "managed-run_a",
+    });
+  });
+
   it("rejects managed metadata from an unbound tool despite server-authored claims", async () => {
     const deps = makeDeps();
     const bridge = createManagedMcpPrivateMetadataBridge(deps);
