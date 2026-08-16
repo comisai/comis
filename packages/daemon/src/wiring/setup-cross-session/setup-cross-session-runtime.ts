@@ -38,10 +38,14 @@ import { err, ok } from "@comis/shared";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
-import { createRecoverableAnnouncementDelivery } from "./recoverable-announcement-delivery.js";
+import {
+  createReceiptAwareRecoverableAnnouncementDelivery,
+  createRecoverableAnnouncementDelivery,
+} from "./recoverable-announcement-delivery.js";
 import {
   cleanupCompletionAttachmentSnapshot,
   createCompletionAttachmentPreparer,
+  reconcileCompletionAttachmentSnapshots,
   verifyCompletionAttachmentSnapshot,
 } from "./completion-attachment.js";
 import { createAnnouncementFailureNoticeRenderer } from "./announcement-failure-locale.js";
@@ -407,6 +411,11 @@ export function setupCrossSession(deps: {
     // (the in-memory deliveredKeys set rebuilds empty on boot; the durable ledger
     // is the authoritative no-double-notify signal). Absent ⇒ at-least-once delivery.
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
+    receiptAwareSendToChannel: sendToChannelWithReceipt,
+    reconcileAttachments: (referencedPaths) => reconcileCompletionAttachmentSnapshots(
+      container.config.dataDir,
+      referencedPaths,
+    ),
     ...(deps.outwardLedger ? {
       governedSendToChannel: (
         channelType,
@@ -505,6 +514,14 @@ export function setupCrossSession(deps: {
         ...(deps.logger ? { logger: deps.logger } : {}),
       })
     : undefined;
+  const sendRecoverableAnnouncement = sendGovernedAnnouncement
+    ? undefined
+    : createReceiptAwareRecoverableAnnouncementDelivery({
+        adaptersByType,
+        deadLetterQueue,
+        send: sendToChannelWithReceipt,
+        ...(deps.logger ? { logger: deps.logger } : {}),
+      });
   const crossSessionSender = createCrossSessionSender({
     sessionStore,
     executeInSession,
@@ -513,6 +530,7 @@ export function setupCrossSession(deps: {
     config: container.config.security.agentToAgent,
     logger: deps.logger,
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
+    ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
   });
 
   // ONE bounded delivered-key store shared across every
@@ -528,6 +546,7 @@ export function setupCrossSession(deps: {
     eventBus: container.eventBus,
     announceToParent,
     sendToChannel,
+    sendToChannelWithReceipt,
     logger: deps.logger?.child({ submodule: "announcement-batcher" }),
     deadLetterQueue,
     deliveryDedup,

@@ -13,10 +13,12 @@ import {
 } from "@comis/core";
 import {
   createAnnouncementOperationDigests,
+  type AnnouncementPlatformSendOutcome,
   type CompletionAnnouncementSendRequest,
   type SendGovernedCompletionAnnouncement,
+  type SendRecoverableCompletionAnnouncement,
 } from "@comis/orchestrator";
-import { err, fromPromise, ok } from "@comis/shared";
+import { err, fromPromise, ok, type Result } from "@comis/shared";
 import { validateCompletionAnnouncementRoute } from "./completion-announcement-route.js";
 
 interface RecoverableAnnouncementDeliveryDeps {
@@ -27,6 +29,21 @@ interface RecoverableAnnouncementDeliveryDeps {
   >;
   resolveRootRunId?: RootRunIdResolver;
   send: SendGovernedCompletionAnnouncement;
+  logger?: Pick<ComisLogger, "error" | "warn">;
+}
+
+interface ReceiptAwareRecoverableAnnouncementDeliveryDeps {
+  adaptersByType: Map<string, { readonly channelId: string; channelType: string }>;
+  deadLetterQueue: Pick<
+    AnnouncementDeadLetterQueuePort,
+    "beginDeliveryAttempt" | "lookupDecision" | "reserveDecision" | "settleDeliveryAttempt"
+  >;
+  send: (
+    channelType: string,
+    channelId: string,
+    text: string,
+    options?: { threadId?: string; extra?: Record<string, unknown> },
+  ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   logger?: Pick<ComisLogger, "error" | "warn">;
 }
 
@@ -282,6 +299,113 @@ export function createRecoverableAnnouncementDelivery(
           hint: "restore dead-letter storage; the outward ledger still prevents an acknowledged operation from replaying",
         },
         "Completion announcement reservation could not be resolved",
+      );
+    }
+    return ok(outcome);
+  };
+}
+
+export function createReceiptAwareRecoverableAnnouncementDelivery(
+  deps: ReceiptAwareRecoverableAnnouncementDeliveryDeps,
+): SendRecoverableCompletionAnnouncement {
+  return async (request) => {
+    const route = validateCompletionAnnouncementRoute(
+      request,
+      deps.adaptersByType.get(request.channelType),
+    );
+    if (!route.valid || request.attachment || request.preparedAttachment) {
+      deps.logger?.error(
+        {
+          runId: request.runId,
+          errorKind: "validation" as const,
+          hint: "retry with the authenticated text destination or enable governed attachment delivery",
+        },
+        "Recoverable completion announcement route rejected",
+      );
+      return ok({ delivered: false, status: "rejected" });
+    }
+    const operationId = createStableAnnouncementOperationId(
+      request.agentId,
+      request.callerSessionKey,
+      request.runId,
+      request.partId,
+    );
+    const completionKeys = request.completionKeys && request.completionKeys.length > 0
+      ? [...new Set(request.completionKeys)]
+      : [operationId];
+    const reservation = reservationFor(
+      request,
+      route.callerConversation,
+      route.destinationEndpoint,
+      `announcement:${request.callerSessionKey}`,
+      operationId,
+      completionKeys,
+    );
+    const existingBoundary = await fromPromise(
+      deps.deadLetterQueue.lookupDecision(operationId),
+    );
+    if (!existingBoundary.ok) return err(existingBoundary.error);
+    if (!existingBoundary.value.ok) return existingBoundary.value;
+    const existing = existingBoundary.value.value;
+    if (existing && !reservationMatches(existing, reservation)) {
+      return err(new Error("Completion announcement reservation identity mismatch"));
+    }
+    if (!existing) {
+      const reservedBoundary = await fromPromise(
+        deps.deadLetterQueue.reserveDecision(reservation),
+      );
+      if (!reservedBoundary.ok) return err(reservedBoundary.error);
+      if (!reservedBoundary.value.ok) return reservedBoundary.value;
+      if (!reservedBoundary.value.value.created) {
+        return ok({ delivered: false, status: "unknown" });
+      }
+    }
+    const claimedBoundary = await fromPromise(
+      deps.deadLetterQueue.beginDeliveryAttempt({
+        announcementText: reservation.announcementText,
+        channelType: reservation.channelType,
+        channelId: reservation.channelId,
+        agentId: reservation.agentId,
+        runId: reservation.runId,
+        sessionKey: reservation.sessionKey,
+        failedAt: reservation.failedAt,
+        attemptCount: 0,
+        lastError: "outward_operation_unresolved",
+        idempotencyKey: reservation.idempotencyKey,
+        rootRunId: reservation.rootRunId,
+        deliveryAuthority: reservation.deliveryAuthority,
+        destinationEndpoint: reservation.destinationEndpoint,
+        completionKeys: reservation.completionKeys,
+        ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
+        ...(reservation.extra ? { extra: reservation.extra } : {}),
+        ...(reservation.partId ? { partId: reservation.partId } : {}),
+      }),
+    );
+    if (!claimedBoundary.ok) return err(claimedBoundary.error);
+    if (!claimedBoundary.value.ok) return claimedBoundary.value;
+    if (!claimedBoundary.value.value.claimed) {
+      return ok({ delivered: false, status: "unknown" });
+    }
+    const sendBoundary = await fromPromise(deps.send(
+      request.channelType,
+      request.channelId,
+      request.text,
+      request.options,
+    ));
+    const outcome = sendBoundary.ok && sendBoundary.value.ok
+      ? sendBoundary.value.value
+      : { delivered: false as const, status: "unknown" as const };
+    const settledBoundary = await fromPromise(
+      deps.deadLetterQueue.settleDeliveryAttempt(operationId, outcome.status),
+    );
+    if (!settledBoundary.ok || !settledBoundary.value.ok) {
+      deps.logger?.warn(
+        {
+          runId: request.runId,
+          errorKind: "resource" as const,
+          hint: "restore dead-letter storage before reviewing the retained completion announcement",
+        },
+        "Recoverable completion announcement outcome was not persisted",
       );
     }
     return ok(outcome);

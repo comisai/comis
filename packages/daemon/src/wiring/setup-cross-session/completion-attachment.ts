@@ -2,7 +2,7 @@
 /** Safe snapshot preparation for files produced by background agent runs. */
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath, unlink, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from "node:fs/promises";
 import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import {
   resolveWorkspaceDir,
@@ -336,4 +336,42 @@ export async function cleanupCompletionAttachmentSnapshot(
   const removed = await fromPromise(unlink(snapshotPath.value));
   if (!removed.ok && (removed.error as NodeJS.ErrnoException).code !== "ENOENT") return removed;
   return ok(undefined);
+}
+
+export async function reconcileCompletionAttachmentSnapshots(
+  dataDir: string,
+  referencedPaths: readonly string[],
+): Promise<Result<void, Error>> {
+  const snapshotDirResult = tryCatch(() => safePath(dataDir, SNAPSHOT_DIRECTORY));
+  if (!snapshotDirResult.ok) return snapshotDirResult;
+  const snapshotDir = resolve(snapshotDirResult.value);
+  const directoryStat = await fromPromise(lstat(snapshotDir));
+  if (!directoryStat.ok) {
+    return (directoryStat.error as NodeJS.ErrnoException).code === "ENOENT"
+      ? ok(undefined)
+      : directoryStat;
+  }
+  if (
+    !directoryStat.value.isDirectory()
+    || directoryStat.value.isSymbolicLink()
+    || (directoryStat.value.mode & 0o077) !== 0
+  ) {
+    return err(new Error("Completion attachment snapshot directory is not owner-only"));
+  }
+  const referenced = new Set(referencedPaths.map((path) => resolve(path)));
+  const listed = await fromPromise(readdir(snapshotDir, { withFileTypes: true }));
+  if (!listed.ok) return listed;
+  let removed = false;
+  for (const entry of listed.value) {
+    const candidate = tryCatch(() => safePath(snapshotDir, entry.name));
+    if (!candidate.ok) return candidate;
+    if (referenced.has(resolve(candidate.value))) continue;
+    if (!entry.isFile() && !entry.isSymbolicLink()) {
+      return err(new Error("Completion attachment snapshot directory contains an invalid entry"));
+    }
+    const unlinked = await fromPromise(unlink(candidate.value));
+    if (!unlinked.ok) return unlinked;
+    removed = true;
+  }
+  return removed ? syncDirectory(snapshotDir) : ok(undefined);
 }

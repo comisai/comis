@@ -3925,6 +3925,16 @@ describe("setupCrossSession durable-store injection", () => {
     expect(senderArgs.resolveRootRunId).toBeUndefined();
   });
 
+  it("threads durable receipt-aware recovery when the outward ledger is disabled", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+
+    setupCrossSession(createMinimalDeps());
+
+    const senderArgs = mockCreateCrossSessionSender.mock.calls[0][0];
+    expect(senderArgs.sendGovernedAnnouncement).toBeUndefined();
+    expect(senderArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
+  });
+
   it("records a completion operation before the first direct fallback and commits its platform receipt", async () => {
     const setupCrossSession = await getSetupCrossSession();
     const order: string[] = [];

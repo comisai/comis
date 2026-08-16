@@ -54,6 +54,8 @@ function makeDeps(overrides: Partial<AnnouncementBatcherDeps> = {}): Announcemen
 function makeDecisionQueue() {
   return {
     enqueue: vi.fn().mockResolvedValue(ok(undefined)),
+    beginDeliveryAttempt: vi.fn().mockResolvedValue(ok({ claimed: true })),
+    settleDeliveryAttempt: vi.fn().mockResolvedValue(ok(true)),
     reserveDecision: vi.fn().mockResolvedValue(ok({ created: true })),
     lookupDecision: vi.fn().mockResolvedValue(ok(undefined)),
     resolveDecision: vi.fn().mockResolvedValue(ok(true)),
@@ -1503,6 +1505,39 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
 
     expect(enqueue).toHaveBeenCalledOnce();
     expect(batcher.hasDelivered("K-false")).toBe(false);
+  });
+
+  it("quarantines a receipt-unknown ledgerless send without replay admission", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendToChannelWithReceipt = vi.fn(async () => ok({
+      delivered: false as const,
+      status: "unknown" as const,
+    }));
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
+      sendToChannelWithReceipt,
+      deadLetterQueue,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "ledgerless-unknown",
+      reservationRootRunId: undefined,
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: "ledgerless-unknown",
+      rootRunId: expect.stringContaining("announcement:"),
+    }));
+    expect(deadLetterQueue.beginDeliveryAttempt).toHaveBeenCalledOnce();
+    expect(deadLetterQueue.settleDeliveryAttempt).toHaveBeenCalledWith(
+      expect.any(String),
+      "unknown",
+    );
+    expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(batcher.hasDelivered("ledgerless-unknown")).toBe(false);
   });
 
   it("does not retry an opaque direct-send failure below DeliveryService", async () => {

@@ -7,6 +7,7 @@ import { ok } from "@comis/shared";
 import {
   createCompletionAttachmentPreparer,
   prepareCompletionAttachment,
+  reconcileCompletionAttachmentSnapshots,
   verifyCompletionAttachmentSnapshot,
 } from "./completion-attachment.js";
 
@@ -122,6 +123,35 @@ describe("completion attachment preparation", () => {
     const verified = await verifyCompletionAttachmentSnapshot(dataDir, prepared.value);
     expect(verified.ok).toBe(false);
     await prepared.value.cleanup();
+  });
+
+  it("removes crash-orphaned snapshots while preserving every durable reference", async () => {
+    const { dataDir, workspaceDir } = await makeLayout();
+    const firstSource = safePath(workspaceDir, "referenced.txt");
+    const secondSource = safePath(workspaceDir, "orphaned.txt");
+    await writeFile(firstSource, "referenced", { mode: 0o600 });
+    await writeFile(secondSource, "orphaned", { mode: 0o600 });
+    const referenced = await prepareCompletionAttachment({
+      dataDir,
+      workspaceDir,
+      sourcePath: firstSource,
+    });
+    const orphaned = await prepareCompletionAttachment({
+      dataDir,
+      workspaceDir,
+      sourcePath: secondSource,
+    });
+    expect(referenced.ok && orphaned.ok).toBe(true);
+    if (!referenced.ok || !orphaned.ok) return;
+
+    await expect(reconcileCompletionAttachmentSnapshots(
+      dataDir,
+      [referenced.value.path],
+    )).resolves.toEqual(ok(undefined));
+
+    await expect(readFile(referenced.value.path, "utf8")).resolves.toBe("referenced");
+    await expect(access(orphaned.value.path)).rejects.toThrow();
+    await referenced.value.cleanup();
   });
 
   it("rejects files outside the producing workspace and symbolic links", async () => {

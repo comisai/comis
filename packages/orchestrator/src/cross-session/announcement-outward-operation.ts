@@ -125,6 +125,10 @@ export type SendGovernedCompletionAnnouncement = (
   request: CompletionAnnouncementSendRequest,
 ) => Promise<Result<GovernedAnnouncementSendOutcome, Error>>;
 
+export type SendRecoverableCompletionAnnouncement = (
+  request: CompletionAnnouncementSendRequest,
+) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
+
 interface GovernedAnnouncementSenderDeps {
   ledger: OutwardSendLedgerPort;
   sendToPlatform: (

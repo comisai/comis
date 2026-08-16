@@ -231,6 +231,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     lastError?: string;
     identity?: AnnouncementOperationIdentity;
     failure?: GovernedAnnouncementFailure;
+    platformStatus?: "accepted" | "rejected" | "unknown";
   }> {
     if (deps.sendGovernedAnnouncement) {
       const boundary = await fromPromise(deps.sendGovernedAnnouncement({
@@ -263,6 +264,36 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         failure: outcome.failure,
         ...(outcome.identity ? { identity: outcome.identity } : {}),
       };
+    }
+
+    if (deps.sendToChannelWithReceipt) {
+      const boundary = await fromPromise(deps.sendToChannelWithReceipt(
+        item.announceChannelType,
+        item.announceChannelId,
+        text,
+        item.announceThreadId ? { threadId: item.announceThreadId } : undefined,
+      ));
+      if (!boundary.ok || !boundary.value.ok) {
+        return {
+          delivered: false,
+          lastError: "outward_operation_unresolved",
+          failure: "transport_uncertain",
+          platformStatus: "unknown",
+        };
+      }
+      const outcome = boundary.value.value;
+      return outcome.delivered
+        ? { delivered: true, platformStatus: "accepted" }
+        : {
+            delivered: false,
+            lastError: outcome.status === "rejected"
+              ? "transport_rejected"
+              : "outward_operation_unresolved",
+            failure: outcome.status === "rejected"
+              ? "transport_rejected"
+              : "transport_uncertain",
+            platformStatus: outcome.status,
+          };
     }
 
     const attemptDirect = async (): Promise<{
@@ -393,7 +424,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       };
     });
 
-    if (deps.sendGovernedAnnouncement) {
+    const usesDurableAttempt = deps.sendGovernedAnnouncement !== undefined
+      || deps.sendToChannelWithReceipt !== undefined;
+    if (usesDurableAttempt) {
       const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
       const admittedReservationKeys = items.flatMap((item) =>
         item.idempotencyKey
@@ -446,6 +479,47 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     } | undefined;
     let failedOperationIndex = -1;
     for (const [operationIndex, operation] of operations.entries()) {
+      if (!deps.sendGovernedAnnouncement && deps.sendToChannelWithReceipt) {
+        const reservationKey = operation.reservationKey;
+        const beginDeliveryAttempt = deps.deadLetterQueue?.beginDeliveryAttempt;
+        if (!reservationKey || !beginDeliveryAttempt) {
+          failure = { lastError: "operation_retained", failure: "operation_retained" };
+          failedOperationIndex = operationIndex;
+          break;
+        }
+        const completionKeys = operation.completionItems.flatMap((item) =>
+          item.idempotencyKey ? [item.idempotencyKey] : []);
+        const claimed = await fromPromise(beginDeliveryAttempt({
+          announcementText: operation.text,
+          channelType: operation.item.announceChannelType,
+          channelId: operation.item.announceChannelId,
+          agentId: operation.item.callerAgentId,
+          runId: operation.item.runId,
+          sessionKey: operation.item.callerSessionKey,
+          failedAt: systemNowMs(),
+          attemptCount: 0,
+          lastError: "outward_operation_unresolved",
+          idempotencyKey: reservationKey,
+          rootRunId: operation.item.reservationRootRunId
+            ?? `announcement:${operation.item.callerSessionKey}`,
+          completionKeys,
+          deliveryAuthority: {
+            tenantId: operation.item.callerConversation.conversationScope.tenantId,
+            agentId: operation.item.callerAgentId,
+            conversationRef: operation.item.callerConversation.conversationRef,
+          },
+          destinationEndpoint: operation.item.destinationEndpoint,
+          ...(operation.item.announceThreadId
+            ? { threadId: operation.item.announceThreadId }
+            : {}),
+          ...(operation.partId ? { partId: operation.partId } : {}),
+        }));
+        if (!claimed.ok || !claimed.value.ok || !claimed.value.value.claimed) {
+          failure = { lastError: "operation_retained", failure: "operation_retained" };
+          failedOperationIndex = operationIndex;
+          break;
+        }
+      }
       const outcome = await sendOnce(
         operation.item,
         operation.text,
@@ -455,12 +529,24 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         operation.partId,
       );
       if (!outcome.delivered) {
+        if (!deps.sendGovernedAnnouncement && operation.reservationKey) {
+          await deps.deadLetterQueue?.settleDeliveryAttempt(
+            operation.reservationKey,
+            outcome.platformStatus ?? "unknown",
+          );
+        }
         failure = outcome;
         failedOperationIndex = operationIndex;
         break;
       }
+      if (!deps.sendGovernedAnnouncement && operation.reservationKey) {
+        await deps.deadLetterQueue?.settleDeliveryAttempt(
+          operation.reservationKey,
+          "accepted",
+        );
+      }
       if (operation.reservationKey && !outcome.terminalDecision) {
-        await resolveDecisionKeys(
+        if (deps.sendGovernedAnnouncement) await resolveDecisionKeys(
           [operation.reservationKey],
           "receipt_committed",
           operation.item.runId,
@@ -468,7 +554,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       }
     }
     if (failure === undefined) {
-      if (!deps.sendGovernedAnnouncement) {
+      if (!usesDurableAttempt) {
         await resolveDecisions(items, "receipt_committed");
       }
       markItemsDelivered(items);
@@ -522,7 +608,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       },
       "Announcement final delivery was not confirmed",
     );
-    if (deps.sendGovernedAnnouncement || attachments.length > 0) return false;
+    if (usesDurableAttempt || attachments.length > 0) return false;
     if (!deps.deadLetterQueue) return false;
     const failedCompletionKeys = items.flatMap((item) =>
       item.idempotencyKey ? [item.idempotencyKey] : []);
@@ -535,7 +621,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       sessionKey: first.callerSessionKey,
       failedAt: systemNowMs(),
       attemptCount: 0,
-      ...(failure.lastError ? { lastError: failure.lastError } : {}),
+      lastError: failure.lastError ?? "outward_operation_unresolved",
       ...(first.announceThreadId ? { threadId: first.announceThreadId } : {}),
       idempotencyKey: first.idempotencyKey,
       ...(failedCompletionKeys.length > 0 ? { completionKeys: failedCompletionKeys } : {}),
@@ -804,8 +890,10 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     const reserveDecision = deps.deadLetterQueue?.reserveDecision;
     const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
     const hasAttachments = (params.attachments?.length ?? 0) > 0;
+    const usesDurableAttempt = deps.sendGovernedAnnouncement !== undefined
+      || deps.sendToChannelWithReceipt !== undefined;
     if (
-      deps.sendGovernedAnnouncement
+      usesDurableAttempt
       && (
         !idempotencyKey
         || (!hasAttachments && !reserveDecision)
@@ -834,9 +922,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       return err(new Error("Governed announcement ledger root unavailable"));
     }
     if (
-      deps.sendGovernedAnnouncement
+      usesDurableAttempt
       && idempotencyKey
-      && reservationRootRunId
     ) {
       const safeFallback = sanitizeForUser(params.announcementText);
       const fallbackDisclosure = enforceAnnouncementTerminalOutcome(
@@ -873,7 +960,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
               channelType: params.announceChannelType,
               channelId: params.announceChannelId,
               failedAt: systemNowMs(),
-              rootRunId: reservationRootRunId,
+              rootRunId: reservationRootRunId ?? `announcement:${params.callerSessionKey}`,
               deliveryAuthority: {
                 tenantId: params.callerConversation.conversationScope.tenantId,
                 agentId: params.callerAgentId,

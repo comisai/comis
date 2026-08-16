@@ -418,6 +418,27 @@ describe("createSqliteOutwardSendLedger — failure + uncertainty parking", () =
     expect(await ledger.hasUncertainty("another-run")).toEqual({ ok: true, value: false });
   });
 
+  it("clears root uncertainty after the parked operation receives a terminal decision", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    const step = await ledger.allocateStep("run-terminal", "operation-terminal");
+    if (!step.ok) throw step.error;
+    await ledger.begin(makeBegin({ rootRunId: "run-terminal", stepIndex: step.value }));
+    await ledger.markUnknown("run-terminal", step.value);
+    await ledger.parkUncertain("run-terminal", step.value);
+
+    expect(await ledger.hasUncertainty("run-terminal")).toEqual({ ok: true, value: true });
+    expect(await ledger.recordTerminalDecision(
+      "run-terminal",
+      "operation-terminal",
+      "delivered",
+    )).toEqual({ ok: true, value: undefined });
+    expect(await ledger.hasUncertainty("run-terminal")).toEqual({ ok: true, value: false });
+    expect(await ledger.lookup("run-terminal", step.value)).toMatchObject({
+      ok: true,
+      value: { state: "unresolved" },
+    });
+  });
+
   it("rejects an empty platform message id instead of fabricating delivery evidence", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());

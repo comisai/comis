@@ -12,6 +12,7 @@ import type { AnnouncementTerminalOutcome, DeliveryDedup } from "@comis/agent";
 import type { Result } from "@comis/shared";
 import type { ChannelType } from "./announcement-dead-letter.js";
 import type {
+  AnnouncementPlatformSendOutcome,
   CompletionAttachmentRef,
   SendGovernedCompletionAnnouncement,
 } from "./announcement-outward-operation.js";
@@ -71,10 +72,17 @@ export interface AnnouncementBatcherDeps {
   /** Durable decision reservation and failed-delivery quarantine. */
   deadLetterQueue?: Pick<
     AnnouncementDeadLetterQueuePort,
-    "enqueue" | "reserveDecision" | "resolveDecision" | "replaceDecisions"
+    "enqueue" | "beginDeliveryAttempt" | "settleDeliveryAttempt"
+      | "reserveDecision" | "resolveDecision" | "replaceDecisions"
   >;
   /** Durable single-attempt sender for the irreversible final delivery. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendToChannelWithReceipt?: (
+    channelType: string,
+    channelId: string,
+    text: string,
+    options?: { threadId?: string; extra?: Record<string, unknown> },
+  ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   /** Shared bounded delivered-key store across every completion-delivery surface. */
   deliveryDedup?: DeliveryDedup;
 }

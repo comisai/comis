@@ -6,7 +6,10 @@ import {
 } from "@comis/core";
 import { err, ok } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
-import { createRecoverableAnnouncementDelivery } from "./recoverable-announcement-delivery.js";
+import {
+  createReceiptAwareRecoverableAnnouncementDelivery,
+  createRecoverableAnnouncementDelivery,
+} from "./recoverable-announcement-delivery.js";
 
 function makeRequest() {
   const conversation = createConversationLocator({
@@ -187,5 +190,48 @@ describe("recoverable completion announcement delivery", () => {
     expect(result).toEqual(ok({ delivered: false, terminalDecision: "discarded" }));
     expect(send).toHaveBeenCalledOnce();
     expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
+  });
+});
+
+describe("receipt-aware completion announcement delivery", () => {
+  it("persists ambiguity before sending and settles the closed platform outcome", async () => {
+    const order: string[] = [];
+    const deadLetterQueue = {
+      lookupDecision: vi.fn(async () => ok(undefined)),
+      reserveDecision: vi.fn(async () => {
+        order.push("reserve");
+        return ok({ created: true });
+      }),
+      beginDeliveryAttempt: vi.fn(async () => {
+        order.push("begin");
+        return ok({ claimed: true });
+      }),
+      settleDeliveryAttempt: vi.fn(async (_key: string, outcome: string) => {
+        order.push(`settle:${outcome}`);
+        return ok(true);
+      }),
+    };
+    const send = vi.fn(async () => {
+      order.push("send");
+      return ok({ delivered: false as const, status: "unknown" as const });
+    });
+    const delivery = createReceiptAwareRecoverableAnnouncementDelivery({
+      adaptersByType: new Map([
+        ["telegram", { channelId: "telegram-primary", channelType: "telegram" }],
+      ]),
+      deadLetterQueue,
+      send,
+    });
+
+    const result = await delivery(makeRequest());
+
+    expect(result).toEqual(ok({ delivered: false, status: "unknown" }));
+    expect(order).toEqual(["reserve", "begin", "send", "settle:unknown"]);
+    expect(deadLetterQueue.beginDeliveryAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: expect.any(String),
+        lastError: "outward_operation_unresolved",
+      }),
+    );
   });
 });

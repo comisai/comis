@@ -271,9 +271,28 @@ export function createSqliteOutwardSendLedger(
   `);
 
   const hasUncertaintyStmt = db.prepare(`
-    SELECT COUNT(*) AS count FROM outward_send_ledger
-    WHERE root_run_id = ?
-      AND state IN ('send_attempt_started','unknown_after_send','unresolved')
+    SELECT COUNT(*) AS count
+    FROM outward_send_ledger AS ledger
+    LEFT JOIN outward_send_operations AS operation
+      ON operation.root_run_id = ledger.root_run_id
+      AND operation.step_index = ledger.step_index
+    WHERE ledger.root_run_id = ?
+      AND ledger.state IN ('send_attempt_started','unknown_after_send','unresolved')
+      AND (
+        operation.operation_id IS NULL
+        OR (
+          NOT EXISTS (
+            SELECT 1 FROM outward_send_operator_decisions AS operator_decision
+            WHERE operator_decision.root_run_id = operation.root_run_id
+              AND operator_decision.operation_id = operation.operation_id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM outward_send_no_reply_decisions AS no_reply_decision
+            WHERE no_reply_decision.root_run_id = operation.root_run_id
+              AND no_reply_decision.operation_id = operation.operation_id
+          )
+        )
+      )
   `);
 
   // The per-row recovery scan. ONLY the still-in-flight rows; the partial

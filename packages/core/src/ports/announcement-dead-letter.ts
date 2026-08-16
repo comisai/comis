@@ -148,6 +148,13 @@ export interface AnnouncementDeadLetterStatus {
  */
 export interface AnnouncementDeadLetterQueuePort {
   enqueue(entry: AnnouncementDeadLetterEntryInput): Promise<Result<void, Error>>;
+  beginDeliveryAttempt(
+    entry: AnnouncementDeadLetterEntryInput,
+  ): Promise<Result<{ claimed: boolean }, Error>>;
+  settleDeliveryAttempt(
+    idempotencyKey: string,
+    outcome: "accepted" | "rejected" | "unknown",
+  ): Promise<Result<boolean, Error>>;
   reserveDecision(
     entry: AnnouncementParentDecisionReservation,
   ): Promise<Result<{ created: boolean }, Error>>;

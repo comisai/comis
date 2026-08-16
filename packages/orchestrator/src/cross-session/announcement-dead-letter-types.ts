@@ -73,12 +73,21 @@ export interface AnnouncementDeadLetterQueueOptions {
     options?: RecoveryDeliveryOptions,
     attachment?: GovernedAnnouncementAttachment,
   ) => Promise<import("@comis/shared").Result<AnnouncementPlatformSendOutcome, Error>>;
+  receiptAwareSendToChannel?: (
+    type: ChannelType,
+    id: string,
+    text: string,
+    options?: RecoveryDeliveryOptions,
+  ) => Promise<import("@comis/shared").Result<AnnouncementPlatformSendOutcome, Error>>;
   /** Rebuild a validated immutable snapshot before attachment recovery. */
   prepareAttachment?: (
     attachment: AnnouncementDeadLetterAttachmentSource,
   ) => Promise<import("@comis/shared").Result<PreparedRecoveryAttachment, Error>>;
   cleanupAttachment?: (
     attachment: AnnouncementDeadLetterAttachmentSnapshot,
+  ) => Promise<import("@comis/shared").Result<void, Error>>;
+  reconcileAttachments?: (
+    referencedPaths: readonly string[],
   ) => Promise<import("@comis/shared").Result<void, Error>>;
   /** Materialize the owning session observer before off-turn recovery events fire. */
   ensureSessionObservation?: (input: {

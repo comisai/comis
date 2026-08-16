@@ -201,6 +201,25 @@ describe("AnnouncementDeadLetterQueue", () => {
     expect(typeof parsed.lastAttemptAt).toBe("number");
   });
 
+  it("reconciles attachment storage against the loaded durable references", async () => {
+    const attachment = snapshotAttachment("agent-a", "report.csv");
+    await writeFile(filePath, `${JSON.stringify({
+      ...makeEntry({ runId: "run-reconcile-snapshots", attachment }),
+      id: "entry-reconcile-snapshots",
+      lastAttemptAt: 0,
+    })}\n`, "utf8");
+    const reconcileAttachments = vi.fn(async () => ok(undefined));
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      reconcileAttachments,
+    });
+
+    await expect(dlq.durableStatus()).resolves.toMatchObject({ ok: true });
+
+    expect(reconcileAttachments).toHaveBeenCalledWith([attachment.path]);
+  });
+
   it("compares two ungoverned recovery rows without inventing route authority", () => {
     const existing = makeFullEntry({
       runId: "run-ungoverned-identity",
@@ -299,16 +318,24 @@ describe("AnnouncementDeadLetterQueue", () => {
       filePath,
       eventBus,
       maxEntries: 3,
+      retryIntervalMs: 0,
       logger,
     });
 
     await dlq.enqueue(makeEntry({ runId: "run-1" }));
     await dlq.enqueue(makeEntry({ runId: "run-2" }));
     await dlq.enqueue(makeEntry({ runId: "run-3" }));
-    const overflow = await dlq.enqueue(makeEntry({ runId: "run-4" }));
+    let settled = false;
+    const overflow = dlq.enqueue(makeEntry({ runId: "run-4" })).finally(() => {
+      settled = true;
+    });
+    await delay(10);
 
-    expect(overflow).toMatchObject({ ok: false });
+    expect(settled).toBe(false);
     expect(dlq.size()).toBe(3);
+    await dlq.drain(vi.fn(async () => true));
+    await expect(overflow).resolves.toEqual(ok(undefined));
+    expect(dlq.size()).toBe(1);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         entryCount: 3,
@@ -317,6 +344,35 @@ describe("AnnouncementDeadLetterQueue", () => {
       }),
       "Dead-letter quarantine capacity exhausted",
     );
+  });
+
+  it("parks a receipt-unknown retry before it can be replayed", async () => {
+    const receiptAwareSendToChannel = vi.fn(async () => ok({
+      delivered: false as const,
+      status: "unknown" as const,
+    }));
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      receiptAwareSendToChannel,
+    });
+    await dlq.enqueue(makeEntry({
+      runId: "run-unknown-receipt",
+      idempotencyKey: "unknown-receipt",
+      lastError: "transport_rejected",
+    }));
+
+    await dlq.drain(vi.fn(async () => true));
+    await dlq.drain(vi.fn(async () => true));
+
+    expect(receiptAwareSendToChannel).toHaveBeenCalledOnce();
+    expect(await listQuarantined(dlq)).toEqual([
+      expect.objectContaining({
+        runId: "run-unknown-receipt",
+        lastError: "outward_operation_unresolved",
+      }),
+    ]);
   });
 
   it("suppresses readmission after a matching quarantine row is discarded", async () => {
@@ -550,7 +606,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     const content = await readFile(filePath, "utf-8");
     const persisted = JSON.parse(content.trim()) as DeadLetterEntry;
     expect(persisted.attemptCount).toBe(2);
-    expect(persisted.lastError).toBe("sendToChannel rejected");
+    expect(persisted.lastError).toBe("outward_operation_unresolved");
   });
 
   it("drain uses atomic write for remaining entries", async () => {
@@ -1132,21 +1188,39 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       ok({ created: true }),
     );
 
-    await expect(queue.reserveDecision(decisionInput({
+    let secondSettled = false;
+    const secondReservation = queue.reserveDecision(decisionInput({
       idempotencyKey: "second-completion",
       runId: "run-parent-2",
       completionKeys: ["second-completion"],
-    }))).resolves.toMatchObject({ ok: false });
-    await expect(queue.replaceDecisions([completionKey], [
-      decisionInput({ idempotencyKey: "operation-summary", completionKeys: [completionKey] }),
+    })).finally(() => {
+      secondSettled = true;
+    });
+    await delay(10);
+    expect(secondSettled).toBe(false);
+    await expect(queue.lookupDecision(completionKey)).resolves.toEqual(ok(decisionInput()));
+
+    await expect(queue.resolveDecision(completionKey, "no_reply"))
+      .resolves.toEqual(ok(true));
+    await expect(secondReservation).resolves.toEqual(ok({ created: true }));
+    await expect(queue.replaceDecisions(["second-completion"], [
+      decisionInput({
+        idempotencyKey: "operation-summary",
+        runId: "run-parent-2",
+        completionKeys: ["second-completion"],
+      }),
       decisionInput({
         idempotencyKey: "operation-attachment",
+        runId: "run-parent-2",
         partId: "attachment:0",
-        completionKeys: [completionKey],
+        completionKeys: ["second-completion"],
       }),
     ])).resolves.toMatchObject({ ok: false });
 
-    await expect(queue.lookupDecision(completionKey)).resolves.toEqual(ok(decisionInput()));
+    await expect(queue.lookupDecision("second-completion")).resolves.toMatchObject({
+      ok: true,
+      value: expect.objectContaining({ idempotencyKey: "second-completion" }),
+    });
     expect(queue.size()).toBe(1);
   });
 
@@ -1619,7 +1693,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({ created: false }));
   });
 
-  it("retains one pending decision when delivery failure lacks governed identity", async () => {
+  it("rejects a mismatched ledgerless operation without replacing its owner", async () => {
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
@@ -1633,7 +1707,12 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       channelId: "chat-1",
       threadId: "topic-1",
       lastError: "operation_validation_blocked",
-    }))).resolves.toEqual(ok(undefined));
+    }))).resolves.toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        message: "Announcement operation reservation identity mismatch",
+      }),
+    });
 
     expect(queue.size()).toBe(1);
     await expect(
@@ -2711,9 +2790,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       outwardLedger: ledger,
     });
 
-    const admissions = [];
-    for (const entry of [entryA, entryB]) {
-      admissions.push(await dlq.enqueue({
+    const admissionInput = (entry: GovernedDeadLetterEntry) => ({
         announcementText: entry.announcementText,
         channelType: entry.channelType,
         channelId: entry.channelId,
@@ -2726,10 +2803,14 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
         stepIndex: entry.stepIndex,
         deliveryAuthority: entry.deliveryAuthority,
         destinationEndpoint: entry.destinationEndpoint,
-      }));
-    }
-    expect(admissions[0]).toEqual(ok(undefined));
-    expect(admissions[1]).toMatchObject({ ok: false });
+      });
+    expect(await dlq.enqueue(admissionInput(entryA))).toEqual(ok(undefined));
+    let overflowSettled = false;
+    const overflow = dlq.enqueue(admissionInput(entryB)).finally(() => {
+      overflowSettled = true;
+    });
+    await delay(10);
+    expect(overflowSettled).toBe(false);
     expect(dlq.size()).toBe(1);
 
     const sendToChannel = vi.fn().mockResolvedValue(true);
@@ -2737,8 +2818,10 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
 
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(dlq.size()).toBe(1);
-    const persisted = (await readFile(filePath, "utf-8")).trim().split("\n");
-    expect(persisted).toHaveLength(1);
+    const firstId = (await listQuarantined(dlq))[0]!.id;
+    expect(await dlq.release(firstId, "discarded")).toEqual(ok(true));
+    await expect(overflow).resolves.toEqual(ok(undefined));
+    expect((await readFile(filePath, "utf-8")).trim().split("\n")).toHaveLength(1);
   });
 
   it("no ledger wired → drain delivers normally (pass-through, unchanged behavior)", async () => {

@@ -58,7 +58,9 @@ export function classifyQuarantined(input: {
 }): AnnouncementQuarantineClassification {
   const actionableEntries = input.entries.filter((entry) => input.governed
     ? entry.lastError !== undefined && GOVERNED_OPERATOR_ERRORS.has(entry.lastError)
-    : entry.attemptCount >= input.maxRetries || input.now - entry.failedAt >= input.maxAgeMs);
+    : entry.lastError === "outward_operation_unresolved"
+      || entry.attemptCount >= input.maxRetries
+      || input.now - entry.failedAt >= input.maxAgeMs);
   const rows = projectQuarantined(actionableEntries, [], input.invalidRecords);
   return {
     actionableIds: new Set(rows.map((row) => row.id)),

@@ -80,8 +80,10 @@ export function createAnnouncementDeadLetterQueue(
     logger,
     outwardLedger,
     governedSendToChannel,
+    receiptAwareSendToChannel,
     prepareAttachment,
     cleanupAttachment,
+    reconcileAttachments,
     fileOperations,
   } = opts;
   let entries: DeadLetterEntry[] = [];
@@ -91,10 +93,56 @@ export function createAnnouncementDeadLetterQueue(
   const terminalDecisionStore = createAnnouncementTerminalDecisionStore(filePath);
   let loaded = false;
   let operationTail: Promise<void> = Promise.resolve();
+  let capacityVersion = 0;
+  const capacityWaiters = new Set<() => void>();
   function serialize<T>(operation: () => Promise<T>): Promise<T> {
     const result = operationTail.then(operation, operation);
     operationTail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  function retainedCount(): number {
+    return entries.length + decisionReservations.length + invalidRecords.length;
+  }
+
+  function signalCapacityChange(): void {
+    capacityVersion++;
+    for (const resolve of capacityWaiters) resolve();
+    capacityWaiters.clear();
+  }
+
+  async function serializeStateChange<T>(operation: () => Promise<T>): Promise<T> {
+    return serialize(async () => {
+      const before = retainedCount();
+      const result = await operation();
+      if (retainedCount() < before) signalCapacityChange();
+      return result;
+    });
+  }
+
+  function waitForCapacity(version: number): Promise<void> {
+    if (capacityVersion !== version) return Promise.resolve();
+    return new Promise((resolve) => {
+      const wake = (): void => resolve();
+      capacityWaiters.add(wake);
+      if (capacityVersion !== version) {
+        capacityWaiters.delete(wake);
+        resolve();
+      }
+    });
+  }
+
+  async function admitWithBackpressure<T>(
+    operation: () => Promise<Result<T, Error>>,
+  ): Promise<Result<T, Error>> {
+    while (true) {
+      const version = capacityVersion;
+      const result = await serializeStateChange(operation);
+      if (result.ok || result.error.message !== "Dead-letter quarantine capacity exhausted") {
+        return result;
+      }
+      await waitForCapacity(version);
+    }
   }
 
   function emitAdmission(entry: DeadLetterEntry): void {
@@ -140,6 +188,25 @@ export function createAnnouncementDeadLetterQueue(
         && !isInvalidDeadLetterRecord(entry));
       decisionReservations = read.value.entries.filter(isParentDecisionReservation);
       invalidRecords = read.value.entries.filter(isInvalidDeadLetterRecord);
+      if (reconcileAttachments) {
+        const referencedPaths = [
+          ...entries.flatMap((entry) =>
+            entry.attachment?.kind === "snapshot" ? [entry.attachment.path] : []),
+          ...decisionReservations.flatMap((reservation) =>
+            reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
+        ];
+        const reconciled = await fromPromise(reconcileAttachments(referencedPaths));
+        if (!reconciled.ok || !reconciled.value.ok) {
+          logger?.error(
+            {
+              errorKind: "resource" as const,
+              hint: "restore completion-attachment storage before accepting retained announcements",
+            },
+            "Completion attachment snapshots could not be reconciled",
+          );
+          return reconciled.ok ? reconciled.value : reconciled;
+        }
+      }
       loaded = true;
       logger?.debug(
         { entryCount: entries.length + decisionReservations.length + invalidRecords.length },
@@ -985,7 +1052,7 @@ export function createAnnouncementDeadLetterQueue(
       && entry.stepIndex !== undefined
       && Number.isSafeInteger(entry.stepIndex)
       && entry.stepIndex >= 0;
-    if (reservation && !governedIdentityComplete) return ok(undefined);
+    if (reservation && outwardLedger !== undefined && !governedIdentityComplete) return ok(undefined);
     if (reservation) {
       const same = isSameAnnouncementRecovery(
         {
@@ -1039,6 +1106,100 @@ export function createAnnouncementDeadLetterQueue(
     decisionReservations = nextReservations;
     emitAdmission(fullEntry);
     return ok(undefined);
+  }
+
+  async function beginDeliveryAttemptDurably(
+    entry: AnnouncementDeadLetterEntryInput,
+  ): Promise<Result<{ claimed: boolean }, Error>> {
+    const load = await loadFromDisk();
+    if (!load.ok) return load;
+    if (!entry.idempotencyKey) {
+      return err(new Error("Dead-letter delivery attempt requires an idempotency key"));
+    }
+    const terminalDecision = await lookupTerminalDecision(entry);
+    if (!terminalDecision.ok) return terminalDecision;
+    if (terminalDecision.value !== undefined) return ok({ claimed: false });
+    if (entry.attachment?.kind === "source") {
+      return err(new Error("Dead-letter attachment must be snapshotted before delivery"));
+    }
+    const existing = entries.find((candidate) =>
+      candidate.idempotencyKey === entry.idempotencyKey);
+    if (existing) {
+      const same = isSameAnnouncementRecovery(existing, entry);
+      if (!same.ok) return same;
+      return same.value
+        ? ok({ claimed: false })
+        : err(new Error("Dead-letter recovery key identity mismatch"));
+    }
+    const reservation = decisionReservations.find((candidate) =>
+      candidate.idempotencyKey === entry.idempotencyKey);
+    if (reservation) {
+      const same = isSameAnnouncementRecovery(
+        { ...entry, ...reservation, lastAttemptAt: 0 },
+        entry,
+      );
+      if (!same.ok) return same;
+      if (!same.value) {
+        return err(new Error("Announcement operation reservation identity mismatch"));
+      }
+    }
+    const id = tryCatch(() => randomUUID());
+    if (!id.ok) return id;
+    const now = systemNowMs();
+    const claimed: DeadLetterEntry = {
+      ...entry,
+      id: id.value,
+      attemptCount: entry.attemptCount + 1,
+      lastAttemptAt: now,
+      lastError: "outward_operation_unresolved",
+    };
+    const nextEntries = [...entries, claimed];
+    const nextReservations = reservation
+      ? decisionReservations.filter((candidate) => candidate.id !== reservation.id)
+      : decisionReservations;
+    if (!canPersistCounts(nextEntries.length, nextReservations.length)) {
+      return err(new Error("Dead-letter quarantine capacity exhausted"));
+    }
+    const persisted = await persist(nextEntries, nextReservations);
+    if (!persisted.ok) return persisted;
+    entries = nextEntries;
+    decisionReservations = nextReservations;
+    emitAdmission(claimed);
+    return ok({ claimed: true });
+  }
+
+  async function settleDeliveryAttemptDurably(
+    idempotencyKey: string,
+    outcome: "accepted" | "rejected" | "unknown",
+  ): Promise<Result<boolean, Error>> {
+    const load = await loadFromDisk();
+    if (!load.ok) return load;
+    const entry = entries.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+    if (!entry) return ok(false);
+    if (outcome === "accepted") {
+      const terminalized = await recordTerminalDecision(entry, "delivered");
+      if (!terminalized.ok) return terminalized;
+    }
+    const nextEntries = outcome === "accepted"
+      ? entries.filter((candidate) => candidate.id !== entry.id)
+      : entries.map((candidate) => candidate.id === entry.id
+        ? {
+            ...candidate,
+            lastError: outcome === "rejected"
+              ? "transport_rejected"
+              : "outward_operation_unresolved",
+          }
+        : candidate);
+    const persisted = await persist(nextEntries);
+    if (!persisted.ok) return persisted;
+    entries = nextEntries;
+    if (outcome === "accepted") {
+      emittedAdmissionKeys.delete(announcementRecoveryKey(entry));
+      if (entry.attachment?.kind === "snapshot") {
+        await cleanupUnreferencedSnapshots([{ attachment: entry.attachment }]);
+      }
+    }
+    return ok(true);
   }
 
   async function recordDecisionTextChunksDurably(
@@ -1243,6 +1404,9 @@ export function createAnnouncementDeadLetterQueue(
         });
         continue;
       }
+      if (!outwardLedger && entry.lastError === "outward_operation_unresolved") {
+        continue;
+      }
       if (!outwardLedger && entry.attemptCount >= maxRetries) {
         if (entry.lastError !== "attempt_limit_reached") {
           logger?.warn(
@@ -1283,31 +1447,51 @@ export function createAnnouncementDeadLetterQueue(
         }
         continue;
       }
-      const boundary = await fromPromise(sendToChannel(
-        entry.channelType,
-        entry.channelId,
-        entry.announcementText,
-        entry.threadId || entry.extra || entry.deliveryAuthority || entry.destinationEndpoint
-          ? {
-              ...(entry.threadId ? { threadId: entry.threadId } : {}),
-              ...(entry.extra ? { extra: entry.extra } : {}),
-              ...(entry.deliveryAuthority ? { authority: entry.deliveryAuthority } : {}),
-              ...(entry.destinationEndpoint ? { destinationEndpoint: entry.destinationEndpoint } : {}),
-            }
-          : undefined,
-      ));
-      if (boundary.ok && boundary.value) {
+      entry.attemptCount++;
+      entry.lastAttemptAt = systemNowMs();
+      entry.lastError = "outward_operation_unresolved";
+      const preAttemptEntries = workingEntries.filter((candidate) =>
+        !deliveredIds.has(candidate.id));
+      const preAttemptPersisted = await persist(preAttemptEntries);
+      if (!preAttemptPersisted.ok) return;
+      entries = [...preAttemptEntries];
+      const options = entry.threadId || entry.extra || entry.deliveryAuthority || entry.destinationEndpoint
+        ? {
+            ...(entry.threadId ? { threadId: entry.threadId } : {}),
+            ...(entry.extra ? { extra: entry.extra } : {}),
+            ...(entry.deliveryAuthority ? { authority: entry.deliveryAuthority } : {}),
+            ...(entry.destinationEndpoint ? { destinationEndpoint: entry.destinationEndpoint } : {}),
+          }
+        : undefined;
+      const receiptBoundary = receiptAwareSendToChannel
+        ? await fromPromise(receiptAwareSendToChannel(
+            entry.channelType,
+            entry.channelId,
+            entry.announcementText,
+            options,
+          ))
+        : undefined;
+      const booleanBoundary = receiptBoundary === undefined
+        ? await fromPromise(sendToChannel(
+            entry.channelType,
+            entry.channelId,
+            entry.announcementText,
+            options,
+          ))
+        : undefined;
+      const deliveryStatus = receiptBoundary?.ok && receiptBoundary.value.ok
+        ? receiptBoundary.value.value.status
+        : booleanBoundary?.ok && booleanBoundary.value
+          ? "accepted" as const
+          : "unknown" as const;
+      if (deliveryStatus === "accepted") {
         deliveredIds.add(entry.id);
         deliveredEntries.push({
-          entry: { ...entry, attemptCount: entry.attemptCount + 1 },
+          entry: { ...entry },
           outcome: "untracked_delivery", durationMs: systemNowMs() - deliveryStartedAt,
         });
-      } else {
-        entry.attemptCount++;
-        entry.lastAttemptAt = systemNowMs();
-        entry.lastError = boundary.ok
-          ? "sendToChannel returned false"
-          : "sendToChannel rejected";
+      } else if (deliveryStatus === "rejected") {
+        entry.lastError = "transport_rejected";
       }
     }
     const nextEntries = workingEntries.filter((entry) => !deliveredIds.has(entry.id));
@@ -1379,8 +1563,12 @@ export function createAnnouncementDeadLetterQueue(
   }
 
   return {
-    enqueue: (entry) => serialize(() => enqueueDurably(entry)),
-    reserveDecision: (entry) => serialize(async () => {
+    enqueue: (entry) => admitWithBackpressure(() => enqueueDurably(entry)),
+    beginDeliveryAttempt: (entry) =>
+      admitWithBackpressure(() => beginDeliveryAttemptDurably(entry)),
+    settleDeliveryAttempt: (idempotencyKey, outcome) =>
+      serializeStateChange(() => settleDeliveryAttemptDurably(idempotencyKey, outcome)),
+    reserveDecision: (entry) => admitWithBackpressure(async () => {
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
       const terminalDecision = await lookupTerminalDecision(entry);
@@ -1424,11 +1612,11 @@ export function createAnnouncementDeadLetterQueue(
     lookupDecision: (idempotencyKey) =>
       serialize(() => decisionStore.lookup(idempotencyKey)),
     resolveDecision: (idempotencyKey, outcome) =>
-      serialize(() => resolveDecisionDurably(idempotencyKey, outcome)),
+      serializeStateChange(() => resolveDecisionDurably(idempotencyKey, outcome)),
     recordDecisionTextChunks: (idempotencyKey, chunks) =>
       serialize(() => recordDecisionTextChunksDurably(idempotencyKey, chunks)),
     replaceDecisions: (expectedKeys, operations) =>
-      serialize(async () => {
+      admitWithBackpressure(async () => {
         const loaded = await loadFromDisk();
         if (!loaded.ok) return loaded;
         const nonterminalOperations: AnnouncementParentDecisionReservation[] = [];
@@ -1446,6 +1634,9 @@ export function createAnnouncementDeadLetterQueue(
           for (const completionKey of operation.completionKeys) {
             settledCompletionKeys.add(completionKey);
           }
+        }
+        if (nonterminalOperations.length > maxEntries) {
+          return err(new Error("Replacement announcement set exceeds quarantine capacity"));
         }
         const pendingOperations: AnnouncementParentDecisionReservation[] = [];
         const transientSnapshots: Array<{
@@ -1486,7 +1677,7 @@ export function createAnnouncementDeadLetterQueue(
         return replaced;
       }),
     drain: (sendToChannel, onDelivered) =>
-      serialize(() => drainSerialized(sendToChannel, onDelivered)),
+      serializeStateChange(() => drainSerialized(sendToChannel, onDelivered)),
     durableStatus: () => serialize(async () => {
       const load = await loadFromDisk();
       return load.ok ? ok(quarantineClassification().status) : load;
@@ -1509,7 +1700,7 @@ export function createAnnouncementDeadLetterQueue(
       }
       return ok(quarantineClassification().rows);
     }),
-    release: (id, outcome) => serialize(async () => {
+    release: (id, outcome) => serializeStateChange(async () => {
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
       if (!quarantineClassification().actionableIds.has(id)) return ok(false);

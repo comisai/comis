@@ -312,14 +312,22 @@ describe("createCrossSessionSender", () => {
   // -----------------------------------------------------------------------
   // Announce sends to channel
   // -----------------------------------------------------------------------
-  it("announce sends to channel with correct params", async () => {
-    const sender = createCrossSessionSender(deps);
+  it("announce uses the recoverable boundary with the authenticated route", async () => {
+    const sendRecoverableAnnouncement = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+    }));
+    const sender = createCrossSessionSender({ ...deps, sendRecoverableAnnouncement });
     const params: CrossSessionSendParams = {
       target: QUERY_ONE,
       text: "question",
       mode: "wait",
       caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "announce-tool-call-direct",
       announceChannelType: "discord",
       announceChannelId: "guild-channel-42",
     };
@@ -327,8 +335,13 @@ describe("createCrossSessionSender", () => {
     const result = await sender.send(params);
 
     expect(result.announced).toBe(true);
-    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
-    expect(deps.sendToChannel).toHaveBeenCalledWith("discord", "guild-channel-42", "test response");
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "announce-tool-call-direct",
+      channelType: "discord",
+      channelId: "guild-channel-42",
+      text: "test response",
+    }));
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------------
@@ -486,6 +499,23 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
 
     expect(result.announced).toBe(false);
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("reports a retained receipt-unknown ledgerless send without raw replay", async () => {
+    const sendRecoverableAnnouncement = vi.fn(async () => ok({
+      delivered: false as const,
+      status: "unknown" as const,
+    }));
+    const sender = createCrossSessionSender({
+      ...deps,
+      sendRecoverableAnnouncement,
+    });
+
+    const result = await sender.send(ledgeredParams);
+
+    expect(result.announced).toBe(false);
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledOnce();
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 

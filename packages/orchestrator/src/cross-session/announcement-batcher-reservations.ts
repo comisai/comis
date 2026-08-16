@@ -44,10 +44,11 @@ export function createAnnouncementReservationPlan(
 
   const reservations: AnnouncementParentDecisionReservation[] = [];
   for (const operation of operations) {
-    const rootRunId = operation.item.reservationRootRunId;
+    const rootRunId = operation.item.reservationRootRunId
+      ?? `announcement:${operation.item.callerSessionKey}`;
     const completionKeys = operation.completionItems.flatMap((item) =>
       item.idempotencyKey ? [item.idempotencyKey] : []);
-    if (!rootRunId || completionKeys.length !== operation.completionItems.length) {
+    if (completionKeys.length !== operation.completionItems.length) {
       return err(new Error("Announcement completion operation cannot be adjudicated"));
     }
     const reservationKey = createStableAnnouncementOperationId(

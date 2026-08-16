@@ -30,6 +30,7 @@ import { fromPromise, type Result } from "@comis/shared";
 import {
   isGovernedAnnouncementConfirmedDelivered,
   type SendGovernedCompletionAnnouncement,
+  type SendRecoverableCompletionAnnouncement,
 } from "./announcement-outward-operation.js";
 
 // ---------------------------------------------------------------------------
@@ -56,6 +57,7 @@ export interface CrossSessionSenderDeps {
   config: AgentToAgentConfig;
   /** Receipt-aware retained-operation boundary for completion announcements. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
   /** Logger for fail-closed durable announcement failures. */
   logger?: Pick<ComisLogger, "error">;
 }
@@ -105,8 +107,17 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
     if (!channelType || !channelId) return false;
 
     const sendGovernedAnnouncement = deps.sendGovernedAnnouncement;
-    if (!sendGovernedAnnouncement) {
-      return deps.sendToChannel(channelType, channelId, text);
+    const sendRecoverableAnnouncement = deps.sendRecoverableAnnouncement;
+    if (!sendGovernedAnnouncement && !sendRecoverableAnnouncement) {
+      deps.logger?.error(
+        {
+          step: "completion-announcement",
+          errorKind: "precondition" as const,
+          hint: "wire the recoverable announcement boundary before retrying the cross-session response",
+        },
+        "Cross-session announcement recovery unavailable",
+      );
+      return false;
     }
     if (
       callerAgentId === undefined
@@ -139,7 +150,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       );
       return false;
     }
-    const boundary = await fromPromise(sendGovernedAnnouncement({
+    const request = {
       agentId: callerAgentId,
       callerSessionKey,
       callerConversation,
@@ -150,7 +161,23 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       text,
       completionKeys: [announceOperationId],
       ...(callerEndpoint.threadId ? { options: { threadId: callerEndpoint.threadId } } : {}),
-    }));
+    };
+    if (sendRecoverableAnnouncement && !sendGovernedAnnouncement) {
+      const recoverableBoundary = await fromPromise(sendRecoverableAnnouncement(request));
+      if (!recoverableBoundary.ok || !recoverableBoundary.value.ok) {
+        deps.logger?.error(
+          {
+            step: "completion-announcement",
+            errorKind: "dependency" as const,
+            hint: "inspect the recoverable announcement boundary and retry only with the same operation identity",
+          },
+          "Cross-session recoverable announcement failed",
+        );
+        return false;
+      }
+      return recoverableBoundary.value.value.delivered;
+    }
+    const boundary = await fromPromise(sendGovernedAnnouncement!(request));
     if (!boundary.ok || !boundary.value.ok) {
       deps.logger?.error(
         {
