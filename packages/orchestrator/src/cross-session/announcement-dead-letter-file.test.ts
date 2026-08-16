@@ -226,7 +226,7 @@ describe("announcement dead-letter file", () => {
     const original = await readFile(filePath, "utf8");
 
     const result = await writeDeadLetterEntries(filePath, [
-      { recordType: "parent_decision_reservation", id: "incomplete" },
+      { recordType: "parent_decision_reservation", id: "incomplete" } as never,
     ]);
 
     expect(result).toMatchObject({

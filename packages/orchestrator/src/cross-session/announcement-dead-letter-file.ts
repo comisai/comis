@@ -446,9 +446,18 @@ export async function readDeadLetterSnapshot(
 
 export async function writeDeadLetterEntries(
   filePath: string,
-  entries: readonly unknown[],
+  entries: readonly StoredDeadLetterEntry[],
   operations: DeadLetterWriteOperations = systemWriteOperations,
 ): Promise<Result<void, DeadLetterWriteFailure>> {
+  if (entries.some((entry) =>
+    !isDeadLetterEntry(entry)
+    && !isParentDecisionReservationRecord(entry)
+    && !isInvalidDeadLetterRecord(entry))) {
+    return writeFailure(
+      new Error("Dead-letter snapshot contains an invalid record"),
+      "snapshot_unchanged",
+    );
+  }
   if (entries.length === 0) {
     const removed = await fromPromise(operations.unlink(filePath));
     if (removed.ok) {

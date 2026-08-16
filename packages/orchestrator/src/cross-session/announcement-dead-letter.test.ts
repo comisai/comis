@@ -1734,6 +1734,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
         channelId: entry.channelId,
         agentId: entry.agentId,
         runId: entry.runId,
+        sessionKey: entry.sessionKey,
         failedAt: entry.failedAt,
         attemptCount: entry.attemptCount,
         rootRunId: entry.rootRunId,

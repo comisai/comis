@@ -56,13 +56,13 @@ export type AnnouncementDeadLetterQueue = AnnouncementDeadLetterQueuePort;
 interface AnnouncementDeadLetterQueueOptions {
   /** JSONL file path (already safePath'd by caller). */
   filePath: string;
-  /** Maximum retry attempts before dropping an entry (default: 5). */
+  /** Retry attempts before an entry requires an operator decision (default: 5). */
   maxRetries?: number;
   /** Minimum interval between retry attempts in ms (default: 60_000). */
   retryIntervalMs?: number;
-  /** Maximum age of an entry in ms before it is dropped (default: 3_600_000). */
+  /** Age after which an entry requires an operator decision (default: 3_600_000). */
   maxAgeMs?: number;
-  /** Maximum number of entries in the queue (default: 100). */
+  /** Retained-item threshold for operator alerts (default: 100). */
   maxEntries?: number;
   /** Event bus for emitting dead-letter events. */
   eventBus: TypedEventBus;
@@ -657,9 +657,6 @@ export function createAnnouncementDeadLetterQueue(
     const nextReservations = reservation
       ? decisionReservations.filter((candidate) => candidate.id !== reservation.id)
       : decisionReservations;
-    const dropped = !outwardLedger && nextEntries.length >= maxEntries
-      ? nextEntries.shift()
-      : undefined;
     nextEntries.push(fullEntry);
     const persisted = await persist(nextEntries, nextReservations);
     if (!persisted.ok) {
@@ -674,23 +671,15 @@ export function createAnnouncementDeadLetterQueue(
     }
     entries = nextEntries;
     decisionReservations = nextReservations;
-    if (dropped) {
-      logger?.error(
-        {
-          errorKind: "resource" as const,
-          hint: "resolve retryable dead letters before the queue reaches capacity",
-          droppedRunId: dropped.runId,
-        },
-        "Retryable dead-letter queue reached capacity",
-      );
-    } else if (outwardLedger && entries.length > maxEntries) {
+    const retainedCount = entries.length + decisionReservations.length + invalidRecords.length;
+    if (retainedCount > maxEntries) {
       logger?.warn(
         {
-          entryCount: entries.length,
+          entryCount: retainedCount,
           errorKind: "resource" as const,
-          hint: "resolve quarantined outward operations; governed evidence is never capacity-evicted",
+          hint: "resolve retained dead letters; delivery evidence is never capacity-evicted",
         },
-        "Governed dead-letter quarantine exceeds its review threshold",
+        "Dead-letter quarantine exceeds its review threshold",
       );
     }
     emitObservationalEventSafely(
@@ -806,26 +795,7 @@ export function createAnnouncementDeadLetterQueue(
     if (outwardLedger) await adjudicateReservations(outwardLedger);
     if (entries.length === 0) return;
     const now = systemNowMs();
-    const workingEntries = entries
-      .map((entry) => ({ ...entry }))
-      .filter((entry) => {
-        if (outwardLedger) return true;
-        if (entry.attemptCount >= maxRetries) {
-          logger?.debug(
-            { runId: entry.runId, attemptCount: entry.attemptCount },
-            "Retryable dead-letter entry dropped after its attempt limit",
-          );
-          return false;
-        }
-        if (now - entry.failedAt >= maxAgeMs) {
-          logger?.debug(
-            { runId: entry.runId, ageMs: now - entry.failedAt },
-            "Retryable dead-letter entry dropped after its retention window",
-          );
-          return false;
-        }
-        return true;
-      });
+    const workingEntries = entries.map((entry) => ({ ...entry }));
     const deliveredIds = new Set<string>();
     const deliveredEntries: Array<{
       entry: DeadLetterEntry;
@@ -833,6 +803,36 @@ export function createAnnouncementDeadLetterQueue(
       durationMs: number;
     }> = [];
     for (const entry of workingEntries) {
+      if (!outwardLedger && entry.attemptCount >= maxRetries) {
+        if (entry.lastError !== "attempt_limit_reached") {
+          logger?.warn(
+            {
+              runId: entry.runId,
+              attemptCount: entry.attemptCount,
+              errorKind: "precondition" as const,
+              hint: "review and explicitly release the exhausted dead-letter entry",
+            },
+            "Dead-letter entry reached its attempt limit",
+          );
+        }
+        entry.lastError = "attempt_limit_reached";
+        continue;
+      }
+      if (!outwardLedger && now - entry.failedAt >= maxAgeMs) {
+        if (entry.lastError !== "retention_window_elapsed") {
+          logger?.warn(
+            {
+              runId: entry.runId,
+              ageMs: now - entry.failedAt,
+              errorKind: "precondition" as const,
+              hint: "review and explicitly release the expired dead-letter entry",
+            },
+            "Dead-letter entry reached its retention window",
+          );
+        }
+        entry.lastError = "retention_window_elapsed";
+        continue;
+      }
       if (now - entry.lastAttemptAt < retryIntervalMs) continue;
       const deliveryStartedAt = systemNowMs();
       if (outwardLedger) {
