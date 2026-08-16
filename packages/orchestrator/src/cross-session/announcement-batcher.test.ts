@@ -32,6 +32,7 @@ function makeAnnouncement(overrides: Partial<QueuedAnnouncement> = {}): QueuedAn
     },
     terminalOutcome: { status: "completed" },
     runId: "run-1",
+    reservationRootRunId: "root-1",
     ...overrides,
   };
 }
@@ -539,20 +540,19 @@ describe("AnnouncementBatcher", () => {
     }));
   });
 
-  it("omits rootRunId rather than inventing one when the caller resolved none", async () => {
-    // Fail-safe: an absent root must not become an empty string or a guess —
-    // `adjudicateReservations` treats a zero-length root as unresolvable anyway,
-    // and a wrong root would ask the ledger about the wrong tree.
+  it("rejects governed admission before reserving when the ledger root is absent", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
     const batcher = createAnnouncementBatcher(deps);
 
-    await batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-root-2" }));
-    await vi.advanceTimersByTimeAsync(2_000);
+    const result = await batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "decision-root-2",
+      reservationRootRunId: undefined,
+    }));
 
-    const [entry] = deadLetterQueue.reserveDecision.mock.calls.at(-1) as [Record<string, unknown>];
-    expect(entry.idempotencyKey).toBe("decision-root-2");
-    expect("rootRunId" in entry).toBe(false);
+    expect(result).toMatchObject({ ok: false });
+    expect(deadLetterQueue.reserveDecision).not.toHaveBeenCalled();
+    expect(deps.announceToParent).not.toHaveBeenCalled();
   });
 
   it("suppresses a restarted decision when its durable reservation exists", async () => {

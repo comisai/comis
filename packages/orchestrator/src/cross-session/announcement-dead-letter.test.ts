@@ -828,6 +828,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       channelId: "chat-1",
       failedAt: 100,
       threadId: "topic-1",
+      rootRunId: "root-parent-1",
       ...overrides,
     };
   }
@@ -858,42 +859,16 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(restarted.size()).toBe(1);
   });
 
-  // `adjudicateReservations` is fail-safe: a reservation with no ledger tree root
-  // cannot be settled, because there is no tree to ask for the step the send
-  // WOULD have used. That skip was SILENT, so a permanently unrecoverable
-  // reservation looked identical to a transient one — live on comis-moshe, two
-  // sat parked for over 24h while the only signal was a count, and a real user
-  // never received the chart set a sub-agent had already produced.
-  it("warns, naming the missing ledger root, when a reservation can never be adjudicated", async () => {
-    const logger = createMockLogger();
+  it("rejects a parent decision that has no adjudicable ledger root", async () => {
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
-      logger,
-      outwardLedger: {
-        allocateStep: vi.fn(),
-        recordState: vi.fn(),
-        findByOperation: vi.fn(),
-      } as unknown as OutwardSendLedgerPort,
     });
 
-    await queue.reserveDecision(decisionInput({ rootRunId: undefined }));
-    // Drain three times: an unadjudicable reservation is re-reached on every
-    // sweep, and re-warning each pass is the same unbounded-volume defect the
-    // ledger-failure path was fixed for. Live, this line fired 4x across 2 sweeps.
-    await queue.drain(vi.fn().mockResolvedValue(true));
-    await queue.drain(vi.fn().mockResolvedValue(true));
-    await queue.drain(vi.fn().mockResolvedValue(true));
+    const result = await queue.reserveDecision(decisionInput({ rootRunId: undefined }));
 
-    const warnings = (logger.warn as unknown as { mock: { calls: [Record<string, unknown>, string][] } })
-      .mock.calls.filter(([, msg]) => /never be adjudicated|cannot be adjudicated/i.test(msg));
-    expect(warnings).toHaveLength(1);
-    const warned = warnings[0];
-    expect(warned?.[0]).toMatchObject({ runId: "run-parent-1", errorKind: "internal" });
-    expect(String(warned?.[0].hint)).toMatch(/rootRunId/);
-    // Fail-safe: it must still be retained, never discarded on the strength of
-    // being unrecoverable.
-    expect(queue.size()).toBe(1);
+    expect(result).toMatchObject({ ok: false });
+    expect(queue.size()).toBe(0);
   });
 
   // A governed entry the ledger cannot complete is RETAINED on purpose and never
@@ -1043,21 +1018,28 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(queue.size()).toBe(1);
   });
 
-  it("leaves a legacy reservation without a rootRunId parked", async () => {
-    // Records written before the identity was carried cannot be looked up, so
-    // they keep the old behaviour rather than being delivered on a guess.
+  it("isolates a persisted reservation without a rootRunId as invalid evidence", async () => {
     const { ledger } = makeStubLedger();
+    const incomplete = {
+      ...decisionInput({ rootRunId: undefined }),
+      recordType: "parent_decision_reservation",
+      id: "incomplete-reservation",
+    };
+    await writeFile(filePath, `${JSON.stringify(incomplete)}\n`, "utf8");
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
       outwardLedger: ledger,
     });
-    await queue.reserveDecision(decisionInput());
 
     await queue.drain(vi.fn(async () => true));
 
     expect(queue.size()).toBe(1);
     expect(ledger.allocateStep).not.toHaveBeenCalled();
+    expect(await queue.listQuarantined()).toMatchObject([{
+      kind: "invalid_record",
+      reason: "schema_mismatch",
+    }]);
   });
 
   it("upserts a pending decision into one governed delivery row", async () => {
