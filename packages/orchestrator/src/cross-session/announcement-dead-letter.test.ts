@@ -422,7 +422,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     expect(remaining.attemptCount).toBe(entry2.attemptCount + 1);
   });
 
-  it("malformed JSONL blocks delivery and preserves every persisted row", async () => {
+  it("quarantines a malformed row without blocking delivery or admission", async () => {
     const eventBus = createMockEventBus();
     const logger = createMockLogger();
     const entry1 = makeFullEntry({
@@ -450,20 +450,34 @@ describe("AnnouncementDeadLetterQueue", () => {
     });
 
     const sendToChannel = vi.fn().mockResolvedValue(true);
-    const enqueueResult = await dlq.enqueue(makeEntry({ runId: "run-must-not-rewrite" }));
+    const enqueueResult = await dlq.enqueue(makeEntry({ runId: "run-new-admission" }));
     await dlq.drain(sendToChannel);
 
-    expect(enqueueResult).toMatchObject({ ok: false });
-    expect(sendToChannel).not.toHaveBeenCalled();
-    expect(dlq.size()).toBe(0);
+    expect(enqueueResult).toMatchObject({ ok: true });
+    expect(sendToChannel).toHaveBeenCalledTimes(3);
+    expect(dlq.size()).toBe(1);
+    const quarantined = await dlq.listQuarantined();
+    expect(quarantined).toMatchObject([{
+      kind: "invalid_record",
+      reason: "invalid_json",
+      sourceLine: 2,
+    }]);
+    expect(JSON.stringify(quarantined)).not.toContain("not json{corrupt line");
     expect(logger.warn).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
+        invalidRowCount: 1,
         errorKind: "precondition",
-        hint: "repair or quarantine the malformed dead-letter file before accepting or draining announcements",
-      },
-      "Malformed dead-letter file blocked",
+        hint: "review and explicitly release invalid dead-letter records; valid announcements remain available",
+      }),
+      "Invalid dead-letter rows quarantined",
     );
-    expect(await readFile(filePath, "utf8")).toBe(content);
+    const persisted = (await readFile(filePath, "utf8")).trim().split("\n");
+    expect(persisted).toHaveLength(1);
+    expect(JSON.parse(persisted[0]!)).toMatchObject({ recordType: "invalid_record" });
+
+    const released = await dlq.release(quarantined[0]!.id, "discarded");
+    expect(released).toMatchObject({ ok: true, value: true });
+    expect(dlq.size()).toBe(0);
   });
 
   it("concurrent drain calls are serialized", async () => {

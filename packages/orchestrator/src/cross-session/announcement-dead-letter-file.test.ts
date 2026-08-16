@@ -218,33 +218,53 @@ describe("announcement dead-letter file", () => {
     });
   });
 
-  it("fails closed when any persisted JSONL row is malformed", async () => {
+  it("isolates a malformed row while preserving valid persisted rows", async () => {
     directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
     const filePath = join(directory, "dead-letters.jsonl");
-    const original = `${JSON.stringify(makeEntry())}\n{"broken":\n`;
+    const second = { ...makeEntry(), id: "entry-2", runId: "run-2" };
+    const original = `${JSON.stringify(makeEntry())}\n{"broken":\n${JSON.stringify(second)}\n`;
     const logger = { warn: vi.fn() };
     await writeFile(filePath, original, { encoding: "utf8", mode: 0o600 });
 
     const result = await readDeadLetterEntries(filePath, logger);
 
-    expect(result).toMatchObject({ ok: false });
+    expect(result).toMatchObject({
+      ok: true,
+      value: [
+        { id: "entry-1", runId: "run-1" },
+        {
+          recordType: "invalid_record",
+          reason: "invalid_json",
+          sourceLine: 2,
+          rawBytes: 10,
+        },
+        { id: "entry-2", runId: "run-2" },
+      ],
+    });
     expect(logger.warn).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
+        invalidRowCount: 1,
         errorKind: "precondition",
-        hint: "repair or quarantine the malformed dead-letter file before accepting or draining announcements",
-      },
-      "Malformed dead-letter file blocked",
+        hint: "review and explicitly release invalid dead-letter records; valid announcements remain available",
+      }),
+      "Invalid dead-letter rows quarantined",
     );
     expect(await readFile(filePath, "utf8")).toBe(original);
   });
 
-  it("fails closed when a JSON row lacks the dead-letter storage contract", async () => {
+  it("classifies a JSON row outside the dead-letter storage contract", async () => {
     directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
     const filePath = join(directory, "dead-letters.jsonl");
     await writeFile(filePath, "{}\n", { encoding: "utf8", mode: 0o600 });
 
     await expect(readDeadLetterEntries(filePath)).resolves.toMatchObject({
-      ok: false,
+      ok: true,
+      value: [{
+        recordType: "invalid_record",
+        reason: "schema_mismatch",
+        sourceLine: 1,
+        rawBytes: 2,
+      }],
     });
     expect(await readFile(filePath, "utf8")).toBe("{}\n");
   });
