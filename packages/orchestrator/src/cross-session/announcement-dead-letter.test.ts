@@ -560,6 +560,27 @@ describe("AnnouncementDeadLetterQueue", () => {
     expect(dlq.size()).toBe(3);
   });
 
+  it("loads the durable count before the first health observation after restart", async () => {
+    const seeded = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await seeded.enqueue(makeEntry({ runId: "run-before-restart" }));
+    const fresh = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    const result = await (fresh as unknown as {
+      durableSize(): Promise<
+        { ok: true; value: number } | { ok: false; error: Error }
+      >;
+    }).durableSize();
+
+    expect(result).toEqual(ok(1));
+    expect(fresh.size()).toBe(1);
+  });
+
   it("serializes concurrent lazy-load enqueues without losing either durable row", async () => {
     const eventBus = createMockEventBus();
     const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus });
