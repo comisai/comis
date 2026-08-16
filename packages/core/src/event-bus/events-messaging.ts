@@ -901,6 +901,11 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** Durable quarantine storage could not be read, so its standing count is unknown. */
+  "announcement:quarantine_read_failed": {
+    timestamp: number;
+  };
+
   /** Dead-letter entry successfully delivered on retry */
   "announcement:dead_letter_delivered": {
     runId: string;

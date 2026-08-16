@@ -17,6 +17,7 @@ import { resolveReservationRoot } from "./reservation-root.js";
 import { promptTimeoutHint, type AbortEvidence } from "./abort-fallout.js";
 import {
   conversationScopeToSessionKey,
+  createStableAnnouncementOperationId,
   safePath,
   systemNowMs,
   systemNowDate,
@@ -26,6 +27,7 @@ import {
   type DeliveryOrigin,
   type ChannelEndpoint,
   type ConversationLocator,
+  type AnnouncementParentDecisionReservation,
 } from "@comis/core";
 import { fromPromise, TimeoutError, withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
@@ -33,7 +35,6 @@ import { dirname } from "node:path";
 import type {
   AnnouncementBatcher,
   AnnouncementDeadLetterQueue,
-  AnnouncementOperationIdentity,
   CompletionAttachmentShape,
   SendGovernedCompletionAnnouncement,
 } from "./announcement-ports.js";
@@ -471,15 +472,23 @@ export async function deliverAnnouncement(params: {
   let finalText = params.suppressText ? "" : stripAnnouncementInstruction(announcementText);
   let decisionReserved = false;
 
-  async function resolveDecision(outcome: "receipt_committed" | "no_reply"): Promise<void> {
-    if (!decisionReserved || !announceKey || !deps.deadLetterQueue) return;
-    const boundary = await fromPromise(deps.deadLetterQueue.resolveDecision(announceKey, outcome));
+  async function resolveDecisionKey(
+    decisionKey: string,
+    outcome: "receipt_committed" | "no_reply",
+  ): Promise<void> {
+    if (!deps.deadLetterQueue) return;
+    const boundary = await fromPromise(deps.deadLetterQueue.resolveDecision(decisionKey, outcome));
     if (boundary.ok && boundary.value.ok) return;
     deps.logger?.warn({
       runId,
       hint: "Repair decision-quarantine storage; the retained row safely suppresses replay",
       errorKind: "resource" as const,
     }, "Sub-agent parent decision reservation could not be resolved");
+  }
+
+  async function resolveDecision(outcome: "receipt_committed" | "no_reply"): Promise<void> {
+    if (!decisionReserved || !announceKey || !deps.deadLetterQueue) return;
+    await resolveDecisionKey(announceKey, outcome);
   }
 
   // Parent execution produces text only. The single irreversible send remains
@@ -535,6 +544,7 @@ export async function deliverAnnouncement(params: {
           conversationRef: params.callerConversation.conversationRef,
         },
         destinationEndpoint,
+        completionKeys: [announceKey],
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!reservationBoundary.ok || !reservationBoundary.value.ok) {
@@ -631,7 +641,6 @@ export async function deliverAnnouncement(params: {
   const threadId = params.announceThreadId;
   let delivered: boolean;
   let lastError = "direct channel send failed";
-  let identity: AnnouncementOperationIdentity | undefined;
 
   if (
     deps.sendGovernedAnnouncement
@@ -644,6 +653,7 @@ export async function deliverAnnouncement(params: {
       text: string;
       partId?: string;
       attachment?: CompletionAttachmentShape;
+      reservationKey?: string;
     }> = params.attachments?.length
       ? params.attachments.map((attachment, index) => ({
           text: index === 0 ? finalText : "",
@@ -651,6 +661,65 @@ export async function deliverAnnouncement(params: {
           attachment,
         }))
       : [{ text: finalText }];
+    const reservationRoot = resolveReservationRoot(
+      deps.resolveRootRunId,
+      callerAgentId,
+      params.callerConversation.conversationScope,
+    );
+    if (!announceKey || !deps.deadLetterQueue || !reservationRoot) {
+      deps.logger?.warn({
+        runId,
+        hint: "Wire durable operation reservations and the caller ledger root before governed delivery",
+        errorKind: "precondition" as const,
+      }, "Sub-agent completion operations cannot be reserved");
+      return;
+    }
+    const reservations: AnnouncementParentDecisionReservation[] = operations.map((operation) => {
+      const reservationKey = createStableAnnouncementOperationId(
+        callerAgentId,
+        callerSessionKey,
+        runId,
+        operation.partId,
+      );
+      operation.reservationKey = reservationKey;
+      return {
+        idempotencyKey: reservationKey,
+        agentId: callerAgentId,
+        runId,
+        sessionKey: callerSessionKey,
+        announcementText: operation.text,
+        channelType: announceChannelType,
+        channelId: announceChannelId,
+        failedAt: systemNowMs(),
+        rootRunId: reservationRoot,
+        deliveryAuthority: {
+          tenantId: params.callerConversation.conversationScope.tenantId,
+          agentId: callerAgentId,
+          conversationRef: params.callerConversation.conversationRef,
+        },
+        destinationEndpoint: params.destinationEndpoint,
+        completionKeys: [announceKey],
+        ...(threadId ? { threadId } : {}),
+        ...(operation.partId ? { partId: operation.partId } : {}),
+        ...(operation.attachment ? { attachment: operation.attachment } : {}),
+      };
+    });
+    const transitioned = await fromPromise(deps.deadLetterQueue.replaceDecisions(
+      decisionReserved ? [announceKey] : [],
+      reservations,
+    ));
+    if (!transitioned.ok || !transitioned.value.ok) {
+      deps.logger?.warn({
+        runId,
+        hint: "Restore decision-quarantine storage before retrying the completion",
+        errorKind: "resource" as const,
+      }, "Sub-agent completion operation reservations were not persisted");
+      return;
+    }
+    if (!transitioned.value.value.created) {
+      deps.logger?.debug({ runId }, "Sub-agent completion operations are already durably retained");
+      return;
+    }
     delivered = true;
     for (const operation of operations) {
       const boundary = await fromPromise(deps.sendGovernedAnnouncement({
@@ -672,11 +741,13 @@ export async function deliverAnnouncement(params: {
         break;
       }
       const outcome = boundary.value.value;
-      identity = outcome.identity;
       if (!outcome.delivered) {
         delivered = false;
         lastError = outcome.failure;
         break;
+      }
+      if (operation.reservationKey) {
+        await resolveDecisionKey(operation.reservationKey, "receipt_committed");
       }
     }
   } else {
@@ -703,7 +774,7 @@ export async function deliverAnnouncement(params: {
   }
 
   if (delivered) {
-    await resolveDecision("receipt_committed");
+    if (!deps.sendGovernedAnnouncement) await resolveDecision("receipt_committed");
     if (announceKey) deps.deliveryDedup?.mark(announceKey);
     return;
   }
@@ -715,14 +786,14 @@ export async function deliverAnnouncement(params: {
     errorKind: "network" as const,
   }, "Sub-agent announcement delivery failed");
 
-  if (params.attachments?.length) return;
+  if (deps.sendGovernedAnnouncement || params.attachments?.length) return;
 
   if (deps.deadLetterQueue && callerAgentId && callerSessionKey) {
     const queued = await deps.deadLetterQueue.enqueue({
       announcementText: finalText,
       channelType: announceChannelType,
       channelId: announceChannelId,
-      agentId: identity?.agentId ?? callerAgentId,
+      agentId: callerAgentId,
       runId,
       sessionKey: callerSessionKey,
       failedAt: systemNowMs(),
@@ -730,14 +801,10 @@ export async function deliverAnnouncement(params: {
       lastError,
       ...(threadId ? { threadId } : {}),
       ...(announceKey ? { idempotencyKey: announceKey } : {}),
-      ...(identity ? {
-        rootRunId: identity.rootRunId,
-        stepIndex: identity.stepIndex,
-      } : {}),
       ...(params.callerConversation && params.destinationEndpoint ? {
         deliveryAuthority: {
           tenantId: params.callerConversation.conversationScope.tenantId,
-          agentId: identity?.agentId ?? callerAgentId,
+          agentId: callerAgentId,
           conversationRef: params.callerConversation.conversationRef,
         },
         destinationEndpoint: params.destinationEndpoint,

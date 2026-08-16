@@ -111,5 +111,5 @@ export interface AnnouncementBatcher {
 /** Agent-facing name for the core-owned durable recovery port. */
 export type AnnouncementDeadLetterQueue = Pick<
   AnnouncementDeadLetterQueuePort,
-  "enqueue" | "reserveDecision" | "lookupDecision" | "resolveDecision" | "drain" | "size"
+  "enqueue" | "reserveDecision" | "lookupDecision" | "resolveDecision" | "replaceDecisions" | "drain" | "size"
 >;

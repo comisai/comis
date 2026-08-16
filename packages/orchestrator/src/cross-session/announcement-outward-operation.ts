@@ -134,19 +134,6 @@ interface AnnouncementTransitionEvidence {
   partId?: string;
 }
 
-/** Build the bounded allocation key for one originating completion operation. */
-export function createStableAnnouncementOperationId(
-  agentId: string,
-  callerSessionKey: string,
-  runId: string,
-  partId?: string,
-): string {
-  const digest = createHash("sha256")
-    .update(JSON.stringify({ agentId, callerSessionKey, kind: "completion_announcement", partId: partId ?? null, runId }))
-    .digest("hex");
-  return `completion-announcement:${digest}`;
-}
-
 export interface AnnouncementOperationDigests {
   contentDigest: string;
   operationFingerprint: string;

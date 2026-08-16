@@ -234,7 +234,10 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       expect.objectContaining({ runId: "run-2" }),
       expect.stringContaining("attempt limit"),
     );
-    expect((await dlq.listQuarantined())[0]?.lastError).toBe("attempt_limit_reached");
+    const listed = await dlq.listQuarantined();
+    expect(listed.ok && listed.value[0]?.kind === "entry"
+      ? listed.value[0].lastError
+      : undefined).toBe("attempt_limit_reached");
   });
 
   // -------------------------------------------------------------------------

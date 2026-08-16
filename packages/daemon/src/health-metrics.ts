@@ -14,7 +14,6 @@ import {
   createSubagentActivityTracker,
   sweepStuckSubAgentRuns,
 } from "./wiring/subagent-stuck-sweep.js";
-import { systemNowMs } from "@comis/core";
 
 /**
  * Operator guidance for a standing announcement quarantine.
@@ -122,18 +121,26 @@ export function wireHealthLogging(deps: {
     const durableSize = deadLetterQueue
       ? await deadLetterQueue.durableSize()
       : undefined;
-    const deadLetterQueueSize = durableSize?.ok
-      ? durableSize.value
-      : (deadLetterQueue?.size() ?? 0);
+    const deadLetterQueueSize = durableSize === undefined
+      ? 0
+      : durableSize.ok
+        ? durableSize.value
+        : undefined;
     if (durableSize && !durableSize.ok && !deadLetterReadFailed) {
       daemonLogger.warn({
-        deadLetterQueueSize,
-        hint: "Restore dead-letter storage access; the health snapshot shows only the in-memory retained count",
+        hint: "Restore dead-letter storage access; the quarantine count is unknown until the durable read succeeds",
         errorKind: "resource" as const,
       }, "Dead-letter health count could not read durable storage");
+      container.eventBus.emitSafely("announcement:quarantine_read_failed", {
+        timestamp: clock.now(),
+      });
     }
     deadLetterReadFailed = durableSize !== undefined && !durableSize.ok;
-    if (deadLetterQueueSize > 0 && deadLetterQueueSize !== lastDeadLetterQueueSize) {
+    if (
+      deadLetterQueueSize !== undefined
+      && deadLetterQueueSize > 0
+      && deadLetterQueueSize !== lastDeadLetterQueueSize
+    ) {
       daemonLogger.warn({
         deadLetterQueueSize,
         hint: ANNOUNCEMENT_QUARANTINE_HINT,
@@ -144,10 +151,10 @@ export function wireHealthLogging(deps: {
       // failure the two-tier triage flow exists to remove.
       container.eventBus.emitSafely("announcement:quarantine_pending", {
         pendingCount: deadLetterQueueSize,
-        timestamp: systemNowMs(),
+        timestamp: clock.now(),
       });
     }
-    lastDeadLetterQueueSize = deadLetterQueueSize;
+    if (deadLetterQueueSize !== undefined) lastDeadLetterQueueSize = deadLetterQueueSize;
 
     daemonLogger.debug({
       rssBytes: metrics.rssBytes, heapUsedBytes: metrics.heapUsedBytes,
@@ -156,7 +163,7 @@ export function wireHealthLogging(deps: {
       activeHandles: metrics.activeHandles, activeConnections: getActiveConnectionCount(),
       activeExecutions: activeExecutions.size, uptimeSeconds: Math.round(metrics.uptimeSeconds),
       activeSubAgentRuns, stuckSubAgentRuns, stuckKilledThisTick,
-      deadLetterQueueSize,
+      ...(deadLetterQueueSize === undefined ? {} : { deadLetterQueueSize }),
       degradedProviders: [...providerHealth.getHealthSummary().entries()]
         .filter(([, v]) => v.degraded).map(([k]) => k),
       promptTimeoutsLast5m: promptTimeoutTimestamps.length,

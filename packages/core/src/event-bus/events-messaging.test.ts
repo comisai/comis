@@ -436,6 +436,20 @@ describe("MessagingEvents payload structure", () => {
     expect(received.timestamp).toBe(now);
   });
 
+  it("announcement quarantine read failures carry only their timestamp", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["announcement:quarantine_read_failed"] = {
+      timestamp: 1_700_000_000_000,
+    };
+
+    bus.on("announcement:quarantine_read_failed", handler);
+    bus.emit("announcement:quarantine_read_failed", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(Object.keys(payload)).toEqual(["timestamp"]);
+  });
+
   it("context:dag_compacted delivers DAG compaction metrics (sibling shape)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();

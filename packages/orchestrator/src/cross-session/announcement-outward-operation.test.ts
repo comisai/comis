@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "@comis/shared";
-import type { OutwardSendLedgerPort, OutwardSendRecord } from "@comis/core";
+import {
+  createStableAnnouncementOperationId,
+  type OutwardSendLedgerPort,
+  type OutwardSendRecord,
+} from "@comis/core";
 import {
   createAnnouncementOperationDigests,
   createGovernedAnnouncementSender,
-  createStableAnnouncementOperationId,
 } from "./announcement-outward-operation.js";
 
 function makeLedger(overrides: Partial<OutwardSendLedgerPort> = {}): OutwardSendLedgerPort {

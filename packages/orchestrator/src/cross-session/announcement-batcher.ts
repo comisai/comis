@@ -32,6 +32,10 @@ import type {
   CompletionAttachmentRef,
   GovernedAnnouncementFailure,
 } from "./announcement-outward-operation.js";
+import {
+  createAnnouncementReservationPlan,
+  type AnnouncementBatchOperation,
+} from "./announcement-batcher-reservations.js";
 import type {
   AnnouncementBatcher,
   AnnouncementBatcherDeps,
@@ -328,15 +332,26 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     items: readonly QueuedAnnouncement[],
     outcome: "receipt_committed" | "no_reply",
   ): Promise<void> {
+    await resolveDecisionKeys(
+      items.flatMap((item) => item.idempotencyKey ? [item.idempotencyKey] : []),
+      outcome,
+      items[0]?.runId,
+    );
+  }
+
+  async function resolveDecisionKeys(
+    keys: readonly string[],
+    outcome: "receipt_committed" | "no_reply",
+    runId?: string,
+  ): Promise<void> {
     const resolveDecision = deps.deadLetterQueue?.resolveDecision;
     if (!resolveDecision) return;
-    for (const item of items) {
-      if (!item.idempotencyKey) continue;
-      const boundary = await fromPromise(resolveDecision(item.idempotencyKey, outcome));
+    for (const decisionKey of keys) {
+      const boundary = await fromPromise(resolveDecision(decisionKey, outcome));
       if (boundary.ok && boundary.value.ok) continue;
       deps.logger?.warn(
         {
-          runId: item.runId,
+          ...(runId ? { runId } : {}),
           errorKind: "resource" as const,
           hint: "Repair decision-quarantine storage; the safe retained row suppresses replay",
         },
@@ -369,34 +384,76 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         "Attached file paths replaced before completion delivery",
       );
     }
-    const operations: Array<{
-      item: QueuedAnnouncement;
-      text: string;
-      attachment?: CompletionAttachmentRef;
-      partId?: string;
-    }> = attachments.length === 0
-      ? [{ item: first, text: sanitizedCaption.text }]
+    const operations: AnnouncementBatchOperation[] = attachments.length === 0
+      ? [{ item: first, text: sanitizedCaption.text, completionItems: items }]
       : items.length === 1
         ? attachments.map((entry, index) => ({
             ...entry,
             text: index === 0 ? sanitizedCaption.text : "",
             partId: `attachment:${entry.index}`,
+            completionItems: [entry.item],
           }))
         : [
-            { item: first, text: sanitizedCaption.text, partId: "summary" },
+            {
+              item: first,
+              text: sanitizedCaption.text,
+              partId: "summary",
+              completionItems: items,
+            },
             ...attachments.map((entry) => ({
               ...entry,
               text: "",
               partId: `attachment:${entry.index}`,
+              completionItems: [entry.item],
             })),
           ];
+
+    if (deps.sendGovernedAnnouncement) {
+      const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
+      const reservationPlan = createAnnouncementReservationPlan(operations);
+      if (!replaceDecisions || !reservationPlan.ok) {
+        retainItems(items);
+        deps.logger?.warn(
+          {
+            batchKey: key,
+            runId: first.runId,
+            errorKind: "precondition" as const,
+            hint: "Wire atomic operation reservations before governed completion delivery",
+          },
+          "Announcement operations could not be reserved",
+        );
+        return false;
+      }
+      const transitioned = await fromPromise(replaceDecisions(
+        reservationPlan.value.expectedKeys,
+        reservationPlan.value.reservations,
+      ));
+      if (!transitioned.ok || !transitioned.value.ok) {
+        retainItems(items);
+        deps.logger?.warn(
+          {
+            batchKey: key,
+            runId: first.runId,
+            errorKind: "resource" as const,
+            hint: "Restore decision-quarantine storage before retrying the completion",
+          },
+          "Announcement operation reservations were not persisted",
+        );
+        return false;
+      }
+      if (!transitioned.value.value.created) {
+        retainItems(items);
+        return false;
+      }
+    }
 
     let failure: {
       lastError?: string;
       identity?: AnnouncementOperationIdentity;
       failure?: GovernedAnnouncementFailure;
     } | undefined;
-    for (const operation of operations) {
+    let failedOperationIndex = -1;
+    for (const [operationIndex, operation] of operations.entries()) {
       const outcome = await sendOnce(
         operation.item,
         operation.text,
@@ -405,17 +462,33 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       );
       if (!outcome.delivered) {
         failure = outcome;
+        failedOperationIndex = operationIndex;
         break;
+      }
+      if (operation.reservationKey) {
+        await resolveDecisionKeys(
+          [operation.reservationKey],
+          "receipt_committed",
+          operation.item.runId,
+        );
       }
     }
     if (failure === undefined) {
-      await resolveDecisions(items, "receipt_committed");
+      if (!deps.sendGovernedAnnouncement) {
+        await resolveDecisions(items, "receipt_committed");
+      }
       markItemsDelivered(items);
       return true;
     }
 
     if (failure.failure === "operation_validation_blocked") {
-      await resolveDecisions(items, "no_reply");
+      await resolveDecisionKeys(
+        operations.slice(failedOperationIndex).flatMap((operation) =>
+          operation.reservationKey ? [operation.reservationKey] : []),
+        "no_reply",
+        first.runId,
+      );
+      if (!deps.sendGovernedAnnouncement) await resolveDecisions(items, "no_reply");
       markItemsDelivered(items);
       deps.eventBus.emit("subagent:delivery_skipped", {
         runId: first.runId,
@@ -449,7 +522,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       },
       "Announcement final delivery was not confirmed",
     );
-    if (attachments.length > 0) return false;
+    if (deps.sendGovernedAnnouncement || attachments.length > 0) return false;
     if (!deps.deadLetterQueue) return false;
     const queued = await deps.deadLetterQueue.enqueue({
       announcementText: sanitizedCaption.text,
@@ -762,6 +835,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           conversationRef: params.callerConversation.conversationRef,
         },
         destinationEndpoint: params.destinationEndpoint,
+        completionKeys: [idempotencyKey],
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!boundary.ok) {

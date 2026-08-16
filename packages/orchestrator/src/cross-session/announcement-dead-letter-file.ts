@@ -9,6 +9,7 @@ import {
   ConversationRefSchema,
   toSafeErrorLogString,
   type AnnouncementChannelType,
+  type AnnouncementDeadLetterAttachment,
   type AnnouncementDeadLetterEntry,
   type AnnouncementParentDecisionReservation,
   type AnnouncementParentDecisionReservationRecord,
@@ -89,6 +90,25 @@ function sameChannelEndpoint(
     && left.conversationKind === right.conversationKind;
 }
 
+function isDeadLetterAttachment(
+  value: unknown,
+): value is AnnouncementDeadLetterAttachment {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).length === 2
+    && typeof record.sourceAgentId === "string"
+    && record.sourceAgentId.length > 0
+    && typeof record.path === "string"
+    && record.path.length > 0;
+}
+
+function isCompletionKeys(value: unknown): value is readonly string[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((key) => typeof key === "string" && key.length > 0)
+    && new Set(value).size === value.length;
+}
+
 export type StoredDeadLetterEntry =
   | DeadLetterEntry
   | ParentDecisionReservationRecord
@@ -126,6 +146,9 @@ function publicDecision(
     rootRunId: record.rootRunId,
     deliveryAuthority: record.deliveryAuthority,
     destinationEndpoint: record.destinationEndpoint,
+    ...(record.attachment !== undefined ? { attachment: record.attachment } : {}),
+    ...(record.partId !== undefined ? { partId: record.partId } : {}),
+    completionKeys: record.completionKeys,
   };
 }
 
@@ -142,6 +165,10 @@ function sameDecision(
     && left.channelId === right.channelId
     && left.threadId === right.threadId
     && left.rootRunId === right.rootRunId
+    && left.partId === right.partId
+    && JSON.stringify(left.attachment) === JSON.stringify(right.attachment)
+    && left.completionKeys.length === right.completionKeys.length
+    && left.completionKeys.every((key, index) => key === right.completionKeys[index])
     && sameDeliveryAuthority(left.deliveryAuthority, right.deliveryAuthority)
     && sameChannelEndpoint(left.destinationEndpoint, right.destinationEndpoint);
 }
@@ -165,6 +192,9 @@ function validDecision(entry: ParentDecisionReservation): boolean {
     && (entry.threadId === undefined || typeof entry.threadId === "string")
     && typeof entry.rootRunId === "string"
     && entry.rootRunId.length > 0
+    && (entry.partId === undefined || (typeof entry.partId === "string" && entry.partId.length > 0))
+    && (entry.attachment === undefined || isDeadLetterAttachment(entry.attachment))
+    && isCompletionKeys(entry.completionKeys)
     && isRecoveryRoute(entry as unknown as Record<string, unknown>);
 }
 
@@ -181,6 +211,10 @@ export function createParentDecisionReservationStore(
     idempotencyKey: string,
     outcome: "receipt_committed" | "no_reply",
   ): Promise<Result<boolean, Error>>;
+  replace(
+    expectedKeys: readonly string[],
+    operations: readonly ParentDecisionReservation[],
+  ): Promise<Result<{ created: boolean }, Error>>;
 } {
   async function reserve(
     entry: ParentDecisionReservation,
@@ -190,7 +224,6 @@ export function createParentDecisionReservationStore(
     if (!validDecision(entry)) {
       return err(new Error("Parent decision reservation is invalid"));
     }
-    if (deps.hasDeliveryKey(entry.idempotencyKey)) return ok({ created: false });
     const existing = deps.getReservations().find(
       (candidate) => candidate.idempotencyKey === entry.idempotencyKey,
     );
@@ -205,6 +238,10 @@ export function createParentDecisionReservationStore(
       );
       return err(new Error("Parent decision reservation identity mismatch"));
     }
+    if (deps.hasDeliveryKey(entry.idempotencyKey)) return ok({ created: false });
+    if (deps.getReservations().some(
+      (candidate) => candidate.completionKeys.includes(entry.idempotencyKey),
+    )) return ok({ created: false });
     const id = tryCatch(() => randomUUID());
     if (!id.ok) return id;
     const next = [
@@ -273,7 +310,65 @@ export function createParentDecisionReservationStore(
     return ok(true);
   }
 
-  return { reserve, lookup, resolve };
+  async function replace(
+    expectedKeys: readonly string[],
+    operations: readonly ParentDecisionReservation[],
+  ): Promise<Result<{ created: boolean }, Error>> {
+    const load = await deps.load();
+    if (!load.ok) return load;
+    if (
+      new Set(expectedKeys).size !== expectedKeys.length
+      || expectedKeys.some((key) => typeof key !== "string" || key.length === 0)
+      || operations.length === 0
+      || operations.some((operation) => !validDecision(operation))
+      || new Set(operations.map((operation) => operation.idempotencyKey)).size
+        !== operations.length
+    ) {
+      return err(new Error("Announcement operation reservation transition is invalid"));
+    }
+
+    const current = deps.getReservations();
+    const expected = new Set(expectedKeys);
+    const completionKeys = new Set(operations.flatMap((operation) => operation.completionKeys));
+    if (
+      expectedKeys.length > 0
+      && (
+        completionKeys.size !== expected.size
+        || [...expected].some((key) => !completionKeys.has(key))
+      )
+    ) {
+      return err(new Error("Announcement operation reservations do not preserve their owners"));
+    }
+    const alreadyTransitioned = current.some((reservation) =>
+      reservation.completionKeys.some((key) => completionKeys.has(key))
+      && !expected.has(reservation.idempotencyKey));
+    if (alreadyTransitioned || [...completionKeys].some(deps.hasDeliveryKey)) {
+      return ok({ created: false });
+    }
+    if (expectedKeys.some((key) =>
+      !current.some((reservation) => reservation.idempotencyKey === key))) {
+      return err(new Error("Announcement decision reservation transition lost its expected owner"));
+    }
+
+    const retained = current.filter((reservation) => !expected.has(reservation.idempotencyKey));
+    const records: ParentDecisionReservationRecord[] = [];
+    for (const operation of operations) {
+      const id = tryCatch(() => randomUUID());
+      if (!id.ok) return id;
+      records.push({
+        ...operation,
+        recordType: "parent_decision_reservation",
+        id: id.value,
+      });
+    }
+    const next = [...retained, ...records];
+    const persisted = await deps.persist(next);
+    if (!persisted.ok) return persisted;
+    deps.replaceReservations(next);
+    return ok({ created: true });
+  }
+
+  return { reserve, lookup, resolve, replace };
 }
 
 interface DeadLetterFileHandle {
@@ -329,6 +424,9 @@ function isParentDecisionReservationRecord(
     && isOptionalString(record.threadId)
     && typeof record.rootRunId === "string"
     && record.rootRunId.length > 0
+    && isCompletionKeys(record.completionKeys)
+    && isOptionalString(record.partId)
+    && (record.attachment === undefined || isDeadLetterAttachment(record.attachment))
     && isRecoveryRoute(record);
 }
 
@@ -362,6 +460,9 @@ function isDeadLetterEntry(
     && isOptionalString(record.threadId)
     && isOptionalString(record.idempotencyKey)
     && isOptionalString(record.rootRunId)
+    && isOptionalString(record.partId)
+    && (record.attachment === undefined || isDeadLetterAttachment(record.attachment))
+    && (record.completionKeys === undefined || isCompletionKeys(record.completionKeys))
     && (
       record.stepIndex === undefined
       || (typeof record.stepIndex === "number" && Number.isSafeInteger(record.stepIndex) && record.stepIndex >= 0)

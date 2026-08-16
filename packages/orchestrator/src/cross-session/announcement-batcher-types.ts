@@ -71,7 +71,7 @@ export interface AnnouncementBatcherDeps {
   /** Durable decision reservation and failed-delivery quarantine. */
   deadLetterQueue?: Pick<
     AnnouncementDeadLetterQueuePort,
-    "enqueue" | "reserveDecision" | "resolveDecision"
+    "enqueue" | "reserveDecision" | "resolveDecision" | "replaceDecisions"
   >;
   /** Durable single-attempt sender for the irreversible final delivery. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;

@@ -218,6 +218,7 @@ export type {
   AnnouncementChannelType,
   AnnouncementDeadLetterEntryInput,
   AnnouncementDeadLetterEntry,
+  AnnouncementDeadLetterAttachment,
   AnnouncementParentDecisionReservation,
   AnnouncementParentDecisionReservationRecord,
   QuarantinedAnnouncement,

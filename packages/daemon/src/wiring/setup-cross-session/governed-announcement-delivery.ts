@@ -5,6 +5,7 @@ import {
   ChannelEndpointSchema,
   ConversationLocatorSchema,
   conversationScopeToSessionKey,
+  createStableAnnouncementOperationId,
   emitObservationalEventSafely,
   resolvePlatformDeliveryResult,
   systemNowMs,
@@ -21,7 +22,6 @@ import {
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
   createGovernedAnnouncementSender,
-  createStableAnnouncementOperationId,
   type AnnouncementPlatformSendOutcome,
   type CompletionAttachmentRef,
   type GovernedAnnouncementAttachment,
@@ -105,6 +105,14 @@ export interface AnnouncementDelivery {
     text: string,
     options?: AnnouncementDeliveryOptions,
   ): Promise<boolean>;
+  sendPreparedAttachmentToChannelWithReceipt(
+    channelType: string,
+    channelId: string,
+    text: string,
+    attachment: GovernedAnnouncementAttachment,
+    destinationEndpoint: ChannelEndpoint,
+    options?: AnnouncementDeliveryOptions,
+  ): Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
 }
 
@@ -189,7 +197,7 @@ export function createAnnouncementDelivery(
     return result.ok && result.value.delivered;
   };
 
-  const sendAttachmentToChannelWithReceipt = async (
+  const sendPreparedAttachmentToChannelWithReceipt = async (
     channelType: string,
     channelId: string,
     text: string,
@@ -272,7 +280,13 @@ export function createAnnouncementDelivery(
   };
 
   const outwardLedger = deps.outwardLedger;
-  if (!outwardLedger) return { sendToChannelWithReceipt, sendToChannel };
+  if (!outwardLedger) {
+    return {
+      sendToChannelWithReceipt,
+      sendToChannel,
+      sendPreparedAttachmentToChannelWithReceipt,
+    };
+  }
 
   const sendGovernedAnnouncement: SendGovernedCompletionAnnouncement = async (request) => {
     const resolveRootRunId = deps.resolveRootRunId;
@@ -437,7 +451,7 @@ export function createAnnouncementDelivery(
       ledger: outwardLedger,
       sendToPlatform: (channelType, channelId, text, options, attachment) =>
         attachment
-          ? sendAttachmentToChannelWithReceipt(
+          ? sendPreparedAttachmentToChannelWithReceipt(
               channelType,
               channelId,
               text,
@@ -469,5 +483,10 @@ export function createAnnouncementDelivery(
     }
   };
 
-  return { sendToChannelWithReceipt, sendToChannel, sendGovernedAnnouncement };
+  return {
+    sendToChannelWithReceipt,
+    sendToChannel,
+    sendPreparedAttachmentToChannelWithReceipt,
+    sendGovernedAnnouncement,
+  };
 }

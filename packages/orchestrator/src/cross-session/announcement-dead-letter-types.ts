@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  AnnouncementDeadLetterAttachment,
   ChannelEndpoint,
   DeliveryAuthority,
   OutwardSendLedgerPort,
@@ -9,6 +10,7 @@ import type {
 import type {
   AnnouncementDeliveryOptions,
   AnnouncementPlatformSendOutcome,
+  GovernedAnnouncementAttachment,
 } from "./announcement-outward-operation.js";
 import type {
   ChannelType,
@@ -19,6 +21,10 @@ export type RecoveryDeliveryOptions = AnnouncementDeliveryOptions & {
   authority?: DeliveryAuthority;
   destinationEndpoint?: ChannelEndpoint;
 };
+
+export interface PreparedRecoveryAttachment extends GovernedAnnouncementAttachment {
+  cleanup(): Promise<import("@comis/shared").Result<void, Error>>;
+}
 
 /** Minimal structural logger accepted from the daemon composition root. */
 export interface AnnouncementLogger {
@@ -52,7 +58,12 @@ export interface AnnouncementDeadLetterQueueOptions {
     id: string,
     text: string,
     options?: RecoveryDeliveryOptions,
+    attachment?: GovernedAnnouncementAttachment,
   ) => Promise<import("@comis/shared").Result<AnnouncementPlatformSendOutcome, Error>>;
+  /** Rebuild a validated immutable snapshot before attachment recovery. */
+  prepareAttachment?: (
+    attachment: AnnouncementDeadLetterAttachment,
+  ) => Promise<import("@comis/shared").Result<PreparedRecoveryAttachment, Error>>;
   /** Materialize the owning session observer before off-turn recovery events fire. */
   ensureSessionObservation?: (input: {
     agentId: string;

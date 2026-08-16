@@ -1,12 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import {
-  nextStandaloneMessageIdBase,
+  reserveStandaloneMessageIdBase,
   toCreateGroupChatOptions,
 } from "../../test/live/bin/vps-emu-group-options.js";
 
 describe("standalone emulator group provisioning", () => {
-  afterEach(() => vi.restoreAllMocks());
+  const directories: string[] = [];
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const directory of directories.splice(0)) {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  function reservationDirectory(): string {
+    const root = mkdtempSync(resolve(tmpdir(), "comis-emu-contract-"));
+    directories.push(root);
+    return resolve(root, "reservations");
+  }
 
   it("preserves forum and supergroup flags required by topic scenarios", () => {
     const options = toCreateGroupChatOptions({
@@ -29,9 +44,13 @@ describe("standalone emulator group provisioning", () => {
 
   it("reserves a new message-id block across standalone restarts", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
+    const directory = reservationDirectory();
 
-    expect(nextStandaloneMessageIdBase(undefined)).toBe(1_786_863_916);
-    expect(nextStandaloneMessageIdBase({})).toBe(1_786_863_916);
-    expect(nextStandaloneMessageIdBase({ messageIdBase: 2_000_000_000 })).toBe(2_001_000_000);
+    expect(reserveStandaloneMessageIdBase(undefined, directory)).toBe(1_786_863_916);
+    expect(reserveStandaloneMessageIdBase({}, directory)).toBe(1_787_863_916);
+    expect(reserveStandaloneMessageIdBase(
+      { messageIdBase: 2_000_000_000 },
+      directory,
+    )).toBe(2_001_000_000);
   });
 });

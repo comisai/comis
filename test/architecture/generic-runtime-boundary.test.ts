@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Domain-neutral runtime boundary and retired-surface guard. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AnnouncementDeadLetterQueuePort } from "@comis/core";
+import { createAnnouncementDeadLetterQueue } from "@comis/orchestrator";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
@@ -127,19 +129,10 @@ describe("generic runtime specialization boundary", () => {
   });
 
   it("owns the dead-letter delivery contract in one core port", () => {
-    const contract = source("packages/core/src/ports/announcement-dead-letter.ts");
-    const agentPort = source("packages/agent/src/spawn/announcement-ports.ts");
-    const orchestratorQueue = source(
-      "packages/orchestrator/src/cross-session/announcement-dead-letter.ts",
-    );
-
-    expect(contract).toContain("sessionKey: string");
-    expect(contract).toContain("AnnouncementDeadLetterQueuePort");
-    expect(agentPort).toContain("AnnouncementDeadLetterQueuePort");
-    expect(agentPort).not.toContain("interface DeadLetterEntryShape");
-    expect(orchestratorQueue).toContain("AnnouncementDeadLetterQueuePort");
-    expect(orchestratorQueue).not.toMatch(
-      /(?:export\s+)?interface\s+AnnouncementDeadLetterQueue\s*\{/u,
-    );
+    expectTypeOf<ReturnType<typeof createAnnouncementDeadLetterQueue>>()
+      .toExtend<AnnouncementDeadLetterQueuePort>();
+    expectTypeOf<Parameters<AnnouncementDeadLetterQueuePort["enqueue"]>[0]>()
+      .toHaveProperty("sessionKey")
+      .toEqualTypeOf<string>();
   });
 });

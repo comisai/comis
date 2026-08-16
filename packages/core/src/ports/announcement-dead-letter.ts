@@ -15,6 +15,12 @@ interface AnnouncementDeadLetterDeliveryOptions {
   readonly destinationEndpoint?: ChannelEndpoint;
 }
 
+/** Generated-file reference retained for an attachment delivery operation. */
+export interface AnnouncementDeadLetterAttachment {
+  readonly sourceAgentId: string;
+  readonly path: string;
+}
+
 /** Failed completion admitted to durable delivery recovery. */
 export interface AnnouncementDeadLetterEntryInput {
   announcementText: string;
@@ -35,6 +41,12 @@ export interface AnnouncementDeadLetterEntryInput {
   deliveryAuthority?: DeliveryAuthority;
   /** Immutable destination retained with the failed platform operation. */
   destinationEndpoint?: ChannelEndpoint;
+  /** Exact generated file owned by this irreversible operation. */
+  attachment?: AnnouncementDeadLetterAttachment;
+  /** Stable operation discriminator used by the outward ledger. */
+  partId?: string;
+  /** Completion keys settled only after every related operation resolves. */
+  completionKeys?: readonly string[];
 }
 
 /** Persisted form of a failed completion. */
@@ -57,6 +69,12 @@ export interface AnnouncementParentDecisionReservation {
   rootRunId: string;
   deliveryAuthority: DeliveryAuthority;
   destinationEndpoint: ChannelEndpoint;
+  /** Exact generated file owned by this irreversible operation. */
+  attachment?: AnnouncementDeadLetterAttachment;
+  /** Stable operation discriminator used by the outward ledger. */
+  partId?: string;
+  /** Completion keys settled only after every related operation resolves. */
+  completionKeys: readonly string[];
 }
 
 export interface AnnouncementParentDecisionReservationRecord
@@ -115,6 +133,11 @@ export interface AnnouncementDeadLetterQueuePort {
     idempotencyKey: string,
     outcome: "receipt_committed" | "no_reply",
   ): Promise<Result<boolean, Error>>;
+  /** Atomically replace rewrite reservations with the actual outward operations. */
+  replaceDecisions(
+    expectedKeys: readonly string[],
+    operations: readonly AnnouncementParentDecisionReservation[],
+  ): Promise<Result<{ created: boolean }, Error>>;
   drain(
     sendToChannel: (
       type: AnnouncementChannelType,
@@ -127,7 +150,7 @@ export interface AnnouncementDeadLetterQueuePort {
   /** Load the durable store before returning its complete retained-item count. */
   durableSize(): Promise<Result<number, Error>>;
   size(): number;
-  listQuarantined(): Promise<readonly QuarantinedAnnouncement[]>;
+  listQuarantined(): Promise<Result<readonly QuarantinedAnnouncement[], Error>>;
   release(
     id: string,
     outcome: QuarantineReleaseOutcome,

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import { closeSync, mkdirSync, openSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import type {
   CreateGroupChatOptions,
   GroupMember,
@@ -29,29 +31,52 @@ interface StandaloneEmulatorState {
  * floor. Losing an ephemeral wiring file therefore cannot reuse a stable
  * `(bot, chat, message_id)` identity retained by an existing Comis session.
  */
-export function nextStandaloneMessageIdBase(
+export function reserveStandaloneMessageIdBase(
   previous: StandaloneEmulatorState | undefined,
+  reservationDirectory: string,
 ): number {
   const freshBase = Math.max(
     FIRST_MESSAGE_ID,
     Math.floor(Date.now() / MESSAGE_ID_TIME_UNIT_MS),
   );
-  if (previous === undefined) return freshBase;
-  if (previous.messageIdBase === undefined) {
-    return Math.max(freshBase, FIRST_MESSAGE_ID + RESTART_MESSAGE_ID_BLOCK);
+  let previousFloor = FIRST_MESSAGE_ID;
+  if (previous?.messageIdBase !== undefined) {
+    if (
+      typeof previous.messageIdBase !== "number"
+      || !Number.isSafeInteger(previous.messageIdBase)
+      || previous.messageIdBase < FIRST_MESSAGE_ID
+      || previous.messageIdBase > Number.MAX_SAFE_INTEGER - RESTART_MESSAGE_ID_BLOCK
+    ) {
+      throw new TypeError("Standalone emulator state has an invalid messageIdBase");
+    }
+    previousFloor = previous.messageIdBase + RESTART_MESSAGE_ID_BLOCK;
   }
-  if (
-    typeof previous.messageIdBase !== "number" ||
-    !Number.isSafeInteger(previous.messageIdBase) ||
-    previous.messageIdBase < FIRST_MESSAGE_ID ||
-    previous.messageIdBase > Number.MAX_SAFE_INTEGER - RESTART_MESSAGE_ID_BLOCK
-  ) {
-    throw new TypeError("Standalone emulator state has an invalid messageIdBase");
-  }
-  return Math.max(
-    freshBase,
-    previous.messageIdBase + RESTART_MESSAGE_ID_BLOCK,
+
+  mkdirSync(reservationDirectory, { recursive: true, mode: 0o700 });
+  const reservedBases = readdirSync(reservationDirectory)
+    .map((name) => Number(name))
+    .filter((value) => Number.isSafeInteger(value) && value >= FIRST_MESSAGE_ID);
+  const greatestReservedBase = reservedBases.reduce(
+    (greatest, value) => Math.max(greatest, value),
+    FIRST_MESSAGE_ID - RESTART_MESSAGE_ID_BLOCK,
   );
+  let candidate = Math.max(
+    freshBase,
+    previousFloor,
+    greatestReservedBase + RESTART_MESSAGE_ID_BLOCK,
+  );
+
+  while (candidate <= Number.MAX_SAFE_INTEGER - RESTART_MESSAGE_ID_BLOCK) {
+    try {
+      const handle = openSync(resolve(reservationDirectory, String(candidate)), "wx", 0o600);
+      closeSync(handle);
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      candidate += RESTART_MESSAGE_ID_BLOCK;
+    }
+  }
+  throw new RangeError("Standalone emulator message-id reservations are exhausted");
 }
 
 /** The emulator's own bot identity — a group's bot member MUST match it or mentions can never fire. */

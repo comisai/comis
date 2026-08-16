@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import os from "node:os";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { resolveGraphCacheRetention } from "./index.js";
 import {
   createDeliveryOrigin,
   createConversationLocator,
+  conversationScopeToSessionKey,
   DeliveryQueueTransitionError,
   formatSessionKey,
   getContext,
   MIN_SUB_AGENT_STEPS,
   runWithContext,
   SUB_AGENT_TOOL_DENYLIST,
+  TypedEventBus,
   type RequestContext,
 } from "@comis/core";
+import { createSessionTrajectoryHandleRegistry } from "@comis/observability";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
+import { createDeadLetterRecoveryObserver } from "../dead-letter-recovery-observer.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -4137,16 +4141,28 @@ describe("setupCrossSession durable-store injection", () => {
     };
     // Isolate the DLQ JSONL onto a unique temp dataDir so no stray
     // process.cwd()/dead-letters.jsonl leaks pre-existing entries into drain.
-    const ensureDeadLetterRecoveryObservation = vi.fn(() => ({
-      ok: true as const,
-      value: undefined,
-    }));
     const deps = createMinimalDeps({
       outwardLedger,
-      ensureDeadLetterRecoveryObservation,
     });
     deps.container.config.dataDir = `${os.tmpdir()}/comis-dlq-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     mkdirSync(deps.container.config.dataDir, { recursive: true });
+    deps.container.eventBus = new TypedEventBus();
+    const callerConversation = makeConversation("default", "parent-agent");
+    const projected = conversationScopeToSessionKey(callerConversation.conversationScope);
+    if (!projected.ok) throw projected.error;
+    const formattedSessionKey = formatSessionKey(projected.value);
+    const trajectoryRegistry = createSessionTrajectoryHandleRegistry();
+    deps.ensureDeadLetterRecoveryObservation = createDeadLetterRecoveryObserver({
+      dataDir: deps.container.config.dataDir,
+      eventBus: deps.container.eventBus,
+      logger: deps.logger,
+      trajectoryConfig: { enabled: true, maxFileBytes: 64_000 },
+      sessionAdapters: new Map([[
+        "parent-agent",
+        { getSessionPath: vi.fn(() => `${deps.container.config.dataDir}/session.jsonl`) },
+      ]]),
+      trajectoryRegistry,
+    });
     const result = setupCrossSession(deps);
 
     const dlq = result.deadLetterQueue;
@@ -4158,14 +4174,13 @@ describe("setupCrossSession durable-store injection", () => {
     // so the subsequent in-memory enqueue is not clobbered by a re-read on drain.
     await dlq!.drain(sendSpy as any);
     const onDelivered = vi.fn();
-    const callerConversation = makeConversation("default", "parent-agent");
     await dlq!.enqueue({
       announcementText,
       channelType: "telegram",
       channelId: "chat-1",
       agentId: "parent-agent",
       runId: "run-dlq",
-      sessionKey: "default:u1:c1",
+      sessionKey: formattedSessionKey,
       failedAt: Date.now(),
       attemptCount: 0,
       idempotencyKey: "default:u1:c1::run-dlq",
@@ -4196,13 +4211,30 @@ describe("setupCrossSession durable-store injection", () => {
 
     // The ledger was consulted and reported committed ⇒ the re-send was skipped.
     expect(outwardLedger.lookup).toHaveBeenCalledWith("root-dlq", 3);
-    expect(ensureDeadLetterRecoveryObservation).toHaveBeenCalledWith({
-      agentId: "parent-agent",
-      sessionKey: "default:u1:c1",
-    });
     expect(sendSpy).not.toHaveBeenCalled();
     expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-dlq");
     expect(dlq!.size()).toBe(0);
+    const recorder = trajectoryRegistry.getRecorder(formattedSessionKey);
+    expect(recorder).toBeDefined();
+    if (!recorder) throw new Error("dead-letter recovery trajectory was not created");
+    await recorder.flush();
+    const trajectoryRows = readFileSync(recorder.filePath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(trajectoryRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "delivery.outward_ledger_transition",
+        data: expect.objectContaining({
+          rootRunId: "root-dlq",
+          stepIndex: 3,
+          transition: "lookup",
+          outcome: "committed",
+        }),
+      }),
+    ]));
+    await trajectoryRegistry.closeAll();
+    rmSync(deps.container.config.dataDir, { recursive: true, force: true });
   });
 });
 

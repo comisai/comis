@@ -141,6 +141,14 @@ function createOneTimeDirectorySyncFailure(
   };
 }
 
+async function listQuarantined(
+  queue: ReturnType<typeof createAnnouncementDeadLetterQueue>,
+) {
+  const listed = await queue.listQuarantined();
+  if (!listed.ok) throw listed.error;
+  return listed.value;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -407,7 +415,7 @@ describe("AnnouncementDeadLetterQueue", () => {
 
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(dlq.size()).toBe(1);
-    expect(await dlq.listQuarantined()).toMatchObject([{
+    expect(await listQuarantined(dlq)).toMatchObject([{
       kind: "entry",
       lastError: "attempt_limit_reached",
     }]);
@@ -432,7 +440,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     await dlq.drain(sendToChannel);
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(dlq.size()).toBe(1);
-    expect(await dlq.listQuarantined()).toMatchObject([{
+    expect(await listQuarantined(dlq)).toMatchObject([{
       kind: "entry",
       lastError: "retention_window_elapsed",
     }]);
@@ -566,7 +574,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     expect(enqueueResult).toMatchObject({ ok: true });
     expect(sendToChannel).toHaveBeenCalledTimes(3);
     expect(dlq.size()).toBe(1);
-    const quarantined = await dlq.listQuarantined();
+    const quarantined = await listQuarantined(dlq);
     expect(quarantined).toMatchObject([{
       kind: "invalid_record",
       reason: "invalid_json",
@@ -680,6 +688,15 @@ describe("AnnouncementDeadLetterQueue", () => {
 
     expect(result).toEqual(ok(1));
     expect(fresh.size()).toBe(1);
+  });
+
+  it("quarantine listing reports a disk read failure instead of an empty list", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath: tmpDir,
+      eventBus: createMockEventBus(),
+    });
+
+    await expect(queue.listQuarantined()).resolves.toMatchObject({ ok: false });
   });
 
   it("serializes concurrent lazy-load enqueues without losing either durable row", async () => {
@@ -1017,6 +1034,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       rootRunId: "root-parent-1",
       deliveryAuthority: makeDeliveryAuthority("parent-agent"),
       destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1", "topic-1"),
+      completionKeys: ["default:user:telegram:chat-1::run-parent-1"],
       ...overrides,
     };
   }
@@ -1045,6 +1063,62 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await restarted.drain(sendToChannel);
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(restarted.size()).toBe(1);
+  });
+
+  it("atomically replaces parent decisions with exact outward operations", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    const firstKey = "default:user:telegram:chat-1::run-parent-1";
+    const secondKey = "default:user:telegram:chat-1::run-parent-2";
+    await queue.reserveDecision(decisionInput());
+    await queue.reserveDecision(decisionInput({
+      idempotencyKey: secondKey,
+      runId: "run-parent-2",
+      completionKeys: [secondKey],
+    }));
+    const operations = [
+      decisionInput({
+        idempotencyKey: "operation-summary",
+        partId: "summary",
+        announcementText: "combined summary",
+        completionKeys: [firstKey, secondKey],
+      }),
+      decisionInput({
+        idempotencyKey: "operation-attachment",
+        partId: "attachment:0",
+        announcementText: "",
+        attachment: { sourceAgentId: "worker-a", path: "report.txt" },
+        completionKeys: [secondKey],
+      }),
+    ];
+
+    await expect(queue.replaceDecisions(
+      [firstKey, secondKey],
+      [decisionInput({
+        idempotencyKey: "operation-incomplete",
+        completionKeys: [firstKey],
+      })],
+    )).resolves.toMatchObject({ ok: false });
+    expect(queue.size()).toBe(2);
+    await expect(queue.replaceDecisions(
+      [firstKey, secondKey],
+      operations,
+    )).resolves.toEqual(ok({ created: true }));
+    await expect(queue.lookupDecision(firstKey)).resolves.toEqual(ok(undefined));
+    await expect(queue.lookupDecision("operation-summary")).resolves.toEqual(ok(operations[0]));
+    await expect(queue.lookupDecision("operation-attachment")).resolves.toEqual(ok(operations[1]));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.replaceDecisions(
+      [firstKey, secondKey],
+      operations,
+    )).resolves.toEqual(ok({ created: false }));
+    expect(restarted.size()).toBe(2);
   });
 
   it("emits a session-attributed diagnostic after reserving a parent decision", async () => {
@@ -1259,7 +1333,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
 
     expect(queue.size()).toBe(1);
     expect(ledger.allocateStep).not.toHaveBeenCalled();
-    expect(await queue.listQuarantined()).toMatchObject([{
+    expect(await listQuarantined(queue)).toMatchObject([{
       kind: "invalid_record",
       reason: "schema_mismatch",
     }]);
@@ -1278,10 +1352,13 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       runId: "run-parent-1",
       idempotencyKey: decisionInput().idempotencyKey,
       agentId: "parent-agent",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: "scrubbed parent decision input",
       channelId: "chat-1",
       threadId: "topic-1",
       rootRunId: "root-parent-1",
       stepIndex: 4,
+      completionKeys: [decisionInput().idempotencyKey],
       lastError: "transport_failed",
     }))).resolves.toEqual(ok(undefined));
 
@@ -1483,6 +1560,53 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(dlq.size()).toBe(0);
   });
 
+  it("settles one completion key after all committed operations clear", async () => {
+    const completionKey = "default:u1:c1::run-multipart-committed";
+    const summary = makeFullEntry({
+      id: "summary-entry",
+      runId: "run-multipart-committed",
+      idempotencyKey: "operation-summary",
+      rootRunId: "root-multipart-committed",
+      stepIndex: 1,
+      agentId: "parent-agent",
+      announcementText: "summary",
+      partId: "summary",
+      completionKeys: [completionKey],
+    }) as GovernedDeadLetterEntry;
+    const finalPart = makeFullEntry({
+      id: "final-entry",
+      runId: "run-multipart-committed",
+      idempotencyKey: "operation-final",
+      rootRunId: "root-multipart-committed",
+      stepIndex: 2,
+      agentId: "parent-agent",
+      announcementText: "final part",
+      partId: "part:1",
+      completionKeys: [completionKey],
+    }) as GovernedDeadLetterEntry;
+    await writeFile(
+      filePath,
+      `${JSON.stringify(summary)}\n${JSON.stringify(finalPart)}\n`,
+      "utf8",
+    );
+    const { ledger } = makeStubLedger();
+    vi.mocked(ledger.lookup).mockImplementation(async (_rootRunId, stepIndex) =>
+      ok(ledgerRow(stepIndex === 1 ? summary : finalPart, "committed")));
+    const onDelivered = vi.fn();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+    });
+
+    await dlq.drain(vi.fn(async () => true), onDelivered);
+
+    expect(onDelivered).toHaveBeenCalledOnce();
+    expect(onDelivered).toHaveBeenCalledWith(completionKey);
+    expect(dlq.size()).toBe(0);
+  });
+
   it("commits a receipt-aware absent-row delivery before removing the dead letter", async () => {
     const eventBus = createMockEventBus();
     const logger = createMockLogger();
@@ -1596,6 +1720,72 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       expect.anything(),
       "Committed dead-letter operation removed without replay",
     );
+    expect(dlq.size()).toBe(0);
+  });
+
+  it("rebuilds and settles one retained attachment operation", async () => {
+    const completionKey = "default:u1:c1::run-attachment-recovery";
+    const entry = makeFullEntry({
+      runId: "run-attachment-recovery",
+      idempotencyKey: "operation-attachment-recovery",
+      rootRunId: "root-attachment-recovery",
+      stepIndex: 10,
+      agentId: "parent-agent",
+      announcementText: "attachment caption",
+      partId: "attachment:0",
+      attachment: { sourceAgentId: "worker-a", path: "report.txt" },
+      completionKeys: [completionKey],
+    }) as GovernedDeadLetterEntry;
+    await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+    const cleanup = vi.fn(async () => ok(undefined));
+    const preparedAttachment = {
+      path: "/snapshots/report.txt",
+      fileName: "report.txt",
+      mimeType: "text/plain",
+      contentDigest: "attachment-digest",
+      sizeBytes: 24,
+      cleanup,
+    };
+    const prepareAttachment = vi.fn(async () => ok(preparedAttachment));
+    const governedSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "attachment-receipt",
+    }));
+    const { ledger } = makeStubLedger({ lookupResult: ok(undefined) });
+    const onDelivered = vi.fn();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+      governedSendToChannel,
+      prepareAttachment,
+    });
+
+    await dlq.drain(vi.fn(async () => true), onDelivered);
+
+    expect(prepareAttachment).toHaveBeenCalledWith({
+      sourceAgentId: "worker-a",
+      path: "report.txt",
+    });
+    expect(governedSendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-123",
+      "attachment caption",
+      expect.objectContaining({
+        authority: entry.deliveryAuthority,
+        destinationEndpoint: entry.destinationEndpoint,
+      }),
+      preparedAttachment,
+    );
+    expect(ledger.commit).toHaveBeenCalledWith(
+      "root-attachment-recovery",
+      10,
+      "attachment-receipt",
+    );
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(onDelivered).toHaveBeenCalledWith(completionKey);
     expect(dlq.size()).toBe(0);
   });
 
@@ -1923,7 +2113,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
 
     expect(lookupCalls).toEqual([]);
     expect(sendToChannel).not.toHaveBeenCalled();
-    expect(await dlq.listQuarantined()).toMatchObject([{
+    expect(await listQuarantined(dlq)).toMatchObject([{
       kind: "invalid_record",
       reason: "schema_mismatch",
     }]);
@@ -2044,7 +2234,7 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
       lastError: "outward_operation_unresolved",
     }));
 
-    const rows = await queue.listQuarantined();
+    const rows = await listQuarantined(queue);
 
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
@@ -2071,7 +2261,7 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
 
     // A brand-new queue over the same file: nothing has loaded it yet.
     const fresh = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
-    const rows = await fresh.listQuarantined();
+    const rows = await listQuarantined(fresh);
 
     expect(rows).toHaveLength(1);
     expect(rows[0]!.runId).toBe("run-from-a-previous-boot");
@@ -2080,12 +2270,12 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
   it("releases a quarantined announcement by id and persists the removal", async () => {
     const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
     await queue.enqueue(makeEntry({ runId: "run-stuck" }));
-    const id = (await queue.listQuarantined())[0]!.id;
+    const id = (await listQuarantined(queue))[0]!.id;
 
     const released = await queue.release(id, "discarded");
 
     expect(released).toMatchObject({ ok: true, value: true });
-    expect(await queue.listQuarantined()).toHaveLength(0);
+    expect(await listQuarantined(queue)).toHaveLength(0);
     expect(queue.size()).toBe(0);
     // Durable: a fresh queue over the same file must not resurrect it.
     const reloaded = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });

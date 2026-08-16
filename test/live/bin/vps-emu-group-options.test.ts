@@ -10,35 +10,65 @@
  * `isBotMentioned` was permanently false. Both must throw, naming the expected shape.
  */
 import { afterEach, describe, it, expect, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import {
   assertValidGroupSpec,
   EMULATOR_BOT_ID,
   EMULATOR_BOT_USERNAME,
-  nextStandaloneMessageIdBase,
+  reserveStandaloneMessageIdBase,
   toCreateGroupChatOptions,
 } from "./vps-emu-group-options.js";
 
 const members = [{ id: 678314278, firstName: "U1", username: "u1" }];
+const reservationDirectories: string[] = [];
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const directory of reservationDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
-describe("nextStandaloneMessageIdBase", () => {
+function reservationDirectory(): string {
+  const root = mkdtempSync(resolve(tmpdir(), "comis-emu-message-ids-"));
+  reservationDirectories.push(root);
+  return resolve(root, "reservations");
+}
+
+describe("reserveStandaloneMessageIdBase", () => {
   it("does not rewind message identity when ephemeral launcher state is absent", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
 
-    expect(nextStandaloneMessageIdBase(undefined)).toBe(1_786_863_916);
+    expect(reserveStandaloneMessageIdBase(undefined, reservationDirectory()))
+      .toBe(1_786_863_916);
+  });
+
+  it("allocates distinct blocks for two stateless launches in the same second", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
+    const directory = reservationDirectory();
+
+    expect(reserveStandaloneMessageIdBase(undefined, directory)).toBe(1_786_863_916);
+    expect(reserveStandaloneMessageIdBase(undefined, directory)).toBe(1_787_863_916);
   });
 
   it("keeps a persisted reservation that is ahead of the wall-clock floor", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
 
-    expect(nextStandaloneMessageIdBase({ messageIdBase: 2_000_000_000 })).toBe(2_001_000_000);
+    expect(reserveStandaloneMessageIdBase(
+      { messageIdBase: 2_000_000_000 },
+      reservationDirectory(),
+    )).toBe(2_001_000_000);
   });
 
   it("advances stale persisted state to the wall-clock floor", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
 
-    expect(nextStandaloneMessageIdBase({ messageIdBase: 100 })).toBe(1_786_863_916);
+    expect(reserveStandaloneMessageIdBase(
+      { messageIdBase: 100 },
+      reservationDirectory(),
+    )).toBe(1_786_863_916);
   });
 });
 

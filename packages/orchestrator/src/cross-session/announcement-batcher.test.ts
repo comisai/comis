@@ -2,7 +2,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAnnouncementBatcher, sanitizeForUser, type AnnouncementBatcherDeps, type QueuedAnnouncement } from "./announcement-batcher.js";
 import { createDeliveryDedup } from "@comis/agent";
-import { createConversationLocator, TypedEventBus } from "@comis/core";
+import {
+  createConversationLocator,
+  createStableAnnouncementOperationId,
+  TypedEventBus,
+} from "@comis/core";
 import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
@@ -53,6 +57,7 @@ function makeDecisionQueue() {
     reserveDecision: vi.fn().mockResolvedValue(ok({ created: true })),
     lookupDecision: vi.fn().mockResolvedValue(ok(undefined)),
     resolveDecision: vi.fn().mockResolvedValue(ok(true)),
+    replaceDecisions: vi.fn().mockResolvedValue(ok({ created: true })),
   };
 }
 
@@ -607,7 +612,11 @@ describe("AnnouncementBatcher", () => {
     expect(deps.announceToParent).toHaveBeenCalledOnce();
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "decision-concurrent",
+      createStableAnnouncementOperationId(
+        "agent-main",
+        "default:agent:agent-main:user1:chan1",
+        "run-1",
+      ),
       "receipt_committed",
     );
   });
@@ -654,7 +663,11 @@ describe("AnnouncementBatcher", () => {
     await deliveredBatcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-delivered" }));
     await vi.advanceTimersByTimeAsync(2_000);
     expect(deliveredQueue.resolveDecision).toHaveBeenCalledWith(
-      "decision-delivered",
+      createStableAnnouncementOperationId(
+        "agent-main",
+        "default:agent:agent-main:user1:chan1",
+        "run-1",
+      ),
       "receipt_committed",
     );
   });
@@ -687,11 +700,16 @@ describe("AnnouncementBatcher", () => {
       },
     }));
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "file-no-caption",
+      createStableAnnouncementOperationId(
+        "agent-main",
+        "default:agent:agent-main:user1:chan1",
+        "run-1",
+        "attachment:0",
+      ),
       "receipt_committed",
     );
     expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalledWith(
-      "file-no-caption",
+      expect.any(String),
       "no_reply",
     );
   });
@@ -810,9 +828,104 @@ describe("AnnouncementBatcher", () => {
       },
     }));
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "attachment-rewrite-failure",
+      createStableAnnouncementOperationId(
+        "agent-main",
+        "default:agent:agent-main:user1:chan1",
+        "run-1",
+        "attachment:0",
+      ),
       "receipt_committed",
     );
+  });
+
+  it("settles batched summary and attachment reservations incrementally", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendGovernedAnnouncement = vi.fn()
+      .mockResolvedValueOnce(ok({
+        delivered: true,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 10 },
+      }))
+      .mockResolvedValueOnce(ok({
+        delivered: true,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 11 },
+      }))
+      .mockResolvedValueOnce(ok({
+        delivered: false,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 12 },
+        failure: "operation_retained" as const,
+      }));
+    const batcher = createAnnouncementBatcher(makeDeps({
+      deadLetterQueue,
+      announceToParent: vi.fn().mockResolvedValue("Combined summary"),
+      sendGovernedAnnouncement,
+    }));
+    const first = makeAnnouncement({
+      runId: "run-batch-a",
+      idempotencyKey: "completion-a",
+      attachments: [{ sourceAgentId: "report-agent", path: "/workspace/a.csv" }],
+    });
+    const second = makeAnnouncement({
+      runId: "run-batch-b",
+      idempotencyKey: "completion-b",
+      attachments: [{ sourceAgentId: "report-agent", path: "/workspace/b.csv" }],
+    });
+
+    await batcher.enqueue(first);
+    await batcher.enqueue(second);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    const summaryKey = createStableAnnouncementOperationId(
+      "agent-main",
+      first.callerSessionKey,
+      first.runId,
+      "summary",
+    );
+    const firstAttachmentKey = createStableAnnouncementOperationId(
+      "agent-main",
+      first.callerSessionKey,
+      first.runId,
+      "attachment:0",
+    );
+    const secondAttachmentKey = createStableAnnouncementOperationId(
+      "agent-main",
+      second.callerSessionKey,
+      second.runId,
+      "attachment:0",
+    );
+    expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith(
+      ["completion-a", "completion-b"],
+      expect.arrayContaining([
+        expect.objectContaining({
+          idempotencyKey: summaryKey,
+          announcementText: "Combined summary",
+          completionKeys: ["completion-a", "completion-b"],
+          partId: "summary",
+        }),
+        expect.objectContaining({
+          idempotencyKey: firstAttachmentKey,
+          attachment: first.attachments?.[0],
+          completionKeys: ["completion-a"],
+        }),
+        expect.objectContaining({
+          idempotencyKey: secondAttachmentKey,
+          attachment: second.attachments?.[0],
+          completionKeys: ["completion-b"],
+        }),
+      ]),
+    );
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      summaryKey,
+      "receipt_committed",
+    );
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      firstAttachmentKey,
+      "receipt_committed",
+    );
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalledWith(
+      secondAttachmentKey,
+      expect.any(String),
+    );
+    expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
   });
 
   it("shutdown closes admission and waits for an in-flight reservation before flushing", async () => {
@@ -893,7 +1006,11 @@ describe("AnnouncementBatcher", () => {
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "rejected-route-key",
+      createStableAnnouncementOperationId(
+        "agent-main",
+        "default:agent:agent-main:user1:chan1",
+        "run-1",
+      ),
       "no_reply",
     );
     expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();

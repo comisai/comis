@@ -158,6 +158,9 @@ export function wireSchedulerDiagnostics(input: {
   input.eventBus.on("announcement:quarantine_pending", (payload) => {
     input.diagnosticBuffer.push(announcementQuarantineEventToRow(payload));
   });
+  input.eventBus.on("announcement:quarantine_read_failed", (payload) => {
+    input.diagnosticBuffer.push(announcementQuarantineReadFailedEventToRow(payload));
+  });
   input.eventBus.on("scheduler:cron_ownership_reconciliation", (payload) => {
     input.diagnosticBuffer.push(cronOwnershipReconciliationEventToRow(payload));
   });
@@ -203,18 +206,37 @@ export function wireSchedulerDiagnostics(input: {
 export function announcementDeadLetteredEventToRow(
   payload: EventMap["announcement:dead_lettered"],
 ): DiagnosticRow {
+  const decisionReserved = payload.reason === "parent_decision_reserved";
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: decisionReserved ? "info" : "warning",
+    agentId: "",
+    sessionKey: payload.sessionKey,
+    message: "announcement:dead_lettered",
+    details: JSON.stringify({
+      signal: decisionReserved
+        ? "announcement_decision_reserved"
+        : "announcement_dead_lettered",
+      channelType: payload.channelType,
+      reason: payload.reason,
+    }),
+    traceId: undefined,
+  };
+}
+
+/** Map an unreadable durable quarantine to a named daemon-wide finding. */
+export function announcementQuarantineReadFailedEventToRow(
+  payload: EventMap["announcement:quarantine_read_failed"],
+): DiagnosticRow {
   return {
     timestamp: payload.timestamp,
     category: "health_signal",
     severity: "warning",
     agentId: "",
-    sessionKey: payload.sessionKey,
-    message: "announcement:dead_lettered",
-    details: JSON.stringify({
-      signal: "announcement_dead_lettered",
-      channelType: payload.channelType,
-      reason: payload.reason,
-    }),
+    sessionKey: "",
+    message: "announcement:quarantine_read_failed",
+    details: JSON.stringify({ signal: "announcement_quarantine_read_failed" }),
     traceId: undefined,
   };
 }

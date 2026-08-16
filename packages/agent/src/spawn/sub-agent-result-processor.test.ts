@@ -5,7 +5,11 @@ import { mkdtemp, writeFile, mkdir, readdir, readFile, utimes } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ok } from "@comis/shared";
-import { createConversationLocator, formatSessionKey } from "@comis/core";
+import {
+  createConversationLocator,
+  createStableAnnouncementOperationId,
+  formatSessionKey,
+} from "@comis/core";
 import { createDeliveryDedup } from "./announce-key.js";
 import {
   sweepResultFiles,
@@ -535,6 +539,7 @@ function makeDecisionDeadLetterQueue() {
     reserveDecision: vi.fn().mockResolvedValue(ok({ created: true })),
     lookupDecision: vi.fn().mockResolvedValue(ok(undefined)),
     resolveDecision: vi.fn().mockResolvedValue(ok(true)),
+    replaceDecisions: vi.fn().mockResolvedValue(ok({ created: true })),
     drain: vi.fn().mockResolvedValue(undefined),
     size: vi.fn().mockReturnValue(0),
   };
@@ -762,7 +767,11 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     expect(announceToParent).toHaveBeenCalledOnce();
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      `${callerSessionKey}::run-reserved`,
+      createStableAnnouncementOperationId(
+        "agent-main",
+        callerSessionKey,
+        "run-reserved",
+      ),
       "receipt_committed",
     );
   });
@@ -919,10 +928,85 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       runId: "run-rewrite",
     }));
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      `${callerSessionKey}::run-rewrite`,
+      createStableAnnouncementOperationId(
+        "agent-main",
+        callerSessionKey,
+        "run-rewrite",
+      ),
       "receipt_committed",
     );
     expect(deliveryDedup.has(`${callerSessionKey}::run-rewrite`)).toBe(true);
+  });
+
+  it("settles direct attachment operation reservations incrementally", async () => {
+    const deadLetterQueue = makeDecisionDeadLetterQueue();
+    const callerSessionKey = formatSessionKey({
+      tenantId: "default", agentId: "agent-main", userId: "user_a", channelId: "chat_a",
+    });
+    const firstKey = createStableAnnouncementOperationId(
+      "agent-main",
+      callerSessionKey,
+      "run-attachments",
+      "attachment:0",
+    );
+    const secondKey = createStableAnnouncementOperationId(
+      "agent-main",
+      callerSessionKey,
+      "run-attachments",
+      "attachment:1",
+    );
+    const sendGovernedAnnouncement = vi.fn()
+      .mockResolvedValueOnce(ok({
+        delivered: true as const,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 1 },
+      }))
+      .mockResolvedValueOnce(ok({
+        delivered: false as const,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 2 },
+        failure: "transport_uncertain",
+      }));
+
+    await deliverAnnouncement({
+      announcementText: "[System Message]\nResult: files ready",
+      terminalOutcome: { status: "completed" },
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+      callerAgentId: "agent-main",
+      callerSessionKey,
+      callerConversation: makeCallerConversation(),
+      destinationEndpoint: makeCallerEndpoint(),
+      runId: "run-attachments",
+      attachments: [
+        { sourceAgentId: "worker-a", path: "first.txt" },
+        { sourceAgentId: "worker-a", path: "second.txt" },
+      ],
+    }, {
+      sendToChannel: vi.fn().mockResolvedValue(true),
+      sendGovernedAnnouncement,
+      deadLetterQueue,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
+    });
+
+    expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith([], [
+      expect.objectContaining({
+        idempotencyKey: firstKey,
+        partId: "attachment:0",
+        attachment: { sourceAgentId: "worker-a", path: "first.txt" },
+        completionKeys: [`${callerSessionKey}::run-attachments`],
+      }),
+      expect.objectContaining({
+        idempotencyKey: secondKey,
+        partId: "attachment:1",
+        attachment: { sourceAgentId: "worker-a", path: "second.txt" },
+        completionKeys: [`${callerSessionKey}::run-attachments`],
+      }),
+    ]);
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledOnce();
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      firstKey,
+      "receipt_committed",
+    );
+    expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
   });
 
   it("blocks a governed completion before any send when caller identity is absent", async () => {
@@ -1060,9 +1144,9 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     expect(deliveryDedup.has("default:u5:c5::r-false")).toBe(false);
   });
 
-  it("threads the governed identity into a direct-send dead letter", async () => {
+  it("retains a governed failure through its operation reservation", async () => {
     const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
-    const enqueue = vi.fn();
+    const deadLetterQueue = makeDecisionDeadLetterQueue();
     const sendGovernedAnnouncement = vi.fn().mockResolvedValue({
       ok: true,
       value: {
@@ -1093,26 +1177,15 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       {
         sendToChannel: vi.fn().mockResolvedValue(true),
         sendGovernedAnnouncement,
-        deadLetterQueue: {
-          enqueue,
-          drain: vi.fn().mockResolvedValue(undefined),
-          size: vi.fn().mockReturnValue(0),
-        },
-      } as never,
+        deadLetterQueue,
+        resolveRootRunId: vi.fn(() => ok("root-r-governed")),
+      },
     );
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
-    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: "agent-main",
-      rootRunId: "root-r-governed",
-      stepIndex: 11,
-      deliveryAuthority: {
-        tenantId: "default",
-        agentId: "agent-main",
-        conversationRef: callerConversation.conversationRef,
-      },
-      destinationEndpoint,
-    }));
+    expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledOnce();
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
+    expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
   });
 });
 

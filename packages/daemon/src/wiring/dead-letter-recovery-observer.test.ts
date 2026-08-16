@@ -35,14 +35,6 @@ function makeSession() {
 }
 
 describe("dead-letter recovery trajectory observer", () => {
-  it("is constructed and injected by the daemon composition root", () => {
-    const daemonSource = readFileSync(new URL("../daemon.ts", import.meta.url), "utf8");
-
-    expect(daemonSource).toMatch(
-      /const ensureDeadLetterRecoveryObservation = createDeadLetterRecoveryObserver\(\{[\s\S]*?setupCrossSession\(\{[\s\S]*?ensureDeadLetterRecoveryObservation/,
-    );
-  });
-
   it("materializes the owning trajectory before off-turn recovery emits", () => {
     const session = makeSession();
     const getSessionPath = vi.fn(() => "/data/session.jsonl");

@@ -260,9 +260,14 @@ export function setupCrossSession(deps: {
       return { response: result.response, tokensUsed: result.tokensUsed, cost: result.cost };
     });
   };
+  const prepareCompletionAttachment = createCompletionAttachmentPreparer({
+    dataDir: container.config.dataDir,
+    agents: container.config.agents,
+  });
   const {
     sendToChannelWithReceipt,
     sendToChannel,
+    sendPreparedAttachmentToChannelWithReceipt,
     sendGovernedAnnouncement,
   } = createAnnouncementDelivery({
     adaptersByType,
@@ -272,10 +277,7 @@ export function setupCrossSession(deps: {
     ...(deps.logger ? { logger: deps.logger } : {}),
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
-    prepareCompletionAttachment: createCompletionAttachmentPreparer({
-      dataDir: container.config.dataDir,
-      agents: container.config.agents,
-    }),
+    prepareCompletionAttachment,
   });
   // executeSubAgent built via setup-cross-session-graph.ts.
   const executeSubAgent = buildExecuteSubAgent({
@@ -402,7 +404,34 @@ export function setupCrossSession(deps: {
     // (the in-memory deliveredKeys set rebuilds empty on boot; the durable ledger
     // is the authoritative no-double-notify signal). Absent ⇒ at-least-once delivery.
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
-    ...(deps.outwardLedger ? { governedSendToChannel: sendToChannelWithReceipt } : {}),
+    ...(deps.outwardLedger ? {
+      governedSendToChannel: (
+        channelType,
+        channelId,
+        text,
+        options,
+        attachment,
+      ) => {
+        if (attachment) {
+          const destinationEndpoint = options?.destinationEndpoint;
+          if (!destinationEndpoint) {
+            return Promise.resolve(err(new Error(
+              "Retained attachment has no immutable destination endpoint",
+            )));
+          }
+          return sendPreparedAttachmentToChannelWithReceipt(
+            channelType,
+            channelId,
+            text,
+            attachment,
+            destinationEndpoint,
+            options,
+          );
+        }
+        return sendToChannelWithReceipt(channelType, channelId, text, options);
+      },
+      prepareAttachment: prepareCompletionAttachment,
+    } : {}),
     ...(deps.ensureDeadLetterRecoveryObservation
       ? { ensureSessionObservation: deps.ensureDeadLetterRecoveryObservation }
       : {}),

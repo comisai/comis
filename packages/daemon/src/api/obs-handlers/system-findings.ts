@@ -219,6 +219,8 @@ export function buildFindings(
         ? "This failure occurred before session creation; inspect the normalized message bound and channel envelope before retrying."
         : label === "announcement_quarantine"
           ? "Run `node packages/cli/dist/cli.js quarantine list` and explicitly release each retained item after reconciling its delivery outcome."
+          : label === "announcement_quarantine_read_failed"
+            ? "Restore access to the configured dead-letter store, then rerun `node packages/cli/dist/cli.js quarantine list`."
           : "run `comis explain` on an affected session; inspect the recurring health WARNs",
     });
   }

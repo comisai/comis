@@ -30,7 +30,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createTgEmulator } from "../emulators/telegram/tg-emulator.js";
 import { registerControlApi } from "../harness/control-api.js";
 import {
-  nextStandaloneMessageIdBase,
+  reserveStandaloneMessageIdBase,
   assertValidGroupSpec,
   toCreateGroupChatOptions,
   type StandaloneGroupSpec,
@@ -47,7 +47,10 @@ const priorState = existsSync(WIRING_PATH)
       }
     })()
   : undefined;
-const messageIdBase = nextStandaloneMessageIdBase(priorState);
+const messageIdBase = reserveStandaloneMessageIdBase(
+  priorState,
+  `${WIRING_PATH}.message-id-reservations`,
+);
 
 const emu = createTgEmulator({ botToken: BOT_TOKEN, initialMessageId: messageIdBase });
 registerControlApi(emu.backend, emu);

@@ -4,12 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   announcementDeadLetteredEventToRow,
   announcementQuarantineEventToRow,
+  announcementQuarantineReadFailedEventToRow,
   cronModelDriftEventToRow,
   cronStoreResetEventToRow,
   cronOwnershipReconciliationEventToRow,
   cronTimerHealthEventToRow,
   wireSchedulerDiagnostics,
 } from "./obs-scheduler-rows.js";
+import { buildFindings } from "../api/obs-handlers/system-findings.js";
 
 describe("announcementDeadLetteredEventToRow", () => {
   it("attributes durable admission to the affected session without message content", () => {
@@ -23,16 +25,53 @@ describe("announcementDeadLetteredEventToRow", () => {
 
     expect(row).toMatchObject({
       category: "health_signal",
-      severity: "warning",
+      severity: "info",
       sessionKey: "default:agent-a:telegram:chat-1:user_a",
       message: "announcement:dead_lettered",
     });
     expect(JSON.parse(row.details)).toEqual({
-      signal: "announcement_dead_lettered",
+      signal: "announcement_decision_reserved",
       channelType: "telegram",
       reason: "parent_decision_reserved",
     });
     expect(JSON.stringify(row)).not.toContain("run-1");
+    expect(buildFindings([row], [], [])).toEqual([]);
+  });
+
+  it("keeps actual failed deliveries warning-severity", () => {
+    expect(announcementDeadLetteredEventToRow({
+      runId: "run-2",
+      sessionKey: "default:agent-a:telegram:chat-1:user_a",
+      channelType: "telegram",
+      reason: "delivery_failed",
+      timestamp: 101,
+    })).toMatchObject({ severity: "warning" });
+  });
+});
+
+describe("announcementQuarantineReadFailedEventToRow", () => {
+  it("reports an unknown durable count as a named warning", () => {
+    const row = announcementQuarantineReadFailedEventToRow({ timestamp: 200 });
+
+    expect(row).toMatchObject({
+      timestamp: 200,
+      category: "health_signal",
+      severity: "warning",
+      message: "announcement:quarantine_read_failed",
+    });
+    expect(JSON.parse(row.details)).toEqual({
+      signal: "announcement_quarantine_read_failed",
+    });
+
+    const eventBus = new TypedEventBus();
+    const push = vi.fn();
+    wireSchedulerDiagnostics({ eventBus, diagnosticBuffer: { push } });
+    eventBus.emit("announcement:quarantine_read_failed", { timestamp: 201 });
+    expect(push).toHaveBeenCalledWith(expect.objectContaining({
+      timestamp: 201,
+      severity: "warning",
+      message: "announcement:quarantine_read_failed",
+    }));
   });
 });
 

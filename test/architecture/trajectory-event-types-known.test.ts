@@ -65,6 +65,7 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // count belongs to the system-health view, not a per-session sidecar.
   // -------------------------------------------------------------------
   "announcement:quarantine_pending",
+  "announcement:quarantine_read_failed",
 
   // -------------------------------------------------------------------
   // Skill registry events — internal, not turn-scoped.
