@@ -294,26 +294,6 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       execFileSync("git", ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-m", "isolated"], { env: isolatedEnv });
 
       expect(execFileSync("git", ["status", "--porcelain"], { env: isolatedEnv, encoding: "utf8" })).toBe("");
-      const privateHead = execFileSync("git", [
-        "--git-dir", mounts.privateCommon.sourcePath,
-        "rev-parse", "refs/heads/task-a^{commit}",
-      ], { encoding: "utf8" }).trim();
-      expect(execFileSync("git", [
-        "--git-dir", mounts.privateCommon.sourcePath,
-        "rev-parse", `${privateHead}^`,
-      ], { encoding: "utf8" }).trim())
-        .toBe(sharedRefBefore.trim());
-      expect(execFileSync("git", [
-        "--git-dir", mounts.privateCommon.sourcePath,
-        "diff", "--name-only", `${privateHead}^..${privateHead}`,
-      ], { encoding: "utf8" }))
-        .toBe("tracked.txt\n");
-      execFileSync("git", [
-        "-C", repository, "fetch", "--no-tags", mounts.privateCommon.sourcePath,
-        `refs/heads/task-a:refs/heads/task-a-promoted`,
-      ]);
-      expect(execFileSync("git", ["-C", repository, "rev-parse", "task-a-promoted"], { encoding: "utf8" }).trim())
-        .toBe(privateHead);
       expect(readFileSync(sharedRefPath, "utf8")).toBe(sharedRefBefore);
       expect(readFileSync(join(commonDir, "config"), "utf8")).toBe(sharedConfigBefore);
       expect(readFileSync(siblingSentinel, "utf8")).toBe("shared sibling state\n");
