@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Atomic JSONL storage for the announcement dead-letter queue. */
 
-import { chmod, open, readFile, rename, unlink } from "node:fs/promises";
+import { chmod, open, rename, unlink } from "node:fs/promises";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import {
@@ -21,6 +21,7 @@ import {
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
   createInvalidDeadLetterRecord,
+  createOversizedDeadLetterRecord,
   isInvalidDeadLetterRecord,
   MAX_DEAD_LETTER_ROW_BYTES,
   type InvalidDeadLetterRecord,
@@ -31,6 +32,13 @@ interface StorageLogger {
   warn(obj: Record<string, unknown>, message: string): void;
   error?(obj: Record<string, unknown>, message: string): void;
 }
+
+const MAX_DEAD_LETTER_SNAPSHOT_ROWS = 200;
+const MAX_DEAD_LETTER_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+const DEAD_LETTER_READ_BUFFER_BYTES = 64 * 1024;
+const INVALID_ROW_EVIDENCE_BYTES = 16 * 1024;
+
+export interface DeadLetterReadLimits { readonly maxRows?: number; readonly maxBytes?: number }
 
 export type ChannelType = AnnouncementChannelType;
 
@@ -679,51 +687,21 @@ export function isAnnouncementProducerReservation(
   return "recordType" in value && value.recordType === "producer_reservation";
 }
 
-function parseEntries(
-  content: string,
-  logger?: StorageLogger,
-): Result<DeadLetterReadSnapshot, Error> {
-  const entries: StoredDeadLetterEntry[] = [];
-  let invalidRowCount = 0;
-  const lines = content.split("\n");
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index]!;
-    const trimmed = line.trim();
-    if (trimmed === "") continue;
-    if (Buffer.byteLength(trimmed, "utf8") > MAX_DEAD_LETTER_ROW_BYTES) {
-      const invalid = createInvalidDeadLetterRecord(trimmed, index + 1, false);
-      if (!invalid.ok) return invalid;
-      entries.push(invalid.value);
-      invalidRowCount++;
-      continue;
-    }
-    const parsed = tryCatch(() => JSON.parse(trimmed) as unknown);
-    const value = parsed.ok ? parsed.value : undefined;
-    if (parsed.ok && isDeadLetterEntry(value)) {
-      entries.push(value);
-      continue;
-    }
-    if (parsed.ok && isParentDecisionReservationRecord(value)) {
-      entries.push(value);
-      continue;
-    }
-    if (parsed.ok && isAnnouncementProducerReservationRecord(value)) {
-      entries.push(value);
-      continue;
-    }
-    if (parsed.ok && isAnnouncementProducerHandoffRecord(value)) {
-      entries.push(value);
-      continue;
-    }
-    if (parsed.ok && isInvalidDeadLetterRecord(value)) {
-      entries.push(value);
-      continue;
-    }
-    const invalid = createInvalidDeadLetterRecord(trimmed, index + 1, parsed.ok);
-    if (!invalid.ok) return invalid;
-    entries.push(invalid.value);
-    invalidRowCount++;
-  }
+function parseEntryLine(
+  trimmed: string,
+  sourceLine: number,
+): Result<StoredDeadLetterEntry, Error> {
+  const parsed = tryCatch(() => JSON.parse(trimmed) as unknown);
+  const value = parsed.ok ? parsed.value : undefined;
+  if (parsed.ok && isDeadLetterEntry(value)) return ok(value);
+  if (parsed.ok && isParentDecisionReservationRecord(value)) return ok(value);
+  if (parsed.ok && isAnnouncementProducerReservationRecord(value)) return ok(value);
+  if (parsed.ok && isAnnouncementProducerHandoffRecord(value)) return ok(value);
+  if (parsed.ok && isInvalidDeadLetterRecord(value)) return ok(value);
+  return createInvalidDeadLetterRecord(trimmed, sourceLine, parsed.ok);
+}
+
+function reportInvalidRows(invalidRowCount: number, logger?: StorageLogger): void {
   if (invalidRowCount > 0) {
     logger?.warn(
       {
@@ -734,7 +712,6 @@ function parseEntries(
       "Invalid dead-letter rows quarantined",
     );
   }
-  return ok({ entries, invalidRowCount });
 }
 
 function writeFailure(
@@ -819,13 +796,143 @@ export async function readDeadLetterEntries(
 export async function readDeadLetterSnapshot(
   filePath: string,
   logger?: StorageLogger,
+  limits: DeadLetterReadLimits = {},
 ): Promise<Result<DeadLetterReadSnapshot, Error>> {
-  const read = await fromPromise(readFile(filePath, "utf-8"));
-  if (read.ok) return parseEntries(read.value, logger);
-  if ("code" in read.error && (read.error as NodeJS.ErrnoException).code === "ENOENT") {
+  const maxRows = limits.maxRows ?? MAX_DEAD_LETTER_SNAPSHOT_ROWS;
+  const maxBytes = limits.maxBytes ?? MAX_DEAD_LETTER_SNAPSHOT_BYTES;
+  if (!Number.isSafeInteger(maxRows) || maxRows <= 0
+    || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    return err(new Error("Dead-letter snapshot read limits are invalid"));
+  }
+  const opened = await fromPromise(open(filePath, "r"));
+  if (!opened.ok && "code" in opened.error
+    && (opened.error as NodeJS.ErrnoException).code === "ENOENT") {
     return ok({ entries: [], invalidRowCount: 0 });
   }
-  return err(read.error);
+  if (!opened.ok) return opened;
+  const handle = opened.value;
+  const initialStat = await fromPromise(handle.stat({ bigint: true }));
+  if (!initialStat.ok) {
+    await fromPromise(handle.close());
+    return initialStat;
+  }
+  if (initialStat.value.size > BigInt(maxBytes)) {
+    await fromPromise(handle.close());
+    return err(new Error("Dead-letter snapshot exceeds the byte limit"));
+  }
+
+  const entries: StoredDeadLetterEntry[] = [];
+  const readBuffer = Buffer.alloc(DEAD_LETTER_READ_BUFFER_BYTES);
+  const evidence = Buffer.alloc(INVALID_ROW_EVIDENCE_BYTES);
+  let evidenceLength = 0;
+  let invalidRowCount = 0;
+  let lineNumber = 1;
+  let physicalRowCount = 0;
+  let position = 0;
+  let rowBytes = 0;
+  let rowParts: Buffer[] = [];
+  let rowHash = createHash("sha256");
+
+  const append = (segment: Buffer): void => {
+    if (segment.length === 0) return;
+    rowHash.update(segment);
+    rowBytes += segment.length;
+    if (evidenceLength < evidence.length) {
+      const copied = segment.copy(evidence, evidenceLength, 0,
+        Math.min(segment.length, evidence.length - evidenceLength));
+      evidenceLength += copied;
+    }
+    if (rowBytes <= MAX_DEAD_LETTER_ROW_BYTES) {
+      rowParts.push(Buffer.from(segment));
+    } else {
+      rowParts = [];
+    }
+  };
+  const resetRow = (): void => {
+    evidenceLength = 0;
+    rowBytes = 0;
+    rowParts = [];
+    rowHash = createHash("sha256");
+  };
+  const finishRow = (): Result<void, Error> => {
+    physicalRowCount++;
+    if (physicalRowCount > maxRows) {
+      return err(new Error("Dead-letter snapshot exceeds the row limit"));
+    }
+    if (rowBytes === 0) {
+      resetRow();
+      return ok(undefined);
+    }
+    if (rowBytes > MAX_DEAD_LETTER_ROW_BYTES) {
+      const invalid = createOversizedDeadLetterRecord(
+        rowHash.digest("hex"),
+        rowBytes,
+        evidence.subarray(0, evidenceLength).toString("utf8"),
+        lineNumber,
+      );
+      if (!invalid.ok) return invalid;
+      entries.push(invalid.value);
+      invalidRowCount++;
+      resetRow();
+      return ok(undefined);
+    }
+    const trimmed = Buffer.concat(rowParts, rowBytes).toString("utf8").trim();
+    resetRow();
+    if (trimmed === "") return ok(undefined);
+    const parsed = parseEntryLine(trimmed, lineNumber);
+    if (!parsed.ok) return parsed;
+    entries.push(parsed.value);
+    if (isInvalidDeadLetterRecord(parsed.value)) invalidRowCount++;
+    return ok(undefined);
+  };
+
+  let failure: Error | undefined;
+  while (failure === undefined) {
+    const read = await fromPromise(handle.read(readBuffer, 0, readBuffer.length, position));
+    if (!read.ok) {
+      failure = read.error;
+      break;
+    }
+    if (read.value.bytesRead === 0) break;
+    position += read.value.bytesRead;
+    if (position > maxBytes) {
+      failure = new Error("Dead-letter snapshot exceeds the byte limit");
+      break;
+    }
+    let segmentStart = 0;
+    for (let index = 0; index < read.value.bytesRead; index++) {
+      if (readBuffer[index] !== 0x0a) continue;
+      append(readBuffer.subarray(segmentStart, index));
+      const finished = finishRow();
+      if (!finished.ok) {
+        failure = finished.error;
+        break;
+      }
+      lineNumber++;
+      segmentStart = index + 1;
+    }
+    if (failure === undefined) append(readBuffer.subarray(segmentStart, read.value.bytesRead));
+  }
+  if (failure === undefined && rowBytes > 0) {
+    const finished = finishRow();
+    if (!finished.ok) failure = finished.error;
+  }
+  const finalStat = await fromPromise(handle.stat({ bigint: true }));
+  const closed = await fromPromise(handle.close());
+  if (failure !== undefined) return err(failure);
+  if (!finalStat.ok) return finalStat;
+  if (!closed.ok) return closed;
+  if (
+    finalStat.value.dev !== initialStat.value.dev
+    || finalStat.value.ino !== initialStat.value.ino
+    || finalStat.value.size !== initialStat.value.size
+    || finalStat.value.mtimeNs !== initialStat.value.mtimeNs
+    || finalStat.value.ctimeNs !== initialStat.value.ctimeNs
+  ) {
+    return err(new Error("Dead-letter snapshot changed while reading"));
+  }
+  reportInvalidRows(invalidRowCount, logger);
+  return ok({ entries, invalidRowCount });
 }
 
 export async function writeDeadLetterEntries(
@@ -833,6 +940,12 @@ export async function writeDeadLetterEntries(
   entries: readonly StoredDeadLetterEntry[],
   operations: DeadLetterWriteOperations = systemWriteOperations,
 ): Promise<Result<void, DeadLetterWriteFailure>> {
+  if (entries.length > MAX_DEAD_LETTER_SNAPSHOT_ROWS) {
+    return writeFailure(
+      new Error("Dead-letter snapshot exceeds the row limit"),
+      "snapshot_unchanged",
+    );
+  }
   if (entries.some((entry) =>
     !isDeadLetterEntry(entry)
     && !isParentDecisionReservationRecord(entry)
@@ -866,6 +979,16 @@ export async function writeDeadLetterEntries(
   )) {
     return writeFailure(
       new Error("Dead-letter snapshot contains an oversized record"),
+      "snapshot_unchanged",
+    );
+  }
+  const serializedBytes = serializedRows.value.reduce(
+    (total, row) => total + Buffer.byteLength(row, "utf8") + 1,
+    0,
+  );
+  if (serializedBytes > MAX_DEAD_LETTER_SNAPSHOT_BYTES) {
+    return writeFailure(
+      new Error("Dead-letter snapshot exceeds the byte limit"),
       "snapshot_unchanged",
     );
   }

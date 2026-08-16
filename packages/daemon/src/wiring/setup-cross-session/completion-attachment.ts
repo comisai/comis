@@ -111,17 +111,17 @@ async function readPinnedFile(
   const opened = await fromPromise(open(path, constants.O_RDONLY | constants.O_NOFOLLOW));
   if (!opened.ok) return opened;
   const handle = opened.value;
-  const initialStat = await fromPromise(handle.stat());
+  const initialStat = await fromPromise(handle.stat({ bigint: true }));
   if (
     !initialStat.ok
     || !initialStat.value.isFile()
-    || initialStat.value.nlink !== 1
-    || initialStat.value.size !== expectedSize
+    || initialStat.value.nlink !== 1n
+    || initialStat.value.size !== BigInt(expectedSize)
   ) {
     await close(handle);
     return err(new Error("Completion attachment snapshot metadata is invalid"));
   }
-  const content = Buffer.alloc(initialStat.value.size);
+  const content = Buffer.alloc(expectedSize);
   let offset = 0;
   while (offset < content.length) {
     const read = await fromPromise(handle.read(content, offset, content.length - offset, offset));
@@ -135,7 +135,7 @@ async function readPinnedFile(
     }
     offset += read.value.bytesRead;
   }
-  const finalStat = await fromPromise(handle.stat());
+  const finalStat = await fromPromise(handle.stat({ bigint: true }));
   const closed = await close(handle);
   if (!finalStat.ok) return finalStat;
   if (!closed.ok) return closed;
@@ -143,6 +143,8 @@ async function readPinnedFile(
     finalStat.value.dev !== initialStat.value.dev
     || finalStat.value.ino !== initialStat.value.ino
     || finalStat.value.size !== initialStat.value.size
+    || finalStat.value.mtimeNs !== initialStat.value.mtimeNs
+    || finalStat.value.ctimeNs !== initialStat.value.ctimeNs
   ) {
     return err(new Error("Completion attachment snapshot changed while reading"));
   }
@@ -167,13 +169,13 @@ export async function prepareCompletionAttachment(
   if (!workspaceStat.ok || !workspaceStat.value.isDirectory() || workspaceStat.value.isSymbolicLink()) {
     return err(new Error("Completion attachment workspace is not a regular directory"));
   }
-  const sourceStat = await fromPromise(lstat(input.sourcePath));
+  const sourceStat = await fromPromise(lstat(input.sourcePath, { bigint: true }));
   if (
     !sourceStat.ok
     || !sourceStat.value.isFile()
     || sourceStat.value.isSymbolicLink()
-    || sourceStat.value.nlink !== 1
-    || sourceStat.value.size > maxBytes
+    || sourceStat.value.nlink !== 1n
+    || sourceStat.value.size > BigInt(maxBytes)
   ) {
     return err(new Error("Completion attachment is not a bounded regular file"));
   }
@@ -186,21 +188,21 @@ export async function prepareCompletionAttachment(
   const opened = await fromPromise(open(input.sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW));
   if (!opened.ok) return opened;
   const handle = opened.value;
-  const pinned = await fromPromise(handle.stat());
+  const pinned = await fromPromise(handle.stat({ bigint: true }));
   if (
     !pinned.ok
     || !pinned.value.isFile()
-    || pinned.value.nlink !== 1
+    || pinned.value.nlink !== 1n
     || pinned.value.dev !== sourceStat.value.dev
     || pinned.value.ino !== sourceStat.value.ino
     || pinned.value.size !== sourceStat.value.size
-    || pinned.value.size > maxBytes
+    || pinned.value.size > BigInt(maxBytes)
   ) {
     await close(handle);
     return err(new Error("Completion attachment changed before snapshotting"));
   }
 
-  const content = Buffer.alloc(pinned.value.size);
+  const content = Buffer.alloc(Number(pinned.value.size));
   let offset = 0;
   while (offset < content.length) {
     const read = await fromPromise(handle.read(content, offset, content.length - offset, offset));
@@ -214,7 +216,7 @@ export async function prepareCompletionAttachment(
     }
     offset += read.value.bytesRead;
   }
-  const finalStat = await fromPromise(handle.stat());
+  const finalStat = await fromPromise(handle.stat({ bigint: true }));
   const closed = await close(handle);
   if (!finalStat.ok) return finalStat;
   if (!closed.ok) return closed;
@@ -222,6 +224,8 @@ export async function prepareCompletionAttachment(
     finalStat.value.dev !== pinned.value.dev
     || finalStat.value.ino !== pinned.value.ino
     || finalStat.value.size !== pinned.value.size
+    || finalStat.value.mtimeNs !== pinned.value.mtimeNs
+    || finalStat.value.ctimeNs !== pinned.value.ctimeNs
   ) {
     return err(new Error("Completion attachment changed while snapshotting"));
   }

@@ -8,6 +8,7 @@ import type { DeadLetterEntry } from "./announcement-dead-letter.js";
 import {
   isAnnouncementChannelType,
   readDeadLetterEntries,
+  readDeadLetterSnapshot,
   writeDeadLetterEntries,
   type DeadLetterWriteOperations,
 } from "./announcement-dead-letter-file.js";
@@ -112,6 +113,27 @@ describe("announcement dead-letter file", () => {
     expect(await readDeadLetterEntries(filePath)).toEqual({
       ok: true,
       value: [entry],
+    });
+  });
+
+  it("rejects snapshots beyond bounded bytes and physical rows", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    await writeFile(filePath, "{}\n{}\n{}\n", { encoding: "utf8", mode: 0o600 });
+
+    await expect(readDeadLetterSnapshot(filePath, undefined, {
+      maxRows: 2,
+      maxBytes: 1_024,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter snapshot exceeds the row limit" },
+    });
+    await expect(readDeadLetterSnapshot(filePath, undefined, {
+      maxRows: 10,
+      maxBytes: 4,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter snapshot exceeds the byte limit" },
     });
   });
 

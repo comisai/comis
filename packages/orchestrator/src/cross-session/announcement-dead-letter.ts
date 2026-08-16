@@ -257,6 +257,38 @@ export function createAnnouncementDeadLetterQueue(
     );
   }
 
+  async function refreshTerminalInvalidRecords(): Promise<Result<void, Error>> {
+    if (outwardLedger) {
+      terminalInvalidRecords = [];
+      return ok(undefined);
+    }
+    const previousIds = terminalInvalidRecords.map((record) => record.id).sort().join("\u0000");
+    const terminalInvalid = await terminalDecisionStore.listInvalid();
+    if (!terminalInvalid.ok) {
+      logger?.error(
+        {
+          errorKind: "resource" as const,
+          hint: "restore terminal-decision storage before accepting ledgerless announcements",
+        },
+        "Terminal-decision quarantine could not be inspected",
+      );
+      return terminalInvalid;
+    }
+    terminalInvalidRecords = [...terminalInvalid.value];
+    const nextIds = terminalInvalidRecords.map((record) => record.id).sort().join("\u0000");
+    if (terminalInvalidRecords.length > 0 && nextIds !== previousIds) {
+      logger?.warn(
+        {
+          invalidRecordCount: terminalInvalidRecords.length,
+          errorKind: "precondition" as const,
+          hint: "repair the quarantined terminal-decision records; unaffected delivery identities remain available",
+        },
+        "Invalid terminal-decision records quarantined",
+      );
+    }
+    return ok(undefined);
+  }
+
   async function loadFromDisk(): Promise<Result<void, Error>> {
     if (loaded) return ok(undefined);
     const read = await readDeadLetterSnapshot(filePath, logger);
@@ -343,30 +375,8 @@ export function createAnnouncementDeadLetterQueue(
           return reconciled.ok ? reconciled.value : reconciled;
         }
       }
-      if (!outwardLedger) {
-        const terminalInvalid = await terminalDecisionStore.listInvalid();
-        if (!terminalInvalid.ok) {
-          logger?.error(
-            {
-              errorKind: "resource" as const,
-              hint: "restore terminal-decision storage before accepting ledgerless announcements",
-            },
-            "Terminal-decision quarantine could not be inspected",
-          );
-          return terminalInvalid;
-        }
-        terminalInvalidRecords = [...terminalInvalid.value];
-        if (terminalInvalidRecords.length > 0) {
-          logger?.warn(
-            {
-              invalidRecordCount: terminalInvalidRecords.length,
-              errorKind: "precondition" as const,
-              hint: "repair the quarantined terminal-decision records; unaffected delivery identities remain available",
-            },
-            "Invalid terminal-decision records quarantined",
-          );
-        }
-      }
+      const terminalInvalid = await refreshTerminalInvalidRecords();
+      if (!terminalInvalid.ok) return terminalInvalid;
       loaded = true;
       const collectedRetirements = await collectTerminalRetirementsDurably();
       if (!collectedRetirements.ok) {
@@ -2780,6 +2790,8 @@ export function createAnnouncementDeadLetterQueue(
     durableStatus: () => serialize(async () => {
       const load = await loadFromDisk();
       if (!load.ok) return load;
+      const terminalInvalid = await refreshTerminalInvalidRecords();
+      if (!terminalInvalid.ok) return terminalInvalid;
       const status = quarantineClassification().status;
       return ok({
         ...status,
@@ -2809,11 +2821,15 @@ export function createAnnouncementDeadLetterQueue(
         );
         return loadedFromDisk;
       }
+      const terminalInvalid = await refreshTerminalInvalidRecords();
+      if (!terminalInvalid.ok) return terminalInvalid;
       return ok(quarantineClassification().rows);
     }),
     release: (id, outcome) => serializeStateChange(async () => {
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
+      const terminalInvalid = await refreshTerminalInvalidRecords();
+      if (!terminalInvalid.ok) return terminalInvalid;
       if (!quarantineClassification().actionableIds.has(id)) return ok(false);
       if (terminalInvalidRecords.some((record) => record.id === id)) {
         return err(new Error("Terminal-decision corruption requires storage repair"));

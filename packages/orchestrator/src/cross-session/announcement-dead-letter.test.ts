@@ -896,15 +896,12 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
     await mkdir(malformedDirectory, { recursive: true });
     await mkdir(oversizedDirectory, { recursive: true });
-    await writeFile(
-      join(malformedDirectory, `${malformed.value.keyDigest}.json`),
-      "{malformed",
-    );
-    await writeFile(
-      join(oversizedDirectory, `${oversized.value.keyDigest}.json`),
-      Buffer.alloc(1_048_577, 120),
-    );
-    await writeFile(join(terminalRoot, "decisions", "stray.json"), "stray");
+    const malformedPath = join(malformedDirectory, `${malformed.value.keyDigest}.json`);
+    const oversizedPath = join(oversizedDirectory, `${oversized.value.keyDigest}.json`);
+    const strayPath = join(terminalRoot, "decisions", "stray.json");
+    await writeFile(malformedPath, "{malformed");
+    await writeFile(oversizedPath, Buffer.alloc(1_048_577, 120));
+    await writeFile(strayPath, "stray");
 
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
@@ -929,6 +926,20 @@ describe("AnnouncementDeadLetterQueue", () => {
       "unrelated-terminal-operation",
       "unrelated-terminal-run",
     ))).resolves.toEqual(ok({ created: true }));
+
+    await writeFile(malformedPath, JSON.stringify(malformed.value));
+    await unlink(oversizedPath);
+    await unlink(strayPath);
+
+    await expect(queue.durableStatus()).resolves.toEqual(ok({
+      activeRecoveryCount: 1,
+      quarantinedCount: 0,
+    }));
+    await expect(listQuarantined(queue)).resolves.toEqual([]);
+    await expect(queue.reserveDecision(malformedDecision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "discarded",
+    }));
   });
 
   it("concurrent drain calls are serialized", async () => {

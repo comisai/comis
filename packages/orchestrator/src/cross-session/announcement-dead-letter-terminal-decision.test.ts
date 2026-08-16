@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err } from "@comis/shared";
@@ -174,5 +174,25 @@ describe("announcement terminal decisions", () => {
     await expect(store.lookup(owner)).resolves.toEqual({ ok: true, value: "no_reply" });
     await expect(createAnnouncementTerminalDecisionStore(filePath).lookup(owner))
       .resolves.toEqual({ ok: true, value: "no_reply" });
+  });
+
+  it("reloads a repaired terminal record without restarting", async () => {
+    const record = createTerminalDecisionRecord(owner, "no_reply", 10);
+    if (!record.ok) throw record.error;
+    const recordDirectory = join(
+      `${filePath}.terminal-decisions`,
+      "decisions",
+      record.value.keyDigest.slice(0, 2),
+    );
+    const recordPath = join(recordDirectory, `${record.value.keyDigest}.json`);
+    await mkdir(recordDirectory, { recursive: true });
+    await writeFile(recordPath, "{malformed");
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+
+    await expect(store.lookup(owner)).resolves.toMatchObject({ ok: false });
+    await writeFile(recordPath, JSON.stringify(record.value));
+
+    await expect(store.lookup(owner)).resolves.toEqual({ ok: true, value: "no_reply" });
+    await expect(store.listInvalid()).resolves.toEqual({ ok: true, value: [] });
   });
 });

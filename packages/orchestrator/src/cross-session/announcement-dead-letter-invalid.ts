@@ -30,6 +30,30 @@ function digest(value: string): Result<string, Error> {
   return tryCatch(() => createHash("sha256").update(value).digest("hex"));
 }
 
+export function createOversizedDeadLetterRecord(
+  rawDigest: string,
+  rawBytes: number,
+  rawLine: string,
+  sourceLine: number,
+): Result<InvalidDeadLetterRecord, Error> {
+  const idDigest = digest(`${sourceLine}\u0000${rawDigest}`);
+  if (!idDigest.ok) return idDigest;
+  return {
+    ok: true,
+    value: {
+      recordType: "invalid_record",
+      id: `invalid:${idDigest.value}`,
+      reason: "oversized_row",
+      sourceLine,
+      detectedAt: systemNowMs(),
+      rawDigest,
+      rawBytes,
+      rawLine: rawLine.slice(0, MAX_INVALID_RAW_CHARS),
+      rawTruncated: true,
+    },
+  };
+}
+
 export function createInvalidDeadLetterRecord(
   rawLine: string,
   sourceLine: number,

@@ -1,6 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { access, chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { safePath } from "@comis/core";
 import { ok } from "@comis/shared";
@@ -123,6 +135,51 @@ describe("completion attachment preparation", () => {
     const verified = await verifyCompletionAttachmentSnapshot(dataDir, prepared.value);
     expect(verified.ok).toBe(false);
     await prepared.value.cleanup();
+  });
+
+  it("rejects same-size source mutation while snapshotting", async () => {
+    const { dataDir, workspaceDir } = await makeLayout();
+    const sourcePath = safePath(workspaceDir, "raced.txt");
+    const original = "a".repeat(64 * 1024);
+    await writeFile(sourcePath, original, { mode: 0o600 });
+    const probe = await open(sourcePath, "r");
+    type PositionalRead = (
+      this: FileHandle,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => Promise<{ bytesRead: number; buffer: Buffer }>;
+    const prototype = Object.getPrototypeOf(probe) as { read: PositionalRead };
+    const originalRead = prototype.read;
+    await probe.close();
+    let mutated = false;
+    const readSpy = vi.spyOn(prototype, "read").mockImplementation(async function (
+      this: FileHandle,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) {
+      const result = await originalRead.call(this, buffer, offset, length, position);
+      if (!mutated) {
+        mutated = true;
+        await writeFile(sourcePath, "b".repeat(original.length), { mode: 0o600 });
+        await utimes(sourcePath, new Date(1_000), new Date(2_000));
+      }
+      return result;
+    });
+
+    try {
+      const prepared = await prepareCompletionAttachment({
+        dataDir,
+        workspaceDir,
+        sourcePath,
+      });
+      expect(prepared.ok).toBe(false);
+    } finally {
+      readSpy.mockRestore();
+    }
   });
 
   it("removes crash-orphaned snapshots while preserving every durable reference", async () => {
