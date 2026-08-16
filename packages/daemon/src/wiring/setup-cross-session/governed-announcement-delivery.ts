@@ -4,6 +4,8 @@
 import {
   conversationScopeToSessionKey,
   classifySendError,
+  createStableAnnouncementChunkOperationId,
+  createStableAnnouncementChunkPartId,
   createStableAnnouncementOperationId,
   emitObservationalEventSafely,
   resolvePlatformDeliveryResult,
@@ -251,15 +253,19 @@ export function createAnnouncementDelivery(
         destinationEndpoint,
       },
       async (chunk) => {
-        const chunkPartId = `${request.partId ?? "text"}:chunk:${chunk.chunkIndex}`;
+        const chunkPartId = createStableAnnouncementChunkPartId(
+          request.partId,
+          chunk.chunkIndex,
+        );
         const { threadId, ...chunkExtra } = chunk.options;
         const chunkOperation: GovernedAnnouncementRequest = {
           ...request,
-          operationId: createStableAnnouncementOperationId(
+          operationId: createStableAnnouncementChunkOperationId(
             request.agentId,
             request.sessionKey,
             request.runId,
-            chunkPartId,
+            request.partId,
+            chunk.chunkIndex,
           ),
           partId: chunkPartId,
           text: chunk.text,

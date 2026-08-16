@@ -3,6 +3,8 @@
 import {
   classifySendError,
   conversationScopeToSessionKey,
+  createStableAnnouncementChunkOperationId,
+  createStableAnnouncementChunkPartId,
   createStableAnnouncementOperationId,
   resolvePlatformDeliveryResult,
   systemNowMs,
@@ -231,9 +233,10 @@ export function createRecoverableAnnouncementDelivery(
       request.runId,
       request.partId,
     );
-    const completionKeys = request.completionKeys && request.completionKeys.length > 0
-      ? [...new Set(request.completionKeys)]
-      : [operationId];
+    const completionKeys = [...new Set([
+      operationId,
+      ...(request.completionKeys ?? []),
+    ])];
     const reservation = reservationFor(
       request,
       route.callerConversation,
@@ -348,9 +351,10 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
       request.runId,
       request.partId,
     );
-    const completionKeys = request.completionKeys && request.completionKeys.length > 0
-      ? [...new Set(request.completionKeys)]
-      : [operationId];
+    const completionKeys = [...new Set([
+      operationId,
+      ...(request.completionKeys ?? []),
+    ])];
     const reservation = reservationFor(
       request,
       route.callerConversation,
@@ -368,7 +372,7 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
     const chunkReservations = (
       chunks: readonly string[],
     ): AnnouncementParentDecisionReservation[] => chunks.map((chunk, chunkIndex) => {
-      const chunkPartId = `${request.partId ?? "text"}:chunk:${chunkIndex}`;
+      const chunkPartId = createStableAnnouncementChunkPartId(request.partId, chunkIndex);
       return reservationFor(
         {
           ...request,
@@ -381,11 +385,12 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
         route.callerConversation,
         route.destinationEndpoint,
         `announcement:${request.callerSessionKey}`,
-        createStableAnnouncementOperationId(
+        createStableAnnouncementChunkOperationId(
           request.agentId,
           request.callerSessionKey,
           request.runId,
-          chunkPartId,
+          request.partId,
+          chunkIndex,
         ),
         completionKeys,
       );

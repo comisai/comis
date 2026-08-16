@@ -19,3 +19,31 @@ export function createStableAnnouncementOperationId(
     .digest("hex");
   return `completion-announcement:${digest}`;
 }
+
+export function createStableAnnouncementChunkPartId(
+  partId: string | undefined,
+  chunkIndex: number,
+): string {
+  return `${partId ?? "text"}:chunk:${chunkIndex}`;
+}
+
+export function createStableAnnouncementChunkOperationId(
+  agentId: string,
+  callerSessionKey: string,
+  runId: string,
+  partId: string | undefined,
+  chunkIndex: number,
+): string {
+  return createStableAnnouncementOperationId(
+    agentId,
+    callerSessionKey,
+    runId,
+    createStableAnnouncementChunkPartId(partId, chunkIndex),
+  );
+}
+
+export function isStableAnnouncementChunkPartId(
+  partId: string | undefined,
+): boolean {
+  return partId !== undefined && /:chunk:\d+$/u.test(partId);
+}

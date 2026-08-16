@@ -12,7 +12,7 @@ import {
   type TypedEventBus,
 } from "@comis/core";
 import { createAnnouncementDeadLetterQueue } from "@comis/orchestrator";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok } from "@comis/shared";
@@ -127,9 +127,10 @@ describe("recoverable completion announcement delivery", () => {
 
     expect(result).toMatchObject({ ok: true, value: { delivered: false } });
     expect(order).toEqual(["lookup", "reserve", "lookup", "send"]);
+    const operationId = retained?.idempotencyKey;
     expect(retained).toMatchObject({
       rootRunId: "root-1",
-      completionKeys: ["default:user_a:telegram:chat-1::run-1"],
+      completionKeys: [operationId, "default:user_a:telegram:chat-1::run-1"],
       threadId: "topic-1",
       extra: { reply_markup: { inline_keyboard: [[{ text: "Open", callback_data: "open:1" }]] } },
     });
@@ -306,6 +307,22 @@ describe("receipt-aware completion announcement delivery", () => {
       expect(chunkReservations.filter((entry) => entry.textChunks !== undefined)).toHaveLength(1);
       expect(deadLetterQueue.settleDeliveryAttempt.mock.calls.map(([, outcome]) => outcome))
         .toEqual(["accepted", "unknown"]);
+      const firstPassRows = (await readFile(filePath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as {
+          idempotencyKey: string;
+          lastError?: string;
+          recordType?: string;
+        });
+      expect(firstPassRows).toHaveLength(2);
+      expect(firstPassRows[0]).toEqual(expect.objectContaining({
+        idempotencyKey: claimedKeys[1],
+        lastError: "outward_operation_unresolved",
+      }));
+      expect(firstPassRows[1]).toEqual(expect.objectContaining({
+        recordType: "parent_decision_reservation",
+      }));
 
       const restartedQueue = createAnnouncementDeadLetterQueue({
         filePath,
@@ -329,6 +346,12 @@ describe("receipt-aware completion announcement delivery", () => {
         ok({ delivered: false, status: "unknown" }),
       );
       expect(replaySend).not.toHaveBeenCalled();
+      const retainedRows = (await readFile(filePath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { idempotencyKey: string });
+      expect(retainedRows.map((row) => row.idempotencyKey))
+        .toEqual(firstPassRows.map((row) => row.idempotencyKey));
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }

@@ -28,6 +28,7 @@ import {
 } from "./sub-agent-resume-descriptor.js";
 import {
   computeWorkspacePolicyCombinedHash,
+  createConversationLocator,
   createConversationRef,
   TypedEventBus,
 } from "@comis/core";
@@ -611,6 +612,79 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
       sessionKey: runner.getRunStatus(runId)?.sessionKey,
     }));
     expect(lifecycleOrder).toEqual(["suspended", "closed"]);
+  });
+
+  it("shutdown preserves a provider-settled run blocked on durable delivery", async () => {
+    const store = createRecordingStore();
+    const callerConversation = createConversationLocator({
+      tenantId: "default",
+      agentId: "parent-agent",
+      partition: { kind: "agent" },
+    });
+    if (!callerConversation.ok) throw callerConversation.error;
+    let releaseAdmission!: (value: Result<"queued" | "retained", Error>) => void;
+    const enqueue = vi.fn(() => new Promise<Result<"queued" | "retained", Error>>((resolve) => {
+      releaseAdmission = resolve;
+    }));
+    const batcher = {
+      enqueue,
+      flush: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => {
+        releaseAdmission(err(new Error("Dead-letter admission cancelled")));
+      }),
+      pending: 0,
+      hasDelivered: vi.fn(() => false),
+      markDelivered: vi.fn(),
+    } as NonNullable<SubAgentRunnerDeps["batcher"]>;
+    const eventBus = new TypedEventBus();
+    const emit = vi.spyOn(eventBus, "emit");
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: store,
+      batcher,
+      eventBus,
+      executeAgent: vi.fn().mockResolvedValue({
+        response: "done",
+        tokensUsed: { total: 10 },
+        cost: { total: 0 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+      }),
+    }));
+    const runId = runner.spawn({
+      task: "retain completion ownership",
+      agentId: "worker",
+      rootRunId: "root-delivery-backpressure",
+      workspacePolicyHash: POLICY_HASH,
+      callerType: "control-plane",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:parent-agent:telegram:chat-a:user_a",
+      callerConversation: callerConversation.value,
+      callerEndpoint: {
+        channelType: "telegram",
+        channelInstanceId: "telegram-primary",
+        conversationId: "chat-a",
+        conversationKind: "direct",
+      },
+      announceChannelType: "telegram",
+      announceChannelId: "chat-a",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(enqueue).toHaveBeenCalledOnce();
+
+    const shutdown = runner.shutdown();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(0);
+    await shutdown;
+
+    expect(store.completed).not.toContainEqual({
+      checkpointId: runId,
+      terminalReason: "killed",
+    });
+    expect(runner.getRunStatus(runId)?.status).toBe("running");
+    expect(emit).toHaveBeenCalledWith("durable:suspended", expect.objectContaining({
+      checkpointId: runId,
+      rootRunId: "root-delivery-backpressure",
+    }));
   });
 
   it("watchdog immediately closes durable resources when execution ignores abort", async () => {

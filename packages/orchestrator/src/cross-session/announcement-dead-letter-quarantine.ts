@@ -59,9 +59,11 @@ export function classifyQuarantined(input: {
   const actionableEntries = input.entries.filter((entry) => input.governed
     ? entry.lastError !== undefined && GOVERNED_OPERATOR_ERRORS.has(entry.lastError)
     : entry.lastError !== "outward_operation_in_flight"
+      && entry.lastError?.startsWith("outward_operation_in_flight:") !== true
       && entry.lastError !== "receipt_accepted_terminalization_pending"
       && (
         entry.lastError === "outward_operation_unresolved"
+        || entry.lastError?.startsWith("outward_operation_unresolved:") === true
         || entry.lastError === "attachment_delivery_unavailable"
         || entry.attemptCount >= input.maxRetries
         || input.now - entry.failedAt >= input.maxAgeMs

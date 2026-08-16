@@ -391,15 +391,29 @@ export function createParentDecisionReservationStore(
       ...operations.flatMap((operation) => operation.completionKeys),
       ...settledCompletionKeys,
     ]);
+    const operationKeys = new Set(operations.map((operation) => operation.idempotencyKey));
+    const ownerCompletionKeys = new Set(
+      [...completionKeys].filter((key) => !operationKeys.has(key)),
+    );
     const expectedReservations = current.filter((reservation) =>
       expected.has(reservation.idempotencyKey));
     const alreadyTransitioned = current.some((reservation) =>
       reservation.completionKeys.some((key) => completionKeys.has(key))
       && !expected.has(reservation.idempotencyKey));
-    if (alreadyTransitioned || [...completionKeys].some(deps.hasDeliveryKey)) {
+    const deliveryTransitioned = [...completionKeys].some(deps.hasDeliveryKey);
+    const retained = current.filter((reservation) => !expected.has(reservation.idempotencyKey));
+    const finishTransitionedReplacement = async (): Promise<Result<{ created: boolean }, Error>> => {
+      if (retained.length !== current.length) {
+        const persisted = await deps.persist(retained);
+        if (!persisted.ok) return persisted;
+        deps.replaceReservations(retained);
+      }
       return ok({ created: false });
-    }
+    };
     if (expectedReservations.length !== expectedKeys.length) {
+      if (alreadyTransitioned || deliveryTransitioned) {
+        return finishTransitionedReplacement();
+      }
       return err(new Error("Announcement decision reservation transition lost its expected owner"));
     }
     if (expectedKeys.length > 0) {
@@ -407,14 +421,16 @@ export function createParentDecisionReservationStore(
         expectedReservations.flatMap((reservation) => reservation.completionKeys),
       );
       if (
-        completionKeys.size !== expectedCompletionKeys.size
-        || [...expectedCompletionKeys].some((key) => !completionKeys.has(key))
+        ownerCompletionKeys.size !== expectedCompletionKeys.size
+        || [...expectedCompletionKeys].some((key) => !ownerCompletionKeys.has(key))
       ) {
         return err(new Error("Announcement operation reservations do not preserve their owners"));
       }
     }
 
-    const retained = current.filter((reservation) => !expected.has(reservation.idempotencyKey));
+    if (alreadyTransitioned || deliveryTransitioned) {
+      return finishTransitionedReplacement();
+    }
     if (!deps.canPersistReservationCount(retained.length + operations.length)) {
       return err(new Error("Dead-letter quarantine capacity exhausted"));
     }

@@ -11,7 +11,13 @@ import type {
   OutwardSendLedgerPort,
   OutwardSendRecord,
 } from "@comis/core";
-import { emitObservationalEventSafely, systemNowMs } from "@comis/core";
+import {
+  createStableAnnouncementChunkOperationId,
+  createStableAnnouncementChunkPartId,
+  emitObservationalEventSafely,
+  isStableAnnouncementChunkPartId,
+  systemNowMs,
+} from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import type { GovernedAnnouncementAttachment } from "./announcement-outward-operation.js";
 import { drainWithPreparedRecoveryAttachment } from "./announcement-dead-letter-attachment.js";
@@ -64,6 +70,9 @@ type GovernedDrainOutcome =
   | "receipt_already_committed"
   | "receipt_committed_now"
   | "retained";
+const CHUNK_IN_FLIGHT_PREFIX = "outward_operation_in_flight:";
+const CHUNK_UNRESOLVED_PREFIX = "outward_operation_unresolved:";
+type AnnouncementTextChunkOwner = AnnouncementParentDecisionReservation;
 /** Create a JSONL-backed announcement dead-letter queue. */
 export function createAnnouncementDeadLetterQueue(
   opts: AnnouncementDeadLetterQueueOptions,
@@ -204,10 +213,20 @@ export function createAnnouncementDeadLetterQueue(
       decisionReservations = read.value.entries.filter(isParentDecisionReservation);
       invalidRecords = read.value.entries.filter(isInvalidDeadLetterRecord);
       const recoveredInFlight = loadedEntries.some((entry) =>
-        entry.lastError === "outward_operation_in_flight");
-      entries = loadedEntries.map((entry) => entry.lastError === "outward_operation_in_flight"
-        ? { ...entry, lastError: "outward_operation_unresolved" }
-        : entry);
+        entry.lastError === "outward_operation_in_flight"
+        || entry.lastError?.startsWith(CHUNK_IN_FLIGHT_PREFIX) === true);
+      entries = loadedEntries.map((entry) => {
+        if (entry.lastError === "outward_operation_in_flight") {
+          return { ...entry, lastError: "outward_operation_unresolved" };
+        }
+        if (entry.lastError?.startsWith(CHUNK_IN_FLIGHT_PREFIX) === true) {
+          return {
+            ...entry,
+            lastError: `${CHUNK_UNRESOLVED_PREFIX}${entry.lastError.slice(CHUNK_IN_FLIGHT_PREFIX.length)}`,
+          };
+        }
+        return entry;
+      });
       if (recoveredInFlight) {
         const recovered = await writeDeadLetterEntries(
           filePath,
@@ -456,6 +475,117 @@ export function createAnnouncementDeadLetterQueue(
       if (!completed.ok) return completed;
     }
     return ok(undefined);
+  }
+
+  function textChunkOwners(
+    owner: AnnouncementDeadLetterEntryInput | AnnouncementParentDecisionReservation,
+  ): AnnouncementTextChunkOwner[] {
+    if (
+      !owner.textChunks
+      || !owner.agentId
+      || !owner.rootRunId
+      || !owner.deliveryAuthority
+      || !owner.destinationEndpoint
+      || isStableAnnouncementChunkPartId(owner.partId)
+    ) return [];
+    const agentId = owner.agentId;
+    const rootRunId = owner.rootRunId;
+    const deliveryAuthority = owner.deliveryAuthority;
+    const destinationEndpoint = owner.destinationEndpoint;
+    return owner.textChunks.map((announcementText, chunkIndex) => {
+      const partId = createStableAnnouncementChunkPartId(owner.partId, chunkIndex);
+      const idempotencyKey = createStableAnnouncementChunkOperationId(
+        agentId,
+        owner.sessionKey,
+        owner.runId,
+        owner.partId,
+        chunkIndex,
+      );
+      return {
+        ...owner,
+        agentId,
+        rootRunId,
+        deliveryAuthority,
+        destinationEndpoint,
+        announcementText,
+        partId,
+        idempotencyKey,
+        completionKeys: [idempotencyKey],
+      };
+    });
+  }
+
+  function unresolvedChunkOperationId(entry: DeadLetterEntry): string | undefined {
+    return entry.lastError?.startsWith(CHUNK_UNRESOLVED_PREFIX) === true
+      ? entry.lastError.slice(CHUNK_UNRESOLVED_PREFIX.length)
+      : undefined;
+  }
+
+  async function settleTextChunkRelease(
+    entry: DeadLetterEntry,
+    outcome: "delivered" | "discarded",
+  ): Promise<Result<"release" | "retain", Error>> {
+    const chunkOwners = textChunkOwners(entry);
+    if (chunkOwners.length === 0) return ok("release");
+    const unresolvedOperationId = unresolvedChunkOperationId(entry);
+    let hasUnattemptedChunk = false;
+    for (const chunkOwner of chunkOwners) {
+      const terminal = await lookupTerminalDecision(chunkOwner);
+      if (!terminal.ok) return terminal;
+      if (terminal.value !== undefined) {
+        if (outcome === "delivered" && terminal.value !== "delivered") {
+          return err(new Error("Announcement chunk release conflicts with its durable outcome"));
+        }
+        continue;
+      }
+      if (!outwardLedger) {
+        if (outcome === "delivered" && unresolvedOperationId !== chunkOwner.idempotencyKey) {
+          hasUnattemptedChunk = true;
+          continue;
+        }
+        const terminalized = await recordTerminalDecision(chunkOwner, outcome);
+        if (!terminalized.ok) return terminalized;
+        continue;
+      }
+      const step = await outwardLedger.allocateStep(
+        entry.rootRunId ?? `announcement:${entry.sessionKey}`,
+        chunkOwner.idempotencyKey,
+      );
+      if (!step.ok) return step;
+      const record = await outwardLedger.lookup(
+        entry.rootRunId ?? `announcement:${entry.sessionKey}`,
+        step.value,
+      );
+      if (!record.ok) return record;
+      if (record.value?.state === "committed") continue;
+      if (
+        record.value?.state === "send_attempt_started"
+        || record.value?.state === "unknown_after_send"
+      ) {
+        return err(new Error("Announcement chunk is still in flight"));
+      }
+      if (!record.value && outcome === "delivered") {
+        hasUnattemptedChunk = true;
+        continue;
+      }
+      const terminalized = await recordTerminalDecision(chunkOwner, outcome);
+      if (!terminalized.ok) return terminalized;
+    }
+    if (outcome === "delivered" && hasUnattemptedChunk) {
+      const nextEntries = entries.map((candidate) => candidate.id === entry.id
+        ? {
+            ...candidate,
+            attemptCount: 0,
+            lastAttemptAt: 0,
+            lastError: "transport_rejected",
+          }
+        : candidate);
+      const retained = await persist(nextEntries);
+      if (!retained.ok) return retained;
+      entries = nextEntries;
+      return ok("retain");
+    }
+    return ok("release");
   }
 
   function sameRetainedOwner(
@@ -1548,6 +1678,96 @@ export function createAnnouncementDeadLetterQueue(
     decisionReservations = [...remaining];
   }
 
+  function recoveryOptions(entry: DeadLetterEntry): RecoveryDeliveryOptions | undefined {
+    return entry.threadId || entry.extra || entry.deliveryAuthority || entry.destinationEndpoint
+      ? {
+          ...(entry.threadId ? { threadId: entry.threadId } : {}),
+          ...(entry.extra ? { extra: entry.extra } : {}),
+          ...(entry.deliveryAuthority ? { authority: entry.deliveryAuthority } : {}),
+          ...(entry.destinationEndpoint ? { destinationEndpoint: entry.destinationEndpoint } : {}),
+        }
+      : undefined;
+  }
+
+  async function drainLedgerlessTextChunks(
+    entry: DeadLetterEntry,
+    workingEntries: readonly DeadLetterEntry[],
+    deliveredIds: ReadonlySet<string>,
+  ): Promise<"delivered" | "retained" | "discarded" | "no_reply"> {
+    const chunkOwners = textChunkOwners(entry);
+    if (chunkOwners.length === 0 || !receiptAwareSendToChannel) return "retained";
+    const unresolvedOperationId = unresolvedChunkOperationId(entry);
+    if (unresolvedOperationId !== undefined) {
+      const unresolvedOwner = chunkOwners.find((owner) =>
+        owner.idempotencyKey === unresolvedOperationId);
+      if (!unresolvedOwner) return "retained";
+      const terminal = await lookupTerminalDecision(unresolvedOwner);
+      if (!terminal.ok || terminal.value === undefined) return "retained";
+      if (terminal.value !== "delivered") return terminal.value;
+      entry.lastError = "transport_rejected";
+      const reconciled = workingEntries.filter((candidate) => !deliveredIds.has(candidate.id));
+      const persisted = await persist(reconciled);
+      if (!persisted.ok) return "retained";
+      entries = [...reconciled];
+    } else if (
+      entry.lastError === "outward_operation_in_flight"
+      || entry.lastError === "outward_operation_unresolved"
+    ) {
+      return "retained";
+    }
+    for (const chunkOwner of chunkOwners) {
+      const terminal = await lookupTerminalDecision(chunkOwner);
+      if (!terminal.ok) return "retained";
+      if (terminal.value !== undefined) {
+        if (terminal.value !== "delivered") return terminal.value;
+        continue;
+      }
+      if (entry.attemptCount >= maxRetries) {
+        entry.lastError = "attempt_limit_reached";
+        return "retained";
+      }
+      entry.attemptCount++;
+      entry.lastAttemptAt = systemNowMs();
+      entry.lastError = `${CHUNK_IN_FLIGHT_PREFIX}${chunkOwner.idempotencyKey}`;
+      const inFlightEntries = workingEntries.filter((candidate) =>
+        !deliveredIds.has(candidate.id));
+      const inFlightPersisted = await persist(inFlightEntries);
+      if (!inFlightPersisted.ok) return "retained";
+      entries = [...inFlightEntries];
+      const sent = await fromPromise(receiptAwareSendToChannel(
+        entry.channelType,
+        entry.channelId,
+        chunkOwner.announcementText,
+        recoveryOptions(entry),
+      ));
+      const status = sent.ok && sent.value.ok ? sent.value.value.status : "unknown";
+      if (status === "accepted") {
+        const terminalized = await recordTerminalDecision(chunkOwner, "delivered");
+        if (!terminalized.ok) {
+          entry.lastError = `${CHUNK_UNRESOLVED_PREFIX}${chunkOwner.idempotencyKey}`;
+          return "retained";
+        }
+        entry.attemptCount = 0;
+        entry.lastError = "transport_rejected";
+        const stableEntries = workingEntries.filter((candidate) =>
+          !deliveredIds.has(candidate.id));
+        const stablePersisted = await persist(stableEntries);
+        if (!stablePersisted.ok) return "retained";
+        entries = [...stableEntries];
+        continue;
+      }
+      entry.lastError = status === "rejected"
+        ? "transport_rejected"
+        : `${CHUNK_UNRESOLVED_PREFIX}${chunkOwner.idempotencyKey}`;
+      const retainedEntries = workingEntries.filter((candidate) =>
+        !deliveredIds.has(candidate.id));
+      const retained = await persist(retainedEntries);
+      if (retained.ok) entries = [...retainedEntries];
+      return "retained";
+    }
+    return "delivered";
+  }
+
   async function drainSerialized(
     sendToChannel: (type: ChannelType, id: string, text: string, options?: RecoveryDeliveryOptions) => Promise<boolean>,
     onDelivered?: (idempotencyKey: string) => void,
@@ -1617,6 +1837,32 @@ export function createAnnouncementDeadLetterQueue(
         });
         continue;
       }
+      if (!outwardLedger && textChunkOwners(entry).length > 0) {
+        const chunkOutcome = await drainLedgerlessTextChunks(
+          entry,
+          workingEntries,
+          deliveredIds,
+        );
+        if (chunkOutcome === "retained") continue;
+        const retainedEntries = workingEntries.filter((candidate) =>
+          candidate.id !== entry.id && !deliveredIds.has(candidate.id));
+        const terminalized = await terminalizeOwner(
+          entry,
+          chunkOutcome === "delivered" ? "delivered" : chunkOutcome,
+          retainedEntries,
+          decisionReservations,
+        );
+        if (!terminalized.ok) continue;
+        deliveredIds.add(entry.id);
+        deliveredEntries.push({
+          entry: { ...entry },
+          outcome: chunkOutcome === "delivered"
+            ? "untracked_delivery"
+            : "suppressed_terminal_decision",
+          durationMs: systemNowMs() - now,
+        });
+        continue;
+      }
       if (!outwardLedger && entry.lastError === "outward_operation_in_flight") {
         continue;
       }
@@ -1674,14 +1920,7 @@ export function createAnnouncementDeadLetterQueue(
       const preAttemptPersisted = await persist(preAttemptEntries);
       if (!preAttemptPersisted.ok) return;
       entries = [...preAttemptEntries];
-      const options = entry.threadId || entry.extra || entry.deliveryAuthority || entry.destinationEndpoint
-        ? {
-            ...(entry.threadId ? { threadId: entry.threadId } : {}),
-            ...(entry.extra ? { extra: entry.extra } : {}),
-            ...(entry.deliveryAuthority ? { authority: entry.deliveryAuthority } : {}),
-            ...(entry.destinationEndpoint ? { destinationEndpoint: entry.destinationEndpoint } : {}),
-          }
-        : undefined;
+      const options = recoveryOptions(entry);
       const receiptBoundary = receiptAwareSendToChannel
         ? await fromPromise(receiptAwareSendToChannel(
             entry.channelType,
@@ -1887,7 +2126,9 @@ export function createAnnouncementDeadLetterQueue(
             decision: terminalDecision.value,
           });
           for (const completionKey of operation.completionKeys) {
-            settledCompletionKeys.add(completionKey);
+            if (completionKey !== operation.idempotencyKey) {
+              settledCompletionKeys.add(completionKey);
+            }
           }
         }
         if (nonterminalOperations.length > maxEntries) {
@@ -1979,6 +2220,11 @@ export function createAnnouncementDeadLetterQueue(
       const releasedEntry = entries.find((candidate) => candidate.id === id);
       const releasedReservation = decisionReservations.find((candidate) => candidate.id === id);
       const releasedDelivery = releasedEntry ?? releasedReservation;
+      if (releasedEntry) {
+        const chunkRelease = await settleTextChunkRelease(releasedEntry, outcome);
+        if (!chunkRelease.ok) return chunkRelease;
+        if (chunkRelease.value === "retain") return ok(true);
+      }
       if (releasedDelivery) {
         const terminalized = await terminalizeOwner(
           releasedDelivery,

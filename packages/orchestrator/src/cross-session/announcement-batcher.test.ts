@@ -713,6 +713,24 @@ describe("AnnouncementBatcher", () => {
     });
 
     await batcher.enqueue(item);
+    const summaryKey = createStableAnnouncementOperationId(
+      item.callerAgentId,
+      item.callerSessionKey,
+      item.runId,
+      "summary",
+    );
+    const firstAttachmentKey = createStableAnnouncementOperationId(
+      item.callerAgentId,
+      item.callerSessionKey,
+      item.runId,
+      "attachment:0",
+    );
+    const secondAttachmentKey = createStableAnnouncementOperationId(
+      item.callerAgentId,
+      item.callerSessionKey,
+      item.runId,
+      "attachment:1",
+    );
 
     expect(deadLetterQueue.reserveDecision).not.toHaveBeenCalled();
     expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith(
@@ -720,19 +738,19 @@ describe("AnnouncementBatcher", () => {
       [
         expect.objectContaining({
           partId: "summary",
-          completionKeys: ["attachment-admission"],
+          completionKeys: [summaryKey, "attachment-admission"],
         }),
         expect.objectContaining({
           partId: "attachment:0",
           attachment: { kind: "source", ...item.attachments?.[0] },
           announcementText: "",
-          completionKeys: ["attachment-admission"],
+          completionKeys: [firstAttachmentKey, "attachment-admission"],
         }),
         expect.objectContaining({
           partId: "attachment:1",
           attachment: { kind: "source", ...item.attachments?.[1] },
           announcementText: "",
-          completionKeys: ["attachment-admission"],
+          completionKeys: [secondAttachmentKey, "attachment-admission"],
         }),
       ],
       expect.any(Object),
@@ -1034,19 +1052,19 @@ describe("AnnouncementBatcher", () => {
         expect.objectContaining({
           idempotencyKey: summaryKey,
           announcementText: "Combined summary",
-          completionKeys: ["completion-a", "completion-b"],
+          completionKeys: [summaryKey, "completion-a", "completion-b"],
         }),
         expect.objectContaining({
           idempotencyKey: firstAttachmentKey,
           announcementText: "",
           attachment: { kind: "source", ...first.attachments?.[0] },
-          completionKeys: ["completion-a", "completion-b"],
+          completionKeys: [firstAttachmentKey, "completion-a", "completion-b"],
         }),
         expect.objectContaining({
           idempotencyKey: secondAttachmentKey,
           announcementText: "",
           attachment: { kind: "source", ...second.attachments?.[0] },
-          completionKeys: ["completion-a", "completion-b"],
+          completionKeys: [secondAttachmentKey, "completion-a", "completion-b"],
         }),
       ]),
       expect.any(Object),
@@ -1653,15 +1671,16 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deps.sendToChannel).not.toHaveBeenCalled();
+    const operationKey = createStableAnnouncementOperationId(
+      "agent-main",
+      announcement.callerSessionKey,
+      announcement.runId,
+    );
     expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith(
       ["default:user1:chan1::run-1"],
       [expect.objectContaining({
-        idempotencyKey: createStableAnnouncementOperationId(
-          "agent-main",
-          announcement.callerSessionKey,
-          announcement.runId,
-        ),
-        completionKeys: ["default:user1:chan1::run-1"],
+        idempotencyKey: operationKey,
+        completionKeys: [operationKey, "default:user1:chan1::run-1"],
       })],
       expect.any(Object),
     );

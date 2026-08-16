@@ -59,24 +59,26 @@ describe("announcement batch operation reservations", () => {
 
     expect(plan).toMatchObject({
       ok: true,
-      value: {
-        expectedKeys: ["completion-1", "completion-2"],
-        reservations: [
-          { partId: "summary", completionKeys: ["completion-1", "completion-2"] },
-          {
-            partId: "attachment:0",
-            completionKeys: ["completion-1", "completion-2"],
-            attachment: { kind: "source", sourceAgentId: "worker-a", path: "report.txt" },
-          },
-        ],
-      },
+      value: { expectedKeys: ["completion-1", "completion-2"] },
     });
     expect(summary.reservationKey).toMatch(/^completion-announcement:/u);
     expect(attachment.reservationKey).toMatch(/^completion-announcement:/u);
+    if (!plan.ok) throw plan.error;
+    expect(plan.value.reservations).toMatchObject([
+      {
+        partId: "summary",
+        completionKeys: [summary.reservationKey, "completion-1", "completion-2"],
+      },
+      {
+        partId: "attachment:0",
+        completionKeys: [attachment.reservationKey, "completion-1", "completion-2"],
+        attachment: { kind: "source", sourceAgentId: "worker-a", path: "report.txt" },
+      },
+    ]);
   });
 
   it("rejects an operation whose owner cannot be adjudicated", () => {
-    const item = makeItem({ reservationRootRunId: undefined });
+    const item = makeItem({ idempotencyKey: undefined });
 
     expect(createAnnouncementReservationPlan([
       { item, text: "completion", completionItems: [item] },

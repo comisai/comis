@@ -1101,6 +1101,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const activeRunIds = new Set<string>();
   const providerSettledRunIds = new Set<string>();
   const deliverySuppressedRunIds = new Set<string>();
+  const deliveryAdmissionRunIds = new Set<string>();
   const forcedTerminalRunIds = new Set<string>();
   const durableAdmittedRunIds = new Set<string>();
   const durableTerminalReasons = new Map<string, DurableRunTerminalReason>();
@@ -3694,22 +3695,27 @@ function classifyCompletionErrorKind(
           // the only user-facing response for this terminal result.
         } else if (result.finishReason === "provider_degraded") {
           if (params.announceChannelType && params.announceChannelId) {
-            await deliverFailureNotification({
-              channelType: params.announceChannelType,
-              channelId: params.announceChannelId,
-              task: params.task,
-              runtimeMs,
-              runId,
-              threadId: resolveAnnouncementThreadId(
-                params.requesterOrigin,
-                params.announceChannelType,
-                params.announceChannelId,
-              ),
-              callerAgentId: params.callerAgentId,
-              callerSessionKey: params.callerSessionKey,  // shared dedup key
-              callerConversation: params.callerConversation,
-              destinationEndpoint: run.callerEndpoint,
-            }, deps);
+            deliveryAdmissionRunIds.add(runId);
+            try {
+              await deliverFailureNotification({
+                channelType: params.announceChannelType,
+                channelId: params.announceChannelId,
+                task: params.task,
+                runtimeMs,
+                runId,
+                threadId: resolveAnnouncementThreadId(
+                  params.requesterOrigin,
+                  params.announceChannelType,
+                  params.announceChannelId,
+                ),
+                callerAgentId: params.callerAgentId,
+                callerSessionKey: params.callerSessionKey,  // shared dedup key
+                callerConversation: params.callerConversation,
+                destinationEndpoint: run.callerEndpoint,
+              }, deps);
+            } finally {
+              deliveryAdmissionRunIds.delete(runId);
+            }
           }
         } else if (params.announceChannelType && params.announceChannelId) {
           // Announce with stats
@@ -3778,61 +3784,66 @@ function classifyCompletionErrorKind(
                 sourceAgentId: params.agentId,
                 path: output.resolvedPath ?? output.path,
               })) ?? [];
-            await deliverAnnouncement({
-              announcementText,
-              announceChannelType: params.announceChannelType,
-              announceChannelId: params.announceChannelId,
-              announceThreadId: resolveAnnouncementThreadId(
-                params.requesterOrigin,
-                params.announceChannelType,
-                params.announceChannelId,
-              ),
-              callerAgentId: params.callerAgentId,
-              callerSessionKey: params.callerSessionKey,
-              callerConversation: params.callerConversation,
-              destinationEndpoint: run.callerEndpoint,
-              resolvedLanguage: params.resolvedLanguage,
-              ...(runCitationEvidence?.observedWebResearch === true
-                ? {
-                    citationEvidence: {
-                      kind: "web_fetch",
-                      urlDigests: [...runCitationEvidence.urlDigests],
-                    },
-                  }
-                : {}),
-              terminalOutcome: !isSuccess
-                ? {
-                    status: "failed",
-                    failureNotice: deps.renderAnnouncementFailureNotice?.(
-                      params.callerAgentId ?? params.agentId,
-                      params.resolvedLanguage,
-                      result.finishReason,
-                    ) ?? (
-                      result.finishReason === "loop_detected"
-                        ? `${buildBackgroundTaskFailedNotice(params.resolvedLanguage)}\n\n${buildLoopDetectedReply({ language: params.resolvedLanguage })}`
-                        : buildBackgroundTaskFailedNotice(params.resolvedLanguage)
-                    ),
-                    ...(result.errorContext?.errorType === "UpstreamToolFailure"
-                      && result.errorContext.configKey !== undefined
-                      ? { requiredConfigKey: result.errorContext.configKey }
-                      : {}),
-                  }
-                : result.finishReason === "completed_with_tool_errors"
+            deliveryAdmissionRunIds.add(runId);
+            try {
+              await deliverAnnouncement({
+                announcementText,
+                announceChannelType: params.announceChannelType,
+                announceChannelId: params.announceChannelId,
+                announceThreadId: resolveAnnouncementThreadId(
+                  params.requesterOrigin,
+                  params.announceChannelType,
+                  params.announceChannelId,
+                ),
+                callerAgentId: params.callerAgentId,
+                callerSessionKey: params.callerSessionKey,
+                callerConversation: params.callerConversation,
+                destinationEndpoint: run.callerEndpoint,
+                resolvedLanguage: params.resolvedLanguage,
+                ...(runCitationEvidence?.observedWebResearch === true
                   ? {
-                      status: "completed_with_warnings",
-                      warningNotice: buildToolFailureNoticeUnnamed(
-                        params.resolvedLanguage,
-                      ).trim(),
+                      citationEvidence: {
+                        kind: "web_fetch",
+                        urlDigests: [...runCitationEvidence.urlDigests],
+                      },
                     }
-                  : { status: "completed" },
-              ...(isSuccess && isSilentResponse(result.response)
-                ? { suppressText: true }
-                : {}),
-              runId,
-              ...(completionAttachments.length > 0
-                ? { attachments: completionAttachments }
-                : {}),
-            }, deps);
+                  : {}),
+                terminalOutcome: !isSuccess
+                  ? {
+                      status: "failed",
+                      failureNotice: deps.renderAnnouncementFailureNotice?.(
+                        params.callerAgentId ?? params.agentId,
+                        params.resolvedLanguage,
+                        result.finishReason,
+                      ) ?? (
+                        result.finishReason === "loop_detected"
+                          ? `${buildBackgroundTaskFailedNotice(params.resolvedLanguage)}\n\n${buildLoopDetectedReply({ language: params.resolvedLanguage })}`
+                          : buildBackgroundTaskFailedNotice(params.resolvedLanguage)
+                      ),
+                      ...(result.errorContext?.errorType === "UpstreamToolFailure"
+                        && result.errorContext.configKey !== undefined
+                        ? { requiredConfigKey: result.errorContext.configKey }
+                        : {}),
+                    }
+                  : result.finishReason === "completed_with_tool_errors"
+                    ? {
+                        status: "completed_with_warnings",
+                        warningNotice: buildToolFailureNoticeUnnamed(
+                          params.resolvedLanguage,
+                        ).trim(),
+                      }
+                    : { status: "completed" },
+                ...(isSuccess && isSilentResponse(result.response)
+                  ? { suppressText: true }
+                  : {}),
+                runId,
+                ...(completionAttachments.length > 0
+                  ? { attachments: completionAttachments }
+                  : {}),
+              }, deps);
+            } finally {
+              deliveryAdmissionRunIds.delete(runId);
+            }
           }
         } else {
           // Log explicit reason when announcement cannot be routed
@@ -4719,6 +4730,13 @@ function classifyCompletionErrorKind(
         }
         if (providerSettledRunIds.has(runId)) {
           if (run.status === "completed" || run.status === "failed") continue;
+          if (
+            deliveryAdmissionRunIds.has(runId)
+            && suspendDurableRunForRestart(run)
+          ) {
+            suspendedRunCount++;
+            continue;
+          }
           deliverySuppressedRunIds.add(runId);
           if (run.status === "running") {
             const completedAtMs = clock.now();

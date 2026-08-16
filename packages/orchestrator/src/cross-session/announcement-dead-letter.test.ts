@@ -17,6 +17,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { err, ok, type Result } from "@comis/shared";
 import {
   createConversationLocator,
+  createStableAnnouncementChunkOperationId,
   type ChannelEndpoint,
   type DeliveryAuthority,
   type OutwardSendLedgerPort,
@@ -1412,6 +1413,44 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     const restarted = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "delivered",
+    }));
+  });
+
+  it("replays a persisted ledgerless manifest one chunk at a time", async () => {
+    const chunks = ["first durable chunk", "second durable chunk"];
+    const decision = decisionInput({
+      failedAt: Date.now() - 301_000,
+      idempotencyKey: "ledgerless-manifest-parent",
+      completionKeys: ["ledgerless-manifest-parent"],
+      announcementText: chunks.join(" "),
+      textChunks: chunks,
+    });
+    const receiptAwareSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-chunk",
+    }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      receiptAwareSendToChannel,
+    });
+    await queue.reserveDecision(decision);
+
+    await queue.drain(vi.fn(async () => false));
+
+    expect(receiptAwareSendToChannel.mock.calls.map(([, , text]) => text))
+      .toEqual(chunks);
+    expect(queue.size()).toBe(0);
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      receiptAwareSendToChannel,
     });
     await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
       created: false,
@@ -3187,6 +3226,82 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
       "discarded",
     );
     await queue.enqueue(entry);
+    expect(queue.size()).toBe(0);
+  });
+
+  it("settles the uncertain governed chunk before recovering its tail", async () => {
+    const chunks = ["first governed chunk", "second governed chunk"];
+    const runId = "run-governed-chunk-release";
+    const sessionKey = "default:agent-a:telegram:chat-123:user_a";
+    const partId = "summary";
+    const chunkOperationIds = chunks.map((_, chunkIndex) =>
+      createStableAnnouncementChunkOperationId(
+        "agent-a",
+        sessionKey,
+        runId,
+        partId,
+        chunkIndex,
+      ));
+    const { ledger } = makeStubLedger();
+    vi.mocked(ledger.allocateStep).mockImplementation(async (_rootRunId, operationId) =>
+      ok(chunkOperationIds.indexOf(operationId)));
+    vi.mocked(ledger.lookup).mockImplementation(async (rootRunId, stepIndex) =>
+      stepIndex === 0
+        ? ok({
+            id: `${rootRunId}:${stepIndex}`,
+            rootRunId,
+            stepIndex,
+            agentId: "agent-a",
+            channelType: "telegram",
+            channelId: "chat-123",
+            state: "unresolved" as const,
+            operationKind: "cross_session_announcement" as const,
+            operationFingerprint: "a".repeat(64),
+            contentDigest: "b".repeat(64),
+            attemptCount: 1,
+            attemptedAtMs: 100,
+          })
+        : ok(undefined));
+    const governedSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-tail",
+    }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel,
+      retryIntervalMs: 0,
+    });
+    await queue.enqueue(makeEntry({
+      runId,
+      sessionKey,
+      rootRunId: "root-governed-chunk-release",
+      idempotencyKey: "governed-chunk-parent",
+      partId,
+      textChunks: chunks,
+      lastError: "outward_operation_unresolved",
+    }));
+    const id = (await listQuarantined(queue))[0]!.id;
+
+    await expect(queue.release(id, "delivered")).resolves.toEqual(ok(true));
+
+    expect(ledger.recordTerminalDecision).toHaveBeenCalledWith(
+      "root-governed-chunk-release",
+      chunkOperationIds[0],
+      "delivered",
+    );
+    expect(queue.size()).toBe(1);
+    await queue.drain(vi.fn(async () => false));
+    expect(governedSendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-123",
+      "Task completed successfully",
+      expect.objectContaining({
+        governedText: expect.objectContaining({ preparedTextChunks: chunks }),
+      }),
+    );
     expect(queue.size()).toBe(0);
   });
 
