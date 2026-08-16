@@ -1429,9 +1429,11 @@ describe("deliverAnnouncement idempotency-key threading", () => {
     expect(dlqEnqueue).toHaveBeenCalledOnce();
     const entry = dlqEnqueue.mock.calls[0]![0] as {
       idempotencyKey?: string;
+      sessionKey?: string;
       lastError: string;
     };
     expect(entry.idempotencyKey).toBe("default:user2:chan2::run-dlq");
+    expect(entry.sessionKey).toBe("default:user2:chan2");
     expect(entry.lastError).not.toContain("xoxb-");
     expect(entry.lastError).not.toContain("private.example");
   });
