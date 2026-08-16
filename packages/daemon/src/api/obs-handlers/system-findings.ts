@@ -218,7 +218,9 @@ export function buildFindings(
       count,
       hint: label === "inbound_persistence_failed"
         ? "This failure occurred before session creation; inspect the normalized message bound and channel envelope before retrying."
-        : "run `comis explain` on an affected session; inspect the recurring health WARNs",
+        : label === "announcement_quarantine"
+          ? "Run `node packages/cli/dist/cli.js quarantine list` and explicitly release each retained item after reconciling its delivery outcome."
+          : "run `comis explain` on an affected session; inspect the recurring health WARNs",
     });
   }
 

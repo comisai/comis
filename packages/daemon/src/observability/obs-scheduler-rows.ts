@@ -226,8 +226,7 @@ export function announcementDeadLetteredEventToRow(
  * background task's outcome is being withheld from the user because the runtime
  * could not prove they were already told. `buildFindings` folds warning-severity
  * rows into one finding per `signal` label, so this reaches
- * `comis system-health` as a named finding instead of a daemon.log grep — live,
- * a completed chart set sat quarantined and the user had to ask for it.
+ * `comis system-health` as a named finding instead of requiring raw-log inspection.
  * Counts only; no announcement text ever enters a diagnostic row.
  */
 export function announcementQuarantineEventToRow(
