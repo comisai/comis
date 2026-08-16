@@ -4,7 +4,7 @@
  *
  * Exercises the full DLQ lifecycle:
  * - Failed delivery -> enqueue -> retry drain -> successful delivery
- * - Expired entries dropped after maxRetries exceeded
+ * - Exhausted entries parked after maxRetries is reached
  * - DLQ integration with sub-agent-runner delivery pipeline
  *
  * Uses real createAnnouncementDeadLetterQueue and createSubAgentRunner
@@ -136,6 +136,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       channelType: "echo",
       channelId: "ch1",
       runId: "run-1",
+      sessionKey: "test-dlq-integration:user:ch1",
       failedAt: Date.now(),
       attemptCount: 0,
       lastError: "sendToChannel failed",
@@ -181,10 +182,10 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Expired entries are dropped on drain
+  // Exhausted entries are parked on drain
   // -------------------------------------------------------------------------
 
-  it("expired entries are dropped after maxRetries exceeded", async () => {
+  it("exhausted entries remain quarantined after maxRetries is reached", async () => {
     const eventBus = new TypedEventBus();
     const logger = createMockLogger();
 
@@ -193,7 +194,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
       retryIntervalMs: 0,
-      maxRetries: 1, // Drop after 1 retry
+      maxRetries: 1,
       maxAgeMs: 3_600_000,
       eventBus,
       logger,
@@ -205,6 +206,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       channelType: "echo",
       channelId: "ch2",
       runId: "run-2",
+      sessionKey: "test-dlq-integration:user:ch2",
       failedAt: Date.now(),
       attemptCount: 0,
       lastError: "initial failure",
@@ -217,22 +219,22 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     await dlq.drain(failingSend);
 
     // Entry is still in queue after first drain (count incremented to 1)
-    // but on next drain the filter will drop it because attemptCount >= maxRetries
+    // and the next drain parks it because attemptCount >= maxRetries.
     expect(dlq.size()).toBe(1);
 
-    // Second drain: entry should be filtered out (expired) before sendToChannel is called
+    // Second drain: entry should be parked before sendToChannel is called.
     const secondSend = vi.fn().mockResolvedValue(true);
     await dlq.drain(secondSend);
 
-    // Entry dropped: size is 0 and sendToChannel was NOT called (entry was filtered)
-    expect(dlq.size()).toBe(0);
+    // Evidence remains durable and sendToChannel is not called again.
+    expect(dlq.size()).toBe(1);
     expect(secondSend).not.toHaveBeenCalled();
 
-    // Verify debug log about the attempt limit.
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "run-2" }),
       expect.stringContaining("attempt limit"),
     );
+    expect((await dlq.listQuarantined())[0]?.lastError).toBe("attempt_limit_reached");
   });
 
   // -------------------------------------------------------------------------
@@ -372,6 +374,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       channelType: "echo",
       channelId: "ch4",
       runId: "run-4",
+      sessionKey: "test-dlq-integration:user:ch4",
       failedAt: Date.now(),
       attemptCount: 0,
     });
