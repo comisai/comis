@@ -700,6 +700,7 @@ export async function deliverAnnouncement(params: {
       channelId: announceChannelId,
       agentId: identity?.agentId ?? callerAgentId,
       runId,
+      sessionKey: callerSessionKey,
       failedAt: systemNowMs(),
       attemptCount: 0,
       lastError,

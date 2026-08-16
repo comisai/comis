@@ -134,6 +134,8 @@ export interface DeadLetterEntryShape {
   channelId: string;
   agentId?: string;
   runId: string;
+  /** Formatted caller session key used for trajectory routing and durable authority. */
+  sessionKey: string;
   failedAt: number;
   attemptCount: number;
   lastAttemptAt: number;
