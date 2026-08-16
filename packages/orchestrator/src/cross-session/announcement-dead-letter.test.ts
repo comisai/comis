@@ -398,7 +398,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     expect(restarted.size()).toBe(0);
   });
 
-  it("emits a fresh admission after a matching quarantine row is delivered", async () => {
+  it("suppresses readmission after a matching quarantine row is delivered", async () => {
     const eventBus = createMockEventBus();
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
@@ -414,8 +414,8 @@ describe("AnnouncementDeadLetterQueue", () => {
     const admissions = vi.mocked(eventBus.emit).mock.calls.filter(
       ([eventName]) => eventName === "announcement:dead_lettered",
     );
-    expect(admissions).toHaveLength(2);
-    expect(dlq.size()).toBe(1);
+    expect(admissions).toHaveLength(1);
+    expect(dlq.size()).toBe(0);
   });
 
   it("drain retries delivery via sendToChannel", async () => {
@@ -1307,8 +1307,12 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(cleanup).not.toHaveBeenCalled();
   });
 
-  it("persists the exact text chunk manifest on its durable operation owner", async () => {
-    const decision = decisionInput({ idempotencyKey: "chunked-summary" });
+  it("finds a persisted text chunk manifest through every represented completion", async () => {
+    const decision = decisionInput({
+      idempotencyKey: "chunked-summary",
+      completionKeys: ["completion-chunked-summary"],
+    });
+    const chunks = ["first formatted chunk", "second formatted chunk"];
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
@@ -1317,23 +1321,141 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
 
     await expect(queue.recordDecisionTextChunks(
       decision.idempotencyKey,
-      ["first formatted chunk", "second formatted chunk"],
+      chunks,
     )).resolves.toEqual(ok(undefined));
+    await expect(queue.replaceDecisions([decision.idempotencyKey], chunks.map((chunk, index) => ({
+      ...decision,
+      idempotencyKey: `chunk-operation-${index}`,
+      announcementText: chunk,
+      partId: `text:chunk:${index}`,
+      textChunks: chunks,
+    })))).resolves.toEqual(ok({ created: true }));
 
     const restarted = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
     });
-    await expect(restarted.lookupDecision(decision.idempotencyKey)).resolves.toMatchObject({
-      ok: true,
-      value: {
-        textChunks: ["first formatted chunk", "second formatted chunk"],
-      },
-    });
+    await expect(restarted.lookupDecisionTextChunks("completion-chunked-summary"))
+      .resolves.toEqual(ok(chunks));
     await expect(restarted.recordDecisionTextChunks(
-      decision.idempotencyKey,
+      "chunk-operation-0",
       ["changed chunk"],
     )).resolves.toMatchObject({ ok: false });
+  });
+
+  it("recovers a ledgerless parent reservation after its rewrite grace", async () => {
+    const decision = decisionInput({
+      failedAt: Date.now() - 301_000,
+      idempotencyKey: "ledgerless-parent-recovery",
+      completionKeys: ["ledgerless-parent-recovery"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await queue.reserveDecision(decision);
+    const send = vi.fn(async () => true);
+
+    await queue.drain(send);
+
+    expect(send).toHaveBeenCalledWith(
+      "telegram",
+      "chat-1",
+      "scrubbed parent decision input",
+      expect.objectContaining({ threadId: "topic-1" }),
+    );
+    expect(queue.size()).toBe(0);
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "delivered",
+    }));
+  });
+
+  it("keeps live ledgerless attempts non-actionable until restart makes them ambiguous", async () => {
+    const attempt = makeEntry({
+      runId: "run-ledgerless-in-flight",
+      idempotencyKey: "ledgerless-in-flight",
+      completionKeys: ["ledgerless-in-flight"],
+      failedAt: Date.now(),
+      lastError: "outward_operation_in_flight",
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+
+    await expect(queue.beginDeliveryAttempt(attempt)).resolves.toEqual(ok({ claimed: true }));
+    await expect(queue.listQuarantined()).resolves.toEqual(ok([]));
+    await expect(queue.durableStatus()).resolves.toEqual(ok({
+      activeRecoveryCount: 1,
+      quarantinedCount: 0,
+    }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(restarted.listQuarantined()).resolves.toMatchObject({
+      ok: true,
+      value: [{
+        idempotencyKey: "ledgerless-in-flight",
+        lastError: "outward_operation_unresolved",
+      }],
+    });
+  });
+
+  it("terminalizes every completion represented by an accepted ledgerless operation", async () => {
+    const decision = decisionInput({
+      idempotencyKey: "coalesced-summary-operation",
+      completionKeys: ["completion-a", "completion-b"],
+      failedAt: Date.now(),
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await queue.reserveDecision(decision);
+    await expect(queue.beginDeliveryAttempt({
+      announcementText: decision.announcementText,
+      channelType: decision.channelType,
+      channelId: decision.channelId,
+      agentId: decision.agentId,
+      runId: decision.runId,
+      sessionKey: decision.sessionKey,
+      failedAt: decision.failedAt,
+      attemptCount: 0,
+      lastError: "outward_operation_in_flight",
+      threadId: decision.threadId,
+      idempotencyKey: decision.idempotencyKey,
+      rootRunId: decision.rootRunId,
+      deliveryAuthority: decision.deliveryAuthority,
+      destinationEndpoint: decision.destinationEndpoint,
+      completionKeys: decision.completionKeys,
+    })).resolves.toEqual(ok({ claimed: true }));
+    await expect(queue.settleDeliveryAttempt(decision.idempotencyKey, "accepted"))
+      .resolves.toEqual(ok(true));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    for (const completionKey of decision.completionKeys) {
+      await expect(restarted.reserveDecision(decisionInput({
+        idempotencyKey: completionKey,
+        completionKeys: [completionKey],
+      }))).resolves.toEqual(ok({
+        created: false,
+        terminalDecision: "delivered",
+      }));
+    }
   });
 
   it("keeps a visible reservation snapshot when final directory sync fails", async () => {
@@ -1604,7 +1726,10 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       filePath,
       eventBus: createMockEventBus(),
     });
-    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({ created: false }));
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
     await expect(restarted.lookupDecision(decision.idempotencyKey))
       .resolves.toEqual(ok(undefined));
   });
@@ -1632,7 +1757,10 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       eventBus: createMockEventBus(),
       outwardLedger: ledger,
     });
-    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({ created: false }));
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
   });
 
   it("does not acknowledge no-reply until reservation removal is durable", async () => {
@@ -1690,7 +1818,10 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
 
     expect(governedSendToChannel).not.toHaveBeenCalled();
     expect(restarted.size()).toBe(0);
-    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({ created: false }));
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
   });
 
   it("rejects a mismatched ledgerless operation without replacing its owner", async () => {

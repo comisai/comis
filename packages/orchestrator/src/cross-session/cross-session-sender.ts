@@ -175,7 +175,9 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         );
         return false;
       }
-      return recoverableBoundary.value.value.delivered;
+      const outcome = recoverableBoundary.value.value;
+      return outcome.delivered
+        || ("terminalDecision" in outcome && outcome.terminalDecision === "delivered");
     }
     const boundary = await fromPromise(sendGovernedAnnouncement!(request));
     if (!boundary.ok || !boundary.value.ok) {

@@ -125,9 +125,13 @@ export type SendGovernedCompletionAnnouncement = (
   request: CompletionAnnouncementSendRequest,
 ) => Promise<Result<GovernedAnnouncementSendOutcome, Error>>;
 
+export type RecoverableAnnouncementSendOutcome =
+  | AnnouncementPlatformSendOutcome
+  | { delivered: false; terminalDecision: OutwardTerminalDecision };
+
 export type SendRecoverableCompletionAnnouncement = (
   request: CompletionAnnouncementSendRequest,
-) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
+) => Promise<Result<RecoverableAnnouncementSendOutcome, Error>>;
 
 interface GovernedAnnouncementSenderDeps {
   ledger: OutwardSendLedgerPort;

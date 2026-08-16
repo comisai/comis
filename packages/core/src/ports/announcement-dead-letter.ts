@@ -4,6 +4,7 @@
 import type { Result } from "@comis/shared";
 import type { ChannelEndpoint } from "../domain/conversation-scope.js";
 import type { DeliveryAuthority } from "./delivery-queue.js";
+import type { OutwardTerminalDecision } from "./outward-send-ledger.js";
 
 /** Channel contribution identifier. Open because deployments can register channels. */
 export type AnnouncementChannelType = string;
@@ -142,6 +143,16 @@ export interface AnnouncementDeadLetterStatus {
   readonly quarantinedCount: number;
 }
 
+export interface AnnouncementDeliveryAttemptClaim {
+  readonly claimed: boolean;
+  readonly terminalDecision?: OutwardTerminalDecision;
+}
+
+export interface AnnouncementDecisionReservationOutcome {
+  readonly created: boolean;
+  readonly terminalDecision?: OutwardTerminalDecision;
+}
+
 /**
  * Durable completion-delivery recovery boundary shared by producers and the
  * orchestrator adapter.
@@ -150,17 +161,20 @@ export interface AnnouncementDeadLetterQueuePort {
   enqueue(entry: AnnouncementDeadLetterEntryInput): Promise<Result<void, Error>>;
   beginDeliveryAttempt(
     entry: AnnouncementDeadLetterEntryInput,
-  ): Promise<Result<{ claimed: boolean }, Error>>;
+  ): Promise<Result<AnnouncementDeliveryAttemptClaim, Error>>;
   settleDeliveryAttempt(
     idempotencyKey: string,
     outcome: "accepted" | "rejected" | "unknown",
   ): Promise<Result<boolean, Error>>;
   reserveDecision(
     entry: AnnouncementParentDecisionReservation,
-  ): Promise<Result<{ created: boolean }, Error>>;
+  ): Promise<Result<AnnouncementDecisionReservationOutcome, Error>>;
   lookupDecision(
     idempotencyKey: string,
   ): Promise<Result<AnnouncementParentDecisionReservation | undefined, Error>>;
+  lookupDecisionTextChunks(
+    completionKey: string,
+  ): Promise<Result<AnnouncementTextChunkManifest | undefined, Error>>;
   resolveDecision(
     idempotencyKey: string,
     outcome: "receipt_committed" | "no_reply",

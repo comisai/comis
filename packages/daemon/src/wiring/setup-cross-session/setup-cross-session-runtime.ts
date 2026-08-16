@@ -276,6 +276,7 @@ export function setupCrossSession(deps: {
   let textChunkQueue: ReturnType<typeof createAnnouncementDeadLetterQueue> | undefined;
   const {
     sendToChannelWithReceipt,
+    sendSingleTextToChannelWithReceipt,
     sendToChannel,
     sendPreparedAttachmentToChannelWithReceipt,
     sendLedgerAnnouncement,
@@ -411,7 +412,7 @@ export function setupCrossSession(deps: {
     // (the in-memory deliveredKeys set rebuilds empty on boot; the durable ledger
     // is the authoritative no-double-notify signal). Absent ⇒ at-least-once delivery.
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
-    receiptAwareSendToChannel: sendToChannelWithReceipt,
+    receiptAwareSendToChannel: sendSingleTextToChannelWithReceipt,
     reconcileAttachments: (referencedPaths) => reconcileCompletionAttachmentSnapshots(
       container.config.dataDir,
       referencedPaths,
@@ -519,7 +520,7 @@ export function setupCrossSession(deps: {
     : createReceiptAwareRecoverableAnnouncementDelivery({
         adaptersByType,
         deadLetterQueue,
-        send: sendToChannelWithReceipt,
+        deliveryService: deps.deliveryService,
         ...(deps.logger ? { logger: deps.logger } : {}),
       });
   const crossSessionSender = createCrossSessionSender({

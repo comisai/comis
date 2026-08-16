@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  classifySendError,
   conversationScopeToSessionKey,
   createStableAnnouncementOperationId,
+  resolvePlatformDeliveryResult,
   systemNowMs,
   type AnnouncementDeadLetterQueuePort,
   type AnnouncementParentDecisionReservation,
   type ChannelEndpoint,
   type ComisLogger,
   type ConversationLocator,
+  type DeliveryChunkSendInput,
+  type DeliveryService,
+  type OutwardTerminalDecision,
   type RootRunIdResolver,
+  type SendMessageOptions,
 } from "@comis/core";
 import {
   createAnnouncementOperationDigests,
-  type AnnouncementPlatformSendOutcome,
   type CompletionAnnouncementSendRequest,
+  type RecoverableAnnouncementSendOutcome,
   type SendGovernedCompletionAnnouncement,
   type SendRecoverableCompletionAnnouncement,
 } from "@comis/orchestrator";
@@ -33,17 +39,26 @@ interface RecoverableAnnouncementDeliveryDeps {
 }
 
 interface ReceiptAwareRecoverableAnnouncementDeliveryDeps {
-  adaptersByType: Map<string, { readonly channelId: string; channelType: string }>;
+  adaptersByType: Map<string, {
+    readonly channelId: string;
+    channelType: string;
+    sendMessage(
+      channelId: string,
+      text: string,
+      options?: SendMessageOptions,
+    ): Promise<Result<string, Error>>;
+  }>;
   deadLetterQueue: Pick<
     AnnouncementDeadLetterQueuePort,
-    "beginDeliveryAttempt" | "lookupDecision" | "reserveDecision" | "settleDeliveryAttempt"
+    | "beginDeliveryAttempt"
+    | "lookupDecision"
+    | "lookupDecisionTextChunks"
+    | "recordDecisionTextChunks"
+    | "replaceDecisions"
+    | "reserveDecision"
+    | "settleDeliveryAttempt"
   >;
-  send: (
-    channelType: string,
-    channelId: string,
-    text: string,
-    options?: { threadId?: string; extra?: Record<string, unknown> },
-  ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
+  deliveryService: DeliveryService;
   logger?: Pick<ComisLogger, "error" | "warn">;
 }
 
@@ -324,15 +339,18 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
       );
       return ok({ delivered: false, status: "rejected" });
     }
+    const adapter = deps.adaptersByType.get(request.channelType);
+    if (!adapter) return ok({ delivered: false, status: "rejected" });
     const operationId = createStableAnnouncementOperationId(
       request.agentId,
       request.callerSessionKey,
       request.runId,
       request.partId,
     );
-    const completionKeys = request.completionKeys && request.completionKeys.length > 0
-      ? [...new Set(request.completionKeys)]
-      : [operationId];
+    const completionKeys = [...new Set([
+      operationId,
+      ...(request.completionKeys ?? []),
+    ])];
     const reservation = reservationFor(
       request,
       route.callerConversation,
@@ -341,6 +359,49 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
       operationId,
       completionKeys,
     );
+    const terminalOutcome = (
+      terminalDecision: OutwardTerminalDecision,
+    ): RecoverableAnnouncementSendOutcome => ({
+      delivered: false,
+      terminalDecision,
+    });
+    const chunkReservations = (
+      chunks: readonly string[],
+    ): AnnouncementParentDecisionReservation[] => chunks.map((chunk, chunkIndex) => {
+      const chunkPartId = `${request.partId ?? "text"}:chunk:${chunkIndex}`;
+      return reservationFor(
+        {
+          ...request,
+          text: chunk,
+          partId: chunkPartId,
+          preparedTextChunks: chunks,
+        },
+        route.callerConversation,
+        route.destinationEndpoint,
+        `announcement:${request.callerSessionKey}`,
+        createStableAnnouncementOperationId(
+          request.agentId,
+          request.callerSessionKey,
+          request.runId,
+          chunkPartId,
+        ),
+        completionKeys,
+      );
+    });
+    const replaceWithChunks = async (
+      chunks: readonly string[],
+      expectedKeys: readonly string[],
+    ): Promise<Result<void, Error>> => {
+      const replacedBoundary = await fromPromise(
+        deps.deadLetterQueue.replaceDecisions(
+          expectedKeys,
+          chunkReservations(chunks),
+        ),
+      );
+      if (!replacedBoundary.ok) return err(replacedBoundary.error);
+      if (!replacedBoundary.value.ok) return replacedBoundary.value;
+      return ok(undefined);
+    };
     const existingBoundary = await fromPromise(
       deps.deadLetterQueue.lookupDecision(operationId),
     );
@@ -350,6 +411,7 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
     if (existing && !reservationMatches(existing, reservation)) {
       return err(new Error("Completion announcement reservation identity mismatch"));
     }
+    let preparedChunks = existing?.textChunks;
     if (!existing) {
       const reservedBoundary = await fromPromise(
         deps.deadLetterQueue.reserveDecision(reservation),
@@ -357,57 +419,175 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
       if (!reservedBoundary.ok) return err(reservedBoundary.error);
       if (!reservedBoundary.value.ok) return reservedBoundary.value;
       if (!reservedBoundary.value.value.created) {
-        return ok({ delivered: false, status: "unknown" });
+        if (reservedBoundary.value.value.terminalDecision !== undefined) {
+          return ok(terminalOutcome(reservedBoundary.value.value.terminalDecision));
+        }
+        const manifestBoundary = await fromPromise(
+          deps.deadLetterQueue.lookupDecisionTextChunks(operationId),
+        );
+        if (!manifestBoundary.ok) return err(manifestBoundary.error);
+        if (!manifestBoundary.value.ok) return manifestBoundary.value;
+        preparedChunks = manifestBoundary.value.value;
+        if (!preparedChunks) return ok({ delivered: false, status: "unknown" });
       }
     }
-    const claimedBoundary = await fromPromise(
-      deps.deadLetterQueue.beginDeliveryAttempt({
-        announcementText: reservation.announcementText,
-        channelType: reservation.channelType,
-        channelId: reservation.channelId,
-        agentId: reservation.agentId,
-        runId: reservation.runId,
-        sessionKey: reservation.sessionKey,
-        failedAt: reservation.failedAt,
-        attemptCount: 0,
-        lastError: "outward_operation_unresolved",
-        idempotencyKey: reservation.idempotencyKey,
-        rootRunId: reservation.rootRunId,
-        deliveryAuthority: reservation.deliveryAuthority,
-        destinationEndpoint: reservation.destinationEndpoint,
-        completionKeys: reservation.completionKeys,
-        ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
-        ...(reservation.extra ? { extra: reservation.extra } : {}),
-        ...(reservation.partId ? { partId: reservation.partId } : {}),
-      }),
-    );
-    if (!claimedBoundary.ok) return err(claimedBoundary.error);
-    if (!claimedBoundary.value.ok) return claimedBoundary.value;
-    if (!claimedBoundary.value.value.claimed) {
-      return ok({ delivered: false, status: "unknown" });
-    }
-    const sendBoundary = await fromPromise(deps.send(
-      request.channelType,
-      request.channelId,
-      request.text,
-      request.options,
-    ));
-    const outcome = sendBoundary.ok && sendBoundary.value.ok
-      ? sendBoundary.value.value
-      : { delivered: false as const, status: "unknown" as const };
-    const settledBoundary = await fromPromise(
-      deps.deadLetterQueue.settleDeliveryAttempt(operationId, outcome.status),
-    );
-    if (!settledBoundary.ok || !settledBoundary.value.ok) {
-      deps.logger?.warn(
-        {
-          runId: request.runId,
-          errorKind: "resource" as const,
-          hint: "restore dead-letter storage before reviewing the retained completion announcement",
-        },
-        "Recoverable completion announcement outcome was not persisted",
+    if (preparedChunks) {
+      const transitioned = await replaceWithChunks(
+        preparedChunks,
+        existing ? [operationId] : [],
       );
+      if (!transitioned.ok) return transitioned;
     }
-    return ok(outcome);
+    let activeChunks = preparedChunks;
+    let suppressedTerminal: Exclude<OutwardTerminalDecision, "delivered"> | undefined;
+    const sendChunk = async (
+      chunk: DeliveryChunkSendInput,
+    ): Promise<Result<string, Error>> => {
+      const chunks = activeChunks;
+      if (!chunks || chunks.length !== chunk.totalChunks) {
+        return err(new Error("Recoverable announcement chunk manifest is unavailable"));
+      }
+      const chunkReservation = chunkReservations(chunks)[chunk.chunkIndex];
+      if (!chunkReservation || chunkReservation.announcementText !== chunk.text) {
+        return err(new Error("Recoverable announcement chunk identity mismatch"));
+      }
+      const storedBoundary = await fromPromise(
+        deps.deadLetterQueue.lookupDecision(chunkReservation.idempotencyKey),
+      );
+      if (!storedBoundary.ok) return err(storedBoundary.error);
+      if (!storedBoundary.value.ok) return storedBoundary.value;
+      if (
+        storedBoundary.value.value
+        && !reservationMatches(storedBoundary.value.value, chunkReservation)
+      ) {
+        return err(new Error("Recoverable announcement chunk reservation mismatch"));
+      }
+      if (!storedBoundary.value.value) {
+        const reservedBoundary = await fromPromise(
+          deps.deadLetterQueue.reserveDecision(chunkReservation),
+        );
+        if (!reservedBoundary.ok) return err(reservedBoundary.error);
+        if (!reservedBoundary.value.ok) return reservedBoundary.value;
+        const terminalDecision = reservedBoundary.value.value.terminalDecision;
+        if (terminalDecision !== undefined) {
+          if (terminalDecision !== "delivered") suppressedTerminal = terminalDecision;
+          return ok(`terminal:${chunkReservation.idempotencyKey}`);
+        }
+      }
+      const claimedBoundary = await fromPromise(
+        deps.deadLetterQueue.beginDeliveryAttempt({
+          announcementText: chunkReservation.announcementText,
+          channelType: chunkReservation.channelType,
+          channelId: chunkReservation.channelId,
+          agentId: chunkReservation.agentId,
+          runId: chunkReservation.runId,
+          sessionKey: chunkReservation.sessionKey,
+          failedAt: chunkReservation.failedAt,
+          attemptCount: 0,
+          lastError: "outward_operation_in_flight",
+          idempotencyKey: chunkReservation.idempotencyKey,
+          rootRunId: chunkReservation.rootRunId,
+          deliveryAuthority: chunkReservation.deliveryAuthority,
+          destinationEndpoint: chunkReservation.destinationEndpoint,
+          completionKeys: chunkReservation.completionKeys,
+          textChunks: chunks,
+          ...(chunkReservation.threadId ? { threadId: chunkReservation.threadId } : {}),
+          ...(chunkReservation.extra ? { extra: chunkReservation.extra } : {}),
+          ...(chunkReservation.partId ? { partId: chunkReservation.partId } : {}),
+        }),
+      );
+      if (!claimedBoundary.ok) return err(claimedBoundary.error);
+      if (!claimedBoundary.value.ok) return claimedBoundary.value;
+      const terminalDecision = claimedBoundary.value.value.terminalDecision;
+      if (terminalDecision !== undefined) {
+        if (terminalDecision !== "delivered") suppressedTerminal = terminalDecision;
+        return ok(`terminal:${chunkReservation.idempotencyKey}`);
+      }
+      if (!claimedBoundary.value.value.claimed) {
+        return err(new Error("Recoverable announcement chunk outcome is unresolved"));
+      }
+      const sentBoundary = await fromPromise(chunk.adapter.sendMessage(
+        chunk.channelId,
+        chunk.text,
+        chunk.options,
+      ));
+      const sent = sentBoundary.ok ? sentBoundary.value : err(sentBoundary.error);
+      const status = sent.ok
+        ? "accepted" as const
+        : classifySendError(sent.error) === "uncertain"
+          ? "unknown" as const
+          : "rejected" as const;
+      const settledBoundary = await fromPromise(
+        deps.deadLetterQueue.settleDeliveryAttempt(
+          chunkReservation.idempotencyKey,
+          status,
+        ),
+      );
+      if (
+        !settledBoundary.ok
+        || !settledBoundary.value.ok
+        || !settledBoundary.value.value
+      ) {
+        deps.logger?.warn(
+          {
+            runId: request.runId,
+            errorKind: "resource" as const,
+            hint: "restore dead-letter storage before reviewing the retained completion announcement",
+          },
+          "Recoverable completion announcement outcome was not persisted",
+        );
+        return err(new Error("Recoverable announcement chunk settlement failed"));
+      }
+      return sent;
+    };
+    const deliveredBoundary = await fromPromise(
+      deps.deliveryService.deliverToChannel(
+        adapter,
+        request.channelId,
+        request.text,
+        {
+          completionMode: "settled",
+          ...(request.options?.threadId ? { threadId: request.options.threadId } : {}),
+          ...(request.options?.extra ? { extra: request.options.extra } : {}),
+          authority: reservation.deliveryAuthority,
+          destinationEndpoint: reservation.destinationEndpoint,
+        },
+        sendChunk,
+        preparedChunks
+          ? { kind: "prepared", chunks: preparedChunks }
+          : {
+              kind: "persist",
+              persist: async (chunks) => {
+                const recordedBoundary = await fromPromise(
+                  deps.deadLetterQueue.recordDecisionTextChunks(operationId, chunks),
+                );
+                if (!recordedBoundary.ok) return err(recordedBoundary.error);
+                if (!recordedBoundary.value.ok) return recordedBoundary.value;
+                const transitioned = await replaceWithChunks(chunks, [operationId]);
+                if (!transitioned.ok) return transitioned;
+                activeChunks = [...chunks];
+                return ok(undefined);
+              },
+            },
+      ),
+    );
+    if (!deliveredBoundary.ok) return err(deliveredBoundary.error);
+    const delivered = resolvePlatformDeliveryResult(deliveredBoundary.value);
+    if (!delivered.ok) return err(delivered.error);
+    const platformStatus = delivered.value.platform.status;
+    if (platformStatus !== "accepted") {
+      return ok({
+        delivered: false,
+        status: platformStatus === "rejected" ? "rejected" : "unknown",
+      });
+    }
+    if (suppressedTerminal !== undefined) return ok(terminalOutcome(suppressedTerminal));
+    return ok({
+      delivered: true,
+      status: "accepted",
+      ...(delivered.value.platform.lastMessageId
+        ? { platformMessageId: delivered.value.platform.lastMessageId }
+        : {}),
+    });
   };
 }

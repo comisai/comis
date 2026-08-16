@@ -76,6 +76,12 @@ export interface AnnouncementDelivery {
     text: string,
     options?: AnnouncementDeliveryOptions,
   ): Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
+  sendSingleTextToChannelWithReceipt(
+    channelType: string,
+    channelId: string,
+    text: string,
+    options?: AnnouncementDeliveryOptions,
+  ): Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   sendToChannel(
     channelType: string,
     channelId: string,
@@ -104,11 +110,12 @@ export interface AnnouncementDelivery {
 export function createAnnouncementDelivery(
   deps: AnnouncementDeliveryDeps,
 ): AnnouncementDelivery {
-  const sendToChannelWithReceipt = async (
+  const deliverTextToChannelWithReceipt = async (
     channelType: string,
     channelId: string,
     text: string,
     options?: AnnouncementDeliveryOptions,
+    skipChunking = false,
   ): Promise<Result<AnnouncementPlatformSendOutcome, Error>> => {
     deps.logger?.debug({
       channelType,
@@ -147,6 +154,7 @@ export function createAnnouncementDelivery(
     const result = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
       completionMode: "settled",
       ...options,
+      ...(skipChunking ? { skipChunking: true } : {}),
     });
     const platformDelivery = resolvePlatformDeliveryResult(result);
     const success = platformDelivery.ok && platformDelivery.value.platform.status === "accepted";
@@ -171,6 +179,22 @@ export function createAnnouncementDelivery(
       ...(platformMessageId ? { platformMessageId } : {}),
     });
   };
+
+  const sendToChannelWithReceipt = (
+    channelType: string,
+    channelId: string,
+    text: string,
+    options?: AnnouncementDeliveryOptions,
+  ): Promise<Result<AnnouncementPlatformSendOutcome, Error>> =>
+    deliverTextToChannelWithReceipt(channelType, channelId, text, options);
+
+  const sendSingleTextToChannelWithReceipt = (
+    channelType: string,
+    channelId: string,
+    text: string,
+    options?: AnnouncementDeliveryOptions,
+  ): Promise<Result<AnnouncementPlatformSendOutcome, Error>> =>
+    deliverTextToChannelWithReceipt(channelType, channelId, text, options, true);
 
   const sendToChannel = async (
     channelType: string,
@@ -411,6 +435,7 @@ export function createAnnouncementDelivery(
   if (!outwardLedger) {
     return {
       sendToChannelWithReceipt,
+      sendSingleTextToChannelWithReceipt,
       sendToChannel,
       sendPreparedAttachmentToChannelWithReceipt,
     };
@@ -612,6 +637,7 @@ export function createAnnouncementDelivery(
 
   return {
     sendToChannelWithReceipt,
+    sendSingleTextToChannelWithReceipt,
     sendToChannel,
     sendPreparedAttachmentToChannelWithReceipt,
     sendLedgerAnnouncement,

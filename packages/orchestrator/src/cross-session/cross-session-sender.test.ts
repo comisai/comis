@@ -519,6 +519,23 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
+  it("reports a terminally confirmed ledgerless delivery as announced", async () => {
+    const sendRecoverableAnnouncement = vi.fn(async () => ok({
+      delivered: false as const,
+      terminalDecision: "delivered" as const,
+    }));
+    const sender = createCrossSessionSender({
+      ...deps,
+      sendRecoverableAnnouncement,
+    });
+
+    const result = await sender.send(ledgeredParams);
+
+    expect(result.announced).toBe(true);
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledOnce();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+  });
+
   it("passes the authenticated topic to governed announcement delivery", async () => {
     const sendGovernedAnnouncement = vi.fn(async () => ok({
       delivered: true as const,

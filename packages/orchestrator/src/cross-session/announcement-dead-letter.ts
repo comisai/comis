@@ -183,11 +183,24 @@ export function createAnnouncementDeadLetterQueue(
           return err(normalized.error.error);
         }
       }
-      entries = read.value.entries.filter((entry): entry is DeadLetterEntry =>
+      const loadedEntries = read.value.entries.filter((entry): entry is DeadLetterEntry =>
         !isParentDecisionReservation(entry)
         && !isInvalidDeadLetterRecord(entry));
       decisionReservations = read.value.entries.filter(isParentDecisionReservation);
       invalidRecords = read.value.entries.filter(isInvalidDeadLetterRecord);
+      const recoveredInFlight = loadedEntries.some((entry) =>
+        entry.lastError === "outward_operation_in_flight");
+      entries = loadedEntries.map((entry) => entry.lastError === "outward_operation_in_flight"
+        ? { ...entry, lastError: "outward_operation_unresolved" }
+        : entry);
+      if (recoveredInFlight) {
+        const recovered = await writeDeadLetterEntries(
+          filePath,
+          [...entries, ...decisionReservations, ...invalidRecords],
+          fileOperations,
+        );
+        if (!recovered.ok) return err(recovered.error.error);
+      }
       if (reconcileAttachments) {
         const referencedPaths = [
           ...entries.flatMap((entry) =>
@@ -393,6 +406,43 @@ export function createAnnouncementDeadLetterQueue(
     return terminalDecisionStore.record(owner, outcome);
   }
 
+  function retainsCompletionKey(
+    completionKey: string,
+    retainedEntries: readonly DeadLetterEntry[],
+    retainedReservations: readonly AnnouncementParentDecisionReservation[],
+  ): boolean {
+    return retainedEntries.some((candidate) =>
+      candidate.idempotencyKey === completionKey
+      || candidate.completionKeys?.includes(completionKey) === true)
+      || retainedReservations.some((candidate) =>
+        candidate.idempotencyKey === completionKey
+        || candidate.completionKeys.includes(completionKey));
+  }
+
+  async function terminalizeOwner(
+    owner: AnnouncementDeadLetterEntryInput | AnnouncementParentDecisionReservation,
+    outcome: AnnouncementTerminalDecision,
+    retainedEntries: readonly DeadLetterEntry[],
+    retainedReservations: readonly AnnouncementParentDecisionReservation[],
+  ): Promise<Result<void, Error>> {
+    const terminalized = await recordTerminalDecision(owner, outcome);
+    if (!terminalized.ok) return terminalized;
+    const completionKeys = [...new Set(owner.completionKeys ?? [])];
+    for (const completionKey of completionKeys) {
+      if (
+        completionKey === owner.idempotencyKey
+        || retainsCompletionKey(completionKey, retainedEntries, retainedReservations)
+      ) continue;
+      const completed = await recordTerminalDecision({
+        ...owner,
+        idempotencyKey: completionKey,
+        completionKeys: [completionKey],
+      }, outcome);
+      if (!completed.ok) return completed;
+    }
+    return ok(undefined);
+  }
+
   function sameRetainedOwner(
     reservation: {
       readonly rootRunId?: string;
@@ -419,7 +469,17 @@ export function createAnnouncementDeadLetterQueue(
     if (!reservation.ok || reservation.value === undefined) return reservation.ok
       ? ok(false)
       : reservation;
+    const nextReservations = decisionReservations.filter(
+      (candidate) => candidate.idempotencyKey !== idempotencyKey,
+    );
     if (outcome === "receipt_committed") {
+      const terminalized = await terminalizeOwner(
+        reservation.value,
+        "delivered",
+        entries,
+        nextReservations,
+      );
+      if (!terminalized.ok) return terminalized;
       const resolved = await decisionStore.resolve(idempotencyKey, outcome);
       if (reservation.value.attachment?.kind === "snapshot") {
         await cleanupUnreferencedSnapshots([{ attachment: reservation.value.attachment }]);
@@ -431,22 +491,22 @@ export function createAnnouncementDeadLetterQueue(
     if (existing.value !== undefined && existing.value !== "no_reply") {
       return err(new Error("No-reply resolution conflicts with its durable outcome"));
     }
-    if (existing.value === undefined) {
-      const terminalized = await recordTerminalDecision(reservation.value, "no_reply");
-      if (!terminalized.ok) {
-        logger?.error(
-          {
-            errorKind: "dependency" as const,
-            hint: "restore decision-quarantine storage or the outward ledger before retrying the no-reply resolution",
-          },
-          "Announcement no-reply resolution could not be durably terminalized",
-        );
-        return terminalized;
-      }
-    }
-    const nextReservations = decisionReservations.filter(
-      (candidate) => candidate.idempotencyKey !== idempotencyKey,
+    const terminalized = await terminalizeOwner(
+      reservation.value,
+      "no_reply",
+      entries,
+      nextReservations,
     );
+    if (!terminalized.ok) {
+      logger?.error(
+        {
+          errorKind: "dependency" as const,
+          hint: "restore decision-quarantine storage or the outward ledger before retrying the no-reply resolution",
+        },
+        "Announcement no-reply resolution could not be durably terminalized",
+      );
+      return terminalized;
+    }
     const resolved = await persist(entries, nextReservations, invalidRecords);
     if (reservation.value.attachment?.kind === "snapshot") {
       await cleanupUnreferencedSnapshots([{ attachment: reservation.value.attachment }]);
@@ -1110,7 +1170,10 @@ export function createAnnouncementDeadLetterQueue(
 
   async function beginDeliveryAttemptDurably(
     entry: AnnouncementDeadLetterEntryInput,
-  ): Promise<Result<{ claimed: boolean }, Error>> {
+  ): Promise<Result<{
+    claimed: boolean;
+    terminalDecision?: AnnouncementTerminalDecision;
+  }, Error>> {
     const load = await loadFromDisk();
     if (!load.ok) return load;
     if (!entry.idempotencyKey) {
@@ -1118,7 +1181,16 @@ export function createAnnouncementDeadLetterQueue(
     }
     const terminalDecision = await lookupTerminalDecision(entry);
     if (!terminalDecision.ok) return terminalDecision;
-    if (terminalDecision.value !== undefined) return ok({ claimed: false });
+    if (terminalDecision.value !== undefined) {
+      const reconciled = await terminalizeOwner(
+        entry,
+        terminalDecision.value,
+        entries,
+        decisionReservations,
+      );
+      if (!reconciled.ok) return reconciled;
+      return ok({ claimed: false, terminalDecision: terminalDecision.value });
+    }
     if (entry.attachment?.kind === "source") {
       return err(new Error("Dead-letter attachment must be snapshotted before delivery"));
     }
@@ -1127,9 +1199,20 @@ export function createAnnouncementDeadLetterQueue(
     if (existing) {
       const same = isSameAnnouncementRecovery(existing, entry);
       if (!same.ok) return same;
-      return same.value
-        ? ok({ claimed: false })
-        : err(new Error("Dead-letter recovery key identity mismatch"));
+      if (!same.value) return err(new Error("Dead-letter recovery key identity mismatch"));
+      if (existing.lastError !== "transport_rejected") return ok({ claimed: false });
+      const reclaimedEntries = entries.map((candidate) => candidate.id === existing.id
+        ? {
+            ...candidate,
+            attemptCount: candidate.attemptCount + 1,
+            lastAttemptAt: systemNowMs(),
+            lastError: "outward_operation_in_flight",
+          }
+        : candidate);
+      const reclaimed = await persist(reclaimedEntries);
+      if (!reclaimed.ok) return reclaimed;
+      entries = reclaimedEntries;
+      return ok({ claimed: true });
     }
     const reservation = decisionReservations.find((candidate) =>
       candidate.idempotencyKey === entry.idempotencyKey);
@@ -1151,7 +1234,7 @@ export function createAnnouncementDeadLetterQueue(
       id: id.value,
       attemptCount: entry.attemptCount + 1,
       lastAttemptAt: now,
-      lastError: "outward_operation_unresolved",
+      lastError: "outward_operation_in_flight",
     };
     const nextEntries = [...entries, claimed];
     const nextReservations = reservation
@@ -1177,12 +1260,30 @@ export function createAnnouncementDeadLetterQueue(
     const entry = entries.find((candidate) => candidate.idempotencyKey === idempotencyKey);
     if (!entry) return ok(false);
     if (outcome === "accepted") {
-      const terminalized = await recordTerminalDecision(entry, "delivered");
+      const pendingEntries = entries.map((candidate) => candidate.id === entry.id
+        ? { ...candidate, lastError: "receipt_accepted_terminalization_pending" }
+        : candidate);
+      const pending = await persist(pendingEntries);
+      if (!pending.ok) return pending;
+      entries = pendingEntries;
+      const nextEntries = pendingEntries.filter((candidate) => candidate.id !== entry.id);
+      const terminalized = await terminalizeOwner(
+        entry,
+        "delivered",
+        nextEntries,
+        decisionReservations,
+      );
       if (!terminalized.ok) return terminalized;
+      const removed = await persist(nextEntries);
+      if (!removed.ok) return removed;
+      entries = nextEntries;
+      emittedAdmissionKeys.delete(announcementRecoveryKey(entry));
+      if (entry.attachment?.kind === "snapshot") {
+        await cleanupUnreferencedSnapshots([{ attachment: entry.attachment }]);
+      }
+      return ok(true);
     }
-    const nextEntries = outcome === "accepted"
-      ? entries.filter((candidate) => candidate.id !== entry.id)
-      : entries.map((candidate) => candidate.id === entry.id
+    const nextEntries = entries.map((candidate) => candidate.id === entry.id
         ? {
             ...candidate,
             lastError: outcome === "rejected"
@@ -1193,12 +1294,6 @@ export function createAnnouncementDeadLetterQueue(
     const persisted = await persist(nextEntries);
     if (!persisted.ok) return persisted;
     entries = nextEntries;
-    if (outcome === "accepted") {
-      emittedAdmissionKeys.delete(announcementRecoveryKey(entry));
-      if (entry.attachment?.kind === "snapshot") {
-        await cleanupUnreferencedSnapshots([{ attachment: entry.attachment }]);
-      }
-    }
     return ok(true);
   }
 
@@ -1250,6 +1345,29 @@ export function createAnnouncementDeadLetterQueue(
     return persisted;
   }
 
+  async function lookupDecisionTextChunksDurably(
+    completionKey: string,
+  ): Promise<Result<readonly string[] | undefined, Error>> {
+    const load = await loadFromDisk();
+    if (!load.ok) return load;
+    const manifests = [
+      ...entries.filter((entry) =>
+        entry.idempotencyKey === completionKey
+        || entry.completionKeys?.includes(completionKey) === true),
+      ...decisionReservations.filter((reservation) =>
+        reservation.idempotencyKey === completionKey
+        || reservation.completionKeys.includes(completionKey)),
+    ].flatMap((owner) => owner.textChunks ? [owner.textChunks] : []);
+    const manifest = manifests[0];
+    if (!manifest) return ok(undefined);
+    const matches = manifests.every((candidate) =>
+      candidate.length === manifest.length
+      && candidate.every((chunk, index) => chunk === manifest[index]));
+    return matches
+      ? ok([...manifest])
+      : err(new Error("Announcement text chunk manifest identity mismatch"));
+  }
+
   async function recordDrainingEntryTextChunks(
     entry: DeadLetterEntry,
     chunks: readonly string[],
@@ -1267,9 +1385,13 @@ export function createAnnouncementDeadLetterQueue(
 
   /** Settle reservations after the rewrite grace. The ledger decides whether
    * delivery is safe; missing roots, errors, and uncertainty remain parked. */
-  async function adjudicateReservations(ledger: OutwardSendLedgerPort): Promise<void> {
+  async function adjudicateReservations(ledger?: OutwardSendLedgerPort): Promise<void> {
     if (decisionReservations.length === 0) return;
     const settled: string[] = [];
+    const terminalSettlements: Array<{
+      reservation: ParentDecisionReservationRecord;
+      decision: AnnouncementTerminalDecision;
+    }> = [];
     const nextEntries = [...entries];
     for (const reservation of [...decisionReservations]) {
       const terminalDecision = await lookupTerminalDecision(reservation);
@@ -1286,6 +1408,10 @@ export function createAnnouncementDeadLetterQueue(
       }
       if (terminalDecision.value !== undefined) {
         settled.push(reservation.idempotencyKey);
+        terminalSettlements.push({
+          reservation,
+          decision: terminalDecision.value,
+        });
         continue;
       }
       const remainingGraceMs = parentDecisionGraceMs
@@ -1297,7 +1423,8 @@ export function createAnnouncementDeadLetterQueue(
         );
         continue;
       }
-      const step = reservation.attachment
+      if (!ledger && reservation.attachment) continue;
+      const step = ledger && reservation.attachment
         ? await fromPromise(
             ledger.allocateStep(reservation.rootRunId, reservation.idempotencyKey),
           )
@@ -1335,6 +1462,7 @@ export function createAnnouncementDeadLetterQueue(
         deliveryAuthority: reservation.deliveryAuthority,
         destinationEndpoint: reservation.destinationEndpoint,
         completionKeys: reservation.completionKeys,
+        ...(!ledger ? { lastError: "transport_rejected" } : {}),
         ...(reservation.partId ? { partId: reservation.partId } : {}),
         ...(reservation.textChunks ? { textChunks: reservation.textChunks } : {}),
         ...(reservation.attachment ? { attachment: reservation.attachment } : {}),
@@ -1347,6 +1475,15 @@ export function createAnnouncementDeadLetterQueue(
     const remaining = decisionReservations.filter(
       (r) => !settled.includes(r.idempotencyKey),
     );
+    for (const terminal of terminalSettlements) {
+      const reconciled = await terminalizeOwner(
+        terminal.reservation,
+        terminal.decision,
+        nextEntries,
+        remaining,
+      );
+      if (!reconciled.ok) return;
+    }
     const persisted = await persist(nextEntries, remaining);
     if (!persisted.ok) {
       logger?.warn(
@@ -1368,7 +1505,7 @@ export function createAnnouncementDeadLetterQueue(
   ): Promise<void> {
     const load = await loadFromDisk();
     if (!load.ok) return;
-    if (outwardLedger) await adjudicateReservations(outwardLedger);
+    await adjudicateReservations(outwardLedger);
     if (entries.length === 0) return;
     const now = systemNowMs();
     const workingEntries = entries.map((entry) => ({ ...entry }));
@@ -1396,12 +1533,42 @@ export function createAnnouncementDeadLetterQueue(
         continue;
       }
       if (terminalDecision.value !== undefined) {
+        const retainedEntries = workingEntries.filter((candidate) =>
+          candidate.id !== entry.id && !deliveredIds.has(candidate.id));
+        const reconciled = await terminalizeOwner(
+          entry,
+          terminalDecision.value,
+          retainedEntries,
+          decisionReservations,
+        );
+        if (!reconciled.ok) continue;
         deliveredIds.add(entry.id);
         deliveredEntries.push({
           entry,
           outcome: "suppressed_terminal_decision",
           durationMs: systemNowMs() - now,
         });
+        continue;
+      }
+      if (!outwardLedger && entry.lastError === "receipt_accepted_terminalization_pending") {
+        const retainedEntries = workingEntries.filter((candidate) =>
+          candidate.id !== entry.id && !deliveredIds.has(candidate.id));
+        const terminalized = await terminalizeOwner(
+          entry,
+          "delivered",
+          retainedEntries,
+          decisionReservations,
+        );
+        if (!terminalized.ok) continue;
+        deliveredIds.add(entry.id);
+        deliveredEntries.push({
+          entry,
+          outcome: "untracked_delivery",
+          durationMs: systemNowMs() - now,
+        });
+        continue;
+      }
+      if (!outwardLedger && entry.lastError === "outward_operation_in_flight") {
         continue;
       }
       if (!outwardLedger && entry.lastError === "outward_operation_unresolved") {
@@ -1449,7 +1616,7 @@ export function createAnnouncementDeadLetterQueue(
       }
       entry.attemptCount++;
       entry.lastAttemptAt = systemNowMs();
-      entry.lastError = "outward_operation_unresolved";
+      entry.lastError = "outward_operation_in_flight";
       const preAttemptEntries = workingEntries.filter((candidate) =>
         !deliveredIds.has(candidate.id));
       const preAttemptPersisted = await persist(preAttemptEntries);
@@ -1485,6 +1652,21 @@ export function createAnnouncementDeadLetterQueue(
           ? "accepted" as const
           : "unknown" as const;
       if (deliveryStatus === "accepted") {
+        entry.lastError = "receipt_accepted_terminalization_pending";
+        const pendingEntries = workingEntries.filter((candidate) =>
+          !deliveredIds.has(candidate.id));
+        const pendingPersisted = await persist(pendingEntries);
+        if (!pendingPersisted.ok) return;
+        entries = [...pendingEntries];
+        const retainedEntries = pendingEntries.filter((candidate) =>
+          candidate.id !== entry.id);
+        const terminalized = await terminalizeOwner(
+          entry,
+          "delivered",
+          retainedEntries,
+          decisionReservations,
+        );
+        if (!terminalized.ok) continue;
         deliveredIds.add(entry.id);
         deliveredEntries.push({
           entry: { ...entry },
@@ -1492,6 +1674,8 @@ export function createAnnouncementDeadLetterQueue(
         });
       } else if (deliveryStatus === "rejected") {
         entry.lastError = "transport_rejected";
+      } else {
+        entry.lastError = "outward_operation_unresolved";
       }
     }
     const nextEntries = workingEntries.filter((entry) => !deliveredIds.has(entry.id));
@@ -1573,7 +1757,16 @@ export function createAnnouncementDeadLetterQueue(
       if (!loaded.ok) return loaded;
       const terminalDecision = await lookupTerminalDecision(entry);
       if (!terminalDecision.ok) return terminalDecision;
-      if (terminalDecision.value !== undefined) return ok({ created: false });
+      if (terminalDecision.value !== undefined) {
+        const reconciled = await terminalizeOwner(
+          entry,
+          terminalDecision.value,
+          entries,
+          decisionReservations,
+        );
+        if (!reconciled.ok) return reconciled;
+        return ok({ created: false, terminalDecision: terminalDecision.value });
+      }
       const existing = await decisionStore.lookup(entry.idempotencyKey);
       if (!existing.ok) return existing;
       const prepared = await prepareReservedAttachment(
@@ -1611,6 +1804,8 @@ export function createAnnouncementDeadLetterQueue(
     }),
     lookupDecision: (idempotencyKey) =>
       serialize(() => decisionStore.lookup(idempotencyKey)),
+    lookupDecisionTextChunks: (completionKey) =>
+      serialize(() => lookupDecisionTextChunksDurably(completionKey)),
     resolveDecision: (idempotencyKey, outcome) =>
       serializeStateChange(() => resolveDecisionDurably(idempotencyKey, outcome)),
     recordDecisionTextChunks: (idempotencyKey, chunks) =>
@@ -1620,6 +1815,10 @@ export function createAnnouncementDeadLetterQueue(
         const loaded = await loadFromDisk();
         if (!loaded.ok) return loaded;
         const nonterminalOperations: AnnouncementParentDecisionReservation[] = [];
+        const terminalOperations: Array<{
+          operation: AnnouncementParentDecisionReservation;
+          decision: AnnouncementTerminalDecision;
+        }> = [];
         const settledCompletionKeys = new Set<string>();
         const expected = new Set(expectedKeys);
         const reusable = decisionReservations.filter((reservation) =>
@@ -1631,6 +1830,10 @@ export function createAnnouncementDeadLetterQueue(
             nonterminalOperations.push(operation);
             continue;
           }
+          terminalOperations.push({
+            operation,
+            decision: terminalDecision.value,
+          });
           for (const completionKey of operation.completionKeys) {
             settledCompletionKeys.add(completionKey);
           }
@@ -1660,6 +1863,23 @@ export function createAnnouncementDeadLetterQueue(
               attachment: prepared.value.entry.attachment,
               cleanup: prepared.value.cleanup,
             });
+          }
+        }
+        const anticipatedReservations = [
+          ...decisionReservations.filter((reservation) =>
+            !expected.has(reservation.idempotencyKey)),
+          ...pendingOperations,
+        ];
+        for (const terminal of terminalOperations) {
+          const reconciled = await terminalizeOwner(
+            terminal.operation,
+            terminal.decision,
+            entries,
+            anticipatedReservations,
+          );
+          if (!reconciled.ok) {
+            await cleanupUnreferencedSnapshots(transientSnapshots);
+            return reconciled;
           }
         }
         const replaced = await decisionStore.replace(
@@ -1708,7 +1928,12 @@ export function createAnnouncementDeadLetterQueue(
       const releasedReservation = decisionReservations.find((candidate) => candidate.id === id);
       const releasedDelivery = releasedEntry ?? releasedReservation;
       if (releasedDelivery) {
-        const terminalized = await recordTerminalDecision(releasedDelivery, outcome);
+        const terminalized = await terminalizeOwner(
+          releasedDelivery,
+          outcome,
+          entries.filter((candidate) => candidate.id !== id),
+          decisionReservations.filter((candidate) => candidate.id !== id),
+        );
         if (!terminalized.ok) {
           return terminalized;
         }

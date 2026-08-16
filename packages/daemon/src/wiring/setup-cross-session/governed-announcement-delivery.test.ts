@@ -151,6 +151,33 @@ describe("completion announcement delivery wiring", () => {
     expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
   });
 
+  it("keeps a retained text operation within one platform send boundary", async () => {
+    const deliveryService = makeDeliveryService();
+    const adapter = {
+      channelId: "telegram-primary",
+      channelType: "telegram",
+      sendMessage: vi.fn(async () => ok("message-1")),
+    };
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", adapter]]),
+      deliveryService,
+      eventBus,
+    });
+
+    await expect(delivery.sendSingleTextToChannelWithReceipt(
+      "telegram",
+      "chat-1",
+      "retained completion text",
+    )).resolves.toMatchObject({ ok: true, value: { status: "accepted" } });
+
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      "retained completion text",
+      expect.objectContaining({ completionMode: "settled", skipChunking: true }),
+    );
+  });
+
   it("blocks a governed attempt before allocation when the root resolver is absent", async () => {
     const ledger = makeLedger();
     const deliveryService = makeDeliveryService();

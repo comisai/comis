@@ -498,7 +498,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           sessionKey: operation.item.callerSessionKey,
           failedAt: systemNowMs(),
           attemptCount: 0,
-          lastError: "outward_operation_unresolved",
+          lastError: "outward_operation_in_flight",
           idempotencyKey: reservationKey,
           rootRunId: operation.item.reservationRootRunId
             ?? `announcement:${operation.item.callerSessionKey}`,
@@ -514,7 +514,13 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             : {}),
           ...(operation.partId ? { partId: operation.partId } : {}),
         }));
-        if (!claimed.ok || !claimed.value.ok || !claimed.value.value.claimed) {
+        if (!claimed.ok || !claimed.value.ok) {
+          failure = { lastError: "operation_retained", failure: "operation_retained" };
+          failedOperationIndex = operationIndex;
+          break;
+        }
+        if (claimed.value.value.terminalDecision !== undefined) continue;
+        if (!claimed.value.value.claimed) {
           failure = { lastError: "operation_retained", failure: "operation_retained" };
           failedOperationIndex = operationIndex;
           break;

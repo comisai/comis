@@ -1,9 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  createDeliveryService,
   createConversationLocator,
+  createNoOpDeliveryQueue,
+  type AnnouncementDeadLetterEntryInput,
   type AnnouncementParentDecisionReservation,
+  type ComisLogger,
+  type DeliveryService,
+  type HookRunner,
+  type TypedEventBus,
 } from "@comis/core";
+import { createAnnouncementDeadLetterQueue } from "@comis/orchestrator";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { err, ok } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -34,6 +45,37 @@ function makeRequest() {
     text: "completion",
     completionKeys: ["default:user_a:telegram:chat-1::run-1"],
   };
+}
+
+function makeChunkingDeliveryService() {
+  return createDeliveryService({
+    hookRunner: {
+      runBeforeDelivery: vi.fn(async () => undefined),
+      runAfterDelivery: vi.fn(async () => undefined),
+    } as unknown as HookRunner,
+    deliveryQueue: createNoOpDeliveryQueue(),
+    logger: {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    } as unknown as ComisLogger,
+    clock: {
+      now: () => 1_000,
+      nowDate: () => new Date(1_000),
+    },
+    maxCharsOverride: 32,
+  });
+}
+
+function makeEventBus() {
+  return {
+    emitSafely: vi.fn(() => ({
+      hadListeners: false,
+      failures: [],
+      pendingFailures: Promise.resolve([]),
+    })),
+  } as unknown as TypedEventBus;
 }
 
 describe("recoverable completion announcement delivery", () => {
@@ -194,44 +236,128 @@ describe("recoverable completion announcement delivery", () => {
 });
 
 describe("receipt-aware completion announcement delivery", () => {
-  it("persists ambiguity before sending and settles the closed platform outcome", async () => {
+  it("persists chunk identities and does not replay an accepted prefix", async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), "receipt-aware-announcement-"));
+    const filePath = join(tmpDir, "dead-letter.jsonl");
     const order: string[] = [];
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: makeEventBus(),
+      retryIntervalMs: 0,
+    });
     const deadLetterQueue = {
-      lookupDecision: vi.fn(async () => ok(undefined)),
-      reserveDecision: vi.fn(async () => {
+      lookupDecision: vi.fn(queue.lookupDecision),
+      lookupDecisionTextChunks: vi.fn(queue.lookupDecisionTextChunks),
+      reserveDecision: vi.fn(async (reservation: AnnouncementParentDecisionReservation) => {
         order.push("reserve");
-        return ok({ created: true });
+        return queue.reserveDecision(reservation);
       }),
-      beginDeliveryAttempt: vi.fn(async () => {
+      recordDecisionTextChunks: vi.fn(async (key: string, chunks: readonly string[]) => {
+        order.push("manifest");
+        return queue.recordDecisionTextChunks(key, chunks);
+      }),
+      replaceDecisions: vi.fn(async (
+        expectedKeys: readonly string[],
+        operations: readonly AnnouncementParentDecisionReservation[],
+      ) => {
+        order.push("replace");
+        return queue.replaceDecisions(expectedKeys, operations);
+      }),
+      beginDeliveryAttempt: vi.fn(async (entry: AnnouncementDeadLetterEntryInput) => {
         order.push("begin");
-        return ok({ claimed: true });
+        return queue.beginDeliveryAttempt(entry);
       }),
-      settleDeliveryAttempt: vi.fn(async (_key: string, outcome: string) => {
+      settleDeliveryAttempt: vi.fn(async (key: string, outcome: "accepted" | "rejected" | "unknown") => {
         order.push(`settle:${outcome}`);
-        return ok(true);
+        return queue.settleDeliveryAttempt(key, outcome);
       }),
     };
-    const send = vi.fn(async () => {
+    const sendMessage = vi.fn(async () => {
       order.push("send");
-      return ok({ delivered: false as const, status: "unknown" as const });
+      return sendMessage.mock.calls.length === 1
+        ? ok("message-first")
+        : err(new Error("503 response unavailable after dispatch"));
     });
     const delivery = createReceiptAwareRecoverableAnnouncementDelivery({
       adaptersByType: new Map([
-        ["telegram", { channelId: "telegram-primary", channelType: "telegram" }],
+        ["telegram", { channelId: "telegram-primary", channelType: "telegram", sendMessage }],
       ]),
       deadLetterQueue,
-      send,
+      deliveryService: makeChunkingDeliveryService(),
+    });
+    const request = {
+      ...makeRequest(),
+      text: "First durable paragraph.\n\nSecond durable paragraph.\n\nThird durable paragraph.",
+    };
+
+    try {
+      const result = await delivery(request);
+
+      expect(result).toEqual(ok({ delivered: false, status: "unknown" }));
+      expect(order.indexOf("manifest")).toBeLessThan(order.indexOf("send"));
+      expect(order.indexOf("replace")).toBeLessThan(order.indexOf("send"));
+      const claimedKeys = deadLetterQueue.beginDeliveryAttempt.mock.calls.map(([entry]) =>
+        entry.idempotencyKey);
+      expect(claimedKeys).toHaveLength(2);
+      expect(new Set(claimedKeys).size).toBe(2);
+      expect(deadLetterQueue.settleDeliveryAttempt.mock.calls.map(([, outcome]) => outcome))
+        .toEqual(["accepted", "unknown"]);
+
+      const restartedQueue = createAnnouncementDeadLetterQueue({
+        filePath,
+        eventBus: makeEventBus(),
+        retryIntervalMs: 0,
+      });
+      const replaySend = vi.fn(async () => ok("unexpected-replay"));
+      const replay = createReceiptAwareRecoverableAnnouncementDelivery({
+        adaptersByType: new Map([
+          ["telegram", {
+            channelId: "telegram-primary",
+            channelType: "telegram",
+            sendMessage: replaySend,
+          }],
+        ]),
+        deadLetterQueue: restartedQueue,
+        deliveryService: makeChunkingDeliveryService(),
+      });
+
+      await expect(replay(request)).resolves.toEqual(
+        ok({ delivered: false, status: "unknown" }),
+      );
+      expect(replaySend).not.toHaveBeenCalled();
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns an authoritative terminal outcome without invoking delivery", async () => {
+    const deliveryService = { deliverToChannel: vi.fn() };
+    const delivery = createReceiptAwareRecoverableAnnouncementDelivery({
+      adaptersByType: new Map([
+        ["telegram", {
+          channelId: "telegram-primary",
+          channelType: "telegram",
+          sendMessage: vi.fn(),
+        }],
+      ]),
+      deadLetterQueue: {
+        lookupDecision: vi.fn(async () => ok(undefined)),
+        lookupDecisionTextChunks: vi.fn(async () => ok(undefined)),
+        reserveDecision: vi.fn(async () => ok({
+          created: false,
+          terminalDecision: "delivered" as const,
+        })),
+        recordDecisionTextChunks: vi.fn(async () => ok(undefined)),
+        replaceDecisions: vi.fn(async () => ok({ created: false })),
+        beginDeliveryAttempt: vi.fn(async () => ok({ claimed: false })),
+        settleDeliveryAttempt: vi.fn(async () => ok(false)),
+      },
+      deliveryService: deliveryService as unknown as DeliveryService,
     });
 
-    const result = await delivery(makeRequest());
-
-    expect(result).toEqual(ok({ delivered: false, status: "unknown" }));
-    expect(order).toEqual(["reserve", "begin", "send", "settle:unknown"]);
-    expect(deadLetterQueue.beginDeliveryAttempt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        idempotencyKey: expect.any(String),
-        lastError: "outward_operation_unresolved",
-      }),
+    await expect(delivery(makeRequest())).resolves.toEqual(
+      ok({ delivered: false, terminalDecision: "delivered" }),
     );
+    expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
   });
 });
