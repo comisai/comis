@@ -294,6 +294,10 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       execFileSync("git", ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-m", "isolated"], { env: isolatedEnv });
 
       expect(execFileSync("git", ["status", "--porcelain"], { env: isolatedEnv, encoding: "utf8" })).toBe("");
+      expect(execFileSync("git", ["rev-parse", "HEAD^"], { env: isolatedEnv, encoding: "utf8" }).trim())
+        .toBe(sharedRefBefore.trim());
+      expect(execFileSync("git", ["diff", "--name-only", "HEAD^..HEAD"], { env: isolatedEnv, encoding: "utf8" }))
+        .toBe("tracked.txt\n");
       expect(readFileSync(sharedRefPath, "utf8")).toBe(sharedRefBefore);
       expect(readFileSync(join(commonDir, "config"), "utf8")).toBe(sharedConfigBefore);
       expect(readFileSync(siblingSentinel, "utf8")).toBe("shared sibling state\n");
