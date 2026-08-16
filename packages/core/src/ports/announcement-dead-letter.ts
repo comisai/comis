@@ -36,6 +36,8 @@ export type AnnouncementDeadLetterAttachment =
   | AnnouncementDeadLetterAttachmentSource
   | AnnouncementDeadLetterAttachmentSnapshot;
 
+export type AnnouncementTextChunkManifest = readonly string[];
+
 /** Failed completion admitted to durable delivery recovery. */
 export interface AnnouncementDeadLetterEntryInput {
   announcementText: string;
@@ -62,6 +64,7 @@ export interface AnnouncementDeadLetterEntryInput {
   partId?: string;
   /** Completion keys settled only after every related operation resolves. */
   completionKeys?: readonly string[];
+  textChunks?: AnnouncementTextChunkManifest;
 }
 
 /** Persisted form of a failed completion. */
@@ -91,6 +94,7 @@ export interface AnnouncementParentDecisionReservation {
   partId?: string;
   /** Completion keys settled only after every related operation resolves. */
   completionKeys: readonly string[];
+  textChunks?: AnnouncementTextChunkManifest;
 }
 
 export interface AnnouncementParentDecisionReservationRecord
@@ -154,6 +158,10 @@ export interface AnnouncementDeadLetterQueuePort {
     idempotencyKey: string,
     outcome: "receipt_committed" | "no_reply",
   ): Promise<Result<boolean, Error>>;
+  recordDecisionTextChunks(
+    idempotencyKey: string,
+    chunks: AnnouncementTextChunkManifest,
+  ): Promise<Result<void, Error>>;
   /** Atomically replace rewrite reservations with the actual outward operations. */
   replaceDecisions(
     expectedKeys: readonly string[],

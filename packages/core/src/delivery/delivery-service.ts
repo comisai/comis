@@ -58,6 +58,7 @@ import {
   type DeliveryQueueTransitionFailure,
   type DeliveryAdapter,
   type DeliveryChunkSender,
+  type DeliveryChunkManifest,
   type DeliverToChannelOptions,
   type DeliveryStrategy,
   type ChunkDeliveryResult,
@@ -256,6 +257,7 @@ export interface DeliveryService {
     text: string,
     options: DeliverToChannelOptions & { abortSignal?: AbortSignal },
     sendChunk?: DeliveryChunkSender,
+    chunkManifest?: DeliveryChunkManifest,
   ): Promise<Result<DeliveryResult, Error>>;
 
   /**
@@ -296,6 +298,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
       text: string,
       options: DeliverToChannelOptions & { abortSignal?: AbortSignal },
       sendChunk?: DeliveryChunkSender,
+      chunkManifest?: DeliveryChunkManifest,
     ): Promise<Result<DeliveryResult, Error>> {
       const startTime = deps.clock.now();
 
@@ -326,22 +329,27 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         // (no if-guard needed). An empty plugin registry still causes
         // runBeforeDelivery to return undefined (see
         // hooks/hook-runner.ts:runModifyingHook empty-registry short-circuit).
-        let deliveryText = text;
         const persistenceScope = resolveDeliveryPersistenceScope(adapter, channelId, options);
+        let chunks: string[];
+        let hookDeliveryText = text;
+        if (chunkManifest?.kind === "prepared") {
+          if (
+            chunkManifest.chunks.length === 0
+            || chunkManifest.chunks.some((chunk) => typeof chunk !== "string" || chunk.length === 0)
+          ) {
+            return err(new Error("Prepared delivery chunk manifest is invalid"));
+          }
+          chunks = [...chunkManifest.chunks];
+          hookDeliveryText = chunks.join("");
+        } else {
+          let deliveryText = text;
+          const egressScrub = scrubSecretsFromText(deliveryText);
+          if (egressScrub.redactions > 0) {
+            deliveryText = egressScrub.text;
+          }
 
-        // --- One-pass egress secret scan BEFORE hooks and chunking ---
-        // mightContainSecret pre-filter inside — secret-free messages pay near-zero cost.
-        // Scan is here (not inside the chunk loop) to satisfy the O(1) per-delivery
-        // perf contract: secret-free 10k-char messages complete in <5ms.
-        const egressScrub = scrubSecretsFromText(deliveryText);
-        if (egressScrub.redactions > 0) {
-          deliveryText = egressScrub.text;
-        }
-
-        const hookRunner = deps.hookRunner;
-        {
           const hookCtx = tryGetContext();
-          const hookResult = await hookRunner.runBeforeDelivery(
+          const hookResult = await deps.hookRunner.runBeforeDelivery(
             {
               text: deliveryText,
               channelType: adapter.channelType,
@@ -363,7 +371,6 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           );
 
           if (hookResult?.cancel) {
-            // Log cancellation at INFO via event
             emitDeliveryEvent(deps, "delivery:hook_cancelled", {
               channelId,
               channelType: adapter.channelType,
@@ -377,51 +384,38 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           if (hookResult?.text !== undefined) {
             deliveryText = hookResult.text;
           }
-        }
+          hookDeliveryText = deliveryText;
 
-        // --- 2. FORMAT: unless skipFormat ---
-        let formatted = deliveryText;
-        if (!options?.skipFormat) {
-          formatted = formatForChannel(deliveryText, adapter.channelType);
-        }
+          let formatted = deliveryText;
+          if (!options?.skipFormat) {
+            formatted = formatForChannel(deliveryText, adapter.channelType);
+          }
+          if (!formatted.trim()) {
+            return err(new DeliveryNotAttemptedError("empty_text"));
+          }
 
-        // Post-format whitespace guard -- reject if formatting reduced text to whitespace
-        if (!formatted.trim()) {
-          return err(new DeliveryNotAttemptedError("empty_text"));
-        }
-
-        // --- 3. CHUNK: unless skipChunking ---
-        let chunks: string[];
-        const maxChars = resolveChunkLimit(deps.maxCharsOverride);
-
-        if (options?.skipChunking) {
-          // Caller guarantees text fits -- send as-is
-          chunks = [formatted];
-        } else if (formatted.length <= maxChars) {
-          // Short text -- skip chunking overhead
-          chunks = [formatted];
-        } else if (adapter.channelType === "gateway") {
-          // Gateway: no chunking (web client renders markdown, no length limit)
-          chunks = [formatted];
-        } else if (PLATFORMS_NEEDING_FORMAT.has(adapter.channelType) && !options?.skipFormat) {
-          // Platforms that went through formatForChannel: text is already rendered
-          // (HTML for telegram, plain text for signal/whatsapp/etc.)
-          // Use chunkBlocks on the rendered output to avoid double-parsing
-          chunks = chunkBlocks(formatted, { mode: "paragraph", maxChars });
-        } else if (PASSTHROUGH_PLATFORMS.has(adapter.channelType)) {
-          // Passthrough platforms (discord, echo): raw markdown, use IR chunker
-          chunks = chunkForDelivery(formatted, adapter.channelType, {
-            maxChars,
-            useMarkdownIR: true,
-          });
-        } else {
-          // Unknown platform: fall back to paragraph-based chunking
-          chunks = chunkBlocks(formatted, { mode: "paragraph", maxChars });
-        }
-
-        // Safety: never return empty chunk array
-        if (chunks.length === 0) {
-          chunks = [formatted];
+          const maxChars = resolveChunkLimit(deps.maxCharsOverride);
+          if (options?.skipChunking) {
+            chunks = [formatted];
+          } else if (formatted.length <= maxChars) {
+            chunks = [formatted];
+          } else if (adapter.channelType === "gateway") {
+            chunks = [formatted];
+          } else if (PLATFORMS_NEEDING_FORMAT.has(adapter.channelType) && !options?.skipFormat) {
+            chunks = chunkBlocks(formatted, { mode: "paragraph", maxChars });
+          } else if (PASSTHROUGH_PLATFORMS.has(adapter.channelType)) {
+            chunks = chunkForDelivery(formatted, adapter.channelType, {
+              maxChars,
+              useMarkdownIR: true,
+            });
+          } else {
+            chunks = chunkBlocks(formatted, { mode: "paragraph", maxChars });
+          }
+          if (chunks.length === 0) chunks = [formatted];
+          if (chunkManifest?.kind === "persist") {
+            const persisted = await chunkManifest.persist(chunks);
+            if (!persisted.ok) return persisted;
+          }
         }
 
         // Resolve context for queue integration (non-throwing)
@@ -859,9 +853,9 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         if (!aborted) {
           const afterCtx = tryGetContext();
           suppressError(
-            hookRunner.runAfterDelivery(
+            deps.hookRunner.runAfterDelivery(
               {
-                text: deliveryText,
+                text: hookDeliveryText,
                 channelType: adapter.channelType,
                 channelId,
                 result: deliveryResult,

@@ -34,6 +34,7 @@ export interface GovernedAnnouncementRequest {
   text: string;
   options?: AnnouncementDeliveryOptions;
   attachment?: GovernedAnnouncementAttachment;
+  preparedTextChunks?: readonly string[];
 }
 
 /** Immutable prepared snapshot metadata bound into one outward operation. */
@@ -116,6 +117,7 @@ export interface CompletionAnnouncementSendRequest {
   partId?: string;
   attachment?: CompletionAttachmentRef;
   preparedAttachment?: GovernedAnnouncementAttachment;
+  preparedTextChunks?: readonly string[];
   completionKeys?: readonly string[];
 }
 

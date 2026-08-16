@@ -55,6 +55,16 @@ export type DeliveryChunkSender = (
   input: DeliveryChunkSendInput,
 ) => Promise<Result<string, Error>>;
 
+export type DeliveryChunkManifest =
+  | {
+      readonly kind: "prepared";
+      readonly chunks: readonly string[];
+    }
+  | {
+      readonly kind: "persist";
+      persist(chunks: readonly string[]): Promise<Result<void, Error>>;
+    };
+
 // -------------------------------------------------------------------------
 // Per-call options
 // -------------------------------------------------------------------------

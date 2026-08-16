@@ -78,6 +78,7 @@ export type {
   DeliveryAdapter,
   DeliveryChunkSendInput,
   DeliveryChunkSender,
+  DeliveryChunkManifest,
   DeliverToChannelOptions,
   ChunkDeliveryResult,
   DeliveryResult,

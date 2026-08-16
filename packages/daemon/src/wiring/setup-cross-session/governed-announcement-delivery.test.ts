@@ -27,12 +27,20 @@ function makeDeliveryService(): DeliveryService {
     text,
     options,
     sendChunk,
+    chunkManifest,
   ) => {
+    if (chunkManifest?.kind === "persist") {
+      const persisted = await chunkManifest.persist([text]);
+      if (!persisted.ok) return persisted;
+    }
+    const deliveryText = chunkManifest?.kind === "prepared"
+      ? chunkManifest.chunks[0] ?? text
+      : text;
     const sent = sendChunk
       ? await sendChunk({
           adapter,
           channelId,
-          text,
+          text: deliveryText,
           options: {
             ...(options.threadId ? { threadId: options.threadId } : {}),
             ...(options.extra ? { extra: options.extra } : {}),
@@ -40,23 +48,23 @@ function makeDeliveryService(): DeliveryService {
           chunkIndex: 0,
           totalChunks: 1,
         })
-      : await adapter.sendMessage(channelId, text);
+      : await adapter.sendMessage(channelId, deliveryText);
     return ok({
       chunks: sent.ok
         ? [{
             status: "accepted" as const,
             messageId: sent.value,
-            charCount: text.length,
+            charCount: deliveryText.length,
             retried: false,
           }]
         : [{
             status: "unknown" as const,
             error: sent.error,
             errorKind: "platform" as const,
-            charCount: text.length,
+            charCount: deliveryText.length,
             retried: false,
           }],
-      totalChars: text.length,
+      totalChars: deliveryText.length,
       platform: sent.ok
         ? {
             status: "accepted" as const,
@@ -184,6 +192,7 @@ describe("completion announcement delivery wiring", () => {
       eventBus,
       outwardLedger: ledger,
       resolveRootRunId: () => ({ ok: true, value: "root-1" }),
+      recordTextChunks: vi.fn(async () => ok(undefined)),
     });
 
     const request = {
@@ -215,6 +224,7 @@ describe("completion announcement delivery wiring", () => {
         destinationEndpoint: caller.endpoint,
       },
       expect.any(Function),
+      expect.objectContaining({ kind: "persist" }),
     );
   });
 
@@ -237,8 +247,14 @@ describe("completion announcement delivery wiring", () => {
       _text,
       _options,
       sendChunk,
+      chunkManifest,
     ) => {
       if (!sendChunk) return err(new Error("governed chunk sender missing"));
+      if (chunkManifest?.kind !== "persist") {
+        return err(new Error("governed chunk manifest missing"));
+      }
+      const persisted = await chunkManifest.persist(["first chunk", "second chunk"]);
+      if (!persisted.ok) return persisted;
       const first = await sendChunk({
         adapter: deliveryAdapter,
         channelId,
@@ -294,12 +310,17 @@ describe("completion announcement delivery wiring", () => {
       });
     });
     const caller = makeChannelPrincipalCaller();
+    const recordTextChunks = vi.fn(async () => {
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+      return ok(undefined);
+    });
     const delivery = createAnnouncementDelivery({
       adaptersByType: new Map([["telegram", adapter]]),
       deliveryService,
       eventBus,
       outwardLedger: ledger,
       resolveRootRunId: () => ok("root-chunked"),
+      recordTextChunks,
     });
 
     const result = await delivery.sendLedgerAnnouncement?.({
@@ -315,6 +336,10 @@ describe("completion announcement delivery wiring", () => {
     });
 
     expect(result).toMatchObject({ ok: true, value: { delivered: false } });
+    expect(recordTextChunks).toHaveBeenCalledWith(
+      expect.any(String),
+      ["first chunk", "second chunk"],
+    );
     const allocatedIds = vi.mocked(ledger.allocateStep).mock.calls.map((call) => call[1]);
     expect(allocatedIds).toHaveLength(2);
     expect(new Set(allocatedIds).size).toBe(2);
@@ -338,6 +363,7 @@ describe("completion announcement delivery wiring", () => {
       eventBus,
       outwardLedger: ledger,
       resolveRootRunId: () => ({ ok: true, value: "root-uncertain" }),
+      recordTextChunks: vi.fn(async () => ok(undefined)),
     });
 
     const result = await delivery.sendLedgerAnnouncement?.({

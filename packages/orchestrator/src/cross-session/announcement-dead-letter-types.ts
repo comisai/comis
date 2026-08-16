@@ -28,6 +28,7 @@ export type RecoveryDeliveryOptions = AnnouncementDeliveryOptions & {
     agentId: string;
     sessionKey: string;
     partId?: string;
+    preparedTextChunks?: readonly string[];
   };
 };
 

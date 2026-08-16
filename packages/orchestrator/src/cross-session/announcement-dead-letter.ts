@@ -17,6 +17,7 @@ import type { GovernedAnnouncementAttachment } from "./announcement-outward-oper
 import { drainWithPreparedRecoveryAttachment } from "./announcement-dead-letter-attachment.js";
 import {
   createParentDecisionReservationStore,
+  isAnnouncementTextChunks,
   isParentDecisionReservation,
   readDeadLetterSnapshot,
   writeDeadLetterEntries,
@@ -241,12 +242,30 @@ export function createAnnouncementDeadLetterQueue(
     });
   }
 
-  async function cleanupSnapshots(
-    attachments: readonly AnnouncementDeadLetterAttachmentSnapshot[],
+  async function cleanupUnreferencedSnapshots(
+    candidates: readonly {
+      attachment: AnnouncementDeadLetterAttachmentSnapshot;
+      cleanup?: () => Promise<Result<void, Error>>;
+    }[],
   ): Promise<void> {
-    if (!cleanupAttachment) return;
-    for (const attachment of attachments) {
-      const cleaned = await cleanupAttachment(attachment);
+    const referencedPaths = new Set([
+      ...entries.flatMap((entry) =>
+        entry.attachment?.kind === "snapshot" ? [entry.attachment.path] : []),
+      ...decisionReservations.flatMap((reservation) =>
+        reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
+    ]);
+    const cleanedPaths = new Set<string>();
+    for (const candidate of candidates) {
+      if (
+        referencedPaths.has(candidate.attachment.path)
+        || cleanedPaths.has(candidate.attachment.path)
+      ) continue;
+      const cleaned = candidate.cleanup
+        ? await candidate.cleanup()
+        : cleanupAttachment
+          ? await cleanupAttachment(candidate.attachment)
+          : ok(undefined);
+      cleanedPaths.add(candidate.attachment.path);
       if (!cleaned.ok) {
         logger?.warn(
           {
@@ -335,8 +354,8 @@ export function createAnnouncementDeadLetterQueue(
       : reservation;
     if (outcome === "receipt_committed") {
       const resolved = await decisionStore.resolve(idempotencyKey, outcome);
-      if (resolved.ok && resolved.value && reservation.value.attachment?.kind === "snapshot") {
-        await cleanupSnapshots([reservation.value.attachment]);
+      if (reservation.value.attachment?.kind === "snapshot") {
+        await cleanupUnreferencedSnapshots([{ attachment: reservation.value.attachment }]);
       }
       return resolved;
     }
@@ -362,11 +381,11 @@ export function createAnnouncementDeadLetterQueue(
       (candidate) => candidate.idempotencyKey !== idempotencyKey,
     );
     const resolved = await persist(entries, nextReservations, invalidRecords);
+    if (reservation.value.attachment?.kind === "snapshot") {
+      await cleanupUnreferencedSnapshots([{ attachment: reservation.value.attachment }]);
+    }
     if (resolved.ok) {
       decisionReservations = nextReservations;
-      if (reservation.value.attachment?.kind === "snapshot") {
-        await cleanupSnapshots([reservation.value.attachment]);
-      }
       return ok(true);
     }
     return err(resolved.error);
@@ -785,6 +804,7 @@ export function createAnnouncementDeadLetterQueue(
             agentId: entry.agentId,
             sessionKey: entry.sessionKey,
             ...(entry.partId ? { partId: entry.partId } : {}),
+            ...(entry.textChunks ? { preparedTextChunks: entry.textChunks } : {}),
           },
         },
       ));
@@ -1016,6 +1036,54 @@ export function createAnnouncementDeadLetterQueue(
     return ok(undefined);
   }
 
+  async function recordDecisionTextChunksDurably(
+    idempotencyKey: string,
+    chunks: readonly string[],
+  ): Promise<Result<void, Error>> {
+    const load = await loadFromDisk();
+    if (!load.ok) return load;
+    if (!isAnnouncementTextChunks(chunks)) {
+      return err(new Error("Announcement text chunk manifest is invalid"));
+    }
+    const reservationIndex = decisionReservations.findIndex(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    const entryIndex = entries.findIndex(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    if ((reservationIndex >= 0) === (entryIndex >= 0)) {
+      return err(new Error("Announcement text chunk owner is unavailable or ambiguous"));
+    }
+    const existingChunks = reservationIndex >= 0
+      ? decisionReservations[reservationIndex]?.textChunks
+      : entries[entryIndex]?.textChunks;
+    if (existingChunks !== undefined) {
+      const matches = existingChunks.length === chunks.length
+        && existingChunks.every((chunk, index) => chunk === chunks[index]);
+      return matches
+        ? ok(undefined)
+        : err(new Error("Announcement text chunk manifest identity mismatch"));
+    }
+    const persistedChunks = [...chunks];
+    const nextEntries = [...entries];
+    const nextReservations = [...decisionReservations];
+    if (reservationIndex >= 0) {
+      const reservation = nextReservations[reservationIndex];
+      if (!reservation) return err(new Error("Announcement text chunk owner is unavailable"));
+      nextReservations[reservationIndex] = { ...reservation, textChunks: persistedChunks };
+    } else {
+      const entry = nextEntries[entryIndex];
+      if (!entry) return err(new Error("Announcement text chunk owner is unavailable"));
+      nextEntries[entryIndex] = { ...entry, textChunks: persistedChunks };
+    }
+    const persisted = await persist(nextEntries, nextReservations);
+    if (persisted.ok) {
+      entries = nextEntries;
+      decisionReservations = nextReservations;
+    }
+    return persisted;
+  }
+
   /** Settle reservations after the rewrite grace. The ledger decides whether
    * delivery is safe; missing roots, errors, and uncertainty remain parked. */
   async function adjudicateReservations(ledger: OutwardSendLedgerPort): Promise<void> {
@@ -1087,6 +1155,7 @@ export function createAnnouncementDeadLetterQueue(
         destinationEndpoint: reservation.destinationEndpoint,
         completionKeys: reservation.completionKeys,
         ...(reservation.partId ? { partId: reservation.partId } : {}),
+        ...(reservation.textChunks ? { textChunks: reservation.textChunks } : {}),
         ...(reservation.attachment ? { attachment: reservation.attachment } : {}),
         ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
         ...(reservation.extra ? { extra: reservation.extra } : {}),
@@ -1222,8 +1291,11 @@ export function createAnnouncementDeadLetterQueue(
       }
     }
     const nextEntries = workingEntries.filter((entry) => !deliveredIds.has(entry.id));
+    const deliveredSnapshots = deliveredEntries.flatMap(({ entry }) =>
+      entry.attachment?.kind === "snapshot" ? [{ attachment: entry.attachment }] : []);
     const persisted = await persist(nextEntries);
     if (!persisted.ok) {
+      await cleanupUnreferencedSnapshots(deliveredSnapshots);
       logger?.error(
         {
           errorKind: "resource" as const,
@@ -1234,8 +1306,7 @@ export function createAnnouncementDeadLetterQueue(
       return;
     }
     entries = nextEntries;
-    await cleanupSnapshots(deliveredEntries.flatMap(({ entry }) =>
-      entry.attachment?.kind === "snapshot" ? [entry.attachment] : []));
+    await cleanupUnreferencedSnapshots(deliveredSnapshots);
     for (const delivered of deliveredEntries) {
       emittedAdmissionKeys.delete(announcementRecoveryKey(delivered.entry));
     }
@@ -1305,8 +1376,15 @@ export function createAnnouncementDeadLetterQueue(
       const reserved = await decisionStore.reserve(
         prepared.value.entry as AnnouncementParentDecisionReservation,
       );
-      if ((!reserved.ok || !reserved.value.created) && prepared.value.cleanup) {
-        await prepared.value.cleanup();
+      if (
+        (!reserved.ok || !reserved.value.created)
+        && prepared.value.cleanup
+        && prepared.value.entry.attachment?.kind === "snapshot"
+      ) {
+        await cleanupUnreferencedSnapshots([{
+          attachment: prepared.value.entry.attachment,
+          cleanup: prepared.value.cleanup,
+        }]);
       }
       if (reserved.ok && reserved.value.created) {
         emitObservationalEventSafely(
@@ -1327,6 +1405,8 @@ export function createAnnouncementDeadLetterQueue(
       serialize(() => decisionStore.lookup(idempotencyKey)),
     resolveDecision: (idempotencyKey, outcome) =>
       serialize(() => resolveDecisionDurably(idempotencyKey, outcome)),
+    recordDecisionTextChunks: (idempotencyKey, chunks) =>
+      serialize(() => recordDecisionTextChunksDurably(idempotencyKey, chunks)),
     replaceDecisions: (expectedKeys, operations) =>
       serialize(async () => {
         const loaded = await loadFromDisk();
@@ -1348,17 +1428,28 @@ export function createAnnouncementDeadLetterQueue(
           }
         }
         const pendingOperations: AnnouncementParentDecisionReservation[] = [];
-        const transientCleanups: Array<() => Promise<Result<void, Error>>> = [];
+        const transientSnapshots: Array<{
+          attachment: AnnouncementDeadLetterAttachmentSnapshot;
+          cleanup: () => Promise<Result<void, Error>>;
+        }> = [];
         for (const operation of nonterminalOperations) {
           const prepared = await prepareReservedAttachment(operation, reusable);
           if (!prepared.ok) {
-            for (const cleanup of transientCleanups) await cleanup();
+            await cleanupUnreferencedSnapshots(transientSnapshots);
             return prepared;
           }
           pendingOperations.push(
             prepared.value.entry as AnnouncementParentDecisionReservation,
           );
-          if (prepared.value.cleanup) transientCleanups.push(prepared.value.cleanup);
+          if (
+            prepared.value.cleanup
+            && prepared.value.entry.attachment?.kind === "snapshot"
+          ) {
+            transientSnapshots.push({
+              attachment: prepared.value.entry.attachment,
+              cleanup: prepared.value.cleanup,
+            });
+          }
         }
         const replaced = await decisionStore.replace(
           expectedKeys,
@@ -1366,21 +1457,12 @@ export function createAnnouncementDeadLetterQueue(
           [...settledCompletionKeys],
         );
         if (!replaced.ok || !replaced.value.created) {
-          for (const cleanup of transientCleanups) await cleanup();
+          await cleanupUnreferencedSnapshots(transientSnapshots);
         }
-        if (replaced.ok) {
-          const retainedSnapshotPaths = new Set(
-            decisionReservations.flatMap((reservation) =>
-              reservation.attachment?.kind === "snapshot"
-                ? [reservation.attachment.path]
-                : []),
-          );
-          await cleanupSnapshots(reusable.flatMap((reservation) =>
-            reservation.attachment?.kind === "snapshot"
-              && !retainedSnapshotPaths.has(reservation.attachment.path)
-              ? [reservation.attachment]
-              : []));
-        }
+        await cleanupUnreferencedSnapshots(reusable.flatMap((reservation) =>
+          reservation.attachment?.kind === "snapshot"
+            ? [{ attachment: reservation.attachment }]
+            : []));
         return replaced;
       }),
     drain: (sendToChannel, onDelivered) =>
@@ -1440,8 +1522,8 @@ export function createAnnouncementDeadLetterQueue(
       if (released.ok && released.value && releasedEntry) {
         emittedAdmissionKeys.delete(announcementRecoveryKey(releasedEntry));
       }
-      if (released.ok && released.value && releasedDelivery?.attachment?.kind === "snapshot") {
-        await cleanupSnapshots([releasedDelivery.attachment]);
+      if (releasedDelivery?.attachment?.kind === "snapshot") {
+        await cleanupUnreferencedSnapshots([{ attachment: releasedDelivery.attachment }]);
       }
       return released;
     }),

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { access, chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { safePath } from "@comis/core";
@@ -55,6 +55,27 @@ describe("completion attachment preparation", () => {
 
     await result.value.cleanup();
     await expect(access(result.value.path)).rejects.toThrow();
+  });
+
+  it("syncs the snapshot directory and its parent before admitting the file", async () => {
+    const { dataDir, workspaceDir } = await makeLayout();
+    const sourcePath = safePath(workspaceDir, "durable.txt");
+    await writeFile(sourcePath, "durable", { mode: 0o600 });
+    const syncDirectory = vi.fn(async () => ok(undefined));
+
+    const result = await prepareCompletionAttachment({
+      dataDir,
+      workspaceDir,
+      sourcePath,
+      syncDirectory,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(syncDirectory.mock.calls.map(([path]) => path)).toEqual([
+      safePath(dataDir, "completion-attachments"),
+      dataDir,
+    ]);
+    if (result.ok) await result.value.cleanup();
   });
 
   it("resolves the producing agent workspace before preparing its output", async () => {

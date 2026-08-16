@@ -122,6 +122,12 @@ function isCompletionKeys(value: unknown): value is readonly string[] {
     && new Set(value).size === value.length;
 }
 
+export function isAnnouncementTextChunks(value: unknown): value is readonly string[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((chunk) => typeof chunk === "string" && chunk.length > 0);
+}
+
 export type StoredDeadLetterEntry =
   | DeadLetterEntry
   | ParentDecisionReservationRecord
@@ -164,6 +170,7 @@ function publicDecision(
     ...(record.attachment !== undefined ? { attachment: record.attachment } : {}),
     ...(record.partId !== undefined ? { partId: record.partId } : {}),
     completionKeys: record.completionKeys,
+    ...(record.textChunks !== undefined ? { textChunks: record.textChunks } : {}),
   };
 }
 
@@ -199,6 +206,14 @@ function sameDecision(
     && left.rootRunId === right.rootRunId
     && left.partId === right.partId
     && JSON.stringify(left.attachment) === JSON.stringify(right.attachment)
+    && (
+      right.textChunks === undefined
+      || (
+        left.textChunks !== undefined
+        && left.textChunks.length === right.textChunks.length
+        && left.textChunks.every((chunk, index) => chunk === right.textChunks?.[index])
+      )
+    )
     && decisionFingerprint(left) !== undefined
     && decisionFingerprint(left) === decisionFingerprint(right)
     && left.completionKeys.length === right.completionKeys.length
@@ -229,6 +244,7 @@ function validDecision(entry: ParentDecisionReservation): boolean {
     && entry.rootRunId.length > 0
     && (entry.partId === undefined || (typeof entry.partId === "string" && entry.partId.length > 0))
     && (entry.attachment === undefined || isDeadLetterAttachmentSnapshot(entry.attachment))
+    && (entry.textChunks === undefined || isAnnouncementTextChunks(entry.textChunks))
     && isCompletionKeys(entry.completionKeys)
     && isRecoveryRoute(entry as unknown as Record<string, unknown>);
 }
@@ -482,6 +498,7 @@ function isParentDecisionReservationRecord(
     && isCompletionKeys(record.completionKeys)
     && isOptionalString(record.partId)
     && (record.attachment === undefined || isDeadLetterAttachmentSnapshot(record.attachment))
+    && (record.textChunks === undefined || isAnnouncementTextChunks(record.textChunks))
     && isRecoveryRoute(record);
 }
 
@@ -517,6 +534,7 @@ function isDeadLetterEntry(
     && isOptionalString(record.rootRunId)
     && isOptionalString(record.partId)
     && (record.attachment === undefined || isDeadLetterAttachmentSnapshot(record.attachment))
+    && (record.textChunks === undefined || isAnnouncementTextChunks(record.textChunks))
     && (record.completionKeys === undefined || isCompletionKeys(record.completionKeys))
     && (
       record.stepIndex === undefined

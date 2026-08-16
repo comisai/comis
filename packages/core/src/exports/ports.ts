@@ -160,6 +160,7 @@ export type {
   AnnouncementDeadLetterAttachment,
   AnnouncementDeadLetterAttachmentSource,
   AnnouncementDeadLetterAttachmentSnapshot,
+  AnnouncementTextChunkManifest,
   AnnouncementParentDecisionReservation,
   AnnouncementParentDecisionReservationRecord,
   AnnouncementDeadLetterStatus,

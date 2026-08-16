@@ -269,6 +269,7 @@ export function setupCrossSession(deps: {
     dataDir: container.config.dataDir,
     agents: container.config.agents,
   });
+  let textChunkQueue: ReturnType<typeof createAnnouncementDeadLetterQueue> | undefined;
   const {
     sendToChannelWithReceipt,
     sendToChannel,
@@ -283,6 +284,9 @@ export function setupCrossSession(deps: {
     ...(deps.logger ? { logger: deps.logger } : {}),
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
+    recordTextChunks: (operationId, chunks) => textChunkQueue
+      ? textChunkQueue.recordDecisionTextChunks(operationId, chunks)
+      : Promise.resolve(err(new Error("Announcement text chunk storage is unavailable"))),
     prepareCompletionAttachment,
     verifyCompletionAttachment: (attachment) => verifyCompletionAttachmentSnapshot(
       container.config.dataDir,
@@ -489,6 +493,7 @@ export function setupCrossSession(deps: {
       ? { ensureSessionObservation: deps.ensureDeadLetterRecoveryObservation }
       : {}),
   });
+  textChunkQueue = deadLetterQueue;
 
   const sendGovernedAnnouncement = sendLedgerAnnouncement
     ? createRecoverableAnnouncementDelivery({

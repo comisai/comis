@@ -55,6 +55,10 @@ interface AnnouncementDeliveryDeps {
   logger?: ComisLogger;
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
+  recordTextChunks?: (
+    operationId: string,
+    chunks: readonly string[],
+  ) => Promise<Result<void, Error>>;
   prepareCompletionAttachment?: (
     attachment: AnnouncementDeadLetterAttachmentSource,
   ) => Promise<Result<PreparedCompletionAttachment, Error>>;
@@ -185,6 +189,9 @@ export function createAnnouncementDelivery(
     if (!ledger || !adapter) {
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
+    if (!request.preparedTextChunks && !deps.recordTextChunks) {
+      return ok({ delivered: false, failure: "allocation_blocked" });
+    }
     const terminalDecision = await ledger.lookupTerminalDecision(
       request.rootRunId,
       request.operationId,
@@ -265,6 +272,13 @@ export function createAnnouncementDelivery(
         }
         return err(new Error("400 governed announcement chunk was not delivered"));
       },
+      request.preparedTextChunks
+        ? { kind: "prepared", chunks: request.preparedTextChunks }
+        : {
+            kind: "persist",
+            persist: (chunks) => deps.recordTextChunks?.(request.operationId, chunks)
+              ?? Promise.resolve(err(new Error("Announcement text chunk storage is unavailable"))),
+          },
     );
     if (settledOutcome && !settledOutcome.delivered) return ok(settledOutcome);
     if (!result.ok) return ok({ delivered: false, failure: "transport_failed" });
@@ -537,6 +551,9 @@ export function createAnnouncementDelivery(
       channelId: request.channelId,
       text: request.text,
       ...(request.options ? { options: request.options } : {}),
+      ...(request.preparedTextChunks
+        ? { preparedTextChunks: request.preparedTextChunks }
+        : {}),
       ...(prepared ? { attachment: prepared } : {}),
     };
     if (!prepared) {

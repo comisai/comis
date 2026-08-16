@@ -40,7 +40,9 @@ describe("recoverable completion announcement delivery", () => {
     const deadLetterQueue = {
       lookupDecision: vi.fn(async () => {
         order.push("lookup");
-        return ok(undefined);
+        return ok(retained
+          ? { ...retained, textChunks: ["persisted first", "persisted second"] }
+          : undefined);
       }),
       reserveDecision: vi.fn(async (reservation: AnnouncementParentDecisionReservation) => {
         order.push("reserve");
@@ -86,6 +88,9 @@ describe("recoverable completion announcement delivery", () => {
       threadId: "topic-1",
       extra: { reply_markup: { inline_keyboard: [[{ text: "Open", callback_data: "open:1" }]] } },
     });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      preparedTextChunks: ["persisted first", "persisted second"],
+    }));
     expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
   });
 

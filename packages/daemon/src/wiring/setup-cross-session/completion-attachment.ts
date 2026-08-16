@@ -3,7 +3,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, unlink, type FileHandle } from "node:fs/promises";
-import { basename, extname, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import {
   resolveWorkspaceDir,
   safePath,
@@ -25,6 +25,7 @@ export interface PrepareCompletionAttachmentInput {
   workspaceDir: string;
   sourcePath: string;
   maxBytes?: number;
+  syncDirectory?: (path: string) => Promise<Result<void, Error>>;
 }
 
 export function createCompletionAttachmentPreparer(input: {
@@ -64,6 +65,14 @@ function mimeTypeFor(path: string): string {
 
 async function close(handle: FileHandle): Promise<Result<void, Error>> {
   return fromPromise(handle.close());
+}
+
+async function syncDirectory(path: string): Promise<Result<void, Error>> {
+  const opened = await fromPromise(open(path, constants.O_RDONLY));
+  if (!opened.ok) return opened;
+  const synced = await fromPromise(opened.value.sync());
+  const closed = await close(opened.value);
+  return synced.ok ? closed : synced;
 }
 
 function isConfinedPath(workspacePath: string, candidatePath: string): boolean {
@@ -272,6 +281,19 @@ export async function prepareCompletionAttachment(
   if (!snapshotClosed.ok) {
     await fromPromise(unlink(snapshotPath));
     return err(snapshotClosed.error);
+  }
+  const syncSnapshotDirectory = input.syncDirectory ?? syncDirectory;
+  const directorySynced = await syncSnapshotDirectory(snapshotDir);
+  if (!directorySynced.ok) {
+    await fromPromise(unlink(snapshotPath));
+    return directorySynced;
+  }
+  if (created.value !== undefined) {
+    const parentSynced = await syncSnapshotDirectory(dirname(snapshotDir));
+    if (!parentSynced.ok) {
+      await fromPromise(unlink(snapshotPath));
+      return parentSynced;
+    }
   }
 
   const sourceName = basename(input.sourcePath);

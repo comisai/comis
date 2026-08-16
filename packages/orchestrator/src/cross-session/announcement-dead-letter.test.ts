@@ -1230,6 +1230,103 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(cleanup).not.toHaveBeenCalled();
   });
 
+  it("persists the exact text chunk manifest on its durable operation owner", async () => {
+    const decision = decisionInput({ idempotencyKey: "chunked-summary" });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await queue.reserveDecision(decision);
+
+    await expect(queue.recordDecisionTextChunks(
+      decision.idempotencyKey,
+      ["first formatted chunk", "second formatted chunk"],
+    )).resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.lookupDecision(decision.idempotencyKey)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        textChunks: ["first formatted chunk", "second formatted chunk"],
+      },
+    });
+    await expect(restarted.recordDecisionTextChunks(
+      decision.idempotencyKey,
+      ["changed chunk"],
+    )).resolves.toMatchObject({ ok: false });
+  });
+
+  it("keeps a visible reservation snapshot when final directory sync fails", async () => {
+    const cleanup = vi.fn(async () => ok(undefined));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      fileOperations: createOneTimeDirectorySyncFailure(tmpDir),
+      prepareAttachment: vi.fn(async (attachment) => ok({
+        kind: "snapshot" as const,
+        sourceAgentId: attachment.sourceAgentId,
+        sourcePath: attachment.path,
+        path: "/durable/completion-attachments/visible.csv",
+        fileName: "visible.csv",
+        mimeType: "text/csv",
+        contentDigest: "b".repeat(64),
+        sizeBytes: 12,
+        cleanup,
+      })),
+    });
+    const decision = decisionInput({
+      idempotencyKey: "visible-attachment",
+      attachment: {
+        kind: "source",
+        sourceAgentId: "worker-a",
+        path: "/workspace/visible.csv",
+      },
+    });
+
+    await expect(queue.reserveDecision(decision)).resolves.toMatchObject({ ok: false });
+    await expect(queue.lookupDecision(decision.idempotencyKey)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        attachment: { path: "/durable/completion-attachments/visible.csv" },
+      },
+    });
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it("cleans a shared attachment snapshot only after its final owner settles", async () => {
+    const cleanupAttachment = vi.fn(async () => ok(undefined));
+    const sharedAttachment = snapshotAttachment("worker-a", "shared.csv");
+    const first = decisionInput({
+      idempotencyKey: "shared-attachment-first",
+      runId: "shared-run-first",
+      attachment: sharedAttachment,
+      completionKeys: ["shared-completion-first"],
+    });
+    const second = decisionInput({
+      idempotencyKey: "shared-attachment-second",
+      runId: "shared-run-second",
+      attachment: sharedAttachment,
+      completionKeys: ["shared-completion-second"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      cleanupAttachment,
+    });
+    await queue.replaceDecisions([], [first, second]);
+
+    await expect(queue.resolveDecision(first.idempotencyKey, "receipt_committed"))
+      .resolves.toEqual(ok(true));
+    expect(cleanupAttachment).not.toHaveBeenCalled();
+    await expect(queue.resolveDecision(second.idempotencyKey, "receipt_committed"))
+      .resolves.toEqual(ok(true));
+    expect(cleanupAttachment).toHaveBeenCalledOnce();
+    expect(cleanupAttachment).toHaveBeenCalledWith(sharedAttachment);
+  });
+
   it("atomically replaces parent decisions with exact outward operations", async () => {
     const queue = createAnnouncementDeadLetterQueue({
       filePath,

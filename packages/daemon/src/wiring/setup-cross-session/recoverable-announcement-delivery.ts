@@ -93,7 +93,15 @@ function reservationMatches(
     && existing.destinationEndpoint.threadId === expected.destinationEndpoint.threadId
     && existing.destinationEndpoint.conversationKind === expected.destinationEndpoint.conversationKind
     && existing.completionKeys.length === expected.completionKeys.length
-    && existing.completionKeys.every((key, index) => key === expected.completionKeys[index]);
+    && existing.completionKeys.every((key, index) => key === expected.completionKeys[index])
+    && (
+      expected.textChunks === undefined
+      || (
+        existing.textChunks !== undefined
+        && existing.textChunks.length === expected.textChunks.length
+        && existing.textChunks.every((chunk, index) => chunk === expected.textChunks?.[index])
+      )
+    );
 }
 
 function reservationFor(
@@ -124,6 +132,9 @@ function reservationFor(
     ...(request.options?.threadId ? { threadId: request.options.threadId } : {}),
     ...(request.options?.extra ? { extra: request.options.extra } : {}),
     ...(request.partId ? { partId: request.partId } : {}),
+    ...(request.preparedTextChunks
+      ? { textChunks: request.preparedTextChunks }
+      : {}),
     ...(request.attachment ? {
       attachment: {
         kind: "source" as const,
@@ -241,9 +252,13 @@ export function createRecoverableAnnouncementDelivery(
     );
     if (!storedBoundary.ok) return err(storedBoundary.error);
     if (!storedBoundary.value.ok) return storedBoundary.value;
-    const storedAttachment = storedBoundary.value.value?.attachment;
+    const storedReservation = storedBoundary.value.value;
+    const storedAttachment = storedReservation?.attachment;
     const sendBoundary = await fromPromise(deps.send({
       ...request,
+      ...(storedReservation?.textChunks
+        ? { preparedTextChunks: storedReservation.textChunks }
+        : {}),
       ...(storedAttachment?.kind === "snapshot"
         ? { preparedAttachment: storedAttachment }
         : {}),

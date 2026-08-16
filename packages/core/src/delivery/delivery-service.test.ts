@@ -652,6 +652,74 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(adapter.sendMessage).not.toHaveBeenCalled();
     });
 
+    it("persists the post-hook chunk manifest before sending and replays it unchanged", async () => {
+      const firstHook = vi.fn().mockResolvedValue({ text: makeLongMarkdown(500) });
+      const firstService = makeDeliveryService({
+        maxCharsOverride: 150,
+        hookRunner: makeNoopHookRunner({ runBeforeDelivery: firstHook }),
+      });
+      const adapter = createMockAdapter("discord");
+      const destinationEndpoint: ChannelEndpoint = {
+        channelType: "discord",
+        channelInstanceId: adapter.channelId,
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      };
+      const order: string[] = [];
+      let storedChunks: readonly string[] = [];
+      const persisted = vi.fn(async (chunks: readonly string[]) => {
+        storedChunks = [...chunks];
+        order.push("persist");
+        return ok(undefined);
+      });
+      const firstSend = vi.fn(async ({ chunkIndex }: DeliveryChunkSendInput) => {
+        order.push(`send:${chunkIndex}`);
+        return ok(`first-${chunkIndex}`);
+      });
+
+      const first = await firstService.deliverToChannel(
+        adapter,
+        "chat-1",
+        "mutable input",
+        {
+          completionMode: "settled",
+          authority: TEST_DELIVERY_AUTHORITY,
+          destinationEndpoint,
+        },
+        firstSend,
+        { kind: "persist", persist: persisted },
+      );
+
+      expect(first.ok).toBe(true);
+      expect(storedChunks.length).toBeGreaterThan(1);
+      expect(order[0]).toBe("persist");
+      const recoveryHook = vi.fn().mockResolvedValue({ text: "changed recovery text" });
+      const recoveryService = makeDeliveryService({
+        maxCharsOverride: 10,
+        hookRunner: makeNoopHookRunner({ runBeforeDelivery: recoveryHook }),
+      });
+      const replayed: string[] = [];
+      const replay = await recoveryService.deliverToChannel(
+        adapter,
+        "chat-1",
+        "different source text",
+        {
+          completionMode: "settled",
+          authority: TEST_DELIVERY_AUTHORITY,
+          destinationEndpoint,
+        },
+        async (chunk) => {
+          replayed.push(chunk.text);
+          return ok(`replay-${chunk.chunkIndex}`);
+        },
+        { kind: "prepared", chunks: storedChunks },
+      );
+
+      expect(replay.ok).toBe(true);
+      expect(recoveryHook).not.toHaveBeenCalled();
+      expect(replayed).toEqual(storedChunks);
+    });
+
     it("does not chunk gateway messages", async () => {
       const service = makeDeliveryService();
       const adapter = createMockAdapter("gateway");
