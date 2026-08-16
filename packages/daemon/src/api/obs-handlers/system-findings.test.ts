@@ -1060,6 +1060,26 @@ describe("buildFindings — health_signal rollup counts only degraded (warning) 
     expect(finding?.hint).not.toMatch(/comis explain/i);
   });
 
+  it("routes standing announcement quarantine findings to the operator control plane", () => {
+    const finding = buildFindings(
+      [{
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "announcement:quarantine_pending",
+        details: JSON.stringify({
+          signal: "announcement_quarantine",
+          pendingCount: 2,
+        }),
+      }],
+      [],
+      [],
+    ).find((candidate) => candidate.code === "health_signal:announcement_quarantine");
+
+    expect(finding?.hint).toContain("node packages/cli/dist/cli.js quarantine list");
+    expect(finding?.hint).not.toMatch(/comis explain/i);
+  });
+
   it("keeps protected background recovery incidents aligned with system health", () => {
     const rows: DiagnosticRow[] = [{
       timestamp: 1_000,
