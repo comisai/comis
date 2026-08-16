@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   nextStandaloneMessageIdBase,
   toCreateGroupChatOptions,
 } from "../../test/live/bin/vps-emu-group-options.js";
 
 describe("standalone emulator group provisioning", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("preserves forum and supergroup flags required by topic scenarios", () => {
     const options = toCreateGroupChatOptions({
       chatId: -1_001_234_567_890,
@@ -26,8 +28,10 @@ describe("standalone emulator group provisioning", () => {
   });
 
   it("reserves a new message-id block across standalone restarts", () => {
-    expect(nextStandaloneMessageIdBase(undefined)).toBe(100);
-    expect(nextStandaloneMessageIdBase({})).toBe(1_000_100);
-    expect(nextStandaloneMessageIdBase({ messageIdBase: 1_000_100 })).toBe(2_000_100);
+    vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
+
+    expect(nextStandaloneMessageIdBase(undefined)).toBe(1_786_863_916);
+    expect(nextStandaloneMessageIdBase({})).toBe(1_786_863_916);
+    expect(nextStandaloneMessageIdBase({ messageIdBase: 2_000_000_000 })).toBe(2_001_000_000);
   });
 });
