@@ -59,6 +59,7 @@ export function wireHealthLogging(deps: {
   // Last observed quarantine depth — the WARN fires on CHANGE only, so a standing quarantine is
   // announced once rather than every health tick.
   let lastDeadLetterQueueSize = 0;
+  let deadLetterReadFailed = false;
 
   container.eventBus.on("observability:metrics", async (metrics) => {
     const fiveMinAgo = clock.now() - 5 * 60_000;
@@ -122,7 +123,20 @@ export function wireHealthLogging(deps: {
     // delivery). Live, one sat unnoticed for hours because the only trace was this DEBUG line, so an
     // operator at the default level had no way to know a user's task outcome was in limbo. Promoted
     // to WARN on the non-zero transition only — steady-state re-warning every tick would be noise.
-    const deadLetterQueueSize = deadLetterQueue?.size() ?? 0;
+    const durableSize = deadLetterQueue
+      ? await deadLetterQueue.durableSize()
+      : undefined;
+    const deadLetterQueueSize = durableSize?.ok
+      ? durableSize.value
+      : (deadLetterQueue?.size() ?? 0);
+    if (durableSize && !durableSize.ok && !deadLetterReadFailed) {
+      daemonLogger.warn({
+        deadLetterQueueSize,
+        hint: "Restore dead-letter storage access; the health snapshot shows only the in-memory retained count",
+        errorKind: "resource" as const,
+      }, "Dead-letter health count could not read durable storage");
+    }
+    deadLetterReadFailed = durableSize !== undefined && !durableSize.ok;
     if (deadLetterQueueSize > 0 && deadLetterQueueSize !== lastDeadLetterQueueSize) {
       daemonLogger.warn({
         deadLetterQueueSize,

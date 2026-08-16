@@ -114,6 +114,8 @@ export interface AnnouncementDeadLetterQueuePort {
     ) => Promise<boolean>,
     onDelivered?: (idempotencyKey: string) => void,
   ): Promise<void>;
+  /** Load the durable store before returning its complete retained-item count. */
+  durableSize(): Promise<Result<number, Error>>;
   size(): number;
   listQuarantined(): Promise<readonly QuarantinedAnnouncement[]>;
   release(

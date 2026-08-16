@@ -901,6 +901,12 @@ export function createAnnouncementDeadLetterQueue(
       serialize(() => decisionStore.resolve(idempotencyKey, outcome)),
     drain: (sendToChannel, onDelivered) =>
       serialize(() => drainSerialized(sendToChannel, onDelivered)),
+    durableSize: () => serialize(async () => {
+      const load = await loadFromDisk();
+      return load.ok
+        ? ok(entries.length + decisionReservations.length + invalidRecords.length)
+        : load;
+    }),
     size: () => entries.length + decisionReservations.length + invalidRecords.length,
     listQuarantined: () => serialize(async () => {
       // Load before projecting: the in-memory lists are empty until some

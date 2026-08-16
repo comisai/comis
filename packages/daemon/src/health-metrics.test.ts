@@ -161,6 +161,7 @@ describe("deadLetterQueueSize metric", () => {
 
     await dlq.enqueue({
       runId: "run-1",
+      sessionKey: "default:agent-a:telegram:chat-1:user_a",
       channelType: "telegram",
       channelId: "chat-1",
       announcementText: "test message",
@@ -170,6 +171,7 @@ describe("deadLetterQueueSize metric", () => {
 
     await dlq.enqueue({
       runId: "run-2",
+      sessionKey: "default:agent-a:discord:chan-2:user_a",
       channelType: "discord",
       channelId: "chan-2",
       announcementText: "test message 2",
