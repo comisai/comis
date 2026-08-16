@@ -17,12 +17,7 @@ import {
   systemSetTimeout,
   systemClearTimeout,
   systemScheduleTimeout,
-  type AnnouncementDeadLetterQueuePort,
-  type ChannelEndpoint,
   type CitationEvidence,
-  type ConversationLocator,
-  type SessionKey,
-  type TypedEventBus,
 } from "@comis/core";
 import { err, fromPromise, ok, TimeoutError, withTimeout, type Result } from "@comis/shared";
 import {
@@ -39,6 +34,16 @@ import type {
   GovernedAnnouncementFailure,
   SendGovernedCompletionAnnouncement,
 } from "./announcement-outward-operation.js";
+import type {
+  AnnouncementBatcher,
+  AnnouncementBatcherDeps,
+  QueuedAnnouncement,
+} from "./announcement-batcher-types.js";
+export type {
+  AnnouncementBatcher,
+  AnnouncementBatcherDeps,
+  QueuedAnnouncement,
+} from "./announcement-batcher-types.js";
 
 /** Hard timeout for the text-only parent candidate execution. A timeout leaves
  *  text-only results quarantined; verified attachments continue without a
@@ -46,98 +51,6 @@ import type {
  *  Defined locally to avoid an orchestrator-to-agent dependency cycle and kept
  *  aligned with the public agent timeout. */
 const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
-
-// ---------------------------------------------------------------------------
-// Public interfaces
-// ---------------------------------------------------------------------------
-
-export interface QueuedAnnouncement {
-  announcementText: string;
-  announceChannelType: ChannelType;
-  announceChannelId: string;
-  announceThreadId?: string;
-  callerAgentId: string;
-  callerSessionKey: string;
-  /** Canonical parent conversation authority captured at spawn time. */
-  callerConversation: ConversationLocator;
-  /** Immutable channel endpoint captured from the authenticated caller turn. */
-  destinationEndpoint: ChannelEndpoint;
-  /** Response locale resolved for the originating user turn. */
-  resolvedLanguage?: string;
-  citationEvidence?: CitationEvidence;
-  /** Runtime-owned terminal truth that a model rewrite cannot weaken. */
-  terminalOutcome: AnnouncementTerminalOutcome;
-  /** The child intentionally returned a silent-control response. Attachments
-   * still deliver, but no parent rewrite may manufacture caption text. */
-  suppressText?: boolean;
-  runId: string;
-  /** Idempotency key `${callerSessionKey}::${runId}`. Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
-  idempotencyKey?: string;
-  attachments?: CompletionAttachmentRef[];
-  /**
-   * Outward-ledger tree root, resolved by the caller, stamped onto the parked
-   * decision reservation.
-   *
-   * Load-bearing for recovery, not bookkeeping: `adjudicateReservations` settles
-   * a parked reservation by asking the ledger for the step the send WOULD have
-   * used (`allocateStep(rootRunId, operationId)`). With no root there is nothing
-   * to ask, and the reservation stays parked forever — so a finished
-   * sub-agent's result is never delivered and nothing drains it. Absent when the
-   * caller could not resolve one; it is then omitted rather than guessed.
-   */
-  reservationRootRunId?: string | undefined;
-}
-
-export interface AnnouncementBatcherDeps {
-  eventBus: TypedEventBus;
-  announceToParent: (
-    callerAgentId: string,
-    callerSessionKey: SessionKey,
-    callerConversation: ConversationLocator,
-    text: string,
-    channelType: string,
-    channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence },
-  ) => Promise<string | undefined>;
-  sendToChannel: (channelType: string, channelId: string, text: string, options?: { threadId?: string; extra?: Record<string, unknown> }) => Promise<boolean>;
-  logger?: {
-    debug(obj: Record<string, unknown>, msg: string): void;
-    warn(obj: Record<string, unknown>, msg: string): void;
-  };
-  debounceMs?: number;
-  /** Durable decision reservation and failed-delivery quarantine. */
-  deadLetterQueue?: Pick<AnnouncementDeadLetterQueuePort,
-    "enqueue" | "reserveDecision" | "resolveDecision">;
-  /** Durable single-attempt sender for the irreversible final delivery. */
-  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
-  /**
-   * Shared, BOUNDED delivered-key store. When injected by the
-   * daemon wiring, the SAME instance is also handed to the no-batcher success
-   * branches (`deliverAnnouncement`) and the failure path / DLQ recovery, so
-   * every completion-delivery surface dedups against one set. Absent → the
-   * batcher owns an internal bounded dedup (still capped — never leaks).
-   */
-  deliveryDedup?: DeliveryDedup;
-}
-
-export interface AnnouncementBatcher {
-  enqueue(params: QueuedAnnouncement): Promise<Result<"queued" | "retained", Error>>;
-  flush(): Promise<void>;
-  shutdown(): Promise<void>;
-  readonly pending: number;
-  /** Has this idempotency key already been delivered (success-path dedup)? Shared with the failure path. */
-  hasDelivered(key: string): boolean;
-  /** Mark an idempotency key delivered. Caller marks ONLY after a successful send (never before the await) so a transient retry is preserved. */
-  markDelivered(key: string): void;
-  /**
-   * Is this idempotency key still OWNED by the announcement pipeline — queued
-   * awaiting flush, mid-admission, or retained-uncertain? While true, the
-   * failure sweep must not send its own notice for the key (the enqueued
-   * completion announcement is the one message the recipient gets), closing
-   * the shutdown race where a notice fired for an enqueued-but-unflushed run.
-   */
-  hasPending?(key: string): boolean;
-}
 
 // ---------------------------------------------------------------------------
 // Helpers

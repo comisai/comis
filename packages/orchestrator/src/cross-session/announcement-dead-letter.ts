@@ -15,8 +15,6 @@ import { emitObservationalEventSafely, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
   createAnnouncementOperationDigests,
-  type AnnouncementDeliveryOptions,
-  type AnnouncementPlatformSendOutcome,
 } from "./announcement-outward-operation.js";
 import {
   createParentDecisionReservationStore,
@@ -25,7 +23,6 @@ import {
   writeDeadLetterEntries,
   type ChannelType,
   type DeadLetterEntry,
-  type DeadLetterWriteOperations,
   type ParentDecisionReservationRecord,
 } from "./announcement-dead-letter-file.js";
 import {
@@ -36,7 +33,12 @@ import {
   announcementRecoveryKey,
   isSameAnnouncementRecovery,
 } from "./announcement-dead-letter-identity.js";
+import type {
+  AnnouncementDeadLetterQueueOptions,
+  RecoveryDeliveryOptions,
+} from "./announcement-dead-letter-types.js";
 export { isAnnouncementChannelType } from "./announcement-dead-letter-file.js";
+export type { AnnouncementLogger } from "./announcement-dead-letter-types.js";
 export type {
   ChannelType,
   DeadLetterEntry,
@@ -48,60 +50,7 @@ export type {
   QuarantineReleaseOutcome,
 } from "./announcement-dead-letter-quarantine.js";
 
-type RecoveryDeliveryOptions = AnnouncementDeliveryOptions & {
-  authority?: DeliveryAuthority;
-  destinationEndpoint?: ChannelEndpoint;
-};
-
-/** Minimal structural logger accepted from the daemon composition root. */
-export interface AnnouncementLogger {
-  info(obj: Record<string, unknown>, msg: string): void;
-  warn(obj: Record<string, unknown>, msg: string): void;
-  error(obj: Record<string, unknown>, msg: string): void;
-  debug(obj: Record<string, unknown>, msg: string): void;
-}
-
 export type AnnouncementDeadLetterQueue = AnnouncementDeadLetterQueuePort;
-
-/** Configuration options for the dead-letter queue factory. */
-interface AnnouncementDeadLetterQueueOptions {
-  /** JSONL file path (already safePath'd by caller). */
-  filePath: string;
-  /** Retry attempts before an entry requires an operator decision (default: 5). */
-  maxRetries?: number;
-  /** Minimum interval between retry attempts in ms (default: 60_000). */
-  retryIntervalMs?: number;
-  /** Age after which an entry requires an operator decision (default: 3_600_000). */
-  maxAgeMs?: number;
-  /** Retained-item threshold for operator alerts (default: 100). */
-  maxEntries?: number;
-  /** Event bus for emitting dead-letter events. */
-  eventBus: TypedEventBus;
-  /** Optional logger for diagnostics. */
-  logger?: AnnouncementLogger;
-  /**
-   * The closed five-state outward-send uncertainty ledger. When present, every
-   * entry must carry its persisted `(agentId, rootRunId, stepIndex)` identity.
-   * A committed row with a receipt suppresses the send; all other retained
-   * states are blocked or parked. Only a definitive absent lookup may begin a
-   * new governed send. `undefined` means the drain uses the unledgered delivery
-   * path. Wired from the daemon.
-   */
-  outwardLedger?: OutwardSendLedgerPort;
-  /** Receipt-aware transport used only for a governed row with no ledger record. */
-  governedSendToChannel?: (
-    type: ChannelType,
-    id: string,
-    text: string,
-    options?: RecoveryDeliveryOptions,
-  ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
-  /** Materialize the owning session observer before off-turn recovery events fire. */
-  ensureSessionObservation?: (input: {
-    agentId: string;
-    sessionKey: string;
-  }) => Result<void, Error>;
-  fileOperations?: DeadLetterWriteOperations;
-}
 /** Create a JSONL-backed announcement dead-letter queue. */
 export function createAnnouncementDeadLetterQueue(
   opts: AnnouncementDeadLetterQueueOptions,
