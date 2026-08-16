@@ -23,7 +23,7 @@ export interface InvalidDeadLetterRecord {
   readonly rawTruncated: boolean;
 }
 
-const MAX_REPLAYABLE_ROW_BYTES = 1_048_576;
+export const MAX_DEAD_LETTER_ROW_BYTES = 1_048_576;
 const MAX_INVALID_RAW_CHARS = 4_096;
 
 function digest(value: string): Result<string, Error> {
@@ -45,7 +45,7 @@ export function createInvalidDeadLetterRecord(
     value: {
       recordType: "invalid_record",
       id: `invalid:${idDigest.value}`,
-      reason: rawBytes > MAX_REPLAYABLE_ROW_BYTES
+      reason: rawBytes > MAX_DEAD_LETTER_ROW_BYTES
         ? "oversized_row"
         : parsedJson
           ? "schema_mismatch"

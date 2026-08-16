@@ -15,6 +15,7 @@ import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
   createInvalidDeadLetterRecord,
   isInvalidDeadLetterRecord,
+  MAX_DEAD_LETTER_ROW_BYTES,
   type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
 
@@ -26,7 +27,7 @@ interface StorageLogger {
 export type ChannelType = AnnouncementChannelType;
 
 export function isAnnouncementChannelType(value: string): value is ChannelType {
-  return value.length > 0 && value.length <= 128;
+  return /^[a-z0-9][a-z0-9._:-]{0,127}$/iu.test(value);
 }
 
 export type DeadLetterEntry = AnnouncementDeadLetterEntry;
@@ -474,9 +475,18 @@ export async function writeDeadLetterEntries(
     }
     return writeFailure(removed.error, "snapshot_unchanged");
   }
-  const serialized = tryCatch(
-    () => `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-  );
-  if (!serialized.ok) return writeFailure(serialized.error, "snapshot_unchanged");
-  return atomicWrite(filePath, serialized.value, operations);
+  const serializedRows = tryCatch(() => entries.map((entry) => JSON.stringify(entry)));
+  if (!serializedRows.ok) {
+    return writeFailure(serializedRows.error, "snapshot_unchanged");
+  }
+  if (serializedRows.value.some(
+    (row) => Buffer.byteLength(row, "utf8") > MAX_DEAD_LETTER_ROW_BYTES,
+  )) {
+    return writeFailure(
+      new Error("Dead-letter snapshot contains an oversized record"),
+      "snapshot_unchanged",
+    );
+  }
+  const serialized = `${serializedRows.value.join("\n")}\n`;
+  return atomicWrite(filePath, serialized, operations);
 }
