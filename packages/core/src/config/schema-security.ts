@@ -37,7 +37,7 @@ export const ActionConfirmationConfigSchema = z.strictObject({
  * `tokenBudget`). Every field `.default()` (AGENTS.md §6.4).
  */
 const DeliveryConfigSchema = z.strictObject({
-    /** Max retry attempts for a transient delivery failure before dead-lettering. 0 = dead-letter on the first transient blip; capped at 10 to bound retry-storm amplification. */
+    /** Maximum safe ledgerless recovery attempts before quarantine. Governed and ambiguous outcomes are never replayed automatically. */
     maxRetries: z.number().int().min(0).max(10).default(3),
   });
 

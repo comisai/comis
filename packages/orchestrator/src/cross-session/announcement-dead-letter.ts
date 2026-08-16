@@ -11,10 +11,7 @@ import type {
 } from "@comis/core";
 import { emitObservationalEventSafely, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
-import {
-  createAnnouncementOperationDigests,
-  type GovernedAnnouncementAttachment,
-} from "./announcement-outward-operation.js";
+import type { GovernedAnnouncementAttachment } from "./announcement-outward-operation.js";
 import { drainWithPreparedRecoveryAttachment } from "./announcement-dead-letter-attachment.js";
 import {
   createParentDecisionReservationStore,
@@ -30,13 +27,10 @@ import {
   type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
 import {
-  createTerminalDecisionRecord,
-  findTerminalDecision,
-  isAnnouncementTerminalDecisionRecord,
+  createAnnouncementTerminalDecisionStore,
   terminalDecisionIdentity,
   type AnnouncementTerminalDecision,
-  type AnnouncementTerminalDecisionRecord,
-} from "./announcement-dead-letter-operator-decision.js";
+} from "./announcement-dead-letter-terminal-decision.js";
 import {
   announcementRecoveryKey,
   isSameAnnouncementRecovery,
@@ -65,9 +59,7 @@ export type AnnouncementDeadLetterQueue = AnnouncementDeadLetterQueuePort;
 type GovernedDrainOutcome =
   | "receipt_already_committed"
   | "receipt_committed_now"
-  | "suppressed_no_reply"
   | "retained";
-const NO_REPLY_LEDGER_FAILURE = "announcement_no_reply";
 /** Create a JSONL-backed announcement dead-letter queue. */
 export function createAnnouncementDeadLetterQueue(
   opts: AnnouncementDeadLetterQueueOptions,
@@ -90,9 +82,8 @@ export function createAnnouncementDeadLetterQueue(
   let entries: DeadLetterEntry[] = [];
   let decisionReservations: ParentDecisionReservationRecord[] = [];
   let invalidRecords: InvalidDeadLetterRecord[] = [];
-  let terminalDecisions: AnnouncementTerminalDecisionRecord[] = [];
   const emittedAdmissionKeys = new Set<string>();
-  const suppressedDecisionKeys = new Set<string>();
+  const terminalDecisionStore = createAnnouncementTerminalDecisionStore(filePath);
   let loaded = false;
   let operationTail: Promise<void> = Promise.resolve();
   function serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -141,11 +132,9 @@ export function createAnnouncementDeadLetterQueue(
       }
       entries = read.value.entries.filter((entry): entry is DeadLetterEntry =>
         !isParentDecisionReservation(entry)
-        && !isInvalidDeadLetterRecord(entry)
-        && !isAnnouncementTerminalDecisionRecord(entry));
+        && !isInvalidDeadLetterRecord(entry));
       decisionReservations = read.value.entries.filter(isParentDecisionReservation);
       invalidRecords = read.value.entries.filter(isInvalidDeadLetterRecord);
-      terminalDecisions = read.value.entries.filter(isAnnouncementTerminalDecisionRecord);
       loaded = true;
       logger?.debug(
         { entryCount: entries.length + decisionReservations.length + invalidRecords.length },
@@ -167,11 +156,10 @@ export function createAnnouncementDeadLetterQueue(
     nextEntries: readonly DeadLetterEntry[],
     nextReservations: readonly ParentDecisionReservationRecord[] = decisionReservations,
     nextInvalidRecords: readonly InvalidDeadLetterRecord[] = invalidRecords,
-    nextTerminalDecisions: readonly AnnouncementTerminalDecisionRecord[] = terminalDecisions,
   ): Promise<Result<void, Error>> {
     const written = await writeDeadLetterEntries(
       filePath,
-      [...nextEntries, ...nextReservations, ...nextInvalidRecords, ...nextTerminalDecisions],
+      [...nextEntries, ...nextReservations, ...nextInvalidRecords],
       fileOperations,
     );
     if (written.ok) return written;
@@ -179,7 +167,6 @@ export function createAnnouncementDeadLetterQueue(
       entries = [...nextEntries];
       decisionReservations = [...nextReservations];
       invalidRecords = [...nextInvalidRecords];
-      terminalDecisions = [...nextTerminalDecisions];
     }
     return err(written.error.error);
   }
@@ -230,15 +217,22 @@ export function createAnnouncementDeadLetterQueue(
   async function lookupTerminalDecision(
     owner: AnnouncementDeadLetterEntryInput | AnnouncementParentDecisionReservation,
   ): Promise<Result<AnnouncementTerminalDecision | undefined, Error>> {
-    const retained = findTerminalDecision(terminalDecisions, owner);
-    if (!retained.ok || retained.value !== undefined) {
-      return retained.ok ? ok(retained.value?.outcome) : retained;
-    }
     if (outwardLedger) {
       const identity = terminalDecisionIdentity(owner);
-      return outwardLedger.lookupOperatorDecision(identity.rootRunId, identity.operationId);
+      return outwardLedger.lookupTerminalDecision(identity.rootRunId, identity.operationId);
     }
-    return ok(undefined);
+    return terminalDecisionStore.lookup(owner);
+  }
+
+  async function recordTerminalDecision(
+    owner: AnnouncementDeadLetterEntryInput | AnnouncementParentDecisionReservation,
+    outcome: AnnouncementTerminalDecision,
+  ): Promise<Result<void, Error>> {
+    if (outwardLedger) {
+      const identity = terminalDecisionIdentity(owner);
+      return outwardLedger.recordTerminalDecision(identity.rootRunId, identity.operationId, outcome);
+    }
+    return terminalDecisionStore.record(owner, outcome);
   }
 
   function sameRetainedOwner(
@@ -259,89 +253,24 @@ export function createAnnouncementDeadLetterQueue(
       && record.operationKind === "cross_session_announcement";
   }
 
-  async function terminalizeNoReply(
-    reservation: AnnouncementParentDecisionReservation,
-  ): Promise<Result<void, Error>> {
-    if (!outwardLedger) return err(new Error("Outward ledger is unavailable"));
-    const allocated = await outwardLedger.allocateStep(
-      reservation.rootRunId,
-      reservation.idempotencyKey,
-    );
-    if (!allocated.ok) return allocated;
-    const existing = await outwardLedger.lookup(reservation.rootRunId, allocated.value);
-    if (!existing.ok) return existing;
-    if (existing.value !== undefined) {
-      return sameRetainedOwner(reservation, existing.value, allocated.value)
-        && existing.value.state === "failed"
-        && existing.value.lastError === NO_REPLY_LEDGER_FAILURE
-        ? ok(undefined)
-        : err(new Error("No-reply resolution conflicts with an outward operation"));
-    }
-    const digests = createAnnouncementOperationDigests({
-      channelId: reservation.channelId,
-      channelType: reservation.channelType,
-      text: reservation.announcementText,
-      ...(reservation.threadId || reservation.extra
-        ? { options: {
-            ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
-            ...(reservation.extra ? { extra: reservation.extra } : {}),
-          } }
-        : {}),
-    });
-    if (!digests.ok) return digests;
-    const begun = await outwardLedger.begin({
-      rootRunId: reservation.rootRunId,
-      stepIndex: allocated.value,
-      agentId: reservation.agentId,
-      channelType: reservation.channelType,
-      channelId: reservation.channelId,
-      operationKind: "cross_session_announcement",
-      ...digests.value,
-    });
-    if (!begun.ok) return begun;
-    const markedUnknown = await outwardLedger.markUnknown(
-      reservation.rootRunId,
-      allocated.value,
-    );
-    if (!markedUnknown.ok) return markedUnknown;
-    return outwardLedger.markFailed(
-      reservation.rootRunId,
-      allocated.value,
-      NO_REPLY_LEDGER_FAILURE,
-    );
-  }
-
   async function resolveDecisionDurably(
     idempotencyKey: string,
     outcome: "receipt_committed" | "no_reply",
   ): Promise<Result<boolean, Error>> {
     if (outcome === "receipt_committed") {
-      const resolved = await decisionStore.resolve(idempotencyKey, outcome);
-      if (resolved.ok) suppressedDecisionKeys.delete(idempotencyKey);
-      return resolved;
+      return decisionStore.resolve(idempotencyKey, outcome);
     }
     const reservation = await decisionStore.lookup(idempotencyKey);
     if (!reservation.ok || reservation.value === undefined) return reservation.ok
       ? ok(false)
       : reservation;
-    const existing = findTerminalDecision(terminalDecisions, reservation.value);
+    const existing = await lookupTerminalDecision(reservation.value);
     if (!existing.ok) return existing;
-    if (existing.value && existing.value.outcome !== "no_reply") {
+    if (existing.value !== undefined && existing.value !== "no_reply") {
       return err(new Error("No-reply resolution conflicts with its durable outcome"));
     }
-    let nextTerminalDecisions = terminalDecisions;
-    if (!existing.value) {
-      const created = createTerminalDecisionRecord(
-        reservation.value,
-        "no_reply",
-        systemNowMs(),
-      );
-      if (!created.ok) return created;
-      nextTerminalDecisions = [...terminalDecisions, created.value];
-    }
-    suppressedDecisionKeys.add(idempotencyKey);
-    if (outwardLedger) {
-      const terminalized = await terminalizeNoReply(reservation.value);
+    if (existing.value === undefined) {
+      const terminalized = await recordTerminalDecision(reservation.value, "no_reply");
       if (!terminalized.ok) {
         logger?.error(
           {
@@ -356,19 +285,12 @@ export function createAnnouncementDeadLetterQueue(
     const nextReservations = decisionReservations.filter(
       (candidate) => candidate.idempotencyKey !== idempotencyKey,
     );
-    const resolved = await persist(
-      entries,
-      nextReservations,
-      invalidRecords,
-      nextTerminalDecisions,
-    );
+    const resolved = await persist(entries, nextReservations, invalidRecords);
     if (resolved.ok) {
       decisionReservations = nextReservations;
-      terminalDecisions = nextTerminalDecisions;
-      suppressedDecisionKeys.delete(idempotencyKey);
       return ok(true);
     }
-    return outwardLedger ? ok(true) : err(resolved.error);
+    return err(resolved.error);
   }
 
   type LedgerTransition = "lookup" | "begin" | "mark_unknown" | "commit" | "park";
@@ -588,10 +510,6 @@ export function createAnnouncementDeadLetterQueue(
           retainBlockedEntry(entry, "outward_operation_unresolved");
           return "retained";
         case "failed":
-          if (existing.value.lastError === NO_REPLY_LEDGER_FAILURE) {
-            emitLedgerTransition(identity, "lookup", "failed");
-            return "suppressed_no_reply";
-          }
           logLedgerFailure(
             entry,
             "lookup",
@@ -827,9 +745,6 @@ export function createAnnouncementDeadLetterQueue(
             return "retained";
           case "failed":
             emitLedgerTransition(identity, "lookup", "failed");
-            if (existing.value.lastError === NO_REPLY_LEDGER_FAILURE) {
-              return "suppressed_no_reply";
-            }
             retainBlockedEntry(entry, "outward_operation_failed");
             return "retained";
           default: {
@@ -985,8 +900,24 @@ export function createAnnouncementDeadLetterQueue(
   async function adjudicateReservations(ledger: OutwardSendLedgerPort): Promise<void> {
     if (decisionReservations.length === 0) return;
     const settled: string[] = [];
+    const nextEntries = [...entries];
     for (const reservation of [...decisionReservations]) {
-      if (suppressedDecisionKeys.has(reservation.idempotencyKey)) continue;
+      const terminalDecision = await lookupTerminalDecision(reservation);
+      if (!terminalDecision.ok) {
+        logger?.warn(
+          {
+            runId: reservation.runId,
+            errorKind: "dependency" as const,
+            hint: "restore terminal-decision storage before adjudicating the retained parent completion",
+          },
+          "Parent decision terminal state could not be read",
+        );
+        continue;
+      }
+      if (terminalDecision.value !== undefined) {
+        settled.push(reservation.idempotencyKey);
+        continue;
+      }
       const remainingGraceMs = parentDecisionGraceMs
         - (systemNowMs() - reservation.failedAt);
       if (remainingGraceMs > 0) {
@@ -996,7 +927,7 @@ export function createAnnouncementDeadLetterQueue(
         );
         continue;
       }
-       const step = await fromPromise(
+      const step = await fromPromise(
         ledger.allocateStep(reservation.rootRunId, reservation.idempotencyKey),
       );
       if (!step.ok || !step.value.ok) {
@@ -1015,7 +946,7 @@ export function createAnnouncementDeadLetterQueue(
         },
         "Parent decision rewrite grace elapsed; adjudicating its safe fallback",
       );
-      entries.push({
+      nextEntries.push({
         id: reservation.id,
         announcementText: reservation.announcementText,
         channelType: reservation.channelType,
@@ -1043,8 +974,7 @@ export function createAnnouncementDeadLetterQueue(
     const remaining = decisionReservations.filter(
       (r) => !settled.includes(r.idempotencyKey),
     );
-    decisionReservations = [...remaining];
-    const persisted = await persist(entries, remaining);
+    const persisted = await persist(nextEntries, remaining);
     if (!persisted.ok) {
       logger?.warn(
         {
@@ -1053,7 +983,10 @@ export function createAnnouncementDeadLetterQueue(
         },
         "Failed to persist adjudicated parent decision reservations",
       );
+      return;
     }
+    entries = nextEntries;
+    decisionReservations = [...remaining];
   }
 
   async function drainSerialized(
@@ -1073,10 +1006,31 @@ export function createAnnouncementDeadLetterQueue(
         | "untracked_delivery"
         | "receipt_already_committed"
         | "receipt_committed_now"
-        | "suppressed_no_reply";
+        | "suppressed_terminal_decision";
       durationMs: number;
     }> = [];
     for (const entry of workingEntries) {
+      const terminalDecision = await lookupTerminalDecision(entry);
+      if (!terminalDecision.ok) {
+        logger?.warn(
+          {
+            runId: entry.runId,
+            errorKind: "dependency" as const,
+            hint: "restore terminal-decision storage before retrying the retained announcement",
+          },
+          "Dead-letter terminal state could not be read",
+        );
+        continue;
+      }
+      if (terminalDecision.value !== undefined) {
+        deliveredIds.add(entry.id);
+        deliveredEntries.push({
+          entry,
+          outcome: "suppressed_terminal_decision",
+          durationMs: systemNowMs() - now,
+        });
+        continue;
+      }
       if (!outwardLedger && entry.attemptCount >= maxRetries) {
         if (entry.lastError !== "attempt_limit_reached") {
           logger?.warn(
@@ -1177,7 +1131,7 @@ export function createAnnouncementDeadLetterQueue(
           tryCatch(() => onDelivered(completionKey));
         }
       }
-      if (outcome !== "suppressed_no_reply") emitDelivered(entry, entry.attemptCount);
+      if (outcome !== "suppressed_terminal_decision") emitDelivered(entry, entry.attemptCount);
       // INFO closes the opening WARN after the queue file is unlinked. It is
       // emitted once per resolved entry, so volume is naturally bounded.
       logger?.info(
@@ -1193,16 +1147,16 @@ export function createAnnouncementDeadLetterQueue(
             ? "dlq-ledger-committed-skip"
             : outcome === "receipt_committed_now"
               ? "dlq-ledger-receipt-committed"
-              : outcome === "suppressed_no_reply"
-                ? "dlq-no-reply-suppressed"
+              : outcome === "suppressed_terminal_decision"
+                ? "dlq-terminal-decision-suppressed"
               : "dead-letter-delivery",
         },
         outcome === "receipt_already_committed"
           ? "Committed dead-letter operation removed without replay"
           : outcome === "receipt_committed_now"
             ? "Dead-letter entry delivered and platform receipt committed"
-            : outcome === "suppressed_no_reply"
-              ? "Dead-letter no-reply resolution removed without delivery"
+            : outcome === "suppressed_terminal_decision"
+              ? "Dead-letter terminal decision removed without delivery"
             : "Dead-letter entry delivered successfully",
       );
     }
@@ -1278,32 +1232,10 @@ export function createAnnouncementDeadLetterQueue(
       const releasedEntry = entries.find((candidate) => candidate.id === id);
       const releasedReservation = decisionReservations.find((candidate) => candidate.id === id);
       const releasedDelivery = releasedEntry ?? releasedReservation;
-      let nextTerminalDecisions = terminalDecisions;
       if (releasedDelivery) {
-        if (outwardLedger) {
-          const identity = terminalDecisionIdentity(releasedDelivery);
-          const terminalized = await outwardLedger.recordOperatorDecision(
-            identity.rootRunId,
-            identity.operationId,
-            outcome,
-          );
-          if (!terminalized.ok) return terminalized;
-        }
-        {
-          const existing = findTerminalDecision(terminalDecisions, releasedDelivery);
-          if (!existing.ok) return existing;
-          if (existing.value && existing.value.outcome !== outcome) {
-            return err(new Error("Terminal decision conflicts with its durable outcome"));
-          }
-          if (!existing.value) {
-            const created = createTerminalDecisionRecord(
-              releasedDelivery,
-              outcome,
-              systemNowMs(),
-            );
-            if (!created.ok) return created;
-            nextTerminalDecisions = [...terminalDecisions, created.value];
-          }
+        const terminalized = await recordTerminalDecision(releasedDelivery, outcome);
+        if (!terminalized.ok) {
+          return terminalized;
         }
       }
       const released = await releaseQuarantined({
@@ -1314,26 +1246,17 @@ export function createAnnouncementDeadLetterQueue(
         invalidRecords,
         logger,
         persist: async (nextEntries, nextReservations, nextInvalidRecords) => {
-          const written = await persist(
-            nextEntries,
-            nextReservations,
-            nextInvalidRecords,
-            nextTerminalDecisions,
-          );
+          const written = await persist(nextEntries, nextReservations, nextInvalidRecords);
           if (written.ok) {
             entries = [...nextEntries];
             decisionReservations = [...nextReservations];
             invalidRecords = [...nextInvalidRecords];
-            terminalDecisions = [...nextTerminalDecisions];
           }
           return written;
         },
       });
       if (released.ok && released.value && releasedEntry) {
         emittedAdmissionKeys.delete(announcementRecoveryKey(releasedEntry));
-      }
-      if (released.ok && released.value && releasedReservation) {
-        suppressedDecisionKeys.delete(releasedReservation.idempotencyKey);
       }
       return released;
     }),

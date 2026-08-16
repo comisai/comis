@@ -24,10 +24,6 @@ import {
   type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
 import { createAnnouncementOperationDigests } from "./announcement-outward-operation.js";
-import {
-  isAnnouncementTerminalDecisionRecord,
-  type AnnouncementTerminalDecisionRecord,
-} from "./announcement-dead-letter-operator-decision.js";
 
 interface StorageLogger {
   warn(obj: Record<string, unknown>, message: string): void;
@@ -117,7 +113,6 @@ function isCompletionKeys(value: unknown): value is readonly string[] {
 export type StoredDeadLetterEntry =
   | DeadLetterEntry
   | ParentDecisionReservationRecord
-  | AnnouncementTerminalDecisionRecord
   | InvalidDeadLetterRecord;
 
 export interface DeadLetterReadSnapshot {
@@ -551,10 +546,6 @@ function parseEntries(
       entries.push(value);
       continue;
     }
-    if (parsed.ok && isAnnouncementTerminalDecisionRecord(value)) {
-      entries.push(value);
-      continue;
-    }
     if (parsed.ok && isInvalidDeadLetterRecord(value)) {
       entries.push(value);
       continue;
@@ -676,7 +667,6 @@ export async function writeDeadLetterEntries(
   if (entries.some((entry) =>
     !isDeadLetterEntry(entry)
     && !isParentDecisionReservationRecord(entry)
-    && !isAnnouncementTerminalDecisionRecord(entry)
     && !isInvalidDeadLetterRecord(entry))) {
     return writeFailure(
       new Error("Dead-letter snapshot contains an invalid record"),

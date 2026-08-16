@@ -48,7 +48,7 @@ export type OutwardSendState = "send_attempt_started" | "unknown_after_send" | "
  */
 export type ReconcileOutcome = "unresolved";
 
-export type OutwardOperatorDecision = "delivered" | "discarded";
+export type OutwardTerminalDecision = "delivered" | "discarded" | "no_reply";
 
 /** Closed discriminator for the irreversible outward operation. */
 export type OutwardOperationKind =
@@ -123,15 +123,15 @@ export interface OutwardSendBeginInput {
  * caller treats as "already in flight".
  */
 export interface OutwardSendLedgerPort {
-  lookupOperatorDecision(
+  lookupTerminalDecision(
     rootRunId: string,
     operationId: string,
-  ): Promise<Result<OutwardOperatorDecision | undefined, Error>>;
+  ): Promise<Result<OutwardTerminalDecision | undefined, Error>>;
 
-  recordOperatorDecision(
+  recordTerminalDecision(
     rootRunId: string,
     operationId: string,
-    outcome: OutwardOperatorDecision,
+    outcome: OutwardTerminalDecision,
   ): Promise<Result<void, Error>>;
 
   /**

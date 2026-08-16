@@ -10,7 +10,6 @@ import type {
 type DrainOutcome =
   | "receipt_already_committed"
   | "receipt_committed_now"
-  | "suppressed_no_reply"
   | "retained";
 
 export async function drainWithPreparedRecoveryAttachment(params: {

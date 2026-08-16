@@ -383,7 +383,7 @@ export function setupCrossSession(deps: {
   const deadLetterFilePath = safePath(container.config.dataDir || process.cwd(), "dead-letters.jsonl");
   const deadLetterQueue = createAnnouncementDeadLetterQueue({
     filePath: deadLetterFilePath,
-    maxRetries: 5,
+    maxRetries: container.config.security.agentToAgent.delivery.maxRetries,
     retryIntervalMs: 60_000,
     maxAgeMs: 3_600_000,
     maxEntries: 100,

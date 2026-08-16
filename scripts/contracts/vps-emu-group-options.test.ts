@@ -43,14 +43,16 @@ describe("standalone emulator group provisioning", () => {
   });
 
   it("reserves a new message-id block across standalone restarts", () => {
-    vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
     const directory = reservationDirectory();
 
-    expect(reserveStandaloneMessageIdBase(undefined, directory)).toBe(1_786_863_916);
-    expect(reserveStandaloneMessageIdBase({}, directory)).toBe(1_787_863_916);
+    expect(reserveStandaloneMessageIdBase(undefined, directory, 4_000_000_000))
+      .toBe(4_000_000_000);
+    expect(reserveStandaloneMessageIdBase({}, directory, 4_000_000_000))
+      .toBe(4_001_000_000);
     expect(reserveStandaloneMessageIdBase(
       { messageIdBase: 2_000_000_000 },
       directory,
-    )).toBe(2_001_000_000);
+      1_000_000_000,
+    )).toBe(4_002_000_000);
   });
 });

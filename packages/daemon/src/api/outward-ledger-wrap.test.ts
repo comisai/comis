@@ -69,8 +69,8 @@ function makeStubLedger(
   const calls: string[] = [];
   const state = { beginInput: undefined as OutwardSendBeginInput | undefined };
   const ledger: OutwardSendLedgerPort = {
-    lookupOperatorDecision: vi.fn(async () => ok(undefined)),
-    recordOperatorDecision: vi.fn(async () => ok(undefined)),
+    lookupTerminalDecision: vi.fn(async () => ok(undefined)),
+    recordTerminalDecision: vi.fn(async () => ok(undefined)),
     allocateStep: vi.fn(async () => ok(0)),
     lookup: vi.fn(async () => {
       calls.push("lookup");

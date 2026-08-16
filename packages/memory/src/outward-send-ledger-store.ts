@@ -48,7 +48,7 @@ import {
   type OutwardSendRecord,
   type OutwardSendBeginInput,
   type OutwardSendState,
-  type OutwardOperatorDecision,
+  type OutwardTerminalDecision,
   type StoredOutwardOperationKind,
 } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
@@ -65,8 +65,8 @@ const outwardSequenceMapper = createRowMapper(
 const outwardOperationMapper = createRowMapper(
   z.strictObject({ step_index: z.number().int().min(0) }),
 );
-const outwardOperatorDecisionMapper = createRowMapper(
-  z.strictObject({ outcome: z.enum(["delivered", "discarded"]) }),
+const outwardTerminalDecisionMapper = createRowMapper(
+  z.strictObject({ outcome: z.enum(["delivered", "discarded", "no_reply"]) }),
 );
 const outwardOperationLedgerStateMapper = createRowMapper(
   z.strictObject({ state: z.enum([
@@ -193,10 +193,21 @@ export function createSqliteOutwardSendLedger(
     WHERE root_run_id = ? AND operation_id = ?
   `);
 
+  const lookupNoReplyDecisionStmt = db.prepare(`
+    SELECT 'no_reply' AS outcome FROM outward_send_no_reply_decisions
+    WHERE root_run_id = ? AND operation_id = ?
+  `);
+
   const insertOperatorDecisionStmt = db.prepare(`
     INSERT INTO outward_send_operator_decisions (
       root_run_id, operation_id, outcome, decided_at_ms
     ) VALUES (?, ?, ?, ?)
+  `);
+
+  const insertNoReplyDecisionStmt = db.prepare(`
+    INSERT INTO outward_send_no_reply_decisions (
+      root_run_id, operation_id, decided_at_ms
+    ) VALUES (?, ?, ?)
   `);
 
   const lookupOperationLedgerStateStmt = db.prepare(`
@@ -212,6 +223,15 @@ export function createSqliteOutwardSendLedger(
     SELECT decision.outcome
     FROM outward_send_operations AS operation
     JOIN outward_send_operator_decisions AS decision
+      ON decision.root_run_id = operation.root_run_id
+      AND decision.operation_id = operation.operation_id
+    WHERE operation.root_run_id = ? AND operation.step_index = ?
+  `);
+
+  const lookupNoReplyDecisionByStepStmt = db.prepare(`
+    SELECT 'no_reply' AS outcome
+    FROM outward_send_operations AS operation
+    JOIN outward_send_no_reply_decisions AS decision
       ON decision.root_run_id = operation.root_run_id
       AND decision.operation_id = operation.operation_id
     WHERE operation.root_run_id = ? AND operation.step_index = ?
@@ -266,15 +286,32 @@ export function createSqliteOutwardSendLedger(
     LIMIT ?
   `);
 
-  const beginOperation = db.transaction((input: OutwardSendBeginInput, timestamp: number) => {
-    const retainedDecision = outwardOperatorDecisionMapper.parseOptionalRow(
-      lookupOperatorDecisionByStepStmt.get(input.rootRunId, input.stepIndex),
-    );
-    if (!retainedDecision.ok) {
-      throw new Error(`Row validation failed: ${retainedDecision.error.message}`);
+  function parseTerminalDecision(
+    operatorRow: unknown,
+    noReplyRow: unknown,
+  ): Result<OutwardTerminalDecision | undefined, Error> {
+    const operatorDecision = outwardTerminalDecisionMapper.parseOptionalRow(operatorRow);
+    if (!operatorDecision.ok) {
+      return err(new Error(`Row validation failed: ${operatorDecision.error.message}`));
     }
+    const noReplyDecision = outwardTerminalDecisionMapper.parseOptionalRow(noReplyRow);
+    if (!noReplyDecision.ok) {
+      return err(new Error(`Row validation failed: ${noReplyDecision.error.message}`));
+    }
+    if (operatorDecision.value !== undefined && noReplyDecision.value !== undefined) {
+      return err(new Error("outward terminal decision has conflicting durable outcomes"));
+    }
+    return ok(operatorDecision.value?.outcome ?? noReplyDecision.value?.outcome);
+  }
+
+  const beginOperation = db.transaction((input: OutwardSendBeginInput, timestamp: number) => {
+    const retainedDecision = parseTerminalDecision(
+      lookupOperatorDecisionByStepStmt.get(input.rootRunId, input.stepIndex),
+      lookupNoReplyDecisionByStepStmt.get(input.rootRunId, input.stepIndex),
+    );
+    if (!retainedDecision.ok) throw retainedDecision.error;
     if (retainedDecision.value !== undefined) {
-      throw new Error("outward operation has a terminal operator decision");
+      throw new Error("outward operation has a terminal decision");
     }
     beginStmt.run(
       `${input.rootRunId}:${input.stepIndex}`,
@@ -294,49 +331,49 @@ export function createSqliteOutwardSendLedger(
   // --- Store implementation ---
 
   const store: OutwardSendLedgerPort = {
-    lookupOperatorDecision(
+    lookupTerminalDecision(
       rootRunId: string,
       operationId: string,
-    ): Promise<Result<OutwardOperatorDecision | undefined, Error>> {
+    ): Promise<Result<OutwardTerminalDecision | undefined, Error>> {
       try {
         if (rootRunId.length === 0 || operationId.length === 0 || operationId.length > 256) {
-          return Promise.resolve(err(new Error("outward operator decision identity is invalid")));
+          return Promise.resolve(err(new Error("outward terminal decision identity is invalid")));
         }
-        const parsed = outwardOperatorDecisionMapper.parseOptionalRow(
-          lookupOperatorDecisionStmt.get(rootRunId, digestOperationId(operationId)),
+        const operationDigest = digestOperationId(operationId);
+        const parsed = parseTerminalDecision(
+          lookupOperatorDecisionStmt.get(rootRunId, operationDigest),
+          lookupNoReplyDecisionStmt.get(rootRunId, operationDigest),
         );
-        if (!parsed.ok) {
-          return Promise.resolve(err(new Error(`Row validation failed: ${parsed.error.message}`)));
-        }
-        return Promise.resolve(ok(parsed.value?.outcome));
+        return Promise.resolve(parsed);
       } catch (cause) {
         return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
       }
     },
 
-    recordOperatorDecision(
+    recordTerminalDecision(
       rootRunId: string,
       operationId: string,
-      outcome: OutwardOperatorDecision,
+      outcome: OutwardTerminalDecision,
     ): Promise<Result<void, Error>> {
       try {
         if (
           rootRunId.length === 0
           || operationId.length === 0
           || operationId.length > 256
-          || (outcome !== "delivered" && outcome !== "discarded")
+          || (outcome !== "delivered" && outcome !== "discarded" && outcome !== "no_reply")
         ) {
-          return Promise.resolve(err(new Error("outward operator decision is invalid")));
+          return Promise.resolve(err(new Error("outward terminal decision is invalid")));
         }
         const operationDigest = digestOperationId(operationId);
         const recordDecision = db.transaction(() => {
-          const existing = outwardOperatorDecisionMapper.parseOptionalRow(
+          const existing = parseTerminalDecision(
             lookupOperatorDecisionStmt.get(rootRunId, operationDigest),
+            lookupNoReplyDecisionStmt.get(rootRunId, operationDigest),
           );
-          if (!existing.ok) throw new Error(`Row validation failed: ${existing.error.message}`);
+          if (!existing.ok) throw existing.error;
           if (existing.value !== undefined) {
-            if (existing.value.outcome !== outcome) {
-              throw new Error("outward operator decision conflicts with its durable outcome");
+            if (existing.value !== outcome) {
+              throw new Error("outward terminal decision conflicts with its durable outcome");
             }
             return;
           }
@@ -355,7 +392,11 @@ export function createSqliteOutwardSendLedger(
           ) {
             throw new Error("outward operation is still in flight");
           }
-          insertOperatorDecisionStmt.run(rootRunId, operationDigest, outcome, nowMs());
+          if (outcome === "no_reply") {
+            insertNoReplyDecisionStmt.run(rootRunId, operationDigest, nowMs());
+          } else {
+            insertOperatorDecisionStmt.run(rootRunId, operationDigest, outcome, nowMs());
+          }
         });
         recordDecision.immediate();
         return Promise.resolve(ok(undefined));

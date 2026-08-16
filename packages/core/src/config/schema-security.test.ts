@@ -177,8 +177,8 @@ describe("AgentToAgentConfigSchema.tokenBudget", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AgentToAgentConfigSchema.delivery.maxRetries — max transient
-// delivery retries before dead-lettering. Co-located under the existing
+// AgentToAgentConfigSchema.delivery.maxRetries — safe ledgerless
+// recovery attempts before quarantine. Co-located under the existing
 // security.agentToAgent section, so NO new SECTION_REGISTRY entry. Every
 // field .default() (AGENTS.md §6.4): parsing `{}` yields delivery.maxRetries=3.
 // ---------------------------------------------------------------------------

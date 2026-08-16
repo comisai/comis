@@ -39,46 +39,41 @@ function reservationDirectory(): string {
 }
 
 describe("reserveStandaloneMessageIdBase", () => {
-  it("keeps reservation state outside the disposable wiring location", () => {
-    expect(resolveStandaloneMessageIdReservationDirectory("/srv/comis-emu"))
-      .toBe("/srv/comis-emu/.comis-vps-emu-state/message-id-reservations");
-    expect(resolveStandaloneMessageIdReservationDirectory(
-      "/srv/comis-emu",
-      "/var/lib/comis-emu",
-    )).toBe("/var/lib/comis-emu/message-id-reservations");
+  it("requires reservation state independent of the disposable checkout", () => {
+    expect(() => resolveStandaloneMessageIdReservationDirectory(undefined))
+      .toThrow("EMU_MESSAGE_ID_STATE_DIR");
+    expect(resolveStandaloneMessageIdReservationDirectory("/var/lib/comis-emu"))
+      .toBe("/var/lib/comis-emu/message-id-reservations");
   });
 
-  it("does not rewind message identity when ephemeral launcher state is absent", () => {
-    vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
-
-    expect(reserveStandaloneMessageIdBase(undefined, reservationDirectory()))
-      .toBe(1_786_863_916);
+  it("uses collision-resistant allocation when launcher state is absent", () => {
+    expect(reserveStandaloneMessageIdBase(undefined, reservationDirectory(), 4_000_000_000))
+      .toBe(4_000_000_000);
   });
 
-  it("allocates distinct blocks for two stateless launches in the same second", () => {
-    vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
+  it("allocates distinct blocks for simultaneous stateless launches", () => {
     const directory = reservationDirectory();
 
-    expect(reserveStandaloneMessageIdBase(undefined, directory)).toBe(1_786_863_916);
-    expect(reserveStandaloneMessageIdBase(undefined, directory)).toBe(1_787_863_916);
+    expect(reserveStandaloneMessageIdBase(undefined, directory, 4_000_000_000))
+      .toBe(4_000_000_000);
+    expect(reserveStandaloneMessageIdBase(undefined, directory, 4_000_000_000))
+      .toBe(4_001_000_000);
   });
 
-  it("keeps a persisted reservation that is ahead of the wall-clock floor", () => {
-    vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
-
+  it("keeps a persisted reservation ahead of a fresh random candidate", () => {
     expect(reserveStandaloneMessageIdBase(
       { messageIdBase: 2_000_000_000 },
       reservationDirectory(),
+      1_000_000_000,
     )).toBe(2_001_000_000);
   });
 
-  it("advances stale persisted state to the wall-clock floor", () => {
-    vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
-
+  it("advances stale persisted state to a fresh random candidate", () => {
     expect(reserveStandaloneMessageIdBase(
       { messageIdBase: 100 },
       reservationDirectory(),
-    )).toBe(1_786_863_916);
+      4_000_000_000,
+    )).toBe(4_000_000_000);
   });
 });
 

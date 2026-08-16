@@ -506,8 +506,8 @@ describe("setupBackgroundCompletionRunner", () => {
       attemptedAtMs: 1,
     };
     const outwardLedger = {
-      lookupOperatorDecision: vi.fn().mockResolvedValue(ok(undefined)),
-      recordOperatorDecision: vi.fn().mockResolvedValue(ok(undefined)),
+      lookupTerminalDecision: vi.fn().mockResolvedValue(ok(undefined)),
+      recordTerminalDecision: vi.fn().mockResolvedValue(ok(undefined)),
       allocateStep: vi.fn().mockResolvedValue(ok(1)),
       lookup: vi.fn()
         .mockResolvedValueOnce(ok(undefined))
@@ -626,8 +626,8 @@ describe("setupBackgroundCompletionRunner", () => {
     };
     const deliverToChannel = vi.fn();
     const outwardLedger = {
-      lookupOperatorDecision: vi.fn(),
-      recordOperatorDecision: vi.fn(),
+      lookupTerminalDecision: vi.fn(),
+      recordTerminalDecision: vi.fn(),
       allocateStep: vi.fn(),
       lookup: vi.fn(),
       begin: vi.fn(),

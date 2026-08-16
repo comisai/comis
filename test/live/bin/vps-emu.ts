@@ -51,7 +51,6 @@ const priorState = existsSync(WIRING_PATH)
 const messageIdBase = reserveStandaloneMessageIdBase(
   priorState,
   resolveStandaloneMessageIdReservationDirectory(
-    process.cwd(),
     process.env["EMU_MESSAGE_ID_STATE_DIR"],
   ),
 );

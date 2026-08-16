@@ -391,19 +391,22 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     }
     const operations: AnnouncementBatchOperation[] = attachments.length === 0
       ? [{ item: first, text: sanitizedCaption.text, completionItems: items }]
-      : items.length === 1
-        ? attachments.map((entry, index) => ({
+      : [
+          ...(sanitizedCaption.text.length > 0
+            ? [{
+                item: first,
+                text: sanitizedCaption.text,
+                partId: "summary",
+                completionItems: items,
+              }]
+            : []),
+          ...attachments.map((entry) => ({
             ...entry,
-            text: index === 0 ? sanitizedCaption.text : "",
-            partId: `attachment:${entry.index}`,
-            completionItems: [entry.item],
-          }))
-        : attachments.map((entry, index) => ({
-            ...entry,
-            text: index === 0 ? sanitizedCaption.text : "",
+            text: "",
             partId: `attachment:${entry.index}`,
             completionItems: items,
-          }));
+          })),
+        ];
 
     if (deps.sendGovernedAnnouncement) {
       const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
@@ -536,6 +539,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     );
     if (deps.sendGovernedAnnouncement || attachments.length > 0) return false;
     if (!deps.deadLetterQueue) return false;
+    const failedCompletionKeys = items.flatMap((item) =>
+      item.idempotencyKey ? [item.idempotencyKey] : []);
     const queued = await deps.deadLetterQueue.enqueue({
       announcementText: sanitizedCaption.text,
       channelType: first.announceChannelType,
@@ -548,6 +553,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       ...(failure.lastError ? { lastError: failure.lastError } : {}),
       ...(first.announceThreadId ? { threadId: first.announceThreadId } : {}),
       idempotencyKey: first.idempotencyKey,
+      ...(failedCompletionKeys.length > 0 ? { completionKeys: failedCompletionKeys } : {}),
       ...(failure.identity ? {
         rootRunId: failure.identity.rootRunId,
         stepIndex: failure.identity.stepIndex,
@@ -853,15 +859,25 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         params.terminalOutcome,
       );
       const fallbackText = fallbackDisclosure.text ?? safeFallback;
-      const attachmentOperations: AnnouncementBatchOperation[] = (params.attachments ?? []).map(
-        (attachment, index) => ({
-          item: params,
-          text: index === 0 ? fallbackText : "",
-          attachment,
-          partId: `attachment:${index}`,
-          completionItems: [params],
-        }),
-      );
+      const attachmentOperations: AnnouncementBatchOperation[] = hasAttachments
+        ? [
+            ...(params.suppressText
+              ? []
+              : [{
+                  item: params,
+                  text: fallbackText,
+                  partId: "summary",
+                  completionItems: [params],
+                }]),
+            ...(params.attachments ?? []).map((attachment, index) => ({
+              item: params,
+              text: "",
+              attachment,
+              partId: `attachment:${index}`,
+              completionItems: [params],
+            })),
+          ]
+        : [];
       const attachmentPlan = attachmentOperations.length > 0
         ? createAnnouncementReservationPlan(attachmentOperations)
         : undefined;

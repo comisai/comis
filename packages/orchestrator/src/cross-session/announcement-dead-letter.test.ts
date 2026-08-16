@@ -1281,8 +1281,8 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
   it("logs a stuck governed entry once, not on every sweep", async () => {
     const logger = createMockLogger();
     const ledger = {
-      lookupOperatorDecision: vi.fn(async () => ok(undefined)),
-      recordOperatorDecision: vi.fn(async () => ok(undefined)),
+      lookupTerminalDecision: vi.fn(async () => ok(undefined)),
+      recordTerminalDecision: vi.fn(async () => ok(undefined)),
       // Definitive absent lookup, so the drain proceeds to the transport check.
       lookup: vi.fn(async () => ok(undefined)),
       allocateStep: vi.fn(async () => ok({ ok: true, value: { stepIndex: 1 } })),
@@ -1325,6 +1325,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(
       queue.lookupDecision(decision.idempotencyKey),
     ).resolves.toEqual(ok(undefined));
+    await expect(readFile(filePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
     const restarted = createAnnouncementDeadLetterQueue({
       filePath,
@@ -1335,10 +1336,9 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       .resolves.toEqual(ok(undefined));
   });
 
-  it("terminalizes a governed no-reply before removing its reservation", async () => {
+  it("records a governed no-reply decision before removing its reservation", async () => {
     const decision = decisionInput();
     const { ledger } = makeStubLedger({ lookupResult: ok(undefined) });
-    vi.mocked(ledger.allocateStep).mockResolvedValue(ok(7));
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
@@ -1348,10 +1348,10 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
 
     await expect(queue.resolveDecision(decision.idempotencyKey, "no_reply"))
       .resolves.toEqual(ok(true));
-    expect(ledger.markFailed).toHaveBeenCalledWith(
+    expect(ledger.recordTerminalDecision).toHaveBeenCalledWith(
       decision.rootRunId,
-      7,
-      "announcement_no_reply",
+      decision.idempotencyKey,
+      "no_reply",
     );
 
     const restarted = createAnnouncementDeadLetterQueue({
@@ -1362,7 +1362,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({ created: false }));
   });
 
-  it("uses a ledger tombstone when no-reply snapshot update fails", async () => {
+  it("does not acknowledge no-reply until reservation removal is durable", async () => {
     const seeded = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
@@ -1370,32 +1370,20 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     const decision = decisionInput({ failedAt: 100 });
     await seeded.reserveDecision(decision);
 
-    let retainedRecord: OutwardSendRecord | undefined;
+    let terminalDecision: "delivered" | "discarded" | "no_reply" | undefined;
     const ledger: OutwardSendLedgerPort = {
-      lookupOperatorDecision: vi.fn(async () => ok(undefined)),
-      recordOperatorDecision: vi.fn(async () => ok(undefined)),
+      lookupTerminalDecision: vi.fn(async () => ok(terminalDecision)),
+      recordTerminalDecision: vi.fn(async (_rootRunId, _operationId, outcome) => {
+        terminalDecision = outcome;
+        return ok(undefined);
+      }),
       allocateStep: vi.fn(async () => ok(7)),
-      lookup: vi.fn(async () => ok(retainedRecord)),
-      begin: vi.fn(async (input) => {
-        retainedRecord = {
-          ...input,
-          id: "no-reply-tombstone",
-          state: "send_attempt_started",
-          attemptCount: 0,
-          attemptedAtMs: 100,
-        };
-        return ok(undefined);
-      }),
-      markUnknown: vi.fn(async () => {
-        retainedRecord = { ...retainedRecord!, state: "unknown_after_send" };
-        return ok(undefined);
-      }),
+      lookup: vi.fn(async () => ok(undefined)),
+      begin: vi.fn(async () => ok(undefined)),
+      markUnknown: vi.fn(async () => ok(undefined)),
       reclaimPreSend: vi.fn(async () => ok(false)),
       commit: vi.fn(async () => ok(undefined)),
-      markFailed: vi.fn(async (_rootRunId, _stepIndex, errorKind) => {
-        retainedRecord = { ...retainedRecord!, state: "failed", lastError: errorKind };
-        return ok(undefined);
-      }),
+      markFailed: vi.fn(async () => ok(undefined)),
       parkUncertain: vi.fn(async () => ok(false)),
       hasUncertainty: vi.fn(async () => ok(false)),
       listUnreconciled: vi.fn(async () => ok([])),
@@ -1408,17 +1396,14 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       fileOperations: {
         open: vi.fn().mockRejectedValue(unavailable),
         rename: vi.fn(),
-        unlink: vi.fn(),
+        unlink: vi.fn().mockRejectedValue(unavailable),
         chmod: vi.fn(),
       } as unknown as DeadLetterWriteOperations,
     });
 
     await expect(blocked.resolveDecision(decision.idempotencyKey, "no_reply"))
-      .resolves.toEqual(ok(true));
-    expect(retainedRecord).toMatchObject({
-      state: "failed",
-      lastError: "announcement_no_reply",
-    });
+      .resolves.toMatchObject({ ok: false });
+    expect(terminalDecision).toBe("no_reply");
 
     const governedSendToChannel = vi.fn();
     const restarted = createAnnouncementDeadLetterQueue({
@@ -1432,6 +1417,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
 
     expect(governedSendToChannel).not.toHaveBeenCalled();
     expect(restarted.size()).toBe(0);
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({ created: false }));
   });
 
   it("retains one pending decision when delivery failure lacks governed identity", async () => {
@@ -1692,9 +1678,19 @@ function makeStubLedger(
   options: StubLedgerOptions = {},
 ): { ledger: OutwardSendLedgerPort; lookupCalls: Array<[string, number]> } {
   const lookupCalls: Array<[string, number]> = [];
+  const terminalDecisions = new Map<string, "delivered" | "discarded" | "no_reply">();
   const ledger: OutwardSendLedgerPort = {
-    lookupOperatorDecision: vi.fn(async () => ok(undefined)),
-    recordOperatorDecision: vi.fn(async () => ok(undefined)),
+    lookupTerminalDecision: vi.fn(async (rootRunId, operationId) =>
+      ok(terminalDecisions.get(`${rootRunId}\u0000${operationId}`))),
+    recordTerminalDecision: vi.fn(async (rootRunId, operationId, outcome) => {
+      const key = `${rootRunId}\u0000${operationId}`;
+      const existing = terminalDecisions.get(key);
+      if (existing !== undefined && existing !== outcome) {
+        return err(new Error("terminal decision conflict"));
+      }
+      terminalDecisions.set(key, outcome);
+      return ok(undefined);
+    }),
     allocateStep: vi.fn(async () => ok(0)),
     lookup: vi.fn(async (rootRunId: string, stepIndex: number) => {
       lookupCalls.push([rootRunId, stepIndex]);
@@ -2649,11 +2645,11 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
     expect(reloaded.size()).toBe(0);
   });
 
-  it("records governed operator decisions before removing quarantine evidence", async () => {
+  it("records governed terminal decisions before removing quarantine evidence", async () => {
     const { ledger } = makeStubLedger();
-    let decision: "delivered" | "discarded" | undefined;
-    vi.mocked(ledger.lookupOperatorDecision).mockImplementation(async () => ok(decision));
-    vi.mocked(ledger.recordOperatorDecision).mockImplementation(async (_root, _operation, outcome) => {
+    let decision: "delivered" | "discarded" | "no_reply" | undefined;
+    vi.mocked(ledger.lookupTerminalDecision).mockImplementation(async () => ok(decision));
+    vi.mocked(ledger.recordTerminalDecision).mockImplementation(async (_root, _operation, outcome) => {
       decision = outcome;
       return ok(undefined);
     });
@@ -2673,7 +2669,7 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
     const id = (await listQuarantined(queue))[0]!.id;
 
     expect(await queue.release(id, "discarded")).toEqual(ok(true));
-    expect(ledger.recordOperatorDecision).toHaveBeenCalledWith(
+    expect(ledger.recordTerminalDecision).toHaveBeenCalledWith(
       "root-governed-release",
       "operation-governed-release",
       "discarded",

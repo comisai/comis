@@ -264,16 +264,16 @@ describe("createSqliteOutwardSendLedger — durable outward sequence", () => {
   });
 });
 
-describe("createSqliteOutwardSendLedger — operator decisions", () => {
+describe("createSqliteOutwardSendLedger — terminal decisions", () => {
   it("persists a stable decision and blocks a later send intent", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 
-    expect(await ledger.recordOperatorDecision(
+    expect(await ledger.recordTerminalDecision(
       "run-operator",
       "operation-operator",
       "discarded",
     )).toEqual({ ok: true, value: undefined });
-    expect(await ledger.lookupOperatorDecision("run-operator", "operation-operator"))
+    expect(await ledger.lookupTerminalDecision("run-operator", "operation-operator"))
       .toEqual({ ok: true, value: "discarded" });
     const step = await ledger.allocateStep("run-operator", "operation-operator");
     if (!step.ok) throw step.error;
@@ -294,13 +294,31 @@ describe("createSqliteOutwardSendLedger — operator decisions", () => {
     if (!step.ok) throw step.error;
     await ledger.begin(makeBegin({ rootRunId: "run-active", stepIndex: step.value }));
 
-    expect((await ledger.recordOperatorDecision(
+    expect((await ledger.recordTerminalDecision(
       "run-active",
       "operation-active",
       "delivered",
     )).ok).toBe(false);
-    expect(await ledger.lookupOperatorDecision("run-active", "operation-active"))
+    expect(await ledger.lookupTerminalDecision("run-active", "operation-active"))
       .toEqual({ ok: true, value: undefined });
+  });
+
+  it("persists no-reply as a terminal admission decision", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    expect(await ledger.recordTerminalDecision(
+      "run-no-reply",
+      "operation-no-reply",
+      "no_reply",
+    )).toEqual({ ok: true, value: undefined });
+    expect(await ledger.lookupTerminalDecision("run-no-reply", "operation-no-reply"))
+      .toEqual({ ok: true, value: "no_reply" });
+    const step = await ledger.allocateStep("run-no-reply", "operation-no-reply");
+    if (!step.ok) throw step.error;
+    expect((await ledger.begin(makeBegin({
+      rootRunId: "run-no-reply",
+      stepIndex: step.value,
+    }))).ok).toBe(false);
   });
 });
 

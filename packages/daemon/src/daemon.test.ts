@@ -151,8 +151,8 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
           allowAgents: [],
           subAgentRetentionMs: 3_600_000,
           waitTimeoutMs: 60_000,
-          // The announcement batcher reads delivery.maxRetries for
-          // its transient-retry cap (schema-defaulted in real config).
+          // The recovery queue reads delivery.maxRetries for its
+          // durable retry cap (schema-defaulted in real config).
           delivery: { maxRetries: 3 },
         },
         storage: "file" as const,

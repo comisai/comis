@@ -493,6 +493,12 @@ A JSONL **snapshot** of retained announcement-delivery failures, parked parent-d
 
 The file tracks the queue rather than accumulating: every change rewrites it atomically, and it is **removed** as soon as the queue drains to zero. It therefore exists only while something is actually pending — if the daemon logged a quarantine WARN and this file is absent, the quarantine has since **resolved**, not vanished. Look for the matching resolution line (`Committed dead-letter operation removed without replay`, or `Dead-letter entry delivered successfully`) rather than treating the announcement as lost.
 
+Ledgerless terminal decisions are stored separately as content-free, digest-keyed
+records under `dead-letters.jsonl.terminal-decisions/`. This indexed store
+suppresses replay without keeping the pending snapshot alive or making each
+queue mutation rewrite the lifetime decision history. Ledger-governed decisions
+use the indexed SQLite outward terminal-decision store instead.
+
 **Written by:** the announcement delivery subsystem.
 **Safe to delete?** No. Deleting it discards delivery evidence and pending outcomes. Do not edit or remove it while the daemon is running; the live queue is the authority and may rewrite the snapshot. Use `node packages/cli/dist/cli.js quarantine list` and `quarantine release` for operator decisions.
 

@@ -398,21 +398,21 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       sessionKey: request.sessionKey,
       ...(request.partId === undefined ? {} : { partId: request.partId }),
     };
-    const operatorDecision = await deps.ledger.lookupOperatorDecision(
+    const terminalDecision = await deps.ledger.lookupTerminalDecision(
       request.rootRunId,
       request.operationId,
     );
-    if (!operatorDecision.ok) {
+    if (!terminalDecision.ok) {
       logFailure(
         { agentId: request.agentId, rootRunId: request.rootRunId },
-        "operator_decision_lookup",
+        "terminal_decision_lookup",
         "dependency",
-        "repair outward operator-decision storage before retrying the retained completion",
-        "Completion announcement operator decision lookup failed",
+        "repair outward terminal-decision storage before retrying the retained completion",
+        "Completion announcement terminal decision lookup failed",
       );
       return ok({ delivered: false, failure: "lookup_blocked" });
     }
-    if (operatorDecision.value !== undefined) {
+    if (terminalDecision.value !== undefined) {
       return ok({ delivered: false, failure: "operation_retained" });
     }
     const allocated = await deps.ledger.allocateStep(request.rootRunId, request.operationId);

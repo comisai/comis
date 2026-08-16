@@ -663,7 +663,7 @@ See [Resilience Architecture](/agents/resilience) for how these systems work tog
     announcement:dead_lettered
     ```
 
-    **What happened:** Announcement delivery failed and the outcome was retained in the dead-letter queue. Safe automatic retry may be attempted up to 5 times; exhausted, expired, ambiguous, and invalid records remain quarantined for an operator decision.
+    **What happened:** Announcement delivery failed and the outcome was retained in the dead-letter queue. Safe automatic retry may be attempted up to `security.agentToAgent.delivery.maxRetries` times; exhausted, expired, ambiguous, and invalid records remain quarantined for an operator decision.
 
     **How to fix:**
 

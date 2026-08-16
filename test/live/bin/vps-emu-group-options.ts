@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { closeSync, mkdirSync, openSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+import { isAbsolute, resolve } from "node:path";
 import type {
   CreateGroupChatOptions,
   GroupMember,
@@ -17,38 +18,49 @@ export interface StandaloneGroupSpec {
 
 const FIRST_MESSAGE_ID = 100;
 const RESTART_MESSAGE_ID_BLOCK = 1_000_000;
-const MESSAGE_ID_TIME_UNIT_MS = 1_000;
 
 interface StandaloneEmulatorState {
   readonly messageIdBase?: unknown;
 }
 
 export function resolveStandaloneMessageIdReservationDirectory(
-  workingDirectory: string,
   stateDirectory?: string,
 ): string {
-  return resolve(
-    stateDirectory ?? resolve(workingDirectory, ".comis-vps-emu-state"),
-    "message-id-reservations",
+  if (!stateDirectory || !isAbsolute(stateDirectory)) {
+    throw new TypeError("EMU_MESSAGE_ID_STATE_DIR must be an absolute durable directory");
+  }
+  return resolve(stateDirectory, "message-id-reservations");
+}
+
+function createCollisionResistantMessageIdBase(): number {
+  const random = randomBytes(6).readUIntBE(0, 6);
+  const blockCount = Math.floor(
+    (Number.MAX_SAFE_INTEGER - RESTART_MESSAGE_ID_BLOCK - FIRST_MESSAGE_ID)
+      / RESTART_MESSAGE_ID_BLOCK,
   );
+  return FIRST_MESSAGE_ID + (random % blockCount) * RESTART_MESSAGE_ID_BLOCK;
 }
 
 /**
  * Reserve a fresh message-id block for each standalone emulator process.
  *
  * Telegram message ids do not rewind when a bot reconnects. The standalone
- * harness advances the persisted block base and also applies a wall-clock
- * floor. Losing an ephemeral wiring file therefore cannot reuse a stable
- * `(bot, chat, message_id)` identity retained by an existing Comis session.
+ * harness advances independently persisted blocks and seeds a missing state
+ * file with a collision-resistant base. Ephemeral wiring and checkout state do
+ * not define the retained `(bot, chat, message_id)` identity.
  */
 export function reserveStandaloneMessageIdBase(
   previous: StandaloneEmulatorState | undefined,
   reservationDirectory: string,
+  freshBase: number = createCollisionResistantMessageIdBase(),
 ): number {
-  const freshBase = Math.max(
-    FIRST_MESSAGE_ID,
-    Math.floor(Date.now() / MESSAGE_ID_TIME_UNIT_MS),
-  );
+  if (
+    !Number.isSafeInteger(freshBase)
+    || freshBase < FIRST_MESSAGE_ID
+    || freshBase > Number.MAX_SAFE_INTEGER - RESTART_MESSAGE_ID_BLOCK
+  ) {
+    throw new TypeError("Standalone emulator fresh messageIdBase is invalid");
+  }
   let previousFloor = FIRST_MESSAGE_ID;
   if (previous?.messageIdBase !== undefined) {
     if (
