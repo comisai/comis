@@ -1121,6 +1121,68 @@ describe("createSubAgentRunner", () => {
     await runner.shutdown();
   });
 
+  it("retries announce skip persistence without sending a failure notice", async () => {
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "private result ANNOUNCE_SKIP",
+      tokensUsed: { total: 100 },
+      cost: { total: 0.01 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    const suppressProducer = vi.fn()
+      .mockResolvedValueOnce(err(new Error("suppression storage unavailable")))
+      .mockResolvedValue(ok(true));
+    const reserveProducer = vi.fn(async () => ok(undefined));
+    deps.deadLetterQueue = {
+      reserveProducer,
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer,
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "silent task",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(suppressProducer).toHaveBeenCalledTimes(1);
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "running" });
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "session:sub_agent_completed",
+      expect.objectContaining({ runId, success: false }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(suppressProducer).toHaveBeenCalledTimes(2);
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "completed" });
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(deps.deadLetterQueue.releaseProducer).not.toHaveBeenCalled();
+    expect(deps.deadLetterQueue.cancelProducer).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
   it("missing completion route emits a child-routed delivery-skipped event", async () => {
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({

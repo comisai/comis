@@ -121,6 +121,7 @@ export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 const SHUTDOWN_ACTIVE_GRACE_MS = 30_000;
 const SHUTDOWN_NOTICE_GRACE_MS = 5_000;
 const DURABLE_TERMINAL_RETRY_MS = 1_000;
+const ANNOUNCEMENT_SUPPRESSION_RETRY_MS = 1_000;
 /**
  * Maximum caller-side guard for a sub-agent runner shutdown. The runner owns
  * the active-run drain and governed-notice grace, with a final bounded margin
@@ -1103,6 +1104,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const providerSettledRunIds = new Set<string>();
   const deliverySuppressedRunIds = new Set<string>();
   const deliveryAdmissionRunIds = new Set<string>();
+  const producerSuppressionPendingRunIds = new Set<string>();
   const producerTransferAttemptedRunIds = new Set<string>();
   const producerAdmissionAbort = new AbortController();
   const forcedTerminalRunIds = new Set<string>();
@@ -1976,6 +1978,7 @@ function classifyCompletionErrorKind(
     trajectoryClosedRunIds.delete(runId);
     resumeDescriptors.delete(runId);
     archivedSessionRunIds.delete(runId);
+    producerSuppressionPendingRunIds.delete(runId);
     producerTransferAttemptedRunIds.delete(runId);
   };
 
@@ -3863,8 +3866,48 @@ function classifyCompletionErrorKind(
             }
             if (suppressProducer) {
               producerSuppressionAttempted = true;
-              const suppressed = await suppressProducer(runId);
-              if (!suppressed.ok) throw suppressed.error;
+              producerSuppressionPendingRunIds.add(runId);
+              deliveryAdmissionRunIds.add(runId);
+              let attemptCount = 0;
+              const suppressionStartedAt = clock.now();
+              try {
+                while (!deliverySuppressedRunIds.has(runId)) {
+                  attemptCount++;
+                  const suppressed = await suppressProducer(runId);
+                  if (suppressed.ok) {
+                    producerSuppressionPendingRunIds.delete(runId);
+                    if (attemptCount > 1) {
+                      deps.logger?.info({
+                        runId,
+                        attempts: attemptCount,
+                        durationMs: clock.now() - suppressionStartedAt,
+                      }, "Announcement producer suppression recovered");
+                    }
+                    break;
+                  }
+                  if (attemptCount === 1) {
+                    deps.logger?.warn({
+                      runId,
+                      err: toSafeErrorLogString(suppressed.error),
+                      errorKind: "resource" as const,
+                      hint: "Restore dead-letter storage; explicit announcement suppression remains pending and will retry",
+                    }, "Announcement producer suppression could not be persisted");
+                  } else {
+                    deps.logger?.debug({ runId, attempts: attemptCount },
+                      "Announcement producer suppression retry remains pending");
+                  }
+                  await new Promise<void>((resolve) => {
+                    const retryHandle = timers.setTimeout(
+                      resolve,
+                      ANNOUNCEMENT_SUPPRESSION_RETRY_MS,
+                    );
+                    retryHandle.unref();
+                  });
+                }
+                if (producerSuppressionPendingRunIds.has(runId)) return;
+              } finally {
+                deliveryAdmissionRunIds.delete(runId);
+              }
             }
           } else {
             // Use NarrativeCaster for tagged result announcement.
@@ -4906,6 +4949,16 @@ function classifyCompletionErrorKind(
             && suspendDurableRunForRestart(run)
           ) {
             suspendedRunCount++;
+            continue;
+          }
+          if (producerSuppressionPendingRunIds.has(runId)) {
+            deliverySuppressedRunIds.add(runId);
+            stoppedRunCount++;
+            deps.logger?.error({
+              runId,
+              errorKind: "resource" as const,
+              hint: "Restore dead-letter storage and resume the retained producer before accepting new work",
+            }, "Explicit announcement suppression remains pending at shutdown");
             continue;
           }
           deliverySuppressedRunIds.add(runId);

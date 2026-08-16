@@ -1615,6 +1615,36 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     }));
   });
 
+  it("applies producer suppression to later operation aliases", async () => {
+    const completionKey = "suppressed-logical-completion";
+    const producer = decisionInput({
+      idempotencyKey: completionKey,
+      runId: "suppressed-alias-run",
+      completionKeys: [completionKey],
+      retirementKeys: [completionKey],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision(decisionInput({
+      idempotencyKey: "hashed-operation-alias",
+      runId: producer.runId,
+      completionKeys: [completionKey],
+      retirementKeys: [completionKey],
+    }))).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+  });
+
   it("finishes a pending producer suppression when admission resumes", async () => {
     const producer = decisionInput({
       idempotencyKey: "pending-suppression-operation",
@@ -1634,7 +1664,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await mkdir(decisionsPath, { recursive: true });
     await writeFile(blockedShard, "blocked", "utf8");
 
-    await expect(queue.suppressProducer(producer.runId)).resolves.toMatchObject({ ok: false });
+    await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
     await unlink(blockedShard);
 
     const restarted = createAnnouncementDeadLetterQueue({
@@ -2106,6 +2136,39 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
       created: false,
       terminalDecision: "delivered",
+    }));
+  });
+
+  it("preserves chunk suppression groups through reservation adjudication", async () => {
+    const terminalGroupKey = "adjudicated-chunk-group";
+    const firstChunk = decisionInput({
+      failedAt: Date.now() - 301_000,
+      idempotencyKey: "adjudicated-chunk-first",
+      partId: "text:chunk:0",
+      completionKeys: ["adjudicated-chunk-first"],
+      terminalGroupKey,
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      maxRetries: 1,
+    });
+    await expect(queue.reserveDecision(firstChunk)).resolves.toEqual(ok({ created: true }));
+    await queue.drain(vi.fn(async () => false));
+
+    const retained = (await listQuarantined(queue))[0];
+    if (!retained) throw new Error("Expected adjudicated chunk quarantine row");
+    await expect(queue.release(retained.id, "discarded")).resolves.toEqual(ok(true));
+
+    await expect(queue.reserveDecision(decisionInput({
+      idempotencyKey: "adjudicated-chunk-second",
+      partId: "text:chunk:1",
+      completionKeys: ["adjudicated-chunk-second"],
+      terminalGroupKey,
+    }))).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "discarded",
     }));
   });
 

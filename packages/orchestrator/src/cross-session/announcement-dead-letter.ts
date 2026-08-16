@@ -624,9 +624,29 @@ export function createAnnouncementDeadLetterQueue(
       entries,
       decisionReservations,
     );
-    if (!terminalized.ok) return terminalized;
+    if (!terminalized.ok) {
+      logger?.warn(
+        {
+          runId: record.runId,
+          errorKind: "resource" as const,
+          hint: "restore terminal-decision storage; the durable no-reply producer state will retry during recovery",
+        },
+        "Announcement producer suppression remains pending",
+      );
+      return ok(true);
+    }
     const removed = await cancelProducerDurably(producerKey);
-    if (!removed.ok) return removed;
+    if (!removed.ok) {
+      logger?.warn(
+        {
+          runId: record.runId,
+          errorKind: "resource" as const,
+          hint: "restore dead-letter storage; the terminal no-reply producer will be removed during recovery",
+        },
+        "Terminal announcement producer cleanup remains pending",
+      );
+      return ok(true);
+    }
     return ok(true);
   }
 
@@ -800,16 +820,22 @@ export function createAnnouncementDeadLetterQueue(
     };
     const direct = await lookupOwner(owner);
     if (!direct.ok || direct.value !== undefined) return direct;
-    if (
-      owner.terminalGroupKey === undefined
-      || owner.terminalGroupKey === owner.idempotencyKey
-    ) return direct;
-    return lookupOwner({
-      ...owner,
-      idempotencyKey: owner.terminalGroupKey,
-      completionKeys: [owner.terminalGroupKey],
-      terminalGroupKey: undefined,
-    });
+    const terminalKeys = [...new Set([
+      owner.terminalGroupKey,
+      ...(owner.completionKeys ?? []),
+    ].filter((key): key is string =>
+      key !== undefined && key !== owner.idempotencyKey))];
+    for (const terminalKey of terminalKeys) {
+      const terminal = await lookupOwner({
+        ...owner,
+        idempotencyKey: terminalKey,
+        completionKeys: [terminalKey],
+        terminalGroupKey: undefined,
+      });
+      if (!terminal.ok) return terminal;
+      if (terminal.value !== undefined) return terminal;
+    }
+    return direct;
   }
 
   async function recordTerminalDecision(
@@ -1941,6 +1967,20 @@ export function createAnnouncementDeadLetterQueue(
     return recorded;
   }
 
+  function retryEntryFromReservation(
+    reservation: ParentDecisionReservationRecord,
+    options: { readonly lastError?: string; readonly stepIndex?: number } = {},
+  ): DeadLetterEntry {
+    const { recordType: _recordType, ...owner } = reservation;
+    return {
+      ...owner,
+      attemptCount: 0,
+      lastAttemptAt: 0,
+      ...(options.lastError === undefined ? {} : { lastError: options.lastError }),
+      ...(options.stepIndex === undefined ? {} : { stepIndex: options.stepIndex }),
+    };
+  }
+
   /** Settle reservations after the rewrite grace. The ledger decides whether
    * delivery is safe; missing roots, errors, and uncertainty remain parked. */
   async function adjudicateReservations(ledger?: OutwardSendLedgerPort): Promise<void> {
@@ -1990,32 +2030,9 @@ export function createAnnouncementDeadLetterQueue(
           },
           "Ledgerless completion attachment requires operator review",
         );
-        nextEntries.push({
-          id: reservation.id,
-          announcementText: reservation.announcementText,
-          channelType: reservation.channelType,
-          channelId: reservation.channelId,
-          agentId: reservation.agentId,
-          runId: reservation.runId,
-          sessionKey: reservation.sessionKey,
-          failedAt: reservation.failedAt,
-          attemptCount: 0,
-          lastAttemptAt: 0,
+        nextEntries.push(retryEntryFromReservation(reservation, {
           lastError: "attachment_delivery_unavailable",
-          idempotencyKey: reservation.idempotencyKey,
-          rootRunId: reservation.rootRunId,
-          deliveryAuthority: reservation.deliveryAuthority,
-          destinationEndpoint: reservation.destinationEndpoint,
-          completionKeys: reservation.completionKeys,
-          ...(reservation.retirementKeys
-            ? { retirementKeys: reservation.retirementKeys }
-            : {}),
-          ...(reservation.partId ? { partId: reservation.partId } : {}),
-          ...(reservation.textChunks ? { textChunks: reservation.textChunks } : {}),
-          attachment: reservation.attachment,
-          ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
-          ...(reservation.extra ? { extra: reservation.extra } : {}),
-        } as DeadLetterEntry);
+        }));
         settled.push(reservation.idempotencyKey);
         continue;
       }
@@ -2040,33 +2057,10 @@ export function createAnnouncementDeadLetterQueue(
         },
         "Parent decision rewrite grace elapsed; adjudicating its safe fallback",
       );
-      nextEntries.push({
-        id: reservation.id,
-        announcementText: reservation.announcementText,
-        channelType: reservation.channelType,
-        channelId: reservation.channelId,
-        agentId: reservation.agentId,
-        runId: reservation.runId,
-        sessionKey: reservation.sessionKey,
-        failedAt: reservation.failedAt,
-        attemptCount: 0,
-        lastAttemptAt: 0,
-        idempotencyKey: reservation.idempotencyKey,
-        rootRunId: reservation.rootRunId,
+      nextEntries.push(retryEntryFromReservation(reservation, {
         ...(step?.ok && step.value.ok ? { stepIndex: step.value.value } : {}),
-        deliveryAuthority: reservation.deliveryAuthority,
-        destinationEndpoint: reservation.destinationEndpoint,
-        completionKeys: reservation.completionKeys,
-        ...(reservation.retirementKeys
-          ? { retirementKeys: reservation.retirementKeys }
-          : {}),
         ...(!ledger ? { lastError: "transport_rejected" } : {}),
-        ...(reservation.partId ? { partId: reservation.partId } : {}),
-        ...(reservation.textChunks ? { textChunks: reservation.textChunks } : {}),
-        ...(reservation.attachment ? { attachment: reservation.attachment } : {}),
-        ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
-        ...(reservation.extra ? { extra: reservation.extra } : {}),
-      } as DeadLetterEntry);
+      }));
       settled.push(reservation.idempotencyKey);
     }
     if (settled.length === 0) return;
