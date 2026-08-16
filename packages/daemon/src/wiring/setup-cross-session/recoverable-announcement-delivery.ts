@@ -132,6 +132,15 @@ function reservationMatches(
     && existing.completionKeys.length === expected.completionKeys.length
     && existing.completionKeys.every((key, index) => key === expected.completionKeys[index])
     && (
+      existing.retirementKeys === undefined && expected.retirementKeys === undefined
+      || (
+        existing.retirementKeys !== undefined
+        && expected.retirementKeys !== undefined
+        && existing.retirementKeys.length === expected.retirementKeys.length
+        && existing.retirementKeys.every((key, index) => key === expected.retirementKeys[index])
+      )
+    )
+    && (
       expected.textChunks === undefined
       || (
         existing.textChunks !== undefined
@@ -515,6 +524,9 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
           deliveryAuthority: chunkReservation.deliveryAuthority,
           destinationEndpoint: chunkReservation.destinationEndpoint,
           completionKeys: chunkReservation.completionKeys,
+          ...(chunkReservation.retirementKeys
+            ? { retirementKeys: chunkReservation.retirementKeys }
+            : {}),
           ...(chunkReservation.textChunks
             ? { textChunks: chunkReservation.textChunks }
             : {}),

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err } from "@comis/shared";
@@ -21,6 +21,20 @@ const owner = {
   failedAt: 1,
   attemptCount: 5,
 };
+
+async function durableRecordFiles(directory: string): Promise<string[]> {
+  const files: string[] = [];
+  const visit = async (current: string): Promise<void> => {
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) await visit(path);
+      else files.push(path);
+    }
+  };
+  await visit(directory);
+  return files.sort();
+}
 
 describe("announcement terminal decisions", () => {
   let directory: string;
@@ -86,12 +100,24 @@ describe("announcement terminal decisions", () => {
       value: undefined,
     });
     await expect(store.lookup(third)).resolves.toEqual({ ok: true, value: undefined });
-    expect(await readdir(directory)).toEqual(["dead-letters.jsonl.terminal-decisions.jsonl"]);
-    const rows = (await readFile(
-      join(directory, "dead-letters.jsonl.terminal-decisions.jsonl"),
-      "utf8",
-    )).trim().split("\n");
-    expect(rows).toHaveLength(2);
+    await expect(createAnnouncementTerminalDecisionStore(filePath).lookup(owner))
+      .resolves.toEqual({ ok: true, value: "delivered" });
+    await expect(createAnnouncementTerminalDecisionStore(filePath).lookup(second))
+      .resolves.toEqual({ ok: true, value: "discarded" });
+  });
+
+  it("writes independent terminal keys without replacing existing guard files", async () => {
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+    await store.record(owner, "delivered");
+    const firstFiles = await durableRecordFiles(directory);
+    expect(firstFiles).toHaveLength(1);
+    const firstStat = await stat(firstFiles[0]!);
+
+    await store.record({ ...owner, runId: "run-2", idempotencyKey: "operation-2" }, "discarded");
+
+    const secondFiles = await durableRecordFiles(directory);
+    expect(secondFiles).toHaveLength(2);
+    expect((await stat(firstFiles[0]!)).ino).toBe(firstStat.ino);
   });
 
   it("recovers a prepared retirement after producer deletion", async () => {
@@ -139,7 +165,7 @@ describe("announcement terminal decisions", () => {
       .resolves.toEqual({ ok: true, value: undefined });
   });
 
-  it("keeps a terminal guard authoritative after its renamed index is visible", async () => {
+  it("keeps a terminal guard authoritative after its renamed record is visible", async () => {
     const store = createAnnouncementTerminalDecisionStore(filePath, {
       syncDirectory: async () => err(new Error("directory sync failed")),
     });

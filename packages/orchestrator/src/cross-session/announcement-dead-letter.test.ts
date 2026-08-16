@@ -602,6 +602,56 @@ describe("AnnouncementDeadLetterQueue", () => {
     await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: false }));
   });
 
+  it("retires claimed chunk aliases with their logical producer ownership", async () => {
+    const producerExists = vi.fn(async () => ok(false));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      retirementProducerExists: producerExists,
+    });
+    const reservation = {
+      idempotencyKey: "chunk-operation",
+      agentId: "agent-a",
+      runId: "chunk-run",
+      sessionKey: "default:agent-a:telegram:chat-123:user_a",
+      announcementText: "chunk result",
+      channelType: "telegram",
+      channelId: "chat-123",
+      failedAt: Date.now(),
+      rootRunId: "root-chunk-run",
+      deliveryAuthority: makeDeliveryAuthority("agent-a"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-123"),
+      completionKeys: ["parent-operation", "logical-completion"],
+      retirementKeys: ["logical-completion"],
+    };
+    await expect(queue.reserveDecision(reservation)).resolves.toEqual(ok({ created: true }));
+    const { retirementKeys: _retirementKeys, ...attempt } = {
+      ...reservation,
+      attemptCount: 0,
+      lastError: "outward_operation_in_flight",
+    };
+    await expect(queue.beginDeliveryAttempt(attempt)).resolves.toEqual(ok({ claimed: true }));
+    await expect(queue.settleDeliveryAttempt("chunk-operation", "accepted"))
+      .resolves.toEqual(ok(true));
+    await expect(queue.prepareTerminalDecisionRetirement(["logical-completion"], {
+      kind: "graph",
+      tenantId: "default",
+      graphId: "retired-graph",
+    })).resolves.toEqual(ok(undefined));
+
+    await queue.drain(vi.fn(async () => false));
+
+    const terminalStore = createAnnouncementTerminalDecisionStore(filePath);
+    await expect(terminalStore.lookup(reservation))
+      .resolves.toEqual(ok(undefined));
+    await expect(terminalStore.lookup({
+      ...reservation,
+      idempotencyKey: "parent-operation",
+      completionKeys: ["parent-operation"],
+    })).resolves.toEqual(ok(undefined));
+  });
+
   it("refuses direct reentry after its recovery retention window", async () => {
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,

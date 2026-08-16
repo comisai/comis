@@ -106,6 +106,61 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   const graphCompletions = createGraphCompletionTracker(
     (gs) => handleGraphCompletionFn(state, deps, gs), deps.logger,
   );
+  async function reserveGraphAnnouncementProducer(
+    gs: GraphRunState,
+  ): Promise<Result<boolean, Error>> {
+    const hasAnnouncementRoute = gs.announceChannelType !== undefined
+      || gs.announceChannelId !== undefined;
+    if (!hasAnnouncementRoute || !deps.announcementDeadLetterQueue) return ok(false);
+    if (
+      gs.announceChannelType === undefined
+      || gs.announceChannelId === undefined
+      || gs.callerAgentId === undefined
+      || gs.callerSessionKey === undefined
+      || gs.callerConversationLocator === undefined
+      || gs.callerEndpoint === undefined
+    ) {
+      return err(new Error("Graph announcement producer identity is incomplete"));
+    }
+    const operationId = createStableAnnouncementOperationId(
+      gs.callerAgentId,
+      gs.callerSessionKey,
+      gs.graphId,
+    );
+    const reserved = await deps.announcementDeadLetterQueue.reserveProducer({
+      idempotencyKey: operationId,
+      agentId: gs.callerAgentId,
+      runId: gs.graphId,
+      sessionKey: gs.callerSessionKey,
+      announcementText: "A graph finished, but its completion notification was interrupted before delivery ownership transferred.",
+      channelType: gs.announceChannelType,
+      channelId: gs.announceChannelId,
+      failedAt: systemNowMs(),
+      rootRunId: gs.rootRunId ?? `announcement:${gs.callerSessionKey}`,
+      deliveryAuthority: {
+        tenantId: gs.callerConversationLocator.conversationScope.tenantId,
+        agentId: gs.callerAgentId,
+        conversationRef: gs.callerConversationLocator.conversationRef,
+      },
+      destinationEndpoint: gs.callerEndpoint,
+      completionKeys: [operationId, gs.graphId],
+      retirementKeys: [gs.graphId],
+      ...(gs.callerEndpoint.threadId ? { threadId: gs.callerEndpoint.threadId } : {}),
+    });
+    if (!reserved.ok) return reserved;
+    const retirement = await deps.announcementDeadLetterQueue
+      .prepareTerminalDecisionRetirement([gs.graphId], {
+        kind: "graph",
+        tenantId: deps.tenantId,
+        graphId: gs.graphId,
+      });
+    if (!retirement.ok) {
+      await deps.announcementDeadLetterQueue.cancelProducer(gs.graphId);
+      return retirement;
+    }
+    gs.announcementProducerReserved = true;
+    return ok(true);
+  }
   /** Persist node state before releasing work; terminal writes await notification delivery. */
   async function checkpointGraph(gs: GraphRunState): Promise<boolean> {
     if (
@@ -538,57 +593,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       maxAnnouncementChars: config.maxAnnouncementChars,
     };
 
-    const hasAnnouncementRoute = params.announceChannelType !== undefined
-      || params.announceChannelId !== undefined;
-    if (hasAnnouncementRoute && deps.announcementDeadLetterQueue) {
-      if (
-        params.announceChannelType === undefined
-        || params.announceChannelId === undefined
-        || params.callerAgentId === undefined
-        || params.callerSessionKey === undefined
-        || gs.callerConversationLocator === undefined
-        || gs.callerEndpoint === undefined
-      ) {
-        return err("Graph announcement producer identity is incomplete");
-      }
-      const operationId = createStableAnnouncementOperationId(
-        params.callerAgentId,
-        params.callerSessionKey,
-        graphId,
-      );
-      const reserved = await deps.announcementDeadLetterQueue.reserveProducer({
-        idempotencyKey: operationId,
-        agentId: params.callerAgentId,
-        runId: graphId,
-        sessionKey: params.callerSessionKey,
-        announcementText: "A graph finished, but its completion notification was interrupted before delivery ownership transferred.",
-        channelType: params.announceChannelType,
-        channelId: params.announceChannelId,
-        failedAt: systemNowMs(),
-        rootRunId: graphRootRunId ?? `announcement:${params.callerSessionKey}`,
-        deliveryAuthority: {
-          tenantId: gs.callerConversationLocator.conversationScope.tenantId,
-          agentId: params.callerAgentId,
-          conversationRef: gs.callerConversationLocator.conversationRef,
-        },
-        destinationEndpoint: gs.callerEndpoint,
-        completionKeys: [operationId, graphId],
-        retirementKeys: [graphId],
-        ...(gs.callerEndpoint.threadId ? { threadId: gs.callerEndpoint.threadId } : {}),
-      });
-      if (!reserved.ok) return err(reserved.error.message);
-      const retirement = await deps.announcementDeadLetterQueue
-        .prepareTerminalDecisionRetirement([graphId], {
-          kind: "graph",
-          tenantId: deps.tenantId,
-          graphId,
-        });
-      if (!retirement.ok) {
-        await deps.announcementDeadLetterQueue.cancelProducer(graphId);
-        return err(retirement.error.message);
-      }
-      gs.announcementProducerReserved = true;
-    }
+    const announcementProducer = await reserveGraphAnnouncementProducer(gs);
+    if (!announcementProducer.ok) return err(announcementProducer.error.message);
 
     const createdSharedDir = tryCatch(() => mkdirSync(sharedDir, { recursive: true, mode: 0o700 }));
     if (!createdSharedDir.ok) {
@@ -931,8 +937,6 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       "graph-runs",
       durableArtifactGraphId.value,
     );
-    mkdirSync(sharedDir, { recursive: true, mode: 0o700 });
-
     const stateMachine = restored.value;
 
     const gs: GraphRunState = {
@@ -991,6 +995,16 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       maxAnnouncementChars: config.maxAnnouncementChars,
     };
 
+    const announcementProducer = await reserveGraphAnnouncementProducer(gs);
+    if (!announcementProducer.ok) return announcementProducer;
+    const createdSharedDir = tryCatch(() => mkdirSync(sharedDir, { recursive: true, mode: 0o700 }));
+    if (!createdSharedDir.ok) {
+      if (gs.announcementProducerReserved) {
+        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+      }
+      return err(new Error("resumeGraph: graph shared directory could not be created"));
+    }
+
     state.graphs.set(graphId, gs);
     deps.retainDurableRoot?.(rootRunId);
 
@@ -1014,6 +1028,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       const completed = await checkpointGraph(gs);
       if (!completed) {
         discardGraphState(state, deps, gs, releaseDurableRetention);
+        if (gs.announcementProducerReserved) {
+          await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+        }
         return err(new Error("resumeGraph: terminal authority could not be persisted"));
       }
       return ok(undefined);
@@ -1026,6 +1043,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         callbacks.handleGraphTimeout(gs);
         if (!(await awaitDurableTransitions(gs))) {
           discardGraphState(state, deps, gs, releaseDurableRetention);
+          if (gs.announcementProducerReserved) {
+            await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+          }
           return err(new Error("resumeGraph: timeout authority could not be persisted"));
         }
         return ok(undefined);
@@ -1044,6 +1064,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     callbacks.spawnReadyNodes(gs);
     if (!(await awaitDurableTransitions(gs))) {
       discardGraphState(state, deps, gs, releaseDurableRetention);
+      if (gs.announcementProducerReserved) {
+        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+      }
       return err(new Error("resumeGraph: durable launch authority failed"));
     }
 

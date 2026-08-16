@@ -713,7 +713,9 @@ export function createAnnouncementDeadLetterQueue(
         ...owner,
         idempotencyKey: completionKey,
         completionKeys: [completionKey],
-        retirementKeys: [completionKey],
+        retirementKeys: owner.retirementKeys && owner.retirementKeys.length > 0
+          ? owner.retirementKeys
+          : [completionKey],
       }, outcome);
       if (!completed.ok) return completed;
     }
@@ -1569,11 +1571,19 @@ export function createAnnouncementDeadLetterQueue(
     if (!entry.idempotencyKey) {
       return err(new Error("Dead-letter delivery attempt requires an idempotency key"));
     }
-    const terminalDecision = await lookupTerminalDecision(entry);
+    const existing = entries.find((candidate) =>
+      candidate.idempotencyKey === entry.idempotencyKey);
+    const reservation = decisionReservations.find((candidate) =>
+      candidate.idempotencyKey === entry.idempotencyKey);
+    const retainedRetirementKeys = reservation?.retirementKeys ?? existing?.retirementKeys;
+    const claimedEntry = entry.retirementKeys === undefined && retainedRetirementKeys !== undefined
+      ? { ...entry, retirementKeys: retainedRetirementKeys }
+      : entry;
+    const terminalDecision = await lookupTerminalDecision(claimedEntry);
     if (!terminalDecision.ok) return terminalDecision;
     if (terminalDecision.value !== undefined) {
       const reconciled = await terminalizeOwner(
-        entry,
+        claimedEntry,
         terminalDecision.value,
         entries,
         decisionReservations,
@@ -1581,13 +1591,11 @@ export function createAnnouncementDeadLetterQueue(
       if (!reconciled.ok) return reconciled;
       return ok({ claimed: false, terminalDecision: terminalDecision.value });
     }
-    if (entry.attachment?.kind === "source") {
+    if (claimedEntry.attachment?.kind === "source") {
       return err(new Error("Dead-letter attachment must be snapshotted before delivery"));
     }
-    const existing = entries.find((candidate) =>
-      candidate.idempotencyKey === entry.idempotencyKey);
     if (existing) {
-      const same = isSameAnnouncementRecovery(existing, entry);
+      const same = isSameAnnouncementRecovery(existing, claimedEntry);
       if (!same.ok) return same;
       if (!same.value) return err(new Error("Dead-letter recovery key identity mismatch"));
       if (existing.lastError !== "transport_rejected") return ok({ claimed: false });
@@ -1610,12 +1618,10 @@ export function createAnnouncementDeadLetterQueue(
       entries = reclaimedEntries;
       return ok({ claimed: true });
     }
-    const reservation = decisionReservations.find((candidate) =>
-      candidate.idempotencyKey === entry.idempotencyKey);
     if (reservation) {
       const same = isSameAnnouncementRecovery(
-        { ...entry, ...reservation, lastAttemptAt: 0 },
-        entry,
+        { ...claimedEntry, ...reservation, lastAttemptAt: 0 },
+        claimedEntry,
       );
       if (!same.ok) return same;
       if (!same.value) {
@@ -1626,9 +1632,9 @@ export function createAnnouncementDeadLetterQueue(
     if (!id.ok) return id;
     const now = systemNowMs();
     const claimed: DeadLetterEntry = {
-      ...entry,
+      ...claimedEntry,
       id: id.value,
-      attemptCount: entry.attemptCount,
+      attemptCount: claimedEntry.attemptCount,
       lastAttemptAt: now,
       lastError: "outward_operation_in_flight",
     };

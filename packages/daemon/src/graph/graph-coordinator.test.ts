@@ -5236,6 +5236,12 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
 
     it("keeps the original graph identity and terminal delivery when the checkpoint authority changes", async () => {
       const durableRuns = createRecordingDurableRuns();
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async () => ok(undefined)),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => ok(undefined)),
+        prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
+      };
       const sendGovernedAnnouncement = vi.fn(async () => ok({
         delivered: true as const,
         identity: {
@@ -5247,6 +5253,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const { deps, runner, eventBus } = createTestDeps({
         durableRuns,
         sendGovernedAnnouncement,
+        announcementDeadLetterQueue,
       });
       const coordinator = createGraphCoordinator(deps);
       const exactGraph = buildGraph([{ nodeId: "A" }]);
@@ -5269,6 +5276,15 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       });
 
       expect(await coordinator.resumeGraph(record)).toEqual({ ok: true, value: undefined });
+      expect(announcementDeadLetterQueue.reserveProducer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "original-graph-run",
+          rootRunId: "root-original-workspace",
+          retirementKeys: ["original-graph-run"],
+        }),
+      );
+      expect(announcementDeadLetterQueue.reserveProducer.mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(runner.spawn).mock.invocationCallOrder[0]!);
       expect(runner._getSpawnCalls()[0]?.graphSharedDir).toBe(
         "/tmp/test-comis/graph-runs/original-graph-run",
       );

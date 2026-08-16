@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import type {
   AnnouncementDeadLetterEntryInput,
@@ -88,10 +88,39 @@ function retirementKeys(owner: TerminalDecisionOwner): Result<readonly string[],
   return ok(digests);
 }
 
-function decisionFilePath(filePath: string): Result<string, Error> {
+interface TerminalDecisionStoragePaths {
+  readonly root: string;
+  readonly decisions: string;
+  readonly retirements: string;
+}
+
+function decisionStoragePaths(filePath: string): Result<TerminalDecisionStoragePaths, Error> {
+  return tryCatch(() => {
+    const root = safePath(
+      dirname(filePath),
+      `${basename(filePath)}.terminal-decisions`,
+    );
+    return {
+      root,
+      decisions: safePath(root, "decisions"),
+      retirements: safePath(root, "retirements"),
+    };
+  });
+}
+
+function terminalRecordPath(
+  paths: TerminalDecisionStoragePaths,
+  record: AnnouncementTerminalDecisionRecord | AnnouncementTerminalRetirementRecord,
+): Result<string, Error> {
+  const digest = record.recordType === "terminal_decision"
+    ? record.keyDigest
+    : record.id.slice("retirement:".length);
+  const collection = record.recordType === "terminal_decision"
+    ? paths.decisions
+    : paths.retirements;
   return tryCatch(() => safePath(
-    dirname(filePath),
-    `${basename(filePath)}.terminal-decisions.jsonl`,
+    safePath(collection, digest.slice(0, 2)),
+    `${digest}.json`,
   ));
 }
 
@@ -105,10 +134,6 @@ async function syncDirectory(path: string): Promise<Result<void, Error>> {
   const synced = await fromPromise(opened.value.sync());
   const closed = await fromPromise(opened.value.close());
   return synced.ok ? closed : synced;
-}
-
-async function removeFile(path: string): Promise<void> {
-  await fromPromise(unlink(path));
 }
 
 export function createTerminalDecisionRecord(
@@ -241,62 +266,45 @@ export function createAnnouncementTerminalDecisionStore(
     return result;
   }
 
-  async function load(): Promise<Result<void, Error>> {
-    if (loaded) return ok(undefined);
-    const path = decisionFilePath(filePath);
-    if (!path.ok) return path;
-    const content = await fromPromise(readFile(path.value, "utf8"));
-    if (!content.ok) {
-      if (isMissingFile(content.error)) {
-        loaded = true;
-        return ok(undefined);
-      }
-      return content;
+  async function ensureRecordDirectory(
+    directory: string,
+    root: string,
+  ): Promise<Result<void, Error>> {
+    const created = await fromPromise(mkdir(directory, { recursive: true, mode: 0o700 }));
+    if (!created.ok) return created;
+    for (const durableDirectory of new Set([
+      directory,
+      dirname(directory),
+      root,
+      dirname(root),
+    ])) {
+      const synced = await syncDirectory(durableDirectory);
+      if (!synced.ok) return synced;
     }
-    const lines = content.value.split("\n").filter((line) => line.length > 0);
-    for (const line of lines) {
-      const parsed = tryCatch(() => JSON.parse(line) as unknown);
-      if (!parsed.ok) {
-        return err(new Error("Announcement terminal decision index is invalid"));
-      }
-      if (isAnnouncementTerminalRetirementRecord(parsed.value)) {
-        retirements.set(parsed.value.id, parsed.value);
-        continue;
-      }
-      if (!isAnnouncementTerminalDecisionRecord(parsed.value)) {
-        return err(new Error("Announcement terminal decision index is invalid"));
-      }
-      const existing = records.get(parsed.value.keyDigest);
-      if (existing && existing.outcome !== parsed.value.outcome) {
-        return err(new Error("Announcement terminal decision index conflicts with its durable outcome"));
-      }
-      records.delete(parsed.value.keyDigest);
-      records.set(parsed.value.keyDigest, parsed.value);
-    }
-    loaded = true;
     return ok(undefined);
   }
 
-  async function persist(): Promise<{
+  async function writeRecord(
+    record: AnnouncementTerminalDecisionRecord | AnnouncementTerminalRetirementRecord,
+  ): Promise<{
     result: Result<void, Error>;
     snapshotVisible: boolean;
   }> {
-    const path = decisionFilePath(filePath);
-    if (!path.ok) return { result: path, snapshotVisible: false };
-    const directory = dirname(path.value);
-    const createdDirectory = await fromPromise(mkdir(directory, { recursive: true, mode: 0o700 }));
+    const paths = decisionStoragePaths(filePath);
+    if (!paths.ok) return { result: paths, snapshotVisible: false };
+    const target = terminalRecordPath(paths.value, record);
+    if (!target.ok) return { result: target, snapshotVisible: false };
+    const directory = dirname(target.value);
+    const createdDirectory = await ensureRecordDirectory(directory, paths.value.root);
     if (!createdDirectory.ok) return { result: createdDirectory, snapshotVisible: false };
     const nonce = tryCatch(() => randomUUID());
     if (!nonce.ok) return { result: nonce, snapshotVisible: false };
     const temporaryPath = tryCatch(() => safePath(
       directory,
-      `${basename(path.value)}.${nonce.value}.tmp`,
+      `${basename(target.value)}.${nonce.value}.tmp`,
     ));
     if (!temporaryPath.ok) return { result: temporaryPath, snapshotVisible: false };
-    const allRecords = [...records.values(), ...retirements.values()];
-    const serialized = tryCatch(() => allRecords.length === 0
-      ? ""
-      : `${allRecords.map((record) => JSON.stringify(record)).join("\n")}\n`);
+    const serialized = tryCatch(() => JSON.stringify(record));
     if (!serialized.ok) return { result: serialized, snapshotVisible: false };
     const handle = await fromPromise(open(temporaryPath.value, "wx", 0o600));
     if (!handle.ok) return { result: handle, snapshotVisible: false };
@@ -304,19 +312,99 @@ export function createAnnouncementTerminalDecisionStore(
     const synced = written.ok ? await fromPromise(handle.value.sync()) : written;
     const closed = await fromPromise(handle.value.close());
     if (!written.ok || !synced.ok || !closed.ok) {
-      await removeFile(temporaryPath.value);
+      await fromPromise(unlink(temporaryPath.value));
       return {
         result: !written.ok ? written : !synced.ok ? synced : closed,
         snapshotVisible: false,
       };
     }
-    const replaced = await fromPromise(rename(temporaryPath.value, path.value));
+    const replaced = await fromPromise(rename(temporaryPath.value, target.value));
     if (!replaced.ok) {
-      await removeFile(temporaryPath.value);
+      await fromPromise(unlink(temporaryPath.value));
       return { result: replaced, snapshotVisible: false };
     }
     const directorySynced = await (options.syncDirectory ?? syncDirectory)(directory);
     return { result: directorySynced, snapshotVisible: true };
+  }
+
+  async function removeRecord(
+    record: AnnouncementTerminalDecisionRecord | AnnouncementTerminalRetirementRecord,
+  ): Promise<{
+    result: Result<void, Error>;
+    snapshotVisible: boolean;
+  }> {
+    const paths = decisionStoragePaths(filePath);
+    if (!paths.ok) return { result: paths, snapshotVisible: false };
+    const target = terminalRecordPath(paths.value, record);
+    if (!target.ok) return { result: target, snapshotVisible: false };
+    const removed = await fromPromise(unlink(target.value));
+    if (!removed.ok && !isMissingFile(removed.error)) {
+      return { result: removed, snapshotVisible: false };
+    }
+    if (!removed.ok) return { result: ok(undefined), snapshotVisible: true };
+    const directorySynced = await (options.syncDirectory ?? syncDirectory)(dirname(target.value));
+    return { result: directorySynced, snapshotVisible: true };
+  }
+
+  async function loadCollection(
+    directory: string,
+    kind: "terminal_decision" | "terminal_retirement",
+  ): Promise<Result<void, Error>> {
+    const shards = await fromPromise(readdir(directory, { withFileTypes: true }));
+    if (!shards.ok) return isMissingFile(shards.error) ? ok(undefined) : shards;
+    for (const shard of shards.value) {
+      if (!shard.isDirectory() || !/^[a-f0-9]{2}$/u.test(shard.name)) {
+        return err(new Error("Announcement terminal decision store is invalid"));
+      }
+      const shardPath = tryCatch(() => safePath(directory, shard.name));
+      if (!shardPath.ok) return shardPath;
+      const files = await fromPromise(readdir(shardPath.value, { withFileTypes: true }));
+      if (!files.ok) return files;
+      for (const file of files.value) {
+        if (/^[a-f0-9]{64}\.json\.[a-f0-9-]{36}\.tmp$/u.test(file.name)) {
+          const temporaryPath = tryCatch(() => safePath(shardPath.value, file.name));
+          if (!temporaryPath.ok) return temporaryPath;
+          const removed = await fromPromise(unlink(temporaryPath.value));
+          if (!removed.ok && !isMissingFile(removed.error)) return removed;
+          continue;
+        }
+        if (!file.isFile() || !/^[a-f0-9]{64}\.json$/u.test(file.name)) {
+          return err(new Error("Announcement terminal decision store is invalid"));
+        }
+        const path = tryCatch(() => safePath(shardPath.value, file.name));
+        if (!path.ok) return path;
+        const content = await fromPromise(readFile(path.value, "utf8"));
+        if (!content.ok) return content;
+        const parsed = tryCatch(() => JSON.parse(content.value) as unknown);
+        if (!parsed.ok) return err(new Error("Announcement terminal decision store is invalid"));
+        if (kind === "terminal_decision") {
+          if (
+            !isAnnouncementTerminalDecisionRecord(parsed.value)
+            || file.name !== `${parsed.value.keyDigest}.json`
+          ) return err(new Error("Announcement terminal decision store is invalid"));
+          records.set(parsed.value.keyDigest, parsed.value);
+        } else {
+          if (
+            !isAnnouncementTerminalRetirementRecord(parsed.value)
+            || file.name !== `${parsed.value.id.slice("retirement:".length)}.json`
+          ) return err(new Error("Announcement terminal retirement store is invalid"));
+          retirements.set(parsed.value.id, parsed.value);
+        }
+      }
+    }
+    return ok(undefined);
+  }
+
+  async function load(): Promise<Result<void, Error>> {
+    if (loaded) return ok(undefined);
+    const paths = decisionStoragePaths(filePath);
+    if (!paths.ok) return paths;
+    const loadedDecisions = await loadCollection(paths.value.decisions, "terminal_decision");
+    if (!loadedDecisions.ok) return loadedDecisions;
+    const loadedRetirements = await loadCollection(paths.value.retirements, "terminal_retirement");
+    if (!loadedRetirements.ok) return loadedRetirements;
+    loaded = true;
+    return ok(undefined);
   }
 
   async function lookupLoaded(
@@ -327,6 +415,26 @@ export function createAnnouncementTerminalDecisionStore(
     const expected = createTerminalDecisionRecord(owner, "no_reply", 0);
     if (!expected.ok) return expected;
     return ok(records.get(expected.value.keyDigest)?.outcome);
+  }
+
+  async function updateDecisionRecord(
+    previous: AnnouncementTerminalDecisionRecord,
+    next?: AnnouncementTerminalDecisionRecord,
+  ): Promise<Result<void, Error>> {
+    const persisted = next ? await writeRecord(next) : await removeRecord(previous);
+    if (persisted.result.ok || persisted.snapshotVisible) {
+      if (next) records.set(next.keyDigest, next);
+      else records.delete(previous.keyDigest);
+    }
+    return persisted.result;
+  }
+
+  async function removeRetirementRecord(
+    retirement: AnnouncementTerminalRetirementRecord,
+  ): Promise<Result<void, Error>> {
+    const persisted = await removeRecord(retirement);
+    if (persisted.result.ok || persisted.snapshotVisible) retirements.delete(retirement.id);
+    return persisted.result;
   }
 
   return {
@@ -342,12 +450,9 @@ export function createAnnouncementTerminalDecisionStore(
           ? ok(undefined)
           : err(new Error("Announcement terminal decision conflicts with its durable outcome"));
       }
-      const previous = new Map(records);
-      records.set(created.value.keyDigest, created.value);
-      const persisted = await persist();
-      if (!persisted.result.ok && !persisted.snapshotVisible) {
-        records.clear();
-        for (const [key, record] of previous) records.set(key, record);
+      const persisted = await writeRecord(created.value);
+      if (persisted.result.ok || persisted.snapshotVisible) {
+        records.set(created.value.keyDigest, created.value);
       }
       return persisted.result;
     }),
@@ -366,27 +471,20 @@ export function createAnnouncementTerminalDecisionStore(
         if (!digest.ok) return digest;
         retiredDigests.add(digest.value);
       }
-      const previous = new Map(records);
-      for (const [keyDigest, record] of records) {
+      for (const record of [...records.values()]) {
         const remaining = record.retirementKeyDigests.filter(
           (digest) => !retiredDigests.has(digest),
         );
         if (remaining.length === record.retirementKeyDigests.length) continue;
-        if (remaining.length === 0) {
-          records.delete(keyDigest);
-        } else {
-          records.set(keyDigest, { ...record, retirementKeyDigests: remaining });
-        }
+        const persisted = await updateDecisionRecord(
+          record,
+          remaining.length === 0
+            ? undefined
+            : { ...record, retirementKeyDigests: remaining },
+        );
+        if (!persisted.ok) return persisted;
       }
-      if (records.size === previous.size && [...records].every(
-        ([key, record]) => previous.get(key) === record,
-      )) return ok(undefined);
-      const persisted = await persist();
-      if (!persisted.result.ok && !persisted.snapshotVisible) {
-        records.clear();
-        for (const [key, record] of previous) records.set(key, record);
-      }
-      return persisted.result;
+      return ok(undefined);
     }),
     prepareRetirement: (completionKeys, producer) => serialize(async () => {
       const loadedIndex = await load();
@@ -414,9 +512,8 @@ export function createAnnouncementTerminalDecisionStore(
         completionKeyDigests,
         preparedAt: systemNowMs(),
       };
-      retirements.set(record.id, record);
-      const persisted = await persist();
-      if (!persisted.result.ok && !persisted.snapshotVisible) retirements.delete(record.id);
+      const persisted = await writeRecord(record);
+      if (persisted.result.ok || persisted.snapshotVisible) retirements.set(record.id, record);
       return persisted.result;
     }),
     collectRetirements: (producerExists, retainedOwnershipExists) => serialize(async () => {
@@ -432,27 +529,25 @@ export function createAnnouncementTerminalDecisionStore(
         if (!retained?.value) collectable.push(retirement);
       }
       if (collectable.length === 0) return ok(0);
-      const previousRecords = new Map(records);
-      const previousRetirements = new Map(retirements);
       const retiredDigests = new Set(collectable.flatMap((retirement) =>
         retirement.completionKeyDigests));
-      for (const [keyDigest, record] of records) {
+      for (const record of [...records.values()]) {
         const remaining = record.retirementKeyDigests.filter(
           (digest) => !retiredDigests.has(digest),
         );
         if (remaining.length === record.retirementKeyDigests.length) continue;
-        if (remaining.length === 0) records.delete(keyDigest);
-        else records.set(keyDigest, { ...record, retirementKeyDigests: remaining });
+        const persisted = await updateDecisionRecord(
+          record,
+          remaining.length === 0
+            ? undefined
+            : { ...record, retirementKeyDigests: remaining },
+        );
+        if (!persisted.ok) return persisted;
       }
-      for (const retirement of collectable) retirements.delete(retirement.id);
-      const persisted = await persist();
-      if (!persisted.result.ok && !persisted.snapshotVisible) {
-        records.clear();
-        retirements.clear();
-        for (const [key, record] of previousRecords) records.set(key, record);
-        for (const [key, record] of previousRetirements) retirements.set(key, record);
+      for (const retirement of collectable) {
+        const removed = await removeRetirementRecord(retirement);
+        if (!removed.ok) return removed;
       }
-      if (!persisted.result.ok) return err(persisted.result.error);
       return ok(collectable.length);
     }),
   };

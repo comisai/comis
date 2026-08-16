@@ -95,6 +95,7 @@ export function isSameAnnouncementRecovery(
     && existing.partId === candidate.partId
     && sameAttachment(existing.attachment, candidate.attachment)
     && sameCompletionKeys(existing.completionKeys, candidate.completionKeys)
+    && sameCompletionKeys(existing.retirementKeys, candidate.retirementKeys)
     && sameCompletionKeys(existing.textChunks, candidate.textChunks)
     && sameDeliveryAuthority(existing.deliveryAuthority, candidate.deliveryAuthority)
     && sameDestinationEndpoint(existing.destinationEndpoint, candidate.destinationEndpoint)
