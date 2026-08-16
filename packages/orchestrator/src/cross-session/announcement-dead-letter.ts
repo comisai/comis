@@ -30,11 +30,12 @@ import {
   type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
 import {
-  createOperatorDecisionRecord,
-  findOperatorDecision,
-  isAnnouncementOperatorDecisionRecord,
-  operatorDecisionIdentity,
-  type AnnouncementOperatorDecisionRecord,
+  createTerminalDecisionRecord,
+  findTerminalDecision,
+  isAnnouncementTerminalDecisionRecord,
+  terminalDecisionIdentity,
+  type AnnouncementTerminalDecision,
+  type AnnouncementTerminalDecisionRecord,
 } from "./announcement-dead-letter-operator-decision.js";
 import {
   announcementRecoveryKey,
@@ -89,7 +90,7 @@ export function createAnnouncementDeadLetterQueue(
   let entries: DeadLetterEntry[] = [];
   let decisionReservations: ParentDecisionReservationRecord[] = [];
   let invalidRecords: InvalidDeadLetterRecord[] = [];
-  let operatorDecisions: AnnouncementOperatorDecisionRecord[] = [];
+  let terminalDecisions: AnnouncementTerminalDecisionRecord[] = [];
   const emittedAdmissionKeys = new Set<string>();
   const suppressedDecisionKeys = new Set<string>();
   let loaded = false;
@@ -141,10 +142,10 @@ export function createAnnouncementDeadLetterQueue(
       entries = read.value.entries.filter((entry): entry is DeadLetterEntry =>
         !isParentDecisionReservation(entry)
         && !isInvalidDeadLetterRecord(entry)
-        && !isAnnouncementOperatorDecisionRecord(entry));
+        && !isAnnouncementTerminalDecisionRecord(entry));
       decisionReservations = read.value.entries.filter(isParentDecisionReservation);
       invalidRecords = read.value.entries.filter(isInvalidDeadLetterRecord);
-      operatorDecisions = read.value.entries.filter(isAnnouncementOperatorDecisionRecord);
+      terminalDecisions = read.value.entries.filter(isAnnouncementTerminalDecisionRecord);
       loaded = true;
       logger?.debug(
         { entryCount: entries.length + decisionReservations.length + invalidRecords.length },
@@ -166,11 +167,11 @@ export function createAnnouncementDeadLetterQueue(
     nextEntries: readonly DeadLetterEntry[],
     nextReservations: readonly ParentDecisionReservationRecord[] = decisionReservations,
     nextInvalidRecords: readonly InvalidDeadLetterRecord[] = invalidRecords,
-    nextOperatorDecisions: readonly AnnouncementOperatorDecisionRecord[] = operatorDecisions,
+    nextTerminalDecisions: readonly AnnouncementTerminalDecisionRecord[] = terminalDecisions,
   ): Promise<Result<void, Error>> {
     const written = await writeDeadLetterEntries(
       filePath,
-      [...nextEntries, ...nextReservations, ...nextInvalidRecords, ...nextOperatorDecisions],
+      [...nextEntries, ...nextReservations, ...nextInvalidRecords, ...nextTerminalDecisions],
       fileOperations,
     );
     if (written.ok) return written;
@@ -178,7 +179,7 @@ export function createAnnouncementDeadLetterQueue(
       entries = [...nextEntries];
       decisionReservations = [...nextReservations];
       invalidRecords = [...nextInvalidRecords];
-      operatorDecisions = [...nextOperatorDecisions];
+      terminalDecisions = [...nextTerminalDecisions];
     }
     return err(written.error.error);
   }
@@ -226,15 +227,18 @@ export function createAnnouncementDeadLetterQueue(
     });
   }
 
-  async function lookupOperatorDecision(
+  async function lookupTerminalDecision(
     owner: AnnouncementDeadLetterEntryInput | AnnouncementParentDecisionReservation,
-  ): Promise<Result<"delivered" | "discarded" | undefined, Error>> {
+  ): Promise<Result<AnnouncementTerminalDecision | undefined, Error>> {
+    const retained = findTerminalDecision(terminalDecisions, owner);
+    if (!retained.ok || retained.value !== undefined) {
+      return retained.ok ? ok(retained.value?.outcome) : retained;
+    }
     if (outwardLedger) {
-      const identity = operatorDecisionIdentity(owner);
+      const identity = terminalDecisionIdentity(owner);
       return outwardLedger.lookupOperatorDecision(identity.rootRunId, identity.operationId);
     }
-    const found = findOperatorDecision(operatorDecisions, owner);
-    return found.ok ? ok(found.value?.outcome) : found;
+    return ok(undefined);
   }
 
   function sameRetainedOwner(
@@ -311,30 +315,60 @@ export function createAnnouncementDeadLetterQueue(
     idempotencyKey: string,
     outcome: "receipt_committed" | "no_reply",
   ): Promise<Result<boolean, Error>> {
-    const reservation = outcome === "no_reply"
-      ? await decisionStore.lookup(idempotencyKey)
-      : undefined;
-    if (reservation && !reservation.ok) return reservation;
-    const resolved = await decisionStore.resolve(idempotencyKey, outcome);
-    if (resolved.ok) {
-      suppressedDecisionKeys.delete(idempotencyKey);
+    if (outcome === "receipt_committed") {
+      const resolved = await decisionStore.resolve(idempotencyKey, outcome);
+      if (resolved.ok) suppressedDecisionKeys.delete(idempotencyKey);
       return resolved;
     }
-    if (outcome !== "no_reply" || !reservation?.value) return resolved;
-    suppressedDecisionKeys.add(idempotencyKey);
-    const terminalized = await terminalizeNoReply(reservation.value);
-    if (!terminalized.ok) {
-      logger?.error(
-        {
-          errorKind: "dependency" as const,
-          hint: "restore decision-quarantine storage or the outward ledger before retrying the no-reply resolution",
-        },
-        "Announcement no-reply resolution could not be durably terminalized",
+    const reservation = await decisionStore.lookup(idempotencyKey);
+    if (!reservation.ok || reservation.value === undefined) return reservation.ok
+      ? ok(false)
+      : reservation;
+    const existing = findTerminalDecision(terminalDecisions, reservation.value);
+    if (!existing.ok) return existing;
+    if (existing.value && existing.value.outcome !== "no_reply") {
+      return err(new Error("No-reply resolution conflicts with its durable outcome"));
+    }
+    let nextTerminalDecisions = terminalDecisions;
+    if (!existing.value) {
+      const created = createTerminalDecisionRecord(
+        reservation.value,
+        "no_reply",
+        systemNowMs(),
       );
-      return resolved;
+      if (!created.ok) return created;
+      nextTerminalDecisions = [...terminalDecisions, created.value];
     }
-    suppressedDecisionKeys.delete(idempotencyKey);
-    return ok(true);
+    suppressedDecisionKeys.add(idempotencyKey);
+    if (outwardLedger) {
+      const terminalized = await terminalizeNoReply(reservation.value);
+      if (!terminalized.ok) {
+        logger?.error(
+          {
+            errorKind: "dependency" as const,
+            hint: "restore decision-quarantine storage or the outward ledger before retrying the no-reply resolution",
+          },
+          "Announcement no-reply resolution could not be durably terminalized",
+        );
+        return terminalized;
+      }
+    }
+    const nextReservations = decisionReservations.filter(
+      (candidate) => candidate.idempotencyKey !== idempotencyKey,
+    );
+    const resolved = await persist(
+      entries,
+      nextReservations,
+      invalidRecords,
+      nextTerminalDecisions,
+    );
+    if (resolved.ok) {
+      decisionReservations = nextReservations;
+      terminalDecisions = nextTerminalDecisions;
+      suppressedDecisionKeys.delete(idempotencyKey);
+      return ok(true);
+    }
+    return outwardLedger ? ok(true) : err(resolved.error);
   }
 
   type LedgerTransition = "lookup" | "begin" | "mark_unknown" | "commit" | "park";
@@ -739,16 +773,7 @@ export function createAnnouncementDeadLetterQueue(
         retainBlockedEntry(entry, "outward_ledger_lookup_blocked");
         return "retained";
       }
-      if (
-        existing.value
-        && (
-          existing.value.state === "committed"
-          || (
-            existing.value.state === "failed"
-            && existing.value.lastError === NO_REPLY_LEDGER_FAILURE
-          )
-        )
-      ) {
+      if (existing.value) {
         const allocated = await ledger.allocateStep(entry.rootRunId, entry.idempotencyKey);
         if (!allocated.ok || allocated.value !== entry.stepIndex) {
           logLedgerFailure(
@@ -772,32 +797,46 @@ export function createAnnouncementDeadLetterQueue(
           retainBlockedEntry(entry, "outward_operation_identity_mismatch");
           return "retained";
         }
-        if (existing.value.state === "failed") {
-          emitLedgerTransition(
-            { ...entry, rootRunId: entry.rootRunId, stepIndex: entry.stepIndex },
-            "lookup",
-            "failed",
-          );
-          return "suppressed_no_reply";
+        const identity = { ...entry, rootRunId: entry.rootRunId, stepIndex: entry.stepIndex };
+        switch (existing.value.state) {
+          case "committed":
+            if (!existing.value.platformMessageId) {
+              logLedgerFailure(
+                entry,
+                "lookup",
+                "precondition",
+                "repair the committed ledger receipt before treating this announcement as delivered",
+                "Committed dead-letter announcement lacks a platform receipt",
+              );
+              retainBlockedEntry(entry, "outward_committed_receipt_missing");
+              return "retained";
+            }
+            emitLedgerTransition(identity, "lookup", "committed", {
+              platformMessageId: existing.value.platformMessageId,
+            });
+            return "receipt_already_committed";
+          case "send_attempt_started":
+          case "unknown_after_send":
+            emitLedgerTransition(identity, "lookup", "in_flight");
+            await parkGovernedEntry(ledger, entry, identity);
+            retainBlockedEntry(entry, "outward_operation_unresolved");
+            return "retained";
+          case "unresolved":
+            emitLedgerTransition(identity, "lookup", "parked");
+            retainBlockedEntry(entry, "outward_operation_unresolved");
+            return "retained";
+          case "failed":
+            emitLedgerTransition(identity, "lookup", "failed");
+            if (existing.value.lastError === NO_REPLY_LEDGER_FAILURE) {
+              return "suppressed_no_reply";
+            }
+            retainBlockedEntry(entry, "outward_operation_failed");
+            return "retained";
+          default: {
+            const _exhaustive: never = existing.value.state;
+            return _exhaustive;
+          }
         }
-        if (!existing.value.platformMessageId) {
-          logLedgerFailure(
-            entry,
-            "lookup",
-            "precondition",
-            "repair the committed ledger receipt before treating this announcement as delivered",
-            "Committed dead-letter announcement lacks a platform receipt",
-          );
-          retainBlockedEntry(entry, "outward_committed_receipt_missing");
-          return "retained";
-        }
-        emitLedgerTransition(
-          { ...entry, rootRunId: entry.rootRunId, stepIndex: entry.stepIndex },
-          "lookup",
-          "committed",
-          { platformMessageId: existing.value.platformMessageId },
-        );
-        return "receipt_already_committed";
       }
     }
     return drainWithPreparedRecoveryAttachment({
@@ -830,9 +869,9 @@ export function createAnnouncementDeadLetterQueue(
   ): Promise<Result<void, Error>> {
     const load = await loadFromDisk();
     if (!load.ok) return load;
-    const operatorDecision = await lookupOperatorDecision(entry);
-    if (!operatorDecision.ok) return operatorDecision;
-    if (operatorDecision.value !== undefined) return ok(undefined);
+    const terminalDecision = await lookupTerminalDecision(entry);
+    if (!terminalDecision.ok) return terminalDecision;
+    if (terminalDecision.value !== undefined) return ok(undefined);
     const entryRecoveryKey = announcementRecoveryKey(entry);
     const keyedEntry = entries.find(
       (candidate) => announcementRecoveryKey(candidate) === entryRecoveryKey,
@@ -1174,9 +1213,9 @@ export function createAnnouncementDeadLetterQueue(
     reserveDecision: (entry) => serialize(async () => {
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
-      const operatorDecision = await lookupOperatorDecision(entry);
-      if (!operatorDecision.ok) return operatorDecision;
-      if (operatorDecision.value !== undefined) return ok({ created: false });
+      const terminalDecision = await lookupTerminalDecision(entry);
+      if (!terminalDecision.ok) return terminalDecision;
+      if (terminalDecision.value !== undefined) return ok({ created: false });
       const reserved = await decisionStore.reserve(entry);
       if (reserved.ok && reserved.value.created) {
         emitObservationalEventSafely(
@@ -1202,9 +1241,9 @@ export function createAnnouncementDeadLetterQueue(
         const loaded = await loadFromDisk();
         if (!loaded.ok) return loaded;
         for (const operation of operations) {
-          const operatorDecision = await lookupOperatorDecision(operation);
-          if (!operatorDecision.ok) return operatorDecision;
-          if (operatorDecision.value !== undefined) return ok({ created: false });
+          const terminalDecision = await lookupTerminalDecision(operation);
+          if (!terminalDecision.ok) return terminalDecision;
+          if (terminalDecision.value !== undefined) return ok({ created: false });
         }
         return decisionStore.replace(expectedKeys, operations);
       }),
@@ -1239,33 +1278,31 @@ export function createAnnouncementDeadLetterQueue(
       const releasedEntry = entries.find((candidate) => candidate.id === id);
       const releasedReservation = decisionReservations.find((candidate) => candidate.id === id);
       const releasedDelivery = releasedEntry ?? releasedReservation;
-      let nextOperatorDecisions = operatorDecisions;
+      let nextTerminalDecisions = terminalDecisions;
       if (releasedDelivery) {
         if (outwardLedger) {
-          const identity = operatorDecisionIdentity(releasedDelivery);
+          const identity = terminalDecisionIdentity(releasedDelivery);
           const terminalized = await outwardLedger.recordOperatorDecision(
             identity.rootRunId,
             identity.operationId,
             outcome,
           );
           if (!terminalized.ok) return terminalized;
-        } else {
-          const existing = findOperatorDecision(operatorDecisions, releasedDelivery);
+        }
+        {
+          const existing = findTerminalDecision(terminalDecisions, releasedDelivery);
           if (!existing.ok) return existing;
           if (existing.value && existing.value.outcome !== outcome) {
-            return err(new Error("Operator decision conflicts with its durable outcome"));
+            return err(new Error("Terminal decision conflicts with its durable outcome"));
           }
           if (!existing.value) {
-            if (operatorDecisions.length >= maxEntries) {
-              return err(new Error("Operator decision capacity exhausted"));
-            }
-            const created = createOperatorDecisionRecord(
+            const created = createTerminalDecisionRecord(
               releasedDelivery,
               outcome,
               systemNowMs(),
             );
             if (!created.ok) return created;
-            nextOperatorDecisions = [...operatorDecisions, created.value];
+            nextTerminalDecisions = [...terminalDecisions, created.value];
           }
         }
       }
@@ -1281,13 +1318,13 @@ export function createAnnouncementDeadLetterQueue(
             nextEntries,
             nextReservations,
             nextInvalidRecords,
-            nextOperatorDecisions,
+            nextTerminalDecisions,
           );
           if (written.ok) {
             entries = [...nextEntries];
             decisionReservations = [...nextReservations];
             invalidRecords = [...nextInvalidRecords];
-            operatorDecisions = [...nextOperatorDecisions];
+            terminalDecisions = [...nextTerminalDecisions];
           }
           return written;
         },

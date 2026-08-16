@@ -1311,23 +1311,58 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(queue.size()).toBe(1);
   });
 
-  it("removes a parent decision only through an explicit terminal resolution", async () => {
+  it("persists a successful no-reply resolution across restart", async () => {
+    const decision = decisionInput();
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
     });
-    await queue.reserveDecision(decisionInput());
+    await queue.reserveDecision(decision);
 
     await expect(
-      queue.resolveDecision(decisionInput().idempotencyKey, "no_reply"),
+      queue.resolveDecision(decision.idempotencyKey, "no_reply"),
     ).resolves.toEqual(ok(true));
     await expect(
-      queue.lookupDecision(decisionInput().idempotencyKey),
+      queue.lookupDecision(decision.idempotencyKey),
     ).resolves.toEqual(ok(undefined));
-    await expect(readFile(filePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({ created: false }));
+    await expect(restarted.lookupDecision(decision.idempotencyKey))
+      .resolves.toEqual(ok(undefined));
   });
 
-  it("uses a ledger tombstone when no-reply snapshot removal fails", async () => {
+  it("terminalizes a governed no-reply before removing its reservation", async () => {
+    const decision = decisionInput();
+    const { ledger } = makeStubLedger({ lookupResult: ok(undefined) });
+    vi.mocked(ledger.allocateStep).mockResolvedValue(ok(7));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    await queue.reserveDecision(decision);
+
+    await expect(queue.resolveDecision(decision.idempotencyKey, "no_reply"))
+      .resolves.toEqual(ok(true));
+    expect(ledger.markFailed).toHaveBeenCalledWith(
+      decision.rootRunId,
+      7,
+      "announcement_no_reply",
+    );
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({ created: false }));
+  });
+
+  it("uses a ledger tombstone when no-reply snapshot update fails", async () => {
     const seeded = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
@@ -1371,9 +1406,9 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       eventBus: createMockEventBus(),
       outwardLedger: ledger,
       fileOperations: {
-        open: vi.fn(),
+        open: vi.fn().mockRejectedValue(unavailable),
         rename: vi.fn(),
-        unlink: vi.fn().mockRejectedValue(unavailable),
+        unlink: vi.fn(),
         chmod: vi.fn(),
       } as unknown as DeadLetterWriteOperations,
     });
@@ -2046,6 +2081,50 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(dlq.size()).toBe(0);
   });
 
+  it.each([
+    ["send_attempt_started", "outward_operation_unresolved"],
+    ["unknown_after_send", "outward_operation_unresolved"],
+    ["unresolved", "outward_operation_unresolved"],
+    ["failed", "outward_operation_failed"],
+  ] as const)(
+    "surfaces retained attachment state %s without reopening its source file",
+    async (state, expectedReason) => {
+      const entry = makeFullEntry({
+        runId: `run-attachment-${state}`,
+        idempotencyKey: `operation-attachment-${state}`,
+        rootRunId: `root-attachment-${state}`,
+        stepIndex: 15,
+        agentId: "parent-agent",
+        partId: "attachment:0",
+        attachment: { sourceAgentId: "worker-a", path: "missing-report.txt" },
+        completionKeys: [`completion-attachment-${state}`],
+      }) as GovernedDeadLetterEntry;
+      await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+      const prepareAttachment = vi.fn(async () => err(new Error("source file missing")));
+      const { ledger } = makeStubLedger({
+        lookupResult: ok(ledgerRow(entry, state)),
+      });
+      vi.mocked(ledger.allocateStep).mockResolvedValue(ok(15));
+      const governedSendToChannel = vi.fn();
+      const dlq = createAnnouncementDeadLetterQueue({
+        filePath,
+        eventBus: createMockEventBus(),
+        retryIntervalMs: 0,
+        outwardLedger: ledger,
+        governedSendToChannel,
+        prepareAttachment,
+      });
+
+      await dlq.drain(vi.fn(async () => true));
+
+      expect(prepareAttachment).not.toHaveBeenCalled();
+      expect(governedSendToChannel).not.toHaveBeenCalled();
+      expect((await listQuarantined(dlq))[0]).toMatchObject({
+        lastError: expectedReason,
+      });
+    },
+  );
+
   it("retains an absent governed row without beginning when receipt-aware transport is unavailable", async () => {
     const eventBus = createMockEventBus();
     const entry = makeFullEntry({
@@ -2601,6 +2680,23 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
     );
     await queue.enqueue(entry);
     expect(queue.size()).toBe(0);
+  });
+
+  it("does not spend pending capacity on prior terminal decisions", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    const first = makeEntry({ runId: "run-release-first", attemptCount: 5 });
+    const second = makeEntry({ runId: "run-release-second", attemptCount: 5 });
+
+    await queue.enqueue(first);
+    const firstId = (await listQuarantined(queue))[0]!.id;
+    expect(await queue.release(firstId, "discarded")).toEqual(ok(true));
+    await expect(queue.enqueue(second)).resolves.toEqual(ok(undefined));
+    const secondId = (await listQuarantined(queue))[0]!.id;
+    expect(await queue.release(secondId, "discarded")).toEqual(ok(true));
   });
 
   it("reports an unknown id as not released rather than failing the call", async () => {

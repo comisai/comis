@@ -36,6 +36,8 @@ export interface AnnouncementQuarantineClassification {
 }
 
 const GOVERNED_OPERATOR_ERRORS = new Set([
+  "attachment_preparation_blocked",
+  "attachment_preparation_unavailable",
   "identity_incomplete",
   "operation_validation_blocked",
   "outward_committed_receipt_missing",

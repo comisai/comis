@@ -2,9 +2,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  createOperatorDecisionRecord,
-  findOperatorDecision,
-  isAnnouncementOperatorDecisionRecord,
+  createTerminalDecisionRecord,
+  findTerminalDecision,
+  isAnnouncementTerminalDecisionRecord,
 } from "./announcement-dead-letter-operator-decision.js";
 
 const owner = {
@@ -17,14 +17,14 @@ const owner = {
   attemptCount: 5,
 };
 
-describe("announcement operator decisions", () => {
+describe("announcement terminal decisions", () => {
   it("matches a content-free terminal decision across reconstructed owners", () => {
-    const created = createOperatorDecisionRecord(owner, "discarded", 10);
+    const created = createTerminalDecisionRecord(owner, "no_reply", 10);
     if (!created.ok) throw created.error;
 
-    expect(isAnnouncementOperatorDecisionRecord(created.value)).toBe(true);
+    expect(isAnnouncementTerminalDecisionRecord(created.value)).toBe(true);
     expect(JSON.stringify(created.value)).not.toContain(owner.sessionKey);
-    expect(findOperatorDecision([created.value], { ...owner })).toEqual({
+    expect(findTerminalDecision([created.value], { ...owner })).toEqual({
       ok: true,
       value: created.value,
     });
