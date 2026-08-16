@@ -185,21 +185,30 @@ transient one whose [retries are exhausted](#self-healing-delivery-retries)
 persistent dead-letter queue backed by a JSONL file at
 `~/.comis/dead-letters.jsonl`.
 
-- **Retry policy:** Up to 5 retries per entry
-- **Maximum age:** 1 hour -- entries older than this are expired and discarded
+- **Retry policy:** Up to 5 automatic attempts per ungoverned entry; exhaustion
+  parks the entry for an operator decision instead of discarding it
+- **Retention window:** After 1 hour an ungoverned entry is parked and no longer
+  retried automatically; it remains durable until an operator releases it
 - **Automatic drain:** On `provider:recovered` events, the queue drains
-  automatically, delivering all queued messages
+  automatically, delivering only entries whose outcome is safe to retry. A
+  ledger-governed ambiguous send is parked rather than replayed
 - **What the operator sees:** `announcement:dead_lettered` events when entries
   are queued, `announcement:dead_letter_delivered` events when they are
-  successfully delivered on retry, and an INFO log line per entry that clears
+  successfully delivered on retry, standing quarantine health signals, and the
+  content-free `comis quarantine list` control plane
+- **Invalid rows:** A malformed, incompatible, truncated, or oversized row is
+  isolated as bounded non-replayable evidence. It cannot block valid rows or
+  new admissions and requires an explicit release
+- **Capacity:** `maxEntries` is an operator-review threshold, not an eviction
+  limit. Crossing it emits a warning without dropping retained evidence
 - **File lifetime:** the JSONL is a snapshot of the queue, not an append-only
   log — it is rewritten on every change and removed once the queue drains. An
   absent file means nothing is pending, so a quarantine WARN with no file means
   that quarantine already resolved
 
 The dead-letter queue ensures that transient failures do not cause permanent
-message loss. Even during extended provider outages, announcements are preserved
-and delivered once the provider recovers.
+message loss. Even during extended provider outages, announcements remain
+preserved until delivery is proven or an operator records a decision.
 
 ### Delivery idempotency
 

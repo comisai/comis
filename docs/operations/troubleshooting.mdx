@@ -637,7 +637,7 @@ See [Resilience Architecture](/agents/resilience) for how these systems work tog
 
     1. Check the provider's status page for ongoing outages
     2. Wait for automatic recovery -- the system emits a `provider:recovered` event when the provider comes back
-    3. Check the dead-letter queue for missed announcements (`~/.comis/dead-letters.jsonl`)
+    3. Check the content-free quarantine view: `node packages/cli/dist/cli.js quarantine list`
   </Accordion>
 
   <Accordion title="Ghost run detected and force-failed">
@@ -663,14 +663,14 @@ See [Resilience Architecture](/agents/resilience) for how these systems work tog
     announcement:dead_lettered
     ```
 
-    **What happened:** Announcement delivery failed and entries were saved to the dead-letter queue (`~/.comis/dead-letters.jsonl`). Retry will be attempted up to 5 times.
+    **What happened:** Announcement delivery failed and the outcome was retained in the dead-letter queue. Safe automatic retry may be attempted up to 5 times; exhausted, expired, ambiguous, and invalid records remain quarantined for an operator decision.
 
     **How to fix:**
 
     1. Check channel connectivity -- is the bot still connected to the channel?
     2. Verify the bot token is still valid
-    3. Entries auto-expire after 1 hour
-    4. On provider recovery the dead-letter queue drains automatically
+    3. Run `node packages/cli/dist/cli.js quarantine list` to inspect the content-free retained state
+    4. On provider recovery, safe retryable entries drain automatically. Reconcile parked rows and release each one explicitly as `delivered` or `discarded`
   </Accordion>
 
   <Accordion title="Execution pipeline timeout -- canned error sent to user">

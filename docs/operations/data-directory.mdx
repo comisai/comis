@@ -489,12 +489,12 @@ Because it carries the gateway token, the handle is written with mode `0o600` (o
 
 ### `dead-letters.jsonl`
 
-A JSONL **snapshot** of announcement-delivery failures that exhausted in-process retries (channel down, bot blocked, etc.), plus any parked parent-decision reservations. The delivery system replays these on provider recovery and expires entries after one hour.
+A JSONL **snapshot** of retained announcement-delivery failures, parked parent-decision reservations, and bounded evidence for invalid rows. On provider recovery the delivery system replays only entries whose outcome is safe to retry. Exhausted, expired, ambiguous, and invalid records remain parked until an operator records a decision with `comis quarantine`.
 
 The file tracks the queue rather than accumulating: every change rewrites it atomically, and it is **removed** as soon as the queue drains to zero. It therefore exists only while something is actually pending — if the daemon logged a quarantine WARN and this file is absent, the quarantine has since **resolved**, not vanished. Look for the matching resolution line (`Committed dead-letter operation removed without replay`, or `Dead-letter entry delivered successfully`) rather than treating the announcement as lost.
 
 **Written by:** the announcement delivery subsystem.
-**Safe to delete?** Yes. Pending re-deliveries are dropped; entries auto-expire after one hour anyway.
+**Safe to delete?** No. Deleting it discards delivery evidence and pending outcomes. Do not edit or remove it while the daemon is running; the live queue is the authority and may rewrite the snapshot. Use `node packages/cli/dist/cli.js quarantine list` and `quarantine release` for operator decisions.
 
 ---
 
