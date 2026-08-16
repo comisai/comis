@@ -9,15 +9,24 @@
  * made the group's bot member a different bot than the daemon authenticates as, so
  * `isBotMentioned` was permanently false. Both must throw, naming the expected shape.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   assertValidGroupSpec,
   EMULATOR_BOT_ID,
   EMULATOR_BOT_USERNAME,
+  nextStandaloneMessageIdBase,
   toCreateGroupChatOptions,
 } from "./vps-emu-group-options.js";
 
 const members = [{ id: 678314278, firstName: "U1", username: "u1" }];
+
+describe("nextStandaloneMessageIdBase", () => {
+  it("does not rewind message identity when ephemeral launcher state is absent", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
+
+    expect(nextStandaloneMessageIdBase(undefined)).toBe(1_786_863_916);
+  });
+});
 
 describe("assertValidGroupSpec", () => {
   it("accepts a well-formed spec", () => {
