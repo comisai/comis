@@ -30,6 +30,7 @@ export interface GovernedCompletionAnnouncementRequest {
   partId?: string;
   attachment?: CompletionAttachmentShape;
   completionKeys?: readonly string[];
+  retireOnSettlement?: boolean;
   signal?: AbortSignal;
 }
 

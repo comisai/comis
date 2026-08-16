@@ -119,6 +119,7 @@ export interface CompletionAnnouncementSendRequest {
   preparedAttachment?: GovernedAnnouncementAttachment;
   preparedTextChunks?: readonly string[];
   completionKeys?: readonly string[];
+  retireOnSettlement?: boolean;
   signal?: AbortSignal;
 }
 

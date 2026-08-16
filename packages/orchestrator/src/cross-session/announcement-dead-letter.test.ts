@@ -34,6 +34,7 @@ import {
 } from "./announcement-dead-letter.js";
 import type { DeadLetterWriteOperations } from "./announcement-dead-letter-file.js";
 import { isSameAnnouncementRecovery } from "./announcement-dead-letter-identity.js";
+import { createAnnouncementTerminalDecisionStore } from "./announcement-dead-letter-terminal-decision.js";
 import type { RecoveryDeliveryOptions } from "./announcement-dead-letter-types.js";
 import { createMockLogger as _createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
@@ -1418,7 +1419,20 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     controller.abort();
 
     await expect(retained).resolves.toEqual(ok({ created: false, deferred: true }));
-    expect(queue.size()).toBe(4);
+    expect(queue.size()).toBe(3);
+    const retainedRows = (await readFile(filePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(retainedRows).toContainEqual(expect.objectContaining({
+      recordType: "producer_handoff",
+      operationCount: 2,
+      groupDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      operations: expect.arrayContaining([
+        expect.objectContaining({ idempotencyKey: "attachment-handoff" }),
+        expect.objectContaining({ idempotencyKey: "summary-handoff" }),
+      ]),
+    }));
     const overflowController = new AbortController();
     const overflow = queue.reserveDecision(decisionInput({
       idempotencyKey: "overflow-handoff",
@@ -1427,10 +1441,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     }), overflowController.signal);
     await delay(10);
     overflowController.abort();
-    await expect(overflow).resolves.toMatchObject({
-      ok: false,
-      error: { message: "Announcement producer handoff capacity exhausted" },
-    });
+    await expect(overflow).resolves.toEqual(ok({ created: false, deferred: true }));
     expect(queue.size()).toBe(4);
     await queue.resolveDecision(first.idempotencyKey, "no_reply");
     await queue.resolveDecision(second.idempotencyKey, "no_reply");
@@ -1443,7 +1454,91 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       ok: true,
       value: { idempotencyKey: "summary-handoff" },
     });
-    expect(queue.size()).toBe(2);
+    await expect(queue.lookupDecision("overflow-handoff")).resolves.toEqual(ok(undefined));
+    expect((await readFile(filePath, "utf8"))).toContain("overflow-handoff");
+    expect(queue.size()).toBe(3);
+  });
+
+  it("quarantines an incomplete producer handoff as one invalid transition", async () => {
+    const operation = decisionInput({
+      idempotencyKey: "incomplete-operation",
+      completionKeys: ["incomplete-completion"],
+    });
+    await writeFile(filePath, `${JSON.stringify({
+      recordType: "producer_handoff",
+      id: "handoff:incomplete-transition",
+      transitionId: "incomplete-transition",
+      expectedKeys: [],
+      operationCount: 2,
+      groupDigest: "a".repeat(64),
+      operations: [operation],
+    })}\n`, "utf8");
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    await expect(restarted.listQuarantined()).resolves.toMatchObject({
+      ok: true,
+      value: [expect.objectContaining({
+        kind: "invalid_record",
+        reason: "schema_mismatch",
+      })],
+    });
+    expect(restarted.size()).toBe(1);
+  });
+
+  it("settles shared handoff ownership only after every sibling is terminal", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 2,
+    });
+    const first = decisionInput({
+      idempotencyKey: "capacity-a",
+      completionKeys: ["capacity-a"],
+    });
+    const second = decisionInput({
+      idempotencyKey: "capacity-b",
+      completionKeys: ["capacity-b"],
+    });
+    await queue.replaceDecisions([], [first, second]);
+    const sharedCompletionKey = "shared-handoff-completion";
+    const summary = decisionInput({
+      idempotencyKey: "shared-summary",
+      completionKeys: [sharedCompletionKey],
+    });
+    const attachment = decisionInput({
+      idempotencyKey: "shared-attachment",
+      partId: "attachment:0",
+      completionKeys: [sharedCompletionKey],
+    });
+    const controller = new AbortController();
+    const retained = queue.replaceDecisions([], [summary, attachment], controller.signal);
+    await delay(10);
+    controller.abort();
+    await expect(retained).resolves.toEqual(ok({ created: false, deferred: true }));
+    await queue.resolveDecision(first.idempotencyKey, "no_reply");
+    await queue.resolveDecision(second.idempotencyKey, "no_reply");
+    const decisions = createAnnouncementTerminalDecisionStore(filePath);
+    await decisions.record(summary, "delivered");
+    await decisions.record(attachment, "discarded");
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 2,
+    });
+
+    await restarted.drain(vi.fn(async () => false));
+
+    await expect(restarted.reserveDecision(decisionInput({
+      idempotencyKey: sharedCompletionKey,
+      completionKeys: [sharedCompletionKey],
+    }))).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "discarded",
+    }));
+    expect(restarted.size()).toBe(0);
   });
 
   it("persists an immutable attachment snapshot during reservation admission", async () => {

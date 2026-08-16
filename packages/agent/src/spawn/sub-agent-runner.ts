@@ -1939,13 +1939,85 @@ function classifyCompletionErrorKind(
     deps.batcher?.markDelivered(idempotencyKey);
   };
 
-  const retireAnnouncementReplayGuards = (run: SubAgentRun): void => {
+  const retireAnnouncementReplayGuards = async (
+    run: SubAgentRun,
+  ): Promise<Result<void, Error>> => {
     const completionKey = buildAnnounceKey(run.callerSessionKey, run.runId);
-    if (!completionKey || !deps.deadLetterQueue?.retireTerminalDecisions) return;
+    if (!completionKey || !deps.deadLetterQueue?.retireTerminalDecisions) {
+      return ok(undefined);
+    }
+    return deps.deadLetterQueue.retireTerminalDecisions([completionKey]);
+  };
+
+  const archivalRunIds = new Set<string>();
+  const archivedSessionRunIds = new Set<string>();
+
+  const removeArchivedRun = (runId: string, run: SubAgentRun): void => {
+    removeDedupEntry(run);
+    runs.delete(runId);
+    completionDeferreds.delete(runId);
+    startDeferreds.delete(runId);
+    durableResumeHandshakeRunIds.delete(runId);
+    forcedTerminalRunIds.delete(runId);
+    durableAdmittedRunIds.delete(runId);
+    durableTerminalReasons.delete(runId);
+    trajectoryClosedRunIds.delete(runId);
+    resumeDescriptors.delete(runId);
+    archivedSessionRunIds.delete(runId);
+  };
+
+  const scheduleRunArchive = (
+    runId: string,
+    run: Extract<SubAgentRun, { status: "completed" | "failed" }>,
+    now: number,
+  ): void => {
+    if (archivalRunIds.has(runId)) return;
+    archivalRunIds.add(runId);
+    const archive = (async () => {
+      if (!archivedSessionRunIds.has(runId)) {
+        const deleted = deps.sessionStore.delete(run.conversationScope);
+        if (!deleted.ok) {
+          deps.logger?.warn({
+            runId,
+            conversationRef: run.conversationRef,
+            hint: "Inspect session database integrity; the retention sweep will retry on its next pass",
+            errorKind: deleted.error.errorKind,
+          }, "Sub-agent session archive failed");
+          return;
+        }
+        archivedSessionRunIds.add(runId);
+      }
+      const retired = await retireAnnouncementReplayGuards(run);
+      if (!retired.ok) {
+        deps.logger?.warn({
+          runId,
+          errorKind: "resource" as const,
+          hint: "Restore dead-letter storage; the archived run remains retained until replay guards retire",
+        }, "Sub-agent announcement replay guards were not retired");
+        return;
+      }
+      deps.eventBus.emit("session:sub_agent_archived", {
+        runId,
+        sessionKey: run.sessionKey,
+        ageMs: now - run.completion.completedAtMs,
+        timestamp: now,
+      });
+      deps.logger?.debug(
+        { runId, ageMs: now - run.completion.completedAtMs },
+        "Sub-agent run auto-archived",
+      );
+      removeArchivedRun(runId, run);
+    })();
+    let tracked: Promise<void>;
+    tracked = archive.finally(() => {
+      archivalRunIds.delete(runId);
+      activePromises.delete(tracked);
+    });
+    activePromises.add(tracked);
     suppressError(
-      deps.deadLetterQueue.retireTerminalDecisions([completionKey]),
-      "retire archived announcement replay guards",
-      (message) => deps.logger?.debug({ runId: run.runId }, message),
+      tracked,
+      "archive sub-agent run after replay-guard retirement",
+      (message) => deps.logger?.debug({ runId }, message),
     );
   };
 
@@ -1958,38 +2030,7 @@ function classifyCompletionErrorKind(
         (run.status === "completed" || run.status === "failed") &&
         now - run.completion.completedAtMs > retentionMs
       ) {
-        const deleted = deps.sessionStore.delete(run.conversationScope);
-        if (!deleted.ok) {
-          deps.logger?.warn({
-            runId,
-            conversationRef: run.conversationRef,
-            hint: "Inspect session database integrity; the retention sweep will retry on its next pass",
-            errorKind: deleted.error.errorKind,
-          }, "Sub-agent session archive failed");
-          continue;
-        }
-
-        deps.eventBus.emit("session:sub_agent_archived", {
-          runId,
-          sessionKey: run.sessionKey,
-          ageMs: now - run.completion.completedAtMs,
-          timestamp: now,
-        });
-
-        deps.logger?.debug({ runId, ageMs: now - run.completion.completedAtMs }, "Sub-agent run auto-archived");
-        // Belt-and-suspenders: terminal-transition sites already remove the
-        // dedup entry, but archive is the last chance to evict if those missed.
-        removeDedupEntry(run);
-        retireAnnouncementReplayGuards(run);
-        runs.delete(runId);
-        completionDeferreds.delete(runId);
-        startDeferreds.delete(runId);
-        durableResumeHandshakeRunIds.delete(runId);
-        forcedTerminalRunIds.delete(runId);
-        durableAdmittedRunIds.delete(runId);
-        durableTerminalReasons.delete(runId);
-        trajectoryClosedRunIds.delete(runId);
-        resumeDescriptors.delete(runId);
+        scheduleRunArchive(runId, run, now);
       }
     }
 
@@ -2010,17 +2051,8 @@ function classifyCompletionErrorKind(
       const toRemove = runs.size - MAX_RUNS;
       for (let i = 0; i < toRemove && i < completedRuns.length; i++) {
         const [pruneRunId, pruneRun] = completedRuns[i]!;
-        removeDedupEntry(pruneRun);
-        retireAnnouncementReplayGuards(pruneRun);
-        runs.delete(pruneRunId);
-        completionDeferreds.delete(pruneRunId);
-        startDeferreds.delete(pruneRunId);
-        durableResumeHandshakeRunIds.delete(pruneRunId);
-        forcedTerminalRunIds.delete(pruneRunId);
-        durableAdmittedRunIds.delete(pruneRunId);
-        durableTerminalReasons.delete(pruneRunId);
-        trajectoryClosedRunIds.delete(pruneRunId);
-        resumeDescriptors.delete(pruneRunId);
+        if (pruneRun.status !== "completed" && pruneRun.status !== "failed") continue;
+        scheduleRunArchive(pruneRunId, pruneRun, now);
       }
     }
 

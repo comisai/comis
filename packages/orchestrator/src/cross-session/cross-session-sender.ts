@@ -160,6 +160,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       channelId,
       text,
       completionKeys: [announceOperationId],
+      retireOnSettlement: true,
       ...(callerEndpoint.threadId ? { options: { threadId: callerEndpoint.threadId } } : {}),
     };
     if (sendRecoverableAnnouncement && !sendGovernedAnnouncement) {

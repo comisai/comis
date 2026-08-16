@@ -359,6 +359,7 @@ describe("receipt-aware completion announcement delivery", () => {
 
   it("returns an authoritative terminal outcome without invoking delivery", async () => {
     const deliveryService = { deliverToChannel: vi.fn() };
+    const retireTerminalDecisions = vi.fn(async () => ok(undefined));
     const delivery = createReceiptAwareRecoverableAnnouncementDelivery({
       adaptersByType: new Map([
         ["telegram", {
@@ -378,13 +379,18 @@ describe("receipt-aware completion announcement delivery", () => {
         replaceDecisions: vi.fn(async () => ok({ created: false })),
         beginDeliveryAttempt: vi.fn(async () => ok({ claimed: false })),
         settleDeliveryAttempt: vi.fn(async () => ok(false)),
+        retireTerminalDecisions,
       },
       deliveryService: deliveryService as unknown as DeliveryService,
     });
 
-    await expect(delivery(makeRequest())).resolves.toEqual(
+    await expect(delivery({ ...makeRequest(), retireOnSettlement: true })).resolves.toEqual(
       ok({ delivered: false, terminalDecision: "delivered" }),
     );
+    expect(retireTerminalDecisions).toHaveBeenCalledWith([
+      expect.stringMatching(/^completion-announcement:[a-f0-9]{64}$/u),
+      "default:user_a:telegram:chat-1::run-1",
+    ]);
     expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
   });
 

@@ -23,6 +23,7 @@ import {
 import {
   createAnnouncementOperationDigests,
   type CompletionAnnouncementSendRequest,
+  type GovernedAnnouncementSendOutcome,
   type RecoverableAnnouncementSendOutcome,
   type SendGovernedCompletionAnnouncement,
   type SendRecoverableCompletionAnnouncement,
@@ -35,7 +36,7 @@ interface RecoverableAnnouncementDeliveryDeps {
   deadLetterQueue: Pick<
     AnnouncementDeadLetterQueuePort,
     "lookupDecision" | "reserveDecision" | "resolveDecision"
-  >;
+  > & Partial<Pick<AnnouncementDeadLetterQueuePort, "retireTerminalDecisions">>;
   resolveRootRunId?: RootRunIdResolver;
   send: SendGovernedCompletionAnnouncement;
   logger?: Pick<ComisLogger, "error" | "warn">;
@@ -61,7 +62,7 @@ interface ReceiptAwareRecoverableAnnouncementDeliveryDeps {
     | "replaceDecisions"
     | "reserveDecision"
     | "settleDeliveryAttempt"
-  >;
+  > & Partial<Pick<AnnouncementDeadLetterQueuePort, "retireTerminalDecisions">>;
   deliveryService: DeliveryService;
   logger?: Pick<ComisLogger, "error" | "warn">;
   lifecycleSignal?: AbortSignal;
@@ -240,6 +241,15 @@ export function createRecoverableAnnouncementDelivery(
       operationId,
       ...(request.completionKeys ?? []),
     ])];
+    const retireSettled = async <T extends GovernedAnnouncementSendOutcome>(
+      outcome: T,
+    ): Promise<Result<T, Error>> => {
+      if (!request.retireOnSettlement) return ok(outcome);
+      const retire = deps.deadLetterQueue.retireTerminalDecisions;
+      if (!retire) return err(new Error("Completion announcement retirement is unavailable"));
+      const retired = await retire(completionKeys);
+      return retired.ok ? ok(outcome) : retired;
+    };
     const reservation = reservationFor(
       request,
       route.callerConversation,
@@ -309,7 +319,7 @@ export function createRecoverableAnnouncementDelivery(
     if (!sendBoundary.value.ok) return sendBoundary.value;
     const outcome = sendBoundary.value.value;
     if (!outcome.delivered) {
-      if ("terminalDecision" in outcome) return ok(outcome);
+      if ("terminalDecision" in outcome) return retireSettled(outcome);
       if (outcome.failure !== "operation_validation_blocked") return ok(outcome);
     }
     const resolution = await fromPromise(deps.deadLetterQueue.resolveDecision(
@@ -326,7 +336,10 @@ export function createRecoverableAnnouncementDelivery(
         "Completion announcement reservation could not be resolved",
       );
     }
-    return ok(outcome);
+    if (request.retireOnSettlement && (!resolution.ok || !resolution.value.ok)) {
+      return err(new Error("Completion announcement settlement could not be retired"));
+    }
+    return retireSettled(outcome);
   };
 }
 
@@ -376,6 +389,15 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
       delivered: false,
       terminalDecision,
     });
+    const retireSettled = async <T extends RecoverableAnnouncementSendOutcome>(
+      outcome: T,
+    ): Promise<Result<T, Error>> => {
+      if (!request.retireOnSettlement) return ok(outcome);
+      const retire = deps.deadLetterQueue.retireTerminalDecisions;
+      if (!retire) return err(new Error("Completion announcement retirement is unavailable"));
+      const retired = await retire(completionKeys);
+      return retired.ok ? ok(outcome) : retired;
+    };
     const chunkReservations = (
       chunks: readonly string[],
     ): AnnouncementParentDecisionReservation[] => chunks.map((chunk, chunkIndex) => {
@@ -438,7 +460,7 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
       }
       if (!reservedBoundary.value.value.created) {
         if (reservedBoundary.value.value.terminalDecision !== undefined) {
-          return ok(terminalOutcome(reservedBoundary.value.value.terminalDecision));
+          return retireSettled(terminalOutcome(reservedBoundary.value.value.terminalDecision));
         }
         const manifestBoundary = await fromPromise(
           deps.deadLetterQueue.lookupDecisionTextChunks(operationId),
@@ -610,8 +632,8 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
         status: platformStatus === "rejected" ? "rejected" : "unknown",
       });
     }
-    if (suppressedTerminal !== undefined) return ok(terminalOutcome(suppressedTerminal));
-    return ok({
+    if (suppressedTerminal !== undefined) return retireSettled(terminalOutcome(suppressedTerminal));
+    return retireSettled({
       delivered: true,
       status: "accepted",
       ...(delivered.value.platform.lastMessageId

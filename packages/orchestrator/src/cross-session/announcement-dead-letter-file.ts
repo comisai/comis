@@ -2,7 +2,7 @@
 /** Atomic JSONL storage for the announcement dead-letter queue. */
 
 import { chmod, open, readFile, rename, unlink } from "node:fs/promises";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import {
   ChannelEndpointSchema,
@@ -45,7 +45,18 @@ export interface AnnouncementProducerHandoffRecord {
   readonly id: string;
   readonly transitionId: string;
   readonly expectedKeys: readonly string[];
-  readonly operation: AnnouncementParentDecisionReservation;
+  readonly operationCount: number;
+  readonly groupDigest: string;
+  readonly operations: readonly AnnouncementParentDecisionReservation[];
+}
+
+export function announcementProducerHandoffDigest(
+  expectedKeys: readonly string[],
+  operations: readonly AnnouncementParentDecisionReservation[],
+): Result<string, Error> {
+  return tryCatch(() => createHash("sha256")
+    .update(JSON.stringify({ expectedKeys, operations }), "utf8")
+    .digest("hex"));
 }
 
 function isDeliveryAuthority(value: unknown): value is DeliveryAuthority {
@@ -263,18 +274,33 @@ export function isAnnouncementProducerHandoffRecord(
 ): value is AnnouncementProducerHandoffRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return record.recordType === "producer_handoff"
+  if (!(record.recordType === "producer_handoff"
     && typeof record.id === "string"
     && record.id.length > 0
     && typeof record.transitionId === "string"
     && record.transitionId.length > 0
+    && record.id === `handoff:${record.transitionId}`
     && Array.isArray(record.expectedKeys)
     && new Set(record.expectedKeys).size === record.expectedKeys.length
     && record.expectedKeys.every((key) => typeof key === "string" && key.length > 0)
-    && typeof record.operation === "object"
-    && record.operation !== null
-    && !Array.isArray(record.operation)
-    && validDecision(record.operation as AnnouncementParentDecisionReservation);
+    && typeof record.operationCount === "number"
+    && Number.isSafeInteger(record.operationCount)
+    && record.operationCount > 0
+    && Array.isArray(record.operations)
+    && record.operations.length === record.operationCount
+    && record.operations.every((operation) => validDecision(
+      operation as AnnouncementParentDecisionReservation,
+    ))
+    && new Set(record.operations.map((operation) =>
+      (operation as AnnouncementParentDecisionReservation).idempotencyKey)).size
+      === record.operations.length
+    && typeof record.groupDigest === "string"
+    && /^[a-f0-9]{64}$/u.test(record.groupDigest))) return false;
+  const digest = announcementProducerHandoffDigest(
+    record.expectedKeys as string[],
+    record.operations as AnnouncementParentDecisionReservation[],
+  );
+  return digest.ok && digest.value === record.groupDigest;
 }
 
 export function createParentDecisionReservationStore(

@@ -340,6 +340,7 @@ describe("createCrossSessionSender", () => {
       channelType: "discord",
       channelId: "guild-channel-42",
       text: "test response",
+      retireOnSettlement: true,
     }));
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
@@ -480,6 +481,7 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
       channelId: "guild-channel-42",
       text: "test response",
       completionKeys: ["announce-tool-call-1"],
+      retireOnSettlement: true,
     });
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });

@@ -14,7 +14,7 @@ import { SandboxDowngradeError } from "./sandbox-posture.js";
 import { mkdtemp, writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
@@ -988,7 +988,7 @@ describe("createSubAgentRunner", () => {
     });
 
     // Advance past retention period + sweep interval
-    vi.advanceTimersByTime(60_000 + 300_001);
+    await vi.advanceTimersByTimeAsync(60_000 + 300_001);
 
     // Run should be archived (removed from Map)
     const runAfter = runner.getRunStatus(runId);
@@ -1008,6 +1008,34 @@ describe("createSubAgentRunner", () => {
         runId,
       }),
     );
+  });
+
+  it("auto-archive retains run state until replay guards retire", async () => {
+    deps.config.subAgentRetentionMs = 60_000;
+    let storageAvailable = false;
+    const retireTerminalDecisions = vi.fn(async () => storageAvailable
+      ? ok(undefined)
+      : err(new Error("storage unavailable")));
+    deps.deadLetterQueue = {
+      retireTerminalDecisions,
+      drain: vi.fn(async () => undefined),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "short task",
+      agentId: "default",
+      callerSessionKey: "default:user_a:telegram:chat-1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(60_000 + 300_001);
+
+    expect(runner.getRunStatus(runId)).toBeDefined();
+    expect(deps.sessionStore.delete).toHaveBeenCalledTimes(1);
+    storageAvailable = true;
+    await vi.advanceTimersByTimeAsync(300_001);
+    expect(runner.getRunStatus(runId)).toBeUndefined();
+    expect(deps.sessionStore.delete).toHaveBeenCalledTimes(1);
   });
 
   // -----------------------------------------------------------------------

@@ -22,6 +22,7 @@ import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import type { GovernedAnnouncementAttachment } from "./announcement-outward-operation.js";
 import { drainWithPreparedRecoveryAttachment } from "./announcement-dead-letter-attachment.js";
 import {
+  announcementProducerHandoffDigest,
   createParentDecisionReservationStore,
   isAnnouncementProducerHandoff,
   isAnnouncementTextChunks,
@@ -252,10 +253,8 @@ export function createAnnouncementDeadLetterQueue(
             entry.attachment?.kind === "snapshot" ? [entry.attachment.path] : []),
           ...decisionReservations.flatMap((reservation) =>
             reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
-          ...producerHandoffs.flatMap((handoff) =>
-            handoff.operation.attachment?.kind === "snapshot"
-              ? [handoff.operation.attachment.path]
-              : []),
+          ...producerHandoffs.flatMap((handoff) => handoff.operations.flatMap((operation) =>
+            operation.attachment?.kind === "snapshot" ? [operation.attachment.path] : [])),
         ];
         const reconciled = await fromPromise(reconcileAttachments(referencedPaths));
         if (!reconciled.ok || !reconciled.value.ok) {
@@ -401,10 +400,8 @@ export function createAnnouncementDeadLetterQueue(
         entry.attachment?.kind === "snapshot" ? [entry.attachment.path] : []),
       ...decisionReservations.flatMap((reservation) =>
         reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
-      ...producerHandoffs.flatMap((handoff) =>
-        handoff.operation.attachment?.kind === "snapshot"
-          ? [handoff.operation.attachment.path]
-          : []),
+      ...producerHandoffs.flatMap((handoff) => handoff.operations.flatMap((operation) =>
+        operation.attachment?.kind === "snapshot" ? [operation.attachment.path] : [])),
     ]);
     const cleanedPaths = new Set<string>();
     for (const candidate of candidates) {
@@ -2103,8 +2100,8 @@ export function createAnnouncementDeadLetterQueue(
     }
     const existing = await decisionStore.lookup(entry.idempotencyKey);
     if (!existing.ok) return existing;
-    const deferred = producerHandoffs.find((handoff) =>
-      handoff.operation.idempotencyKey === entry.idempotencyKey);
+    const deferred = producerHandoffs.find((handoff) => handoff.operations.some((operation) =>
+      operation.idempotencyKey === entry.idempotencyKey));
     if (deferred) return ok({ created: false, deferred: true });
     const prepared = await prepareReservedAttachment(
       entry,
@@ -2146,16 +2143,16 @@ export function createAnnouncementDeadLetterQueue(
   ): Promise<Result<{ created: boolean; deferred: boolean }, Error>> {
     const loaded = await loadFromDisk();
     if (!loaded.ok) return loaded;
-    if (operations.length === 0 || operations.length > maxEntries) {
+    if (operations.length === 0) {
       return err(new Error("Announcement producer handoff set is invalid"));
     }
     const operationKeys = new Set(operations.map((operation) => operation.idempotencyKey));
     if (operationKeys.size !== operations.length) {
       return err(new Error("Announcement producer handoff identities are invalid"));
     }
-    const existing = producerHandoffs.filter((handoff) =>
-      operationKeys.has(handoff.operation.idempotencyKey));
-    const reusable = existing.map((handoff) => handoff.operation);
+    const existing = producerHandoffs.filter((handoff) => handoff.operations.some((operation) =>
+      operationKeys.has(operation.idempotencyKey)));
+    const reusable = existing.flatMap((handoff) => handoff.operations);
     const preparedOperations: AnnouncementParentDecisionReservation[] = [];
     const transientSnapshots: Array<{
       attachment: AnnouncementDeadLetterAttachmentSnapshot;
@@ -2177,14 +2174,16 @@ export function createAnnouncementDeadLetterQueue(
       }
     }
     if (existing.length > 0) {
-      const existingKeys = new Set(existing.map((handoff) => handoff.operation.idempotencyKey));
-      const exact = existing.length === preparedOperations.length
+      const retainedOperations = existing.flatMap((handoff) => handoff.operations);
+      const existingKeys = new Set(retainedOperations.map((operation) => operation.idempotencyKey));
+      const exact = retainedOperations.length === preparedOperations.length
         && preparedOperations.every((operation) => {
-          const retained = existing.find((handoff) =>
-            handoff.operation.idempotencyKey === operation.idempotencyKey);
+          const retained = retainedOperations.find((candidate) =>
+            candidate.idempotencyKey === operation.idempotencyKey);
           return retained !== undefined
-            && JSON.stringify(retained.operation) === JSON.stringify(operation)
-            && JSON.stringify(retained.expectedKeys) === JSON.stringify(expectedKeys);
+            && JSON.stringify(retained) === JSON.stringify(operation)
+            && existing.every((handoff) =>
+              JSON.stringify(handoff.expectedKeys) === JSON.stringify(expectedKeys));
         })
         && existingKeys.size === operationKeys.size;
       await cleanupUnreferencedSnapshots(transientSnapshots);
@@ -2192,7 +2191,7 @@ export function createAnnouncementDeadLetterQueue(
         ? ok({ created: false, deferred: true })
         : err(new Error("Announcement producer handoff identity mismatch"));
     }
-    if (!canPersistProducerHandoffs(producerHandoffs.length + preparedOperations.length)) {
+    if (!canPersistProducerHandoffs(producerHandoffs.length + 1)) {
       await cleanupUnreferencedSnapshots(transientSnapshots);
       return err(new Error("Announcement producer handoff capacity exhausted"));
     }
@@ -2201,60 +2200,88 @@ export function createAnnouncementDeadLetterQueue(
       await cleanupUnreferencedSnapshots(transientSnapshots);
       return transitionId;
     }
-    const records: AnnouncementProducerHandoffRecord[] = preparedOperations.map((operation) => ({
+    const groupDigest = announcementProducerHandoffDigest(expectedKeys, preparedOperations);
+    if (!groupDigest.ok) {
+      await cleanupUnreferencedSnapshots(transientSnapshots);
+      return groupDigest;
+    }
+    const record: AnnouncementProducerHandoffRecord = {
       recordType: "producer_handoff",
-      id: `${transitionId.value}:${operation.idempotencyKey}`,
+      id: `handoff:${transitionId.value}`,
       transitionId: transitionId.value,
       expectedKeys: [...expectedKeys],
-      operation,
-    }));
+      operationCount: preparedOperations.length,
+      groupDigest: groupDigest.value,
+      operations: preparedOperations,
+    };
     const persisted = await persist(
       entries,
       decisionReservations,
       invalidRecords,
-      [...producerHandoffs, ...records],
+      [...producerHandoffs, record],
     );
     if (!persisted.ok) {
       await cleanupUnreferencedSnapshots(transientSnapshots);
       return persisted;
     }
-    producerHandoffs = [...producerHandoffs, ...records];
+    producerHandoffs = [...producerHandoffs, record];
     return ok({ created: false, deferred: true });
   }
 
   async function promoteProducerHandoffs(): Promise<void> {
-    const transitionIds = [...new Set(producerHandoffs.map((handoff) => handoff.transitionId))];
-    for (const transitionId of transitionIds) {
-      const group = producerHandoffs.filter((handoff) => handoff.transitionId === transitionId);
-      const expectedKeys = group[0]?.expectedKeys;
-      if (!expectedKeys || group.some((handoff) =>
-        JSON.stringify(handoff.expectedKeys) !== JSON.stringify(expectedKeys))) continue;
+    for (const handoff of [...producerHandoffs]) {
+      const expectedKeys = handoff.expectedKeys;
       const promotable: AnnouncementParentDecisionReservation[] = [];
+      const terminalOperations: Array<{
+        operation: AnnouncementParentDecisionReservation;
+        decision: AnnouncementTerminalDecision;
+      }> = [];
       const settledCompletionKeys = new Set<string>();
       let terminalLookupFailed = false;
-      for (const handoff of group) {
-        const terminal = await lookupTerminalDecision(handoff.operation);
+      for (const operation of handoff.operations) {
+        const terminal = await lookupTerminalDecision(operation);
         if (!terminal.ok) {
           terminalLookupFailed = true;
           break;
         }
         if (terminal.value === undefined) {
-          promotable.push(handoff.operation);
+          promotable.push(operation);
           continue;
         }
-        const terminalized = await terminalizeOwner(
-          handoff.operation,
-          terminal.value,
-          entries,
-          decisionReservations,
-        );
+        terminalOperations.push({ operation, decision: terminal.value });
+        const terminalized = await recordTerminalDecision(operation, terminal.value);
         if (!terminalized.ok) {
           terminalLookupFailed = true;
           break;
         }
-        for (const completionKey of handoff.operation.completionKeys) {
-          settledCompletionKeys.add(completionKey);
+      }
+      if (terminalLookupFailed) continue;
+      const logicalCompletionKeys = new Set(terminalOperations.flatMap(({ operation }) =>
+        operation.completionKeys.filter((key) => key !== operation.idempotencyKey)));
+      for (const completionKey of logicalCompletionKeys) {
+        if (promotable.some((operation) =>
+          operation.idempotencyKey === completionKey
+          || operation.completionKeys.includes(completionKey))) continue;
+        const owners = terminalOperations.filter(({ operation }) =>
+          operation.completionKeys.includes(completionKey));
+        const representative = owners[0]?.operation;
+        if (!representative) continue;
+        const decision: AnnouncementTerminalDecision = owners.every(({ decision: outcome }) =>
+          outcome === "delivered")
+          ? "delivered"
+          : owners.some(({ decision: outcome }) => outcome === "no_reply")
+            ? "no_reply"
+            : "discarded";
+        const terminalized = await recordTerminalDecision({
+          ...representative,
+          idempotencyKey: completionKey,
+          completionKeys: [completionKey],
+        }, decision);
+        if (!terminalized.ok) {
+          terminalLookupFailed = true;
+          break;
         }
+        settledCompletionKeys.add(completionKey);
       }
       if (terminalLookupFailed) continue;
       const promoted = await decisionStore.replace(
@@ -2274,8 +2301,8 @@ export function createAnnouncementDeadLetterQueue(
         }
         continue;
       }
-      const remaining = producerHandoffs.filter((handoff) =>
-        handoff.transitionId !== transitionId);
+      const remaining = producerHandoffs.filter((candidate) =>
+        candidate.transitionId !== handoff.transitionId);
       const removed = await persist(entries, decisionReservations, invalidRecords, remaining);
       if (!removed.ok) continue;
       producerHandoffs = remaining;
