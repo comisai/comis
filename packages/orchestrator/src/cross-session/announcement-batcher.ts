@@ -27,12 +27,10 @@ import {
   type AnnouncementTerminalOutcome,
   type DeliveryDedup,
 } from "@comis/agent";
-import type { ChannelType } from "./announcement-dead-letter.js";
 import type {
   AnnouncementOperationIdentity,
   CompletionAttachmentRef,
   GovernedAnnouncementFailure,
-  SendGovernedCompletionAnnouncement,
 } from "./announcement-outward-operation.js";
 import type {
   AnnouncementBatcher,

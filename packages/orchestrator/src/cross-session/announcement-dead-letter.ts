@@ -7,7 +7,6 @@ import type {
   AnnouncementDeadLetterQueuePort,
   ChannelEndpoint,
   DeliveryAuthority,
-  TypedEventBus,
   OutwardSendLedgerPort,
   OutwardSendRecord,
 } from "@comis/core";
