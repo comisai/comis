@@ -300,6 +300,10 @@ describe("receipt-aware completion announcement delivery", () => {
         entry.idempotencyKey);
       expect(claimedKeys).toHaveLength(2);
       expect(new Set(claimedKeys).size).toBe(2);
+      expect(deadLetterQueue.beginDeliveryAttempt.mock.calls.map(([entry]) => entry.textChunks))
+        .toEqual([undefined, undefined]);
+      const chunkReservations = deadLetterQueue.replaceDecisions.mock.calls.at(-1)?.[1] ?? [];
+      expect(chunkReservations.filter((entry) => entry.textChunks !== undefined)).toHaveLength(1);
       expect(deadLetterQueue.settleDeliveryAttempt.mock.calls.map(([, outcome]) => outcome))
         .toEqual(["accepted", "unknown"]);
 

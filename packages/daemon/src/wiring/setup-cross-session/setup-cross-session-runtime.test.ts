@@ -36,7 +36,7 @@ const mockCreateSubAgentRunner = vi.hoisted(() => vi.fn(() => ({
   shutdown: vi.fn(async () => {}),
 })));
 const mockRandomUUID = vi.hoisted(() => vi.fn(() => "30000000-0000-4000-8000-000000000003"));
-const mockDeliverToChannel = vi.hoisted(() => vi.fn(async () => ({
+const mockDeliverToChannel = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({
   ok: true as const,
   value: {
     chunks: [{ status: "accepted" as const, messageId: "mock-msg-id", charCount: 10, retried: false }],
@@ -3927,12 +3927,112 @@ describe("setupCrossSession durable-store injection", () => {
 
   it("threads durable receipt-aware recovery when the outward ledger is disabled", async () => {
     const setupCrossSession = await getSetupCrossSession();
+    const dataDir = `${os.tmpdir()}/comis-ledgerless-batcher-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    mkdirSync(dataDir, { recursive: true });
+    const deps = createMinimalDeps();
+    deps.container.config.dataDir = dataDir;
+    const platformSend = deps.adaptersByType.get("telegram").sendMessage;
+    mockDeliverToChannel.mockImplementationOnce(async (...rawArgs: unknown[]) => {
+      const [adapter, channelId, , options, sendChunk, chunkManifest] = rawArgs as [
+        DeliveryAdapter,
+        string,
+        string,
+        DeliverToChannelOptions,
+        DeliveryChunkSender | undefined,
+        { kind: "persist"; persist: (chunks: readonly string[]) => Promise<{ ok: true; value: void } | { ok: false; error: Error }> } | undefined,
+      ];
+      if (!sendChunk || chunkManifest?.kind !== "persist") {
+        return { ok: false as const, error: new Error("durable chunk boundary unavailable") };
+      }
+      const chunks = ["first durable chunk", "second durable chunk"];
+      const persisted = await chunkManifest.persist(chunks);
+      if (!persisted.ok) return persisted;
+      const results: Array<{
+        status: "accepted";
+        messageId: string;
+        charCount: number;
+        retried: false;
+      }> = [];
+      for (const [chunkIndex, text] of chunks.entries()) {
+        const sent = await sendChunk({
+          adapter,
+          channelId,
+          text,
+          options: options.threadId ? { threadId: options.threadId } : {},
+          chunkIndex,
+          totalChunks: chunks.length,
+        });
+        if (!sent.ok) return sent;
+        if (sent.value.kind !== "sent") {
+          return { ok: false as const, error: new Error("chunk did not produce a platform receipt") };
+        }
+        results.push({
+          status: "accepted" as const,
+          messageId: sent.value.messageId,
+          charCount: text.length,
+          retried: false,
+        });
+      }
+      return {
+        ok: true as const,
+        value: {
+          chunks: results,
+          totalChars: chunks.reduce((sum, chunk) => sum + chunk.length, 0),
+          platform: {
+            status: "accepted" as const,
+            deliveredChunks: chunks.length,
+            settledAtMs: 1,
+            lastMessageId: results.at(-1)!.messageId,
+          },
+          queueDisposition: "settled" as const,
+        },
+      };
+    });
 
-    setupCrossSession(createMinimalDeps());
+    try {
+      const result = setupCrossSession(deps);
+      const senderArgs = mockCreateCrossSessionSender.mock.calls[0][0];
+      const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+      expect(senderArgs.sendGovernedAnnouncement).toBeUndefined();
+      expect(senderArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
+      expect(runnerArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
 
-    const senderArgs = mockCreateCrossSessionSender.mock.calls[0][0];
-    expect(senderArgs.sendGovernedAnnouncement).toBeUndefined();
-    expect(senderArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
+      const admitted = await result.announcementBatcher.enqueue({
+        announcementText: "[System Message]\nResult: completed",
+        terminalOutcome: { status: "completed" },
+        announceChannelType: "telegram",
+        announceChannelId: "chat-1",
+        callerAgentId: "agent-1",
+        callerSessionKey: "default:agent:agent-1:user1:chan1",
+        callerConversation: makeConversation("default", "agent-1"),
+        destinationEndpoint: {
+          channelType: "telegram",
+          channelInstanceId: "telegram-primary",
+          conversationId: "chat-1",
+          conversationKind: "direct",
+        },
+        runId: "ledgerless-run-1",
+        idempotencyKey: "default:agent:agent-1:user1:chan1::ledgerless-run-1",
+      });
+      expect(admitted).toEqual({ ok: true, value: "queued" });
+      await result.announcementBatcher.flush();
+
+      expect(mockDeliverToChannel).toHaveBeenCalledWith(
+        expect.any(Object),
+        "chat-1",
+        expect.any(String),
+        expect.any(Object),
+        expect.any(Function),
+        expect.any(Object),
+      );
+      expect(platformSend).toHaveBeenCalledTimes(2);
+      expect(platformSend.mock.calls.map((call) => call[1])).toEqual([
+        "first durable chunk",
+        "second durable chunk",
+      ]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("records a completion operation before the first direct fallback and commits its platform receipt", async () => {
@@ -3986,12 +4086,13 @@ describe("setupCrossSession durable-store injection", () => {
         totalChunks: 1,
       });
       if (!sent.ok) throw sent.error;
+      if (sent.value.kind !== "sent") throw new Error("expected platform send receipt");
       return {
         ok: true as const,
         value: {
           chunks: [{
             status: "accepted" as const,
-            messageId: sent.value,
+            messageId: sent.value.messageId,
             charCount: 20,
             retried: false,
           }],

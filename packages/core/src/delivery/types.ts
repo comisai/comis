@@ -51,9 +51,13 @@ export interface DeliveryChunkSendInput {
   readonly totalChunks: number;
 }
 
+export type DeliveryChunkSendOutcome =
+  | { readonly kind: "sent"; readonly messageId: string }
+  | { readonly kind: "settled" };
+
 export type DeliveryChunkSender = (
   input: DeliveryChunkSendInput,
-) => Promise<Result<string, Error>>;
+) => Promise<Result<DeliveryChunkSendOutcome, Error>>;
 
 export type DeliveryChunkManifest =
   | {
@@ -122,6 +126,14 @@ export type ChunkDeliveryResult =
       errorKind?: never;
       charCount: number;
       retried: boolean;
+    }
+  | {
+      status: "settled";
+      messageId?: never;
+      error?: never;
+      errorKind?: never;
+      charCount: number;
+      retried: false;
     }
   | {
       status: "rejected" | "unknown";

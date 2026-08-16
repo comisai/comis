@@ -34,10 +34,12 @@ import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   isGovernedCompletionAnnouncementConfirmedDelivered,
+  isRecoverableCompletionAnnouncementConfirmedDelivered,
   type AnnouncementBatcher,
   type AnnouncementDeadLetterQueue,
   type CompletionAttachmentShape,
   type SendGovernedCompletionAnnouncement,
+  type SendRecoverableCompletionAnnouncement,
 } from "./announcement-ports.js";
 import { createCompletionAnnouncementOperationPlan } from "./completion-announcement-operations.js";
 import { buildAnnounceKey, type DeliveryDedup } from "./announce-key.js";
@@ -384,6 +386,7 @@ export async function deliverAnnouncement(params: {
   batcher?: AnnouncementBatcher;
   deadLetterQueue?: AnnouncementDeadLetterQueue;
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
   /**
    * Shared, bounded delivered-key store. When the batcher is absent the
    * batcher cannot mark the key, so the non-batcher success branches mark this
@@ -418,7 +421,7 @@ export async function deliverAnnouncement(params: {
   const announcementText = announceScrub.redactions > 0 ? announceScrub.text : params.announcementText;
 
   if (
-    deps.sendGovernedAnnouncement
+    (deps.sendGovernedAnnouncement || deps.sendRecoverableAnnouncement)
     && (!callerAgentId || !callerSessionKey || !params.callerConversation || !params.destinationEndpoint)
   ) {
     deps.logger?.warn({
@@ -771,6 +774,30 @@ export async function deliverAnnouncement(params: {
         await resolveDecisionKey(operation.reservationKey, "receipt_committed");
       }
     }
+  } else if (
+    deps.sendRecoverableAnnouncement
+    && callerAgentId
+    && callerSessionKey
+    && params.callerConversation
+    && params.destinationEndpoint
+    && !params.attachments?.length
+  ) {
+    const boundary = await fromPromise(deps.sendRecoverableAnnouncement({
+      agentId: callerAgentId,
+      callerSessionKey,
+      callerConversation: params.callerConversation,
+      destinationEndpoint: params.destinationEndpoint,
+      runId,
+      channelType: announceChannelType,
+      channelId: announceChannelId,
+      text: finalText,
+      ...(announceKey ? { completionKeys: [announceKey] } : {}),
+      ...(threadId ? { options: { threadId } } : {}),
+    }));
+    delivered = boundary.ok
+      && boundary.value.ok
+      && isRecoverableCompletionAnnouncementConfirmedDelivered(boundary.value.value);
+    if (!delivered) lastError = "recoverable announcement was not confirmed";
   } else {
     if (params.attachments?.length) {
       deps.logger?.warn({
@@ -795,7 +822,9 @@ export async function deliverAnnouncement(params: {
   }
 
   if (delivered) {
-    if (!deps.sendGovernedAnnouncement) await resolveDecision("receipt_committed");
+    if (!deps.sendGovernedAnnouncement && !deps.sendRecoverableAnnouncement) {
+      await resolveDecision("receipt_committed");
+    }
     if (announceKey) deps.deliveryDedup?.mark(announceKey);
     return;
   }
@@ -807,7 +836,7 @@ export async function deliverAnnouncement(params: {
     errorKind: "network" as const,
   }, "Sub-agent announcement delivery failed");
 
-  if (deps.sendGovernedAnnouncement || params.attachments?.length) return;
+  if (deps.sendGovernedAnnouncement || deps.sendRecoverableAnnouncement || params.attachments?.length) return;
 
   if (deps.deadLetterQueue && callerAgentId && callerSessionKey) {
     const queued = await deps.deadLetterQueue.enqueue({
@@ -868,7 +897,7 @@ interface FailureNotificationParams {
 
 type FailureNotificationDeps = Pick<
   SubAgentRunnerDeps,
-  "sendToChannel" | "sendGovernedAnnouncement" | "logger" | "batcher"
+  "sendToChannel" | "sendGovernedAnnouncement" | "sendRecoverableAnnouncement" | "logger" | "batcher"
 > & {
     /**
      * Shared, bounded delivered-key store. Lets the failure-path dedup
@@ -929,7 +958,7 @@ async function deliverFailureNotificationOnce(
   const threadId = params.threadId;
 
   if (
-    deps.sendGovernedAnnouncement
+    (deps.sendGovernedAnnouncement || deps.sendRecoverableAnnouncement)
     && (!params.callerAgentId || !params.callerSessionKey || !params.callerConversation || !params.destinationEndpoint)
   ) {
     deps.logger?.warn({
@@ -961,6 +990,32 @@ async function deliverFailureNotificationOnce(
     delivered = boundary.ok
       && boundary.value.ok
       && isGovernedCompletionAnnouncementConfirmedDelivered(boundary.value.value);
+  } else if (deps.sendRecoverableAnnouncement) {
+    if (!announceKey) {
+      return Promise.reject(new Error("Recoverable failure notification requires a completion key"));
+    }
+    const boundary = await fromPromise(deps.sendRecoverableAnnouncement({
+      agentId: params.callerAgentId!,
+      callerSessionKey: params.callerSessionKey!,
+      callerConversation: params.callerConversation!,
+      destinationEndpoint: params.destinationEndpoint!,
+      runId: params.runId,
+      channelType: params.channelType,
+      channelId: params.channelId,
+      text: message,
+      completionKeys: [announceKey],
+      ...(threadId ? { options: { threadId } } : {}),
+    }));
+    delivered = boundary.ok
+      && boundary.value.ok
+      && isRecoverableCompletionAnnouncementConfirmedDelivered(boundary.value.value);
+    if (!boundary.ok) {
+      sendErr = boundary.error;
+    } else if (!boundary.value.ok) {
+      sendErr = boundary.value.error;
+    } else if (!delivered) {
+      sendErr = new Error("Recoverable failure notification was not confirmed");
+    }
   } else {
     const boundary = await fromPromise(deps.sendToChannel(
       params.channelType,
@@ -976,8 +1031,8 @@ async function deliverFailureNotificationOnce(
     deps.logger?.warn({
       runId: params.runId,
       err: toSafeErrorLogString(sendErr),
-      hint: deps.sendGovernedAnnouncement
-        ? "Inspect the retained governed operation before deciding whether to retry"
+      hint: deps.sendGovernedAnnouncement || deps.sendRecoverableAnnouncement
+        ? "Inspect the retained announcement operation before deciding whether to retry"
         : "Even direct channel send failed; user will not be notified",
       errorKind: "network" as const,
     }, "Failure notification delivery failed");

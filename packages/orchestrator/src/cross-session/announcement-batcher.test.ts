@@ -161,9 +161,12 @@ describe("AnnouncementBatcher", () => {
       reservationRootRunId: "root-1",
     }));
 
-    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
-      announcementText: "Research completed. https://example.com/report",
-    }));
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        announcementText: "Research completed. https://example.com/report",
+      }),
+      expect.any(Object),
+    );
   });
 
   it("blocks an echoed internal completion envelope at final channel egress", async () => {
@@ -509,19 +512,22 @@ describe("AnnouncementBatcher", () => {
     await enqueue;
     await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
-      idempotencyKey: "decision-1",
-      agentId: "agent-main",
-      runId: "run-1",
-      channelType: "discord",
-      channelId: "chan-123",
-      deliveryAuthority: {
-        tenantId: "default",
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "decision-1",
         agentId: "agent-main",
-        conversationRef: announcement.callerConversation.conversationRef,
-      },
-      destinationEndpoint: announcement.destinationEndpoint,
-    }));
+        runId: "run-1",
+        channelType: "discord",
+        channelId: "chan-123",
+        deliveryAuthority: {
+          tenantId: "default",
+          agentId: "agent-main",
+          conversationRef: announcement.callerConversation.conversationRef,
+        },
+        destinationEndpoint: announcement.destinationEndpoint,
+      }),
+      expect.any(Object),
+    );
     expect(deps.announceToParent).toHaveBeenCalledOnce();
   });
 
@@ -548,10 +554,13 @@ describe("AnnouncementBatcher", () => {
     }));
     await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
-      idempotencyKey: "decision-root-1",
-      rootRunId: "root-session-abc",
-    }));
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "decision-root-1",
+        rootRunId: "root-session-abc",
+      }),
+      expect.any(Object),
+    );
   });
 
   it("rejects governed admission before reserving when the ledger root is absent", async () => {
@@ -726,7 +735,42 @@ describe("AnnouncementBatcher", () => {
           completionKeys: ["attachment-admission"],
         }),
       ],
+      expect.any(Object),
     );
+  });
+
+  it("retains ledgerless attachments through the recoverable delivery boundary", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendRecoverableAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: false,
+      status: "rejected" as const,
+    }));
+    const deps = makeDeps({
+      deadLetterQueue,
+      sendRecoverableAnnouncement,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+    const attachment = { sourceAgentId: "report-agent", path: "/workspace/report.csv" };
+
+    const admitted = await batcher.enqueue({
+      ...makeAnnouncement({
+        idempotencyKey: "ledgerless-attachment",
+        announcementText: "[System Message]\nResult: NO_REPLY",
+        attachments: [attachment],
+      }),
+      suppressText: true,
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(admitted).toEqual(ok("queued"));
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledOnce();
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      partId: "attachment:0",
+      attachment,
+      text: "",
+    }));
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
   });
 
   it("delivers a generated file even when the parent suppresses its caption", async () => {
@@ -1005,6 +1049,7 @@ describe("AnnouncementBatcher", () => {
           completionKeys: ["completion-a", "completion-b"],
         }),
       ]),
+      expect.any(Object),
     );
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
       summaryKey,
@@ -1021,12 +1066,14 @@ describe("AnnouncementBatcher", () => {
     expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
   });
 
-  it("shutdown closes admission and waits for an in-flight reservation before flushing", async () => {
-    let finishReservation!: (value: ReturnType<typeof ok>) => void;
+  it("shutdown cancels a capacity-blocked reservation before flushing", async () => {
     const deadLetterQueue = makeDecisionQueue();
-    deadLetterQueue.reserveDecision.mockReturnValue(new Promise((resolve) => {
-      finishReservation = resolve;
-    }));
+    deadLetterQueue.reserveDecision.mockImplementation((_entry, signal?: AbortSignal) =>
+      new Promise((resolve) => {
+        signal?.addEventListener("abort", () => resolve(err(new Error("admission cancelled"))), {
+          once: true,
+        });
+      }));
     const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
     const batcher = createAnnouncementBatcher(deps);
 
@@ -1036,15 +1083,11 @@ describe("AnnouncementBatcher", () => {
     expect(refused.ok).toBe(false);
     expect(deps.announceToParent).not.toHaveBeenCalled();
 
-    finishReservation(ok({ created: true }));
-    await admission;
+    await expect(admission).resolves.toMatchObject({ ok: false });
     await shutdown;
 
-    expect(deps.announceToParent).toHaveBeenCalledOnce();
-    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "shutdown-reservation",
-      "no_reply",
-    );
+    expect(deps.announceToParent).not.toHaveBeenCalled();
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
   });
 
   it("sends the parent rewrite through the governed outward operation", async () => {
@@ -1486,9 +1529,10 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
 
     expect(sendToChannel).toHaveBeenCalledOnce();
     expect(enqueue).toHaveBeenCalledOnce();
-    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
-      completionKeys: ["K1", "K2"],
-    }));
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ completionKeys: ["K1", "K2"] }),
+      expect.any(Object),
+    );
   });
 
   it("treats a resolved false direct fallback as a failed delivery", async () => {
@@ -1526,10 +1570,13 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     }));
     await vi.advanceTimersByTimeAsync(2000);
 
-    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
-      idempotencyKey: "ledgerless-unknown",
-      rootRunId: expect.stringContaining("announcement:"),
-    }));
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "ledgerless-unknown",
+        rootRunId: expect.stringContaining("announcement:"),
+      }),
+      expect.any(Object),
+    );
     expect(deadLetterQueue.beginDeliveryAttempt).toHaveBeenCalledOnce();
     expect(deadLetterQueue.settleDeliveryAttempt).toHaveBeenCalledWith(
       expect.any(String),
@@ -1616,6 +1663,7 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
         ),
         completionKeys: ["default:user1:chan1::run-1"],
       })],
+      expect.any(Object),
     );
     expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();

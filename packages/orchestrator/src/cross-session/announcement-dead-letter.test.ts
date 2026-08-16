@@ -346,6 +346,26 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
   });
 
+  it("cancels a capacity-blocked admission without releasing retained evidence", async () => {
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    await expect(dlq.enqueue(makeEntry({ runId: "run-capacity-owner" })))
+      .resolves.toEqual(ok(undefined));
+    const controller = new AbortController();
+
+    const blocked = dlq.enqueue(makeEntry({ runId: "run-cancelled-waiter" }), controller.signal);
+    controller.abort();
+
+    await expect(blocked).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter admission cancelled" },
+    });
+    expect(dlq.size()).toBe(1);
+  });
+
   it("parks a receipt-unknown retry before it can be replayed", async () => {
     const receiptAwareSendToChannel = vi.fn(async () => ok({
       delivered: false as const,
@@ -514,7 +534,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
   });
 
-  it("parks entries after maxRetries until an operator releases them", async () => {
+  it("parks entries after every configured recovery attempt is exhausted", async () => {
     const eventBus = createMockEventBus();
     const entry = makeFullEntry({ attemptCount: 5 });
 
@@ -535,6 +555,29 @@ describe("AnnouncementDeadLetterQueue", () => {
       kind: "entry",
       lastError: "attempt_limit_reached",
     }]);
+  });
+
+  it("allows the configured recovery attempt after the initial platform attempt", async () => {
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxRetries: 1,
+      retryIntervalMs: 0,
+    });
+    const entry = makeEntry({
+      idempotencyKey: "initial-plus-one-recovery",
+      completionKeys: ["initial-plus-one-recovery"],
+    });
+
+    await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: true }));
+    await expect(dlq.settleDeliveryAttempt("initial-plus-one-recovery", "rejected"))
+      .resolves.toEqual(ok(true));
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    await dlq.drain(sendToChannel);
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(dlq.size()).toBe(0);
   });
 
   it("parks entries after maxAgeMs until an operator releases them", async () => {
@@ -1373,6 +1416,38 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
       created: false,
       terminalDecision: "delivered",
+    }));
+  });
+
+  it("quarantines a ledgerless attachment after its rewrite grace", async () => {
+    const decision = decisionInput({
+      failedAt: Date.now() - 301_000,
+      idempotencyKey: "ledgerless-attachment-recovery",
+      completionKeys: ["ledgerless-attachment-recovery"],
+      partId: "attachment:0",
+      attachment: snapshotAttachment("worker-a", "report.csv"),
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(queue.reserveDecision(decision)).resolves.toEqual(ok({ created: true }));
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    await queue.drain(sendToChannel);
+
+    expect(sendToChannel).not.toHaveBeenCalled();
+    await expect(queue.listQuarantined()).resolves.toMatchObject({
+      ok: true,
+      value: [{
+        idempotencyKey: "ledgerless-attachment-recovery",
+        lastError: "attachment_delivery_unavailable",
+      }],
+    });
+    await expect(queue.durableStatus()).resolves.toEqual(ok({
+      activeRecoveryCount: 0,
+      quarantinedCount: 1,
     }));
   });
 

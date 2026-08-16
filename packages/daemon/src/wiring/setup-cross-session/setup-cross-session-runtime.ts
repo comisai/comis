@@ -485,7 +485,6 @@ export function setupCrossSession(deps: {
             return ok({
               delivered: true,
               status: "accepted" as const,
-              platformMessageId: `terminal:${governedText.operationId}`,
             });
           }
           return ok({
@@ -552,6 +551,7 @@ export function setupCrossSession(deps: {
     deadLetterQueue,
     deliveryDedup,
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
+    ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
   });
 
   // Resolve condensation model via 5-level priority chain
@@ -674,6 +674,7 @@ export function setupCrossSession(deps: {
     deadLetterQueue,
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}), deliveryDedup,
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
+    ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
     clock: deps.clock,
     timers: deps.timers,
     // The tree-wide spawn ceiling (bound to

@@ -52,6 +52,7 @@ export type PlatformDeliveryOutcome = z.infer<typeof PlatformDeliveryOutcomeSche
 
 export type PlatformChunkDeliveryOutcome =
   | { status: "accepted"; charCount: number; retried: boolean; messageId?: string }
+  | { status: "settled"; charCount: number; retried: false }
   | { status: "rejected"; charCount: number; retried: boolean; errorKind: ErrorKind }
   | { status: "unknown"; charCount: number; retried: boolean; errorKind: ErrorKind };
 
@@ -75,11 +76,13 @@ export function classifyPlatformDelivery(
     return err({ code: "invalid_input", errorKind: "validation", message: "Invalid platform delivery evidence" });
   }
 
-  const accepted = chunks.filter((chunk) => chunk.status === "accepted");
-  const failed = chunks.filter((chunk) => chunk.status !== "accepted");
+  const accepted = chunks.filter((chunk) =>
+    chunk.status === "accepted" || chunk.status === "settled");
+  const failed = chunks.filter((chunk) =>
+    chunk.status !== "accepted" && chunk.status !== "settled");
   const ambiguous = chunks.filter((chunk) => chunk.status === "unknown");
-  const lastAccepted = accepted.at(-1);
-  const lastMessageId = lastAccepted?.status === "accepted" ? lastAccepted.messageId : undefined;
+  const lastAccepted = chunks.filter((chunk) => chunk.status === "accepted").at(-1);
+  const lastMessageId = lastAccepted?.messageId;
 
   let candidate: PlatformDeliveryOutcome;
   if (ambiguous.length > 0) {

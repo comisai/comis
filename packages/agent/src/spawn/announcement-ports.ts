@@ -30,6 +30,7 @@ export interface GovernedCompletionAnnouncementRequest {
   partId?: string;
   attachment?: CompletionAttachmentShape;
   completionKeys?: readonly string[];
+  signal?: AbortSignal;
 }
 
 /** Generated-file reference; daemon wiring validates and snapshots it before egress. */
@@ -61,6 +62,22 @@ export function isGovernedCompletionAnnouncementConfirmedDelivered(
 export type SendGovernedCompletionAnnouncement = (
   request: GovernedCompletionAnnouncementRequest,
 ) => Promise<Result<GovernedCompletionAnnouncementOutcome, Error>>;
+
+export type RecoverableCompletionAnnouncementOutcome =
+  | { delivered: true; status: "accepted"; platformMessageId?: string }
+  | { delivered: false; status: "rejected" | "unknown" }
+  | { delivered: false; terminalDecision: OutwardTerminalDecision };
+
+export function isRecoverableCompletionAnnouncementConfirmedDelivered(
+  outcome: RecoverableCompletionAnnouncementOutcome,
+): boolean {
+  return outcome.delivered
+    || ("terminalDecision" in outcome && outcome.terminalDecision === "delivered");
+}
+
+export type SendRecoverableCompletionAnnouncement = (
+  request: GovernedCompletionAnnouncementRequest,
+) => Promise<Result<RecoverableCompletionAnnouncementOutcome, Error>>;
 
 /**
  * Single announcement enqueued onto the batcher. Mirrors the shape of

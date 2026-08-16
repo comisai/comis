@@ -189,6 +189,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const deliveryTails = new Map<string, Promise<void>>();
   const pendingAdmissions = new Set<Promise<Result<"queued" | "retained", Error>>>();
+  const admissionAbort = new AbortController();
   // Keys whose enqueue admission has not yet settled — consulted by hasPending
   // alongside the materialized queues so the failure sweep never fires inside
   // the admission await window.
@@ -244,6 +245,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         channelId: item.announceChannelId,
         text,
         completionKeys,
+        signal: admissionAbort.signal,
         ...(partId ? { partId } : {}),
         ...(attachment ? { attachment } : {}),
         ...(item.announceThreadId ? { options: { threadId: item.announceThreadId } } : {}),
@@ -263,6 +265,46 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         lastError: outcome.failure,
         failure: outcome.failure,
         ...(outcome.identity ? { identity: outcome.identity } : {}),
+      };
+    }
+
+    if (deps.sendRecoverableAnnouncement) {
+      const boundary = await fromPromise(deps.sendRecoverableAnnouncement({
+        agentId: item.callerAgentId,
+        callerSessionKey: item.callerSessionKey,
+        callerConversation: item.callerConversation,
+        destinationEndpoint: item.destinationEndpoint,
+        runId: item.runId,
+        channelType: item.announceChannelType,
+        channelId: item.announceChannelId,
+        text,
+        completionKeys,
+        signal: admissionAbort.signal,
+        ...(partId ? { partId } : {}),
+        ...(attachment ? { attachment } : {}),
+        ...(item.announceThreadId ? { options: { threadId: item.announceThreadId } } : {}),
+      }));
+      if (!boundary.ok || !boundary.value.ok) {
+        return {
+          delivered: false,
+          lastError: "recoverable announcement boundary failed",
+          platformStatus: "unknown",
+        };
+      }
+      const outcome = boundary.value.value;
+      if (outcome.delivered) return { delivered: true, platformStatus: "accepted" };
+      if ("terminalDecision" in outcome) {
+        return { delivered: true, terminalDecision: true };
+      }
+      return {
+        delivered: false,
+        lastError: outcome.status === "rejected"
+          ? "transport_rejected"
+          : "outward_operation_unresolved",
+        failure: outcome.status === "rejected"
+          ? "transport_rejected"
+          : "transport_uncertain",
+        platformStatus: outcome.status,
       };
     }
 
@@ -425,6 +467,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     });
 
     const usesDurableAttempt = deps.sendGovernedAnnouncement !== undefined
+      || deps.sendRecoverableAnnouncement !== undefined
       || deps.sendToChannelWithReceipt !== undefined;
     if (usesDurableAttempt) {
       const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
@@ -452,6 +495,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       const transitioned = await fromPromise(replaceDecisions(
         reservationPlan.value.expectedKeys,
         reservationPlan.value.reservations,
+        admissionAbort.signal,
       ));
       if (!transitioned.ok || !transitioned.value.ok) {
         retainItems(items);
@@ -479,7 +523,11 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     } | undefined;
     let failedOperationIndex = -1;
     for (const [operationIndex, operation] of operations.entries()) {
-      if (!deps.sendGovernedAnnouncement && deps.sendToChannelWithReceipt) {
+      if (
+        !deps.sendGovernedAnnouncement
+        && !deps.sendRecoverableAnnouncement
+        && deps.sendToChannelWithReceipt
+      ) {
         const reservationKey = operation.reservationKey;
         const beginDeliveryAttempt = deps.deadLetterQueue?.beginDeliveryAttempt;
         if (!reservationKey || !beginDeliveryAttempt) {
@@ -513,7 +561,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             ? { threadId: operation.item.announceThreadId }
             : {}),
           ...(operation.partId ? { partId: operation.partId } : {}),
-        }));
+        }, admissionAbort.signal));
         if (!claimed.ok || !claimed.value.ok) {
           failure = { lastError: "operation_retained", failure: "operation_retained" };
           failedOperationIndex = operationIndex;
@@ -535,7 +583,11 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         operation.partId,
       );
       if (!outcome.delivered) {
-        if (!deps.sendGovernedAnnouncement && operation.reservationKey) {
+        if (
+          !deps.sendGovernedAnnouncement
+          && !deps.sendRecoverableAnnouncement
+          && operation.reservationKey
+        ) {
           await deps.deadLetterQueue?.settleDeliveryAttempt(
             operation.reservationKey,
             outcome.platformStatus ?? "unknown",
@@ -545,7 +597,11 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         failedOperationIndex = operationIndex;
         break;
       }
-      if (!deps.sendGovernedAnnouncement && operation.reservationKey) {
+      if (
+        !deps.sendGovernedAnnouncement
+        && !deps.sendRecoverableAnnouncement
+        && operation.reservationKey
+      ) {
         await deps.deadLetterQueue?.settleDeliveryAttempt(
           operation.reservationKey,
           "accepted",
@@ -641,7 +697,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         conversationRef: first.callerConversation.conversationRef,
       },
       destinationEndpoint: first.destinationEndpoint,
-    });
+    }, admissionAbort.signal);
     if (!queued?.ok) {
       deps.logger?.warn(
         {
@@ -881,7 +937,11 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     if (idempotencyKey && (deliveredKeys.has(idempotencyKey) || retainedKeys.has(idempotencyKey))) {
       return ok("retained");
     }
-    if ((params.attachments?.length ?? 0) > 0 && !deps.sendGovernedAnnouncement) {
+    if (
+      (params.attachments?.length ?? 0) > 0
+      && !deps.sendGovernedAnnouncement
+      && !deps.sendRecoverableAnnouncement
+    ) {
       deps.logger?.warn(
         {
           runId: params.runId,
@@ -897,6 +957,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
     const hasAttachments = (params.attachments?.length ?? 0) > 0;
     const usesDurableAttempt = deps.sendGovernedAnnouncement !== undefined
+      || deps.sendRecoverableAnnouncement !== undefined
       || deps.sendToChannelWithReceipt !== undefined;
     if (
       usesDurableAttempt
@@ -956,7 +1017,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       if (attachmentPlan && !attachmentPlan.ok) return attachmentPlan;
       const boundary = await fromPromise(
         attachmentPlan?.ok && replaceDecisions
-          ? replaceDecisions([], attachmentPlan.value.reservations)
+          ? replaceDecisions([], attachmentPlan.value.reservations, admissionAbort.signal)
           : reserveDecision!({
               idempotencyKey,
               agentId: params.callerAgentId,
@@ -975,7 +1036,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
               destinationEndpoint: params.destinationEndpoint,
               completionKeys: [idempotencyKey],
               ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
-            }),
+            }, admissionAbort.signal),
       );
       if (!boundary.ok) {
         deps.logger?.warn(
@@ -1105,6 +1166,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
 
   function shutdown(): Promise<void> {
     accepting = false;
+    admissionAbort.abort();
     shutdownPromise ??= performShutdown();
     return shutdownPromise;
   }

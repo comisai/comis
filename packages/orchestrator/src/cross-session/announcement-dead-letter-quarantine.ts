@@ -62,6 +62,7 @@ export function classifyQuarantined(input: {
       && entry.lastError !== "receipt_accepted_terminalization_pending"
       && (
         entry.lastError === "outward_operation_unresolved"
+        || entry.lastError === "attachment_delivery_unavailable"
         || entry.attemptCount >= input.maxRetries
         || input.now - entry.failedAt >= input.maxAgeMs
       ));

@@ -48,12 +48,17 @@ function makeDeliveryService(): DeliveryService {
           chunkIndex: 0,
           totalChunks: 1,
         })
-      : await adapter.sendMessage(channelId, deliveryText);
+      : await adapter.sendMessage(channelId, deliveryText).then((result) => result.ok
+          ? ok({ kind: "sent" as const, messageId: result.value })
+          : result);
+    const sentMessageId = sent.ok && sent.value.kind === "sent"
+      ? sent.value.messageId
+      : undefined;
     return ok({
       chunks: sent.ok
         ? [{
-            status: "accepted" as const,
-            messageId: sent.value,
+            status: sentMessageId ? "accepted" as const : "settled" as const,
+            ...(sentMessageId ? { messageId: sentMessageId } : {}),
             charCount: deliveryText.length,
             retried: false,
           }]
@@ -67,10 +72,10 @@ function makeDeliveryService(): DeliveryService {
       totalChars: deliveryText.length,
       platform: sent.ok
         ? {
-            status: "accepted" as const,
-            deliveredChunks: 1,
-            settledAtMs: 1,
-            lastMessageId: sent.value,
+          status: "accepted" as const,
+          deliveredChunks: 1,
+          settledAtMs: 1,
+          ...(sentMessageId ? { lastMessageId: sentMessageId } : {}),
           }
         : {
             status: "unknown" as const,
@@ -291,6 +296,7 @@ describe("completion announcement delivery wiring", () => {
         totalChunks: 2,
       });
       if (!first.ok) return first;
+      if (first.value.kind !== "sent") return err(new Error("first chunk was not sent"));
       const second = await sendChunk({
         adapter: deliveryAdapter,
         channelId,
@@ -303,24 +309,30 @@ describe("completion announcement delivery wiring", () => {
         chunks: [
           {
             status: "accepted" as const,
-            messageId: first.value,
+            messageId: first.value.messageId,
             charCount: 11,
             retried: false,
           },
           second.ok
-            ? {
-                status: "accepted" as const,
-                messageId: second.value,
-                charCount: 12,
-                retried: false,
-              }
+            ? second.value.kind === "sent"
+              ? {
+                  status: "accepted" as const,
+                  messageId: second.value.messageId,
+                  charCount: 12,
+                  retried: false,
+                }
+              : {
+                  status: "settled" as const,
+                  charCount: 12,
+                  retried: false as const,
+                }
             : {
-                status: "unknown" as const,
-                error: second.error,
-                errorKind: "platform" as const,
-                charCount: 12,
-                retried: false,
-              },
+              status: "unknown" as const,
+              error: second.error,
+              errorKind: "platform" as const,
+              charCount: 12,
+              retried: false,
+            },
         ],
         totalChars: 23,
         platform: second.ok

@@ -158,9 +158,13 @@ export interface AnnouncementDecisionReservationOutcome {
  * orchestrator adapter.
  */
 export interface AnnouncementDeadLetterQueuePort {
-  enqueue(entry: AnnouncementDeadLetterEntryInput): Promise<Result<void, Error>>;
+  enqueue(
+    entry: AnnouncementDeadLetterEntryInput,
+    signal?: AbortSignal,
+  ): Promise<Result<void, Error>>;
   beginDeliveryAttempt(
     entry: AnnouncementDeadLetterEntryInput,
+    signal?: AbortSignal,
   ): Promise<Result<AnnouncementDeliveryAttemptClaim, Error>>;
   settleDeliveryAttempt(
     idempotencyKey: string,
@@ -168,6 +172,7 @@ export interface AnnouncementDeadLetterQueuePort {
   ): Promise<Result<boolean, Error>>;
   reserveDecision(
     entry: AnnouncementParentDecisionReservation,
+    signal?: AbortSignal,
   ): Promise<Result<AnnouncementDecisionReservationOutcome, Error>>;
   lookupDecision(
     idempotencyKey: string,
@@ -187,6 +192,7 @@ export interface AnnouncementDeadLetterQueuePort {
   replaceDecisions(
     expectedKeys: readonly string[],
     operations: readonly AnnouncementParentDecisionReservation[],
+    signal?: AbortSignal,
   ): Promise<Result<{ created: boolean }, Error>>;
   drain(
     sendToChannel: (

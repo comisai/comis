@@ -297,13 +297,13 @@ export function createAnnouncementDelivery(
         if (!outcome.ok) return outcome;
         settledOutcome = outcome.value;
         if (outcome.value.delivered && outcome.value.platformMessageId) {
-          return ok(outcome.value.platformMessageId);
+          return ok({ kind: "sent" as const, messageId: outcome.value.platformMessageId });
         }
         if (
           "terminalDecision" in outcome.value
           && outcome.value.terminalDecision === "delivered"
         ) {
-          return ok(`terminal:${chunkOperation.operationId}`);
+          return ok({ kind: "settled" as const });
         }
         return err(new Error("400 governed announcement chunk was not delivered"));
       },

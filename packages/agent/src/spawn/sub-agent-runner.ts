@@ -74,6 +74,7 @@ import type {
   AnnouncementBatcher,
   AnnouncementDeadLetterQueue,
   SendGovernedCompletionAnnouncement,
+  SendRecoverableCompletionAnnouncement,
 } from "./announcement-ports.js";
 import type { DeliveryDedup } from "./announce-key.js";
 import {
@@ -572,6 +573,7 @@ export interface SubAgentRunnerDeps {
   deadLetterQueue?: AnnouncementDeadLetterQueue;
   /** Durable single-attempt sender for final completion-announcement delivery. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
   /**
    * Shared, bounded delivered-key store, forwarded to deliverAnnouncement
    * + deliverFailureNotification so the failure-path dedup is correct whether or

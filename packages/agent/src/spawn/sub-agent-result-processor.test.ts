@@ -318,6 +318,35 @@ describe("deliverFailureNotification", () => {
     expect(deliveryDedup.has("default:user_a:chat-1::run-1")).toBe(true);
   });
 
+  it("routes a ledgerless failure notice through durable receipt-aware recovery", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const sendRecoverableAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-ledgerless",
+    }));
+    const deliveryDedup = createDeliveryDedup();
+
+    await deliverFailureNotification({
+      channelType: "telegram",
+      channelId: "chat-1",
+      task: "failed child task",
+      runtimeMs: 1_000,
+      runId: "run-ledgerless",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:user_a:chat-1",
+      callerConversation: makeCallerConversation("parent-agent"),
+      destinationEndpoint: makeCallerEndpoint("telegram", "chat-1"),
+    }, { sendToChannel, sendRecoverableAnnouncement, deliveryDedup });
+
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-ledgerless",
+      completionKeys: ["default:user_a:chat-1::run-ledgerless"],
+    }));
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(deliveryDedup.has("default:user_a:chat-1::run-ledgerless")).toBe(true);
+  });
+
   it("does not raw-fallback or mark a governed false or lost response", async () => {
     const sendToChannel = vi.fn().mockResolvedValue(true);
     const deliveryDedup = createDeliveryDedup();

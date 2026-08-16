@@ -77,6 +77,7 @@ export type {
   DeliveryStrategy,
   DeliveryAdapter,
   DeliveryChunkSendInput,
+  DeliveryChunkSendOutcome,
   DeliveryChunkSender,
   DeliveryChunkManifest,
   DeliverToChannelOptions,

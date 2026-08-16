@@ -120,20 +120,33 @@ export function createAnnouncementDeadLetterQueue(
     });
   }
 
-  function waitForCapacity(version: number): Promise<void> {
-    if (capacityVersion !== version) return Promise.resolve();
+  function waitForCapacity(version: number, signal?: AbortSignal): Promise<boolean> {
+    if (capacityVersion !== version) return Promise.resolve(true);
+    if (signal?.aborted) return Promise.resolve(false);
     return new Promise((resolve) => {
-      const wake = (): void => resolve();
-      capacityWaiters.add(wake);
-      if (capacityVersion !== version) {
+      let settled = false;
+      const finish = (retry: boolean): void => {
+        if (settled) return;
+        settled = true;
         capacityWaiters.delete(wake);
-        resolve();
+        signal?.removeEventListener("abort", abort);
+        resolve(retry);
+      };
+      const wake = (): void => finish(true);
+      const abort = (): void => finish(false);
+      capacityWaiters.add(wake);
+      signal?.addEventListener("abort", abort, { once: true });
+      if (capacityVersion !== version) {
+        finish(true);
+      } else if (signal?.aborted) {
+        finish(false);
       }
     });
   }
 
   async function admitWithBackpressure<T>(
     operation: () => Promise<Result<T, Error>>,
+    signal?: AbortSignal,
   ): Promise<Result<T, Error>> {
     while (true) {
       const version = capacityVersion;
@@ -141,7 +154,9 @@ export function createAnnouncementDeadLetterQueue(
       if (result.ok || result.error.message !== "Dead-letter quarantine capacity exhausted") {
         return result;
       }
-      await waitForCapacity(version);
+      if (!await waitForCapacity(version, signal)) {
+        return err(new Error("Dead-letter admission cancelled"));
+      }
     }
   }
 
@@ -1232,7 +1247,7 @@ export function createAnnouncementDeadLetterQueue(
     const claimed: DeadLetterEntry = {
       ...entry,
       id: id.value,
-      attemptCount: entry.attemptCount + 1,
+      attemptCount: entry.attemptCount,
       lastAttemptAt: now,
       lastError: "outward_operation_in_flight",
     };
@@ -1423,7 +1438,41 @@ export function createAnnouncementDeadLetterQueue(
         );
         continue;
       }
-      if (!ledger && reservation.attachment) continue;
+      if (!ledger && reservation.attachment) {
+        logger?.warn(
+          {
+            runId: reservation.runId,
+            errorKind: "precondition" as const,
+            hint: "enable governed attachment delivery or explicitly release the quarantined announcement",
+          },
+          "Ledgerless completion attachment requires operator review",
+        );
+        nextEntries.push({
+          id: reservation.id,
+          announcementText: reservation.announcementText,
+          channelType: reservation.channelType,
+          channelId: reservation.channelId,
+          agentId: reservation.agentId,
+          runId: reservation.runId,
+          sessionKey: reservation.sessionKey,
+          failedAt: reservation.failedAt,
+          attemptCount: 0,
+          lastAttemptAt: 0,
+          lastError: "attachment_delivery_unavailable",
+          idempotencyKey: reservation.idempotencyKey,
+          rootRunId: reservation.rootRunId,
+          deliveryAuthority: reservation.deliveryAuthority,
+          destinationEndpoint: reservation.destinationEndpoint,
+          completionKeys: reservation.completionKeys,
+          ...(reservation.partId ? { partId: reservation.partId } : {}),
+          ...(reservation.textChunks ? { textChunks: reservation.textChunks } : {}),
+          attachment: reservation.attachment,
+          ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
+          ...(reservation.extra ? { extra: reservation.extra } : {}),
+        } as DeadLetterEntry);
+        settled.push(reservation.idempotencyKey);
+        continue;
+      }
       const step = ledger && reservation.attachment
         ? await fromPromise(
             ledger.allocateStep(reservation.rootRunId, reservation.idempotencyKey),
@@ -1572,6 +1621,9 @@ export function createAnnouncementDeadLetterQueue(
         continue;
       }
       if (!outwardLedger && entry.lastError === "outward_operation_unresolved") {
+        continue;
+      }
+      if (!outwardLedger && entry.lastError === "attachment_delivery_unavailable") {
         continue;
       }
       if (!outwardLedger && entry.attemptCount >= maxRetries) {
@@ -1747,12 +1799,12 @@ export function createAnnouncementDeadLetterQueue(
   }
 
   return {
-    enqueue: (entry) => admitWithBackpressure(() => enqueueDurably(entry)),
-    beginDeliveryAttempt: (entry) =>
-      admitWithBackpressure(() => beginDeliveryAttemptDurably(entry)),
+    enqueue: (entry, signal) => admitWithBackpressure(() => enqueueDurably(entry), signal),
+    beginDeliveryAttempt: (entry, signal) =>
+      admitWithBackpressure(() => beginDeliveryAttemptDurably(entry), signal),
     settleDeliveryAttempt: (idempotencyKey, outcome) =>
       serializeStateChange(() => settleDeliveryAttemptDurably(idempotencyKey, outcome)),
-    reserveDecision: (entry) => admitWithBackpressure(async () => {
+    reserveDecision: (entry, signal) => admitWithBackpressure(async () => {
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
       const terminalDecision = await lookupTerminalDecision(entry);
@@ -1801,7 +1853,7 @@ export function createAnnouncementDeadLetterQueue(
         );
       }
       return reserved;
-    }),
+    }, signal),
     lookupDecision: (idempotencyKey) =>
       serialize(() => decisionStore.lookup(idempotencyKey)),
     lookupDecisionTextChunks: (completionKey) =>
@@ -1810,7 +1862,7 @@ export function createAnnouncementDeadLetterQueue(
       serializeStateChange(() => resolveDecisionDurably(idempotencyKey, outcome)),
     recordDecisionTextChunks: (idempotencyKey, chunks) =>
       serialize(() => recordDecisionTextChunksDurably(idempotencyKey, chunks)),
-    replaceDecisions: (expectedKeys, operations) =>
+    replaceDecisions: (expectedKeys, operations, signal) =>
       admitWithBackpressure(async () => {
         const loaded = await loadFromDisk();
         if (!loaded.ok) return loaded;
@@ -1895,7 +1947,7 @@ export function createAnnouncementDeadLetterQueue(
             ? [{ attachment: reservation.attachment }]
             : []));
         return replaced;
-      }),
+      }, signal),
     drain: (sendToChannel, onDelivered) =>
       serializeStateChange(() => drainSerialized(sendToChannel, onDelivered)),
     durableStatus: () => serialize(async () => {

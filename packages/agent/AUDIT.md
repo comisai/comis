@@ -2,15 +2,15 @@
 
 **Generated:** 2026-07-30
 **Status:** FINAL
-**Interface source:** `packages/agent/src/spawn/sub-agent-runner.ts` SubAgentRunnerDeps (32-field interface)
+**Interface source:** `packages/agent/src/spawn/sub-agent-runner.ts` SubAgentRunnerDeps (33-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-cross-session/setup-cross-session-runtime.ts` (single site — `createSubAgentRunner({`)
-**Field count:** 32 (8 required + 24 optional + 0 stale-fallback)
+**Field count:** 33 (8 required + 25 optional + 0 stale-fallback)
 
 This audit lives co-located with the agent package; `files: ["dist"]` in `packages/agent/package.json` excludes it from the npm tarball.
 
 ## Audit Result
 
-The audit enumerates all 32 fields of `SubAgentRunnerDeps`. Every required field appears in every production construction call; every optional field has a real production absent-mode code path (either an `if (deps.X)` guard or a `deps.X?.method()` chain whose absent-branch falls through to a no-op).
+The audit enumerates all 33 fields of `SubAgentRunnerDeps`. Every required field appears in every production construction call; every optional field has a real production absent-mode code path (either an `if (deps.X)` guard or a `deps.X?.method()` chain whose absent-branch falls through to a no-op).
 
 The architecture-test invariants enforced by `packages/agent/src/__tests__/architecture.test.ts` hold: bidirectional set equality between this table and `SubAgentRunnerDeps`; every classification is `required` or `optional`; classification matches the interface's `?` marker; every row has a non-empty evidence-link cell.
 
@@ -35,7 +35,8 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | memoryAdapter | optional | sub-agent completion summaries skipped (line 1147 `if (deps.memoryAdapter)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:174 |
 | batcher | optional | announcements bypass coalescing and emit individually (deps.batcher absent → direct send path) | packages/agent/src/spawn/sub-agent-runner.ts:189 |
 | deadLetterQueue | optional | failed announcement deliveries are lost (no persistence; line 596 `if (deps.deadLetterQueue)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:191 |
-| sendGovernedAnnouncement | optional | direct completion fallback uses the unledgered channel sender; the daemon wires this whenever the outward ledger is available | packages/agent/src/spawn/sub-agent-runner.ts:317 |
+| sendGovernedAnnouncement | optional | completion announcements use the receipt-aware durable sender when available, otherwise the raw channel sender | packages/agent/src/spawn/sub-agent-runner.ts:575 |
+| sendRecoverableAnnouncement | optional | completion announcements use governed ledger delivery when available, otherwise the raw channel sender | packages/agent/src/spawn/sub-agent-runner.ts:576 |
 | resolveRootRunId | optional | absent → a parked parent-decision reservation carries no ledger root, so the dead-letter drain cannot adjudicate it and it stays quarantined (the prior behaviour); present → the drain resolves the outward step and lets the governed path decide (deps.resolveRootRunId?. optional-chain in deliverAnnouncement) | packages/agent/src/spawn/sub-agent-runner.ts:554 |
 | deliveryDedup | optional | failure-path dedup falls back to the batcher's set when present; absent + no batcher → no cross-path dedup (deps.deliveryDedup?. optional-chain in deliverAnnouncement/deliverFailureNotification) | packages/agent/src/spawn/sub-agent-runner.ts:204 |
 | sessionResolver | optional | abort path falls back to no-op when neither resolver nor registry resolves a handle (line 545 `if (deps.sessionResolver)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:205 |

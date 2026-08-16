@@ -15,6 +15,7 @@ import type {
   AnnouncementPlatformSendOutcome,
   CompletionAttachmentRef,
   SendGovernedCompletionAnnouncement,
+  SendRecoverableCompletionAnnouncement,
 } from "./announcement-outward-operation.js";
 
 export interface QueuedAnnouncement {
@@ -77,6 +78,7 @@ export interface AnnouncementBatcherDeps {
   >;
   /** Durable single-attempt sender for the irreversible final delivery. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
   sendToChannelWithReceipt?: (
     channelType: string,
     channelId: string,
