@@ -551,6 +551,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           rootRunId: operation.item.reservationRootRunId
             ?? `announcement:${operation.item.callerSessionKey}`,
           completionKeys,
+          retirementKeys: completionKeys,
           deliveryAuthority: {
             tenantId: operation.item.callerConversation.conversationScope.tenantId,
             agentId: operation.item.callerAgentId,
@@ -697,6 +698,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         conversationRef: first.callerConversation.conversationRef,
       },
       destinationEndpoint: first.destinationEndpoint,
+      ...(failedCompletionKeys.length > 0
+        ? { retirementKeys: failedCompletionKeys }
+        : {}),
     }, admissionAbort.signal);
     if (!queued?.ok) {
       deps.logger?.warn(

@@ -66,11 +66,7 @@ function retirementIntentId(
 ): Result<string, Error> {
   return tryCatch(() => `retirement:${createHash("sha256")
     .update(JSON.stringify({
-      producer: {
-        tenantId: producer.tenantId,
-        agentId: producer.agentId,
-        conversationRef: producer.conversationRef,
-      },
+      producer,
       completionKeyDigests,
     }), "utf8")
     .digest("hex")}`);
@@ -78,7 +74,10 @@ function retirementIntentId(
 
 function retirementKeys(owner: TerminalDecisionOwner): Result<readonly string[], Error> {
   const operationId = terminalDecisionIdentity(owner).operationId;
-  const logicalKeys = owner.completionKeys?.filter((key) => key !== operationId) ?? [];
+  const explicitKeys = owner.retirementKeys ?? [];
+  const logicalKeys = explicitKeys.length > 0
+    ? explicitKeys
+    : owner.completionKeys?.filter((key) => key !== operationId) ?? [];
   const keys = logicalKeys.length > 0 ? [...new Set(logicalKeys)] : [operationId];
   const digests: string[] = [];
   for (const key of keys) {
@@ -181,18 +180,34 @@ export function isAnnouncementTerminalRetirementRecord(
     || !Number.isFinite(record.preparedAt)
   ) return false;
   const producer = record.producer as Record<string, unknown>;
-  if (
-    typeof producer.tenantId !== "string"
-    || producer.tenantId.length === 0
-    || typeof producer.agentId !== "string"
-    || producer.agentId.length === 0
-    || !ConversationRefSchema.safeParse(producer.conversationRef).success
-  ) return false;
+  if (!isRetirementProducer(producer)) return false;
   const expectedId = retirementIntentId(
     producer as unknown as AnnouncementRetirementProducer,
     record.completionKeyDigests as string[],
   );
   return expectedId.ok && expectedId.value === record.id;
+}
+
+function isRetirementProducer(
+  producer: Record<string, unknown>,
+): producer is Record<string, unknown> & AnnouncementRetirementProducer {
+  if (typeof producer.tenantId !== "string" || producer.tenantId.length === 0) return false;
+  switch (producer.kind) {
+    case "session":
+      return typeof producer.agentId === "string"
+        && producer.agentId.length > 0
+        && ConversationRefSchema.safeParse(producer.conversationRef).success;
+    case "tool_result":
+      return typeof producer.agentId === "string"
+        && producer.agentId.length > 0
+        && ConversationRefSchema.safeParse(producer.conversationRef).success
+        && typeof producer.toolCallId === "string"
+        && producer.toolCallId.length > 0;
+    case "graph":
+      return typeof producer.graphId === "string" && producer.graphId.length > 0;
+    default:
+      return false;
+  }
 }
 
 export function createAnnouncementTerminalDecisionStore(
@@ -379,9 +394,7 @@ export function createAnnouncementTerminalDecisionStore(
       if (
         completionKeys.length === 0
         || completionKeys.some((key) => typeof key !== "string" || key.length === 0)
-        || producer.tenantId.length === 0
-        || producer.agentId.length === 0
-        || !ConversationRefSchema.safeParse(producer.conversationRef).success
+        || !isRetirementProducer(producer as unknown as Record<string, unknown>)
       ) {
         return err(new Error("Announcement terminal decision retirement intent is invalid"));
       }

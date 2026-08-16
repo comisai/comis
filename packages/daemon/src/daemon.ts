@@ -449,6 +449,7 @@ function buildGraphCoordinatorDeps(deps: {
     sendRecoverableAnnouncement: ReturnType<typeof setupCrossSession>["sendRecoverableAnnouncement"];
     announceToParent: ReturnType<typeof setupCrossSession>["announceToParent"];
     announcementBatcher: ReturnType<typeof setupCrossSession>["announcementBatcher"];
+    deadLetterQueue: ReturnType<typeof setupCrossSession>["deadLetterQueue"];
     commandQueue: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
     assembleToolsForAgent: ReturnType<typeof setupTools>["assembleToolsForAgent"];
     nodeTypeRegistry: ReturnType<typeof createNodeTypeRegistry>;
@@ -508,6 +509,9 @@ function buildGraphCoordinatorDeps(deps: {
       ? { sendRecoverableAnnouncement: channels.sendRecoverableAnnouncement }
       : {}),
     announceToParent: channels.announceToParent,
+    ...(channels.deadLetterQueue
+      ? { announcementDeadLetterQueue: channels.deadLetterQueue }
+      : {}),
     batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
     maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? graphDefaults.maxConcurrency,
     maxResultLength: a2aSec.graphMaxResultLength as number | undefined, maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
@@ -2278,6 +2282,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     sessionAdapters: handle.piSessionAdapters,
     trajectoryRegistry: handle.trajectoryRegistry,
   });
+  const graphProducerState = { exists: (_graphId: string) => true };
   const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, sendRecoverableAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, closeAnnouncementAdmission, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
@@ -2298,6 +2303,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // drain one retained operation identity (off ⇒ pass-through).
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
+    graphProducerExists: (graphId) => graphProducerState.exists(graphId),
   });
 
   // The worktree orphan-sweep. Boot recovery (discover prior-crash
@@ -2349,7 +2355,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const nodeTypeRegistry = createNodeTypeRegistry();
   const graphCoordinator = createGraphCoordinator(buildGraphCoordinatorDeps({
     agents: handle,
-    channels: { subAgentRunner, sendToChannel, sendGovernedAnnouncement, sendRecoverableAnnouncement, announceToParent, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
+    channels: { subAgentRunner, sendToChannel, sendGovernedAnnouncement, sendRecoverableAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
     // Thread the live durable store so the coordinator checkpoints node state (DAG durability).
     ...(durableResume.durableRunStore ? { durableRunStore: durableResume.durableRunStore } : {}),
     ...(capEndpointHandle
@@ -2363,6 +2369,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
         }
       : {}),
   }));
+  graphProducerState.exists = (graphId) => graphCoordinator.getStatus(graphId) !== undefined;
   subAgentRunner.setGraphCoordinator(graphCoordinator);
   // Populate the late-bound holder so resumeRun (fires at resumeAndStart, after channels) routes a DAG record to coordinator.resumeGraph (incomplete-node re-entry).
   graphResumeHolder.ref = (record, lease) => graphCoordinator.resumeGraph(record, lease);

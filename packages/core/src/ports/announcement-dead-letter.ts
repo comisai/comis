@@ -65,6 +65,8 @@ export interface AnnouncementDeadLetterEntryInput {
   partId?: string;
   /** Completion keys settled only after every related operation resolves. */
   completionKeys?: readonly string[];
+  /** Producer-owned keys that keep terminal replay guards live. */
+  retirementKeys?: readonly string[];
   textChunks?: AnnouncementTextChunkManifest;
 }
 
@@ -95,12 +97,22 @@ export interface AnnouncementParentDecisionReservation {
   partId?: string;
   /** Completion keys settled only after every related operation resolves. */
   completionKeys: readonly string[];
+  /** Producer-owned keys that keep terminal replay guards live. */
+  retirementKeys?: readonly string[];
   textChunks?: AnnouncementTextChunkManifest;
 }
 
 export interface AnnouncementParentDecisionReservationRecord
   extends AnnouncementParentDecisionReservation {
   recordType: "parent_decision_reservation";
+  id: string;
+}
+
+export type AnnouncementProducerReservation = AnnouncementParentDecisionReservation;
+
+export interface AnnouncementProducerReservationRecord
+  extends AnnouncementProducerReservation {
+  recordType: "producer_reservation";
   id: string;
 }
 
@@ -154,11 +166,25 @@ export interface AnnouncementDecisionReservationOutcome {
   readonly terminalDecision?: OutwardTerminalDecision;
 }
 
-export interface AnnouncementRetirementProducer {
-  readonly tenantId: string;
-  readonly agentId: string;
-  readonly conversationRef: ConversationRef;
-}
+export type AnnouncementRetirementProducer =
+  | {
+      readonly kind: "session";
+      readonly tenantId: string;
+      readonly agentId: string;
+      readonly conversationRef: ConversationRef;
+    }
+  | {
+      readonly kind: "tool_result";
+      readonly tenantId: string;
+      readonly agentId: string;
+      readonly conversationRef: ConversationRef;
+      readonly toolCallId: string;
+    }
+  | {
+      readonly kind: "graph";
+      readonly tenantId: string;
+      readonly graphId: string;
+    };
 
 /**
  * Durable completion-delivery recovery boundary shared by producers and the
@@ -166,10 +192,13 @@ export interface AnnouncementRetirementProducer {
  */
 export interface AnnouncementDeadLetterQueuePort {
   reserveProducer(
-    producerKey: string,
+    reservation: AnnouncementProducerReservation,
     signal?: AbortSignal,
   ): Promise<Result<void, Error>>;
   releaseProducer(
+    producerKey: string,
+  ): Promise<Result<void, Error>>;
+  cancelProducer(
     producerKey: string,
   ): Promise<Result<void, Error>>;
   enqueue(

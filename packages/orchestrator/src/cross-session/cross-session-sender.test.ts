@@ -353,14 +353,20 @@ describe("createCrossSessionSender", () => {
     expect(prepareAnnouncementRetirement).toHaveBeenCalledWith(
       ["announce-tool-call-direct"],
       {
+        kind: "tool_result",
         tenantId: PARENT_TWO.conversationScope.tenantId,
         agentId: PARENT_TWO.conversationScope.agentId,
         conversationRef: PARENT_TWO.conversationRef,
+        toolCallId: "announce-tool-call-direct",
       },
     );
     expect(prepareAnnouncementRetirement.mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(deps.executeInSession).mock.invocationCallOrder[0]!);
-    expect(reserveAnnouncementProducer).toHaveBeenCalledWith("announce-tool-call-direct");
+    expect(reserveAnnouncementProducer).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "announce-tool-call-direct",
+      retirementKeys: ["announce-tool-call-direct"],
+      destinationEndpoint: PARENT_TWO_ENDPOINT,
+    }));
     expect(releaseAnnouncementProducer).toHaveBeenCalledWith("announce-tool-call-direct");
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });

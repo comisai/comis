@@ -96,6 +96,7 @@ describe("announcement terminal decisions", () => {
 
   it("recovers a prepared retirement after producer deletion", async () => {
     const producer = {
+      kind: "session" as const,
       tenantId: "tenant_a",
       agentId: "agent_a",
       conversationRef: ConversationRefSchema.parse(`cv_${"a".repeat(43)}`),
@@ -120,6 +121,22 @@ describe("announcement terminal decisions", () => {
     ))
       .resolves.toEqual({ ok: true, value: 1 });
     await expect(restarted.lookup(owner)).resolves.toEqual({ ok: true, value: undefined });
+  });
+
+  it("retires chunk guards by their explicit producer key", async () => {
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+    const chunkOwner = {
+      ...owner,
+      idempotencyKey: "chunk-operation",
+      completionKeys: ["parent-operation", "logical-completion"],
+      retirementKeys: ["logical-completion"],
+    };
+
+    await store.record(chunkOwner, "delivered");
+    await expect(store.retire(["logical-completion"]))
+      .resolves.toEqual({ ok: true, value: undefined });
+    await expect(store.lookup(chunkOwner))
+      .resolves.toEqual({ ok: true, value: undefined });
   });
 
   it("keeps a terminal guard authoritative after its renamed index is visible", async () => {

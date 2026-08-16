@@ -76,6 +76,7 @@ export function createAnnouncementReservationPlan(
       },
       destinationEndpoint: operation.item.destinationEndpoint,
       completionKeys,
+      retirementKeys: logicalCompletionKeys,
       ...(operation.item.announceThreadId
         ? { threadId: operation.item.announceThreadId }
         : {}),

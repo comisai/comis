@@ -21,10 +21,11 @@ import {
   parseDurableRunRecord,
   ResolvedTurnScopeSchema,
   toSafeErrorLogString,
+  createStableAnnouncementOperationId,
 } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { ok, err, type Result } from "@comis/shared";
+import { ok, err, tryCatch, type Result } from "@comis/shared";
 import {
   createDurableGraphCheckpoint,
   graphRunIdFromCheckpointRef,
@@ -434,7 +435,6 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     const graphTraceId = randomUUID();
 
     const sharedDir = safePath(deps.dataDir, "graph-runs", graphId);
-    mkdirSync(sharedDir, { recursive: true, mode: 0o700 });
 
     if (state.graphs.size >= config.maxGraphs) {
       sweepExpiredGraphs(state, config);
@@ -538,6 +538,65 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       maxAnnouncementChars: config.maxAnnouncementChars,
     };
 
+    const hasAnnouncementRoute = params.announceChannelType !== undefined
+      || params.announceChannelId !== undefined;
+    if (hasAnnouncementRoute && deps.announcementDeadLetterQueue) {
+      if (
+        params.announceChannelType === undefined
+        || params.announceChannelId === undefined
+        || params.callerAgentId === undefined
+        || params.callerSessionKey === undefined
+        || gs.callerConversationLocator === undefined
+        || gs.callerEndpoint === undefined
+      ) {
+        return err("Graph announcement producer identity is incomplete");
+      }
+      const operationId = createStableAnnouncementOperationId(
+        params.callerAgentId,
+        params.callerSessionKey,
+        graphId,
+      );
+      const reserved = await deps.announcementDeadLetterQueue.reserveProducer({
+        idempotencyKey: operationId,
+        agentId: params.callerAgentId,
+        runId: graphId,
+        sessionKey: params.callerSessionKey,
+        announcementText: "A graph finished, but its completion notification was interrupted before delivery ownership transferred.",
+        channelType: params.announceChannelType,
+        channelId: params.announceChannelId,
+        failedAt: systemNowMs(),
+        rootRunId: graphRootRunId ?? `announcement:${params.callerSessionKey}`,
+        deliveryAuthority: {
+          tenantId: gs.callerConversationLocator.conversationScope.tenantId,
+          agentId: params.callerAgentId,
+          conversationRef: gs.callerConversationLocator.conversationRef,
+        },
+        destinationEndpoint: gs.callerEndpoint,
+        completionKeys: [operationId, graphId],
+        retirementKeys: [graphId],
+        ...(gs.callerEndpoint.threadId ? { threadId: gs.callerEndpoint.threadId } : {}),
+      });
+      if (!reserved.ok) return err(reserved.error.message);
+      const retirement = await deps.announcementDeadLetterQueue
+        .prepareTerminalDecisionRetirement([graphId], {
+          kind: "graph",
+          tenantId: deps.tenantId,
+          graphId,
+        });
+      if (!retirement.ok) {
+        await deps.announcementDeadLetterQueue.cancelProducer(graphId);
+        return err(retirement.error.message);
+      }
+      gs.announcementProducerReserved = true;
+    }
+
+    const createdSharedDir = tryCatch(() => mkdirSync(sharedDir, { recursive: true, mode: 0o700 }));
+    if (!createdSharedDir.ok) {
+      if (gs.announcementProducerReserved) {
+        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+      }
+      return err("Graph shared directory could not be created");
+    }
     state.graphs.set(graphId, gs);
 
     // Pre-warm awaits the graph-wide tool names and full definitions.
@@ -668,6 +727,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         releaseDurableRetention(gs);
         state.graphs.delete(graphId);
         clearAllTimers(deps, gs);
+        if (gs.announcementProducerReserved) {
+          await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+        }
         return err("Graph could not establish durable authority");
       }
     }
@@ -675,6 +737,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     callbacks.spawnReadyNodes(gs);
     if (!(await awaitDurableTransitions(gs))) {
       discardGraphState(state, deps, gs, releaseDurableRetention);
+      if (gs.announcementProducerReserved) {
+        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+      }
       return err("Graph durable launch authority failed");
     }
 

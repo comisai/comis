@@ -1390,11 +1390,17 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       eventBus: createMockEventBus(),
       maxEntries: 2,
     });
-    await expect(queue.reserveProducer("producer-a")).resolves.toEqual(ok(undefined));
-    await expect(queue.reserveProducer("producer-b")).resolves.toEqual(ok(undefined));
+    const producer = (runId: string) => decisionInput({
+      idempotencyKey: `operation-${runId}`,
+      runId,
+      completionKeys: [`operation-${runId}`],
+      retirementKeys: [`operation-${runId}`],
+    });
+    await expect(queue.reserveProducer(producer("producer-a"))).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveProducer(producer("producer-b"))).resolves.toEqual(ok(undefined));
 
     let thirdAdmitted = false;
-    const third = queue.reserveProducer("producer-c").then((result) => {
+    const third = queue.reserveProducer(producer("producer-c")).then((result) => {
       thirdAdmitted = true;
       return result;
     });
@@ -1402,9 +1408,42 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(thirdAdmitted).toBe(false);
     expect(queue.size()).toBe(2);
 
-    await expect(queue.releaseProducer("producer-a")).resolves.toEqual(ok(undefined));
+    await expect(queue.cancelProducer("producer-a")).resolves.toEqual(ok(undefined));
     await expect(third).resolves.toEqual(ok(undefined));
     expect(queue.size()).toBe(2);
+  });
+
+  it("promotes a persisted producer reservation after restart", async () => {
+    const producer = decisionInput({
+      idempotencyKey: "producer-fallback-operation",
+      runId: "producer-fallback-run",
+      failedAt: Date.now() - 500_000,
+      completionKeys: ["producer-fallback-operation"],
+      retirementKeys: ["producer-fallback-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(first.releaseProducer(producer.runId)).resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+
+    expect(send).toHaveBeenCalledWith(
+      producer.channelType,
+      producer.channelId,
+      producer.announcementText,
+      expect.objectContaining({ threadId: producer.threadId }),
+    );
+    expect(restarted.size()).toBe(0);
   });
 
   it("hands off a cancelled attachment replacement atomically within its bound", async () => {

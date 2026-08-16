@@ -438,6 +438,59 @@ describe("createGraphCoordinator", () => {
       await coordinator.shutdown();
     });
 
+    it("reserves graph announcement ownership before node execution", async () => {
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async () => ok(undefined)),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => ok(undefined)),
+        prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
+      };
+      const { deps, runner } = createTestDeps({
+        announcementDeadLetterQueue,
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const turnScope = makeCallerTurnScope("telegram", "chat-a", "parent-agent");
+
+      const result = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000004",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: "test-tenant:user_a:telegram:chat-a",
+        agentId: "parent-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+        turnScope,
+      }, () => coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerAgentId: "parent-agent",
+        callerSessionKey: "test-tenant:user_a:telegram:chat-a",
+        callerTurnScope: turnScope,
+        announceChannelType: "telegram",
+        announceChannelId: "chat-a",
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(announcementDeadLetterQueue.reserveProducer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: result.ok ? result.value : undefined,
+          retirementKeys: result.ok ? [result.value] : [],
+          destinationEndpoint: turnScope.endpoint,
+        }),
+      );
+      expect(announcementDeadLetterQueue.prepareTerminalDecisionRetirement)
+        .toHaveBeenCalledWith(
+          result.ok ? [result.value] : [],
+          expect.objectContaining({
+            kind: "graph",
+            graphId: result.ok ? result.value : undefined,
+          }),
+        );
+      expect(announcementDeadLetterQueue.reserveProducer.mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(runner.spawn).mock.invocationCallOrder[0]!);
+
+      await coordinator.shutdown();
+    });
+
     it("snapshots caller trust for every graph node spawn", async () => {
       const { deps, runner } = createTestDeps();
       const coordinator = createGraphCoordinator(deps);

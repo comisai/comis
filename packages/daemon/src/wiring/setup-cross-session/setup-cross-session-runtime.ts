@@ -186,6 +186,7 @@ export function setupCrossSession(deps: {
    */
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
+  graphProducerExists?: (graphId: string) => boolean;
   /**
    * Release a child session's trajectory recorder when its run settles
    * (bound to `SessionTrajectoryHandleRegistry.close` by the daemon).
@@ -418,8 +419,24 @@ export function setupCrossSession(deps: {
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     receiptAwareSendToChannel: sendSingleTextToChannelWithReceipt,
     retirementProducerExists: async (producer) => {
-      const loaded = sessionStore.loadByRef(producer, producer.conversationRef);
-      return loaded.ok ? ok(loaded.value !== undefined) : err(loaded.error);
+      if (producer.kind === "graph") {
+        return ok(deps.graphProducerExists?.(producer.graphId) ?? true);
+      }
+      const loaded = sessionStore.loadByRef({
+        tenantId: producer.tenantId,
+        agentId: producer.agentId,
+      }, producer.conversationRef);
+      if (!loaded.ok) return err(loaded.error);
+      if (producer.kind === "session") return ok(loaded.value !== undefined);
+      if (!loaded.value) return ok(false);
+      const committed = loaded.value.messages.some((message) => {
+        if (typeof message !== "object" || message === null || Array.isArray(message)) {
+          return false;
+        }
+        const record = message as Record<string, unknown>;
+        return record.role === "toolResult" && record.toolCallId === producer.toolCallId;
+      });
+      return ok(!committed);
     },
     reconcileAttachments: (referencedPaths) => reconcileCompletionAttachmentSnapshots(
       container.config.dataDir,
@@ -539,15 +556,17 @@ export function setupCrossSession(deps: {
     eventBus: container.eventBus,
     config: container.config.security.agentToAgent,
     logger: deps.logger,
-    reserveAnnouncementProducer: (producerKey) => deadLetterQueue.reserveProducer(
-      producerKey,
+    reserveAnnouncementProducer: (reservation) => deadLetterQueue.reserveProducer(
+      reservation,
       announcementAdmissionAbort.signal,
     ),
     releaseAnnouncementProducer: (producerKey) => deadLetterQueue.releaseProducer(producerKey),
+    cancelAnnouncementProducer: (producerKey) => deadLetterQueue.cancelProducer(producerKey),
     prepareAnnouncementRetirement: (completionKeys, producer) =>
       deadLetterQueue.prepareTerminalDecisionRetirement(completionKeys, producer),
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
     ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
+    resolveRootRunId: deps.resolveRootRunId,
   });
 
   // ONE bounded delivered-key store shared across every

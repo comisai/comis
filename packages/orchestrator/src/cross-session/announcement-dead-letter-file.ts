@@ -13,6 +13,8 @@ import {
   type AnnouncementDeadLetterEntry,
   type AnnouncementParentDecisionReservation,
   type AnnouncementParentDecisionReservationRecord,
+  type AnnouncementProducerReservation,
+  type AnnouncementProducerReservationRecord,
   type ChannelEndpoint,
   type DeliveryAuthority,
 } from "@comis/core";
@@ -39,6 +41,7 @@ export function isAnnouncementChannelType(value: string): value is ChannelType {
 export type DeadLetterEntry = AnnouncementDeadLetterEntry;
 export type ParentDecisionReservation = AnnouncementParentDecisionReservation;
 export type ParentDecisionReservationRecord = AnnouncementParentDecisionReservationRecord;
+export type ProducerReservationRecord = AnnouncementProducerReservationRecord;
 
 export interface AnnouncementProducerHandoffRecord {
   readonly recordType: "producer_handoff";
@@ -150,6 +153,7 @@ export function isAnnouncementTextChunks(value: unknown): value is readonly stri
 export type StoredDeadLetterEntry =
   | DeadLetterEntry
   | ParentDecisionReservationRecord
+  | ProducerReservationRecord
   | AnnouncementProducerHandoffRecord
   | InvalidDeadLetterRecord;
 
@@ -190,6 +194,7 @@ function publicDecision(
     ...(record.attachment !== undefined ? { attachment: record.attachment } : {}),
     ...(record.partId !== undefined ? { partId: record.partId } : {}),
     completionKeys: record.completionKeys,
+    ...(record.retirementKeys !== undefined ? { retirementKeys: record.retirementKeys } : {}),
     ...(record.textChunks !== undefined ? { textChunks: record.textChunks } : {}),
   };
 }
@@ -238,11 +243,12 @@ function sameDecision(
     && decisionFingerprint(left) === decisionFingerprint(right)
     && left.completionKeys.length === right.completionKeys.length
     && left.completionKeys.every((key, index) => key === right.completionKeys[index])
+    && JSON.stringify(left.retirementKeys) === JSON.stringify(right.retirementKeys)
     && sameDeliveryAuthority(left.deliveryAuthority, right.deliveryAuthority)
     && sameChannelEndpoint(left.destinationEndpoint, right.destinationEndpoint);
 }
 
-function validDecision(entry: ParentDecisionReservation): boolean {
+export function isValidAnnouncementDecision(entry: ParentDecisionReservation): boolean {
   return decisionFingerprint(entry) !== undefined
     && typeof entry.idempotencyKey === "string"
     && entry.idempotencyKey.length > 0
@@ -266,7 +272,15 @@ function validDecision(entry: ParentDecisionReservation): boolean {
     && (entry.attachment === undefined || isDeadLetterAttachmentSnapshot(entry.attachment))
     && (entry.textChunks === undefined || isAnnouncementTextChunks(entry.textChunks))
     && isCompletionKeys(entry.completionKeys)
+    && (entry.retirementKeys === undefined || isCompletionKeys(entry.retirementKeys))
     && isRecoveryRoute(entry as unknown as Record<string, unknown>);
+}
+
+export function sameAnnouncementProducerReservation(
+  left: ProducerReservationRecord,
+  right: AnnouncementProducerReservation,
+): boolean {
+  return sameDecision(left, right);
 }
 
 export function isAnnouncementProducerHandoffRecord(
@@ -288,7 +302,7 @@ export function isAnnouncementProducerHandoffRecord(
     && record.operationCount > 0
     && Array.isArray(record.operations)
     && record.operations.length === record.operationCount
-    && record.operations.every((operation) => validDecision(
+    && record.operations.every((operation) => isValidAnnouncementDecision(
       operation as AnnouncementParentDecisionReservation,
     ))
     && new Set(record.operations.map((operation) =>
@@ -327,7 +341,7 @@ export function createParentDecisionReservationStore(
   ): Promise<Result<{ created: boolean }, Error>> {
     const load = await deps.load();
     if (!load.ok) return load;
-    if (!validDecision(entry)) {
+    if (!isValidAnnouncementDecision(entry)) {
       return err(new Error("Parent decision reservation is invalid"));
     }
     const existing = deps.getReservations().find(
@@ -432,7 +446,7 @@ export function createParentDecisionReservationStore(
       || new Set(settledCompletionKeys).size !== settledCompletionKeys.length
       || settledCompletionKeys.some((key) => typeof key !== "string" || key.length === 0)
       || operations.length + settledCompletionKeys.length === 0
-      || operations.some((operation) => !validDecision(operation))
+      || operations.some((operation) => !isValidAnnouncementDecision(operation))
       || new Set(operations.map((operation) => operation.idempotencyKey)).size
         !== operations.length
     ) {
@@ -571,10 +585,25 @@ function isParentDecisionReservationRecord(
     && typeof record.rootRunId === "string"
     && record.rootRunId.length > 0
     && isCompletionKeys(record.completionKeys)
+    && (record.retirementKeys === undefined || isCompletionKeys(record.retirementKeys))
     && isOptionalString(record.partId)
     && (record.attachment === undefined || isDeadLetterAttachmentSnapshot(record.attachment))
     && (record.textChunks === undefined || isAnnouncementTextChunks(record.textChunks))
     && isRecoveryRoute(record);
+}
+
+function isAnnouncementProducerReservationRecord(
+  value: unknown,
+): value is ProducerReservationRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (!isParentDecisionReservationRecord({
+    ...(value as Record<string, unknown>),
+    recordType: "parent_decision_reservation",
+  })) return false;
+  const record = value as Record<string, unknown>;
+  return record.recordType === "producer_reservation"
+    && typeof record.id === "string"
+    && record.id.length > 0;
 }
 
 function isDeadLetterEntry(
@@ -611,6 +640,7 @@ function isDeadLetterEntry(
     && (record.attachment === undefined || isDeadLetterAttachmentSnapshot(record.attachment))
     && (record.textChunks === undefined || isAnnouncementTextChunks(record.textChunks))
     && (record.completionKeys === undefined || isCompletionKeys(record.completionKeys))
+    && (record.retirementKeys === undefined || isCompletionKeys(record.retirementKeys))
     && (
       record.stepIndex === undefined
       || (typeof record.stepIndex === "number" && Number.isSafeInteger(record.stepIndex) && record.stepIndex >= 0)
@@ -634,6 +664,12 @@ export function isAnnouncementProducerHandoff(
   value: StoredDeadLetterEntry,
 ): value is AnnouncementProducerHandoffRecord {
   return "recordType" in value && value.recordType === "producer_handoff";
+}
+
+export function isAnnouncementProducerReservation(
+  value: StoredDeadLetterEntry,
+): value is ProducerReservationRecord {
+  return "recordType" in value && value.recordType === "producer_reservation";
 }
 
 function parseEntries(
@@ -661,6 +697,10 @@ function parseEntries(
       continue;
     }
     if (parsed.ok && isParentDecisionReservationRecord(value)) {
+      entries.push(value);
+      continue;
+    }
+    if (parsed.ok && isAnnouncementProducerReservationRecord(value)) {
       entries.push(value);
       continue;
     }
@@ -789,6 +829,7 @@ export async function writeDeadLetterEntries(
   if (entries.some((entry) =>
     !isDeadLetterEntry(entry)
     && !isParentDecisionReservationRecord(entry)
+    && !isAnnouncementProducerReservationRecord(entry)
     && !isAnnouncementProducerHandoffRecord(entry)
     && !isInvalidDeadLetterRecord(entry))) {
     return writeFailure(

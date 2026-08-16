@@ -224,6 +224,8 @@ export type {
   AnnouncementTextChunkManifest,
   AnnouncementParentDecisionReservation,
   AnnouncementParentDecisionReservationRecord,
+  AnnouncementProducerReservation,
+  AnnouncementProducerReservationRecord,
   AnnouncementDeadLetterStatus,
   AnnouncementRetirementProducer,
   QuarantinedAnnouncement,

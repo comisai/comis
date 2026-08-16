@@ -166,6 +166,9 @@ function reservationFor(
     },
     destinationEndpoint,
     completionKeys,
+    retirementKeys: request.completionKeys && request.completionKeys.length > 0
+      ? [...new Set(request.completionKeys)]
+      : [operationId],
     ...(request.options?.threadId ? { threadId: request.options.threadId } : {}),
     ...(request.options?.extra ? { extra: request.options.extra } : {}),
     ...(request.partId ? { partId: request.partId } : {}),

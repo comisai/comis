@@ -3922,7 +3922,7 @@ describe("setupCrossSession durable-store injection", () => {
     const senderArgs = mockCreateCrossSessionSender.mock.calls[0][0];
     expect(senderArgs.sendGovernedAnnouncement).toEqual(expect.any(Function));
     expect(senderArgs.outwardLedger).toBeUndefined();
-    expect(senderArgs.resolveRootRunId).toBeUndefined();
+    expect(senderArgs.resolveRootRunId).toBe(resolveRootRunId);
   });
 
   it("threads durable receipt-aware recovery when the outward ledger is disabled", async () => {
@@ -3997,6 +3997,7 @@ describe("setupCrossSession durable-store injection", () => {
       expect(senderArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
       expect(senderArgs.reserveAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.releaseAnnouncementProducer).toEqual(expect.any(Function));
+      expect(senderArgs.cancelAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.prepareAnnouncementRetirement).toEqual(expect.any(Function));
       expect(runnerArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
       expect(result.sendRecoverableAnnouncement).toEqual(expect.any(Function));

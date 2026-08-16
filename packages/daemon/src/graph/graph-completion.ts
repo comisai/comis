@@ -89,11 +89,17 @@ export function computeSubtreeCost(gs: GraphRunState, nodeId: string): number {
  */
 export async function handleGraphCompletion(
   state: CoordinatorSharedState,
-  deps: Pick<GraphCoordinatorDeps, "eventBus" | "logger" | "sendGovernedAnnouncement" | "sendRecoverableAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback">,
+  deps: Pick<GraphCoordinatorDeps, "eventBus" | "logger" | "sendGovernedAnnouncement" | "sendRecoverableAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback" | "announcementDeadLetterQueue">,
   gs: GraphRunState,
 ): Promise<Result<void, Error>> {
   // Prevent double-completion
-  if (gs.completedAt !== undefined) return ok(undefined);
+  if (gs.completedAt !== undefined) {
+    if (gs.announcementProducerReserved) {
+      const released = await deps.announcementDeadLetterQueue?.releaseProducer(gs.graphId);
+      if (released?.ok) gs.announcementProducerReserved = false;
+    }
+    return ok(undefined);
+  }
 
   // Touch parent lane one final time before announcement delivery
   if (gs.callerSessionKey) {
@@ -293,6 +299,10 @@ export async function handleGraphCompletion(
       : "not-requested";
   if (hasAnyAnnouncementRoute && !announcementIdentityValid) {
     writeRunMetadata(deps, gs, graphStatus, "failed");
+    if (gs.announcementProducerReserved) {
+      const cancelled = await deps.announcementDeadLetterQueue?.cancelProducer(gs.graphId);
+      if (cancelled?.ok) gs.announcementProducerReserved = false;
+    }
     return err(new Error("Graph announcement identity or route is invalid"));
   }
   if (
@@ -301,11 +311,18 @@ export async function handleGraphCompletion(
       || deps.sendRecoverableAnnouncement !== undefined)
   ) {
     const delivery = await sendGoverned(announcement, deliveryOptions);
+    if (gs.announcementProducerReserved) {
+      const released = await deps.announcementDeadLetterQueue?.releaseProducer(gs.graphId);
+      if (released?.ok) gs.announcementProducerReserved = false;
+    }
     if (!delivery.ok) {
       writeRunMetadata(deps, gs, graphStatus, "failed");
       return delivery;
     }
     announcementDelivery = delivery.value;
+  } else if (gs.announcementProducerReserved) {
+    const cancelled = await deps.announcementDeadLetterQueue?.cancelProducer(gs.graphId);
+    if (cancelled?.ok) gs.announcementProducerReserved = false;
   }
 
   // Persist only after the governed notification has settled so one graph

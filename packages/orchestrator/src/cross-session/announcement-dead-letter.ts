@@ -8,6 +8,7 @@ import type {
   AnnouncementDeadLetterAttachmentSource,
   AnnouncementDeadLetterQueuePort,
   AnnouncementParentDecisionReservation,
+  AnnouncementProducerReservation,
   OutwardSendLedgerPort,
   OutwardSendRecord,
 } from "@comis/core";
@@ -25,7 +26,9 @@ import {
   announcementProducerHandoffDigest,
   createParentDecisionReservationStore,
   isAnnouncementProducerHandoff,
+  isAnnouncementProducerReservation,
   isAnnouncementTextChunks,
+  isValidAnnouncementDecision,
   isParentDecisionReservation,
   readDeadLetterSnapshot,
   writeDeadLetterEntries,
@@ -33,6 +36,8 @@ import {
   type DeadLetterEntry,
   type AnnouncementProducerHandoffRecord,
   type ParentDecisionReservationRecord,
+  type ProducerReservationRecord,
+  sameAnnouncementProducerReservation,
 } from "./announcement-dead-letter-file.js";
 import {
   isInvalidDeadLetterRecord,
@@ -102,9 +107,10 @@ export function createAnnouncementDeadLetterQueue(
   } = opts;
   let entries: DeadLetterEntry[] = [];
   let decisionReservations: ParentDecisionReservationRecord[] = [];
+  let producerReservations: ProducerReservationRecord[] = [];
   let producerHandoffs: AnnouncementProducerHandoffRecord[] = [];
   let invalidRecords: InvalidDeadLetterRecord[] = [];
-  const producerSlots = new Set<string>();
+  const activeProducerKeys = new Set<string>();
   const emittedAdmissionKeys = new Set<string>();
   const terminalDecisionStore = createAnnouncementTerminalDecisionStore(filePath);
   let loaded = false;
@@ -120,8 +126,8 @@ export function createAnnouncementDeadLetterQueue(
   function capacityCount(): number {
     return entries.length
       + decisionReservations.length
+      + producerReservations.length
       + producerHandoffs.length
-      + producerSlots.size
       + invalidRecords.length;
   }
 
@@ -224,11 +230,14 @@ export function createAnnouncementDeadLetterQueue(
     const retainedOwners = [
       ...entries,
       ...decisionReservations,
+      ...producerReservations,
       ...producerHandoffs.flatMap((handoff) => handoff.operations),
     ];
     for (const owner of retainedOwners) {
-      const keys = owner.completionKeys && owner.completionKeys.length > 0
-        ? owner.completionKeys
+      const keys = owner.retirementKeys && owner.retirementKeys.length > 0
+        ? owner.retirementKeys
+        : owner.completionKeys && owner.completionKeys.length > 0
+          ? owner.completionKeys
         : owner.idempotencyKey
           ? [owner.idempotencyKey]
           : [];
@@ -270,9 +279,11 @@ export function createAnnouncementDeadLetterQueue(
       }
       const loadedEntries = read.value.entries.filter((entry): entry is DeadLetterEntry =>
         !isParentDecisionReservation(entry)
+        && !isAnnouncementProducerReservation(entry)
         && !isAnnouncementProducerHandoff(entry)
         && !isInvalidDeadLetterRecord(entry));
       decisionReservations = read.value.entries.filter(isParentDecisionReservation);
+      producerReservations = read.value.entries.filter(isAnnouncementProducerReservation);
       producerHandoffs = read.value.entries.filter(isAnnouncementProducerHandoff);
       invalidRecords = read.value.entries.filter(isInvalidDeadLetterRecord);
       if (producerHandoffs.length > maxEntries) {
@@ -296,7 +307,13 @@ export function createAnnouncementDeadLetterQueue(
       if (recoveredInFlight) {
         const recovered = await writeDeadLetterEntries(
           filePath,
-          [...entries, ...decisionReservations, ...producerHandoffs, ...invalidRecords],
+          [
+            ...entries,
+            ...decisionReservations,
+            ...producerReservations,
+            ...producerHandoffs,
+            ...invalidRecords,
+          ],
           fileOperations,
         );
         if (!recovered.ok) return err(recovered.error.error);
@@ -306,6 +323,8 @@ export function createAnnouncementDeadLetterQueue(
           ...entries.flatMap((entry) =>
             entry.attachment?.kind === "snapshot" ? [entry.attachment.path] : []),
           ...decisionReservations.flatMap((reservation) =>
+            reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
+          ...producerReservations.flatMap((reservation) =>
             reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
           ...producerHandoffs.flatMap((handoff) => handoff.operations.flatMap((operation) =>
             operation.attachment?.kind === "snapshot" ? [operation.attachment.path] : [])),
@@ -336,6 +355,7 @@ export function createAnnouncementDeadLetterQueue(
       logger?.debug(
         {
           entryCount: entries.length + decisionReservations.length + invalidRecords.length,
+          producerReservationCount: producerReservations.length,
           producerHandoffCount: producerHandoffs.length,
         },
         "Loaded dead-letter entries from disk",
@@ -357,18 +377,40 @@ export function createAnnouncementDeadLetterQueue(
     nextReservations: readonly ParentDecisionReservationRecord[] = decisionReservations,
     nextInvalidRecords: readonly InvalidDeadLetterRecord[] = invalidRecords,
     nextProducerHandoffs: readonly AnnouncementProducerHandoffRecord[] = producerHandoffs,
+    nextProducerReservations: readonly ProducerReservationRecord[] = producerReservations,
   ): Promise<Result<void, Error>> {
+    const transferredProducerKeys = new Set([
+      ...nextEntries.map((entry) => entry.runId),
+      ...nextReservations.map((reservation) => reservation.runId),
+      ...nextProducerHandoffs.flatMap((handoff) => handoff.operations.map((operation) =>
+        operation.runId)),
+    ]);
+    const retainedProducerReservations = nextProducerReservations.filter(
+      (reservation) => !transferredProducerKeys.has(reservation.runId),
+    );
     const written = await writeDeadLetterEntries(
       filePath,
-      [...nextEntries, ...nextReservations, ...nextProducerHandoffs, ...nextInvalidRecords],
+      [
+        ...nextEntries,
+        ...nextReservations,
+        ...retainedProducerReservations,
+        ...nextProducerHandoffs,
+        ...nextInvalidRecords,
+      ],
       fileOperations,
     );
-    if (written.ok) return written;
+    if (written.ok) {
+      producerReservations = [...retainedProducerReservations];
+      for (const producerKey of transferredProducerKeys) activeProducerKeys.delete(producerKey);
+      return written;
+    }
     if (written.error.state === "snapshot_visible") {
       entries = [...nextEntries];
       decisionReservations = [...nextReservations];
       invalidRecords = [...nextInvalidRecords];
       producerHandoffs = [...nextProducerHandoffs];
+      producerReservations = [...retainedProducerReservations];
+      for (const producerKey of transferredProducerKeys) activeProducerKeys.delete(producerKey);
     }
     return err(written.error.error);
   }
@@ -390,19 +432,18 @@ export function createAnnouncementDeadLetterQueue(
   }
 
   function canPersistProducerOwnership(
-    nextHandoffCount: number,
+    nextProducerOwnershipCount: number,
     consumedProducerKeys: ReadonlySet<string> = new Set(),
   ): boolean {
-    const remainingSlotCount = [...producerSlots].filter(
-      (producerKey) => !consumedProducerKeys.has(producerKey),
-    ).length;
-    const nextCount = nextHandoffCount + remainingSlotCount;
-    const currentCount = producerHandoffs.length + producerSlots.size;
+    const consumedReservationCount = producerReservations.filter((reservation) =>
+      consumedProducerKeys.has(reservation.runId)).length;
+    const nextCount = nextProducerOwnershipCount - consumedReservationCount;
+    const currentCount = producerHandoffs.length + producerReservations.length;
     if (nextCount <= maxEntries || nextCount <= currentCount) return true;
     logger?.warn(
       {
         producerHandoffCount: producerHandoffs.length,
-        producerSlotCount: producerSlots.size,
+        producerReservationCount: producerReservations.length,
         maxEntries,
         errorKind: "resource" as const,
         hint: "allow retained announcements to drain before stopping additional completion producers",
@@ -412,33 +453,93 @@ export function createAnnouncementDeadLetterQueue(
     return false;
   }
 
-  async function reserveProducerDurably(producerKey: string): Promise<Result<void, Error>> {
+  async function reserveProducerDurably(
+    reservation: AnnouncementProducerReservation,
+  ): Promise<Result<void, Error>> {
     const loadedFromDisk = await loadFromDisk();
     if (!loadedFromDisk.ok) return loadedFromDisk;
+    const producerKey = reservation.runId;
     if (producerKey.length === 0 || producerKey.length > 256) {
       return err(new Error("Announcement producer identity is invalid"));
     }
+    if (!isValidAnnouncementDecision(reservation)) {
+      return err(new Error("Announcement producer reservation is invalid"));
+    }
     if (
-      producerSlots.has(producerKey)
+      entries.some((entry) => entry.runId === producerKey)
+      || decisionReservations.some((entry) => entry.runId === producerKey)
       || producerHandoffs.some((handoff) => handoff.operations.some((operation) =>
         operation.runId === producerKey))
-    ) return ok(undefined);
-    if (!canPersistProducerOwnership(producerHandoffs.length + 1)) {
+    ) {
+      activeProducerKeys.add(producerKey);
+      return ok(undefined);
+    }
+    const existing = producerReservations.find((candidate) => candidate.runId === producerKey);
+    if (existing && !sameAnnouncementProducerReservation(existing, reservation)) {
+      return err(new Error("Announcement producer reservation identity mismatch"));
+    }
+    if (!existing && !canPersistProducerOwnership(
+      producerHandoffs.length + producerReservations.length + 1,
+    )) {
       return err(new Error("Announcement producer capacity exhausted"));
     }
-    producerSlots.add(producerKey);
+    const id = existing?.id ?? randomUUID();
+    const record: ProducerReservationRecord = {
+      ...reservation,
+      recordType: "producer_reservation",
+      id,
+    };
+    const next = existing
+      ? producerReservations.map((candidate) => candidate.runId === producerKey ? record : candidate)
+      : [...producerReservations, record];
+    const persisted = await persist(
+      entries,
+      decisionReservations,
+      invalidRecords,
+      producerHandoffs,
+      next,
+    );
+    if (!persisted.ok) return persisted;
+    producerReservations = next;
+    activeProducerKeys.add(producerKey);
     return ok(undefined);
   }
 
   async function releaseProducerDurably(producerKey: string): Promise<Result<void, Error>> {
-    producerSlots.delete(producerKey);
+    activeProducerKeys.delete(producerKey);
+    return ok(undefined);
+  }
+
+  async function cancelProducerDurably(producerKey: string): Promise<Result<void, Error>> {
+    const loadedFromDisk = await loadFromDisk();
+    if (!loadedFromDisk.ok) return loadedFromDisk;
+    const removed = producerReservations.filter((candidate) => candidate.runId === producerKey);
+    const next = producerReservations.filter((candidate) => candidate.runId !== producerKey);
+    if (next.length === producerReservations.length) {
+      activeProducerKeys.delete(producerKey);
+      return ok(undefined);
+    }
+    const persisted = await persist(
+      entries,
+      decisionReservations,
+      invalidRecords,
+      producerHandoffs,
+      next,
+    );
+    if (!persisted.ok) return persisted;
+    producerReservations = next;
+    activeProducerKeys.delete(producerKey);
+    await cleanupUnreferencedSnapshots(removed.flatMap((reservation) =>
+      reservation.attachment?.kind === "snapshot"
+        ? [{ attachment: reservation.attachment }]
+        : []));
     return ok(undefined);
   }
 
   function consumeProducerSlots(producerKeys: Iterable<string>): void {
     let consumed = false;
     for (const producerKey of producerKeys) {
-      if (producerSlots.delete(producerKey)) consumed = true;
+      if (activeProducerKeys.delete(producerKey)) consumed = true;
     }
     if (consumed) signalCapacityChange();
   }
@@ -503,6 +604,8 @@ export function createAnnouncementDeadLetterQueue(
       ...entries.flatMap((entry) =>
         entry.attachment?.kind === "snapshot" ? [entry.attachment.path] : []),
       ...decisionReservations.flatMap((reservation) =>
+        reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
+      ...producerReservations.flatMap((reservation) =>
         reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
       ...producerHandoffs.flatMap((handoff) => handoff.operations.flatMap((operation) =>
         operation.attachment?.kind === "snapshot" ? [operation.attachment.path] : [])),
@@ -610,6 +713,7 @@ export function createAnnouncementDeadLetterQueue(
         ...owner,
         idempotencyKey: completionKey,
         completionKeys: [completionKey],
+        retirementKeys: [completionKey],
       }, outcome);
       if (!completed.ok) return completed;
     }
@@ -1741,6 +1845,9 @@ export function createAnnouncementDeadLetterQueue(
           deliveryAuthority: reservation.deliveryAuthority,
           destinationEndpoint: reservation.destinationEndpoint,
           completionKeys: reservation.completionKeys,
+          ...(reservation.retirementKeys
+            ? { retirementKeys: reservation.retirementKeys }
+            : {}),
           ...(reservation.partId ? { partId: reservation.partId } : {}),
           ...(reservation.textChunks ? { textChunks: reservation.textChunks } : {}),
           attachment: reservation.attachment,
@@ -1788,6 +1895,9 @@ export function createAnnouncementDeadLetterQueue(
         deliveryAuthority: reservation.deliveryAuthority,
         destinationEndpoint: reservation.destinationEndpoint,
         completionKeys: reservation.completionKeys,
+        ...(reservation.retirementKeys
+          ? { retirementKeys: reservation.retirementKeys }
+          : {}),
         ...(!ledger ? { lastError: "transport_rejected" } : {}),
         ...(reservation.partId ? { partId: reservation.partId } : {}),
         ...(reservation.textChunks ? { textChunks: reservation.textChunks } : {}),
@@ -1921,6 +2031,17 @@ export function createAnnouncementDeadLetterQueue(
   ): Promise<void> {
     const load = await loadFromDisk();
     if (!load.ok) return;
+    const collectedRetirements = await collectTerminalRetirementsDurably();
+    if (!collectedRetirements.ok) {
+      logger?.warn(
+        {
+          errorKind: "resource" as const,
+          hint: "restore terminal-decision storage; durable retirement intents remain queued",
+        },
+        "Announcement terminal retirement intents could not be collected",
+      );
+    }
+    await promoteProducerReservations();
     await promoteProducerHandoffs();
     await adjudicateReservations(outwardLedger);
     if (entries.length === 0) return;
@@ -2302,7 +2423,10 @@ export function createAnnouncementDeadLetterQueue(
         ? ok({ created: false, deferred: true })
         : err(new Error("Announcement producer handoff identity mismatch"));
     }
-    if (!canPersistProducerOwnership(producerHandoffs.length + 1, producerKeys)) {
+    if (!canPersistProducerOwnership(
+      producerHandoffs.length + producerReservations.length + 1,
+      producerKeys,
+    )) {
       await cleanupUnreferencedSnapshots(transientSnapshots);
       return err(new Error("Announcement producer handoff capacity exhausted"));
     }
@@ -2338,6 +2462,36 @@ export function createAnnouncementDeadLetterQueue(
     producerHandoffs = [...producerHandoffs, record];
     consumeProducerSlots(producerKeys);
     return ok({ created: false, deferred: true });
+  }
+
+  function publicProducerReservation(
+    record: ProducerReservationRecord,
+  ): AnnouncementProducerReservation {
+    const { recordType: _recordType, id: _id, ...reservation } = record;
+    return reservation;
+  }
+
+  async function promoteProducerReservations(): Promise<void> {
+    for (const record of [...producerReservations]) {
+      if (activeProducerKeys.has(record.runId)) continue;
+      const reservation = publicProducerReservation(record);
+      const terminal = await lookupTerminalDecision(reservation);
+      if (!terminal.ok) continue;
+      if (terminal.value !== undefined) {
+        const reconciled = await terminalizeOwner(
+          reservation,
+          terminal.value,
+          entries,
+          decisionReservations,
+        );
+        if (!reconciled.ok) continue;
+        await cancelProducerDurably(record.runId);
+        continue;
+      }
+      const promoted = await decisionStore.reserve(reservation);
+      if (!promoted.ok) continue;
+      if (!promoted.value.created) await cancelProducerDurably(record.runId);
+    }
   }
 
   async function promoteProducerHandoffs(): Promise<void> {
@@ -2388,6 +2542,7 @@ export function createAnnouncementDeadLetterQueue(
           ...representative,
           idempotencyKey: completionKey,
           completionKeys: [completionKey],
+          retirementKeys: [completionKey],
         }, decision);
         if (!terminalized.ok) {
           terminalLookupFailed = true;
@@ -2422,12 +2577,15 @@ export function createAnnouncementDeadLetterQueue(
   }
 
   return {
-    reserveProducer: (producerKey, signal) => admitWithBackpressure(
-      () => reserveProducerDurably(producerKey),
+    reserveProducer: (reservation, signal) => admitWithBackpressure(
+      () => reserveProducerDurably(reservation),
       signal,
     ),
     releaseProducer: (producerKey) => serializeStateChange(
       () => releaseProducerDurably(producerKey),
+    ),
+    cancelProducer: (producerKey) => serializeStateChange(
+      () => cancelProducerDurably(producerKey),
     ),
     enqueue: (entry, signal) => admitWithBackpressure(() => enqueueDurably(entry), signal),
     beginDeliveryAttempt: (entry, signal) =>
@@ -2555,13 +2713,13 @@ export function createAnnouncementDeadLetterQueue(
         ...status,
         activeRecoveryCount: status.activeRecoveryCount
           + producerHandoffs.length
-          + producerSlots.size,
+          + producerReservations.length,
       });
     }),
     size: () => entries.length
       + decisionReservations.length
       + producerHandoffs.length
-      + producerSlots.size
+      + producerReservations.length
       + invalidRecords.length,
     listQuarantined: () => serialize(async () => {
       // Load before projecting: the in-memory lists are empty until some

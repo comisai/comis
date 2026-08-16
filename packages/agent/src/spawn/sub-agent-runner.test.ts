@@ -7200,6 +7200,66 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     expect(localDeps.sendToChannel).not.toHaveBeenCalled();
   });
 
+  it("parent kill cancels producer ownership when no delivery transfer occurred", async () => {
+    const localDeps = createMockDeps();
+    localDeps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    let resolveExecution!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(localDeps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const reserveProducer = vi.fn(async () => ok(undefined));
+    const releaseProducer = vi.fn(async () => ok(undefined));
+    const cancelProducer = vi.fn(async () => ok(undefined));
+    localDeps.deadLetterQueue = {
+      reserveProducer,
+      releaseProducer,
+      cancelProducer,
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as SubAgentRunnerDeps["deadLetterQueue"];
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "42",
+    });
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({
+      task: "t",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "42",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "42",
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    runner.killRun(runId);
+    resolveExecution({
+      response: "late result",
+      tokensUsed: { total: 1 },
+      cost: { total: 0 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(reserveProducer).toHaveBeenCalledWith(
+      expect.objectContaining({ runId, retirementKeys: [expect.any(String)] }),
+      expect.any(AbortSignal),
+    );
+    expect(cancelProducer).toHaveBeenCalledWith(runId);
+    expect(releaseProducer).not.toHaveBeenCalled();
+  });
+
   it("health-monitor kill delivers an LLM-free failure notification to the announce channel", async () => {
     const localDeps = runningDeps();
     const runner = createSubAgentRunner(localDeps);

@@ -550,6 +550,7 @@ export async function deliverAnnouncement(params: {
         },
         destinationEndpoint,
         completionKeys: [announceKey],
+        retirementKeys: [announceKey],
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!reservationBoundary.ok || !reservationBoundary.value.ok) {

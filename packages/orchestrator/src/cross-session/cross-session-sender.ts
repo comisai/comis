@@ -22,8 +22,11 @@ import {
   type SessionKey,
   type TypedEventBus,
   type AgentToAgentConfig,
+  type AnnouncementProducerReservation,
   type AnnouncementRetirementProducer,
   type ComisLogger,
+  type RootRunIdResolver,
+  createStableAnnouncementOperationId,
   systemNowMs,
   systemSetTimeout,
 } from "@comis/core";
@@ -60,15 +63,19 @@ export interface CrossSessionSenderDeps {
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
   reserveAnnouncementProducer?: (
-    producerKey: string,
+    reservation: AnnouncementProducerReservation,
   ) => Promise<Result<void, Error>>;
   releaseAnnouncementProducer?: (
+    producerKey: string,
+  ) => Promise<Result<void, Error>>;
+  cancelAnnouncementProducer?: (
     producerKey: string,
   ) => Promise<Result<void, Error>>;
   prepareAnnouncementRetirement?: (
     completionKeys: readonly string[],
     producer: AnnouncementRetirementProducer,
   ) => Promise<Result<void, Error>>;
+  resolveRootRunId?: RootRunIdResolver;
   /** Logger for fail-closed durable announcement failures. */
   logger?: Pick<ComisLogger, "error">;
 }
@@ -237,14 +244,56 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         );
       }
       let reservedProducerKey: string | undefined;
+      let producerShouldRemain = true;
       if (
         params.mode !== "fire-and-forget"
         && params.announceOperationId !== undefined
         && params.announceChannelType !== undefined
         && params.announceChannelId !== undefined
+        && params.callerAgentId !== undefined
+        && params.callerSessionKey !== undefined
+        && params.callerConversation !== undefined
+        && params.callerEndpoint !== undefined
         && deps.reserveAnnouncementProducer !== undefined
       ) {
-        const reserved = await deps.reserveAnnouncementProducer(params.announceOperationId);
+        const callerSession = conversationScopeToSessionKey(
+          params.callerConversation.conversationScope,
+        );
+        if (!callerSession.ok) throw callerSession.error;
+        const resolvedRoot = deps.resolveRootRunId?.(
+          params.callerAgentId,
+          callerSession.value,
+        );
+        const operationId = createStableAnnouncementOperationId(
+          params.callerAgentId,
+          params.callerSessionKey,
+          params.announceOperationId,
+        );
+        const reservation: AnnouncementProducerReservation = {
+          idempotencyKey: operationId,
+          agentId: params.callerAgentId,
+          runId: params.announceOperationId,
+          sessionKey: params.callerSessionKey,
+          announcementText: "A cross-session response finished, but its notification was interrupted before delivery ownership transferred.",
+          channelType: params.announceChannelType,
+          channelId: params.announceChannelId,
+          failedAt: systemNowMs(),
+          rootRunId: resolvedRoot?.ok
+            ? resolvedRoot.value
+            : `announcement:${params.callerSessionKey}`,
+          deliveryAuthority: {
+            tenantId: params.callerConversation.conversationScope.tenantId,
+            agentId: params.callerAgentId,
+            conversationRef: params.callerConversation.conversationRef,
+          },
+          destinationEndpoint: params.callerEndpoint,
+          completionKeys: [operationId, params.announceOperationId],
+          retirementKeys: [params.announceOperationId],
+          ...(params.callerEndpoint.threadId
+            ? { threadId: params.callerEndpoint.threadId }
+            : {}),
+        };
+        const reserved = await deps.reserveAnnouncementProducer(reservation);
         if (!reserved.ok) throw reserved.error;
         reservedProducerKey = params.announceOperationId;
       }
@@ -258,9 +307,11 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           const prepared = await deps.prepareAnnouncementRetirement(
             [reservedProducerKey],
             {
+              kind: "tool_result",
               tenantId: params.callerConversation.conversationScope.tenantId,
               agentId: params.callerConversation.conversationScope.agentId,
               conversationRef: params.callerConversation.conversationRef,
+              toolCallId: reservedProducerKey,
             },
           );
           if (!prepared.ok) throw prepared.error;
@@ -315,6 +366,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         // 8. Wait mode: announce and return
         if (params.mode === "wait") {
           const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
+          if (hadSkip) producerShouldRemain = false;
           const announced = hadSkip
             ? false
             : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
@@ -377,6 +429,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
 
         // 10. Announce final result
         const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
+        if (hadSkip) producerShouldRemain = false;
         const announced = hadSkip
           ? false
           : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
@@ -393,8 +446,12 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           },
         };
       } finally {
-        if (reservedProducerKey !== undefined && deps.releaseAnnouncementProducer) {
-          await deps.releaseAnnouncementProducer(reservedProducerKey);
+        if (reservedProducerKey !== undefined) {
+          if (!producerShouldRemain && deps.cancelAnnouncementProducer) {
+            await deps.cancelAnnouncementProducer(reservedProducerKey);
+          } else if (deps.releaseAnnouncementProducer) {
+            await deps.releaseAnnouncementProducer(reservedProducerKey);
+          }
         }
       }
     },

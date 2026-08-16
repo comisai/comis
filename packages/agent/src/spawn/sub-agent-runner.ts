@@ -57,6 +57,7 @@ import {
   type WorkspacePolicySnapshot,
   verifyWorkspacePolicySnapshot,
   SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
+  type AnnouncementProducerReservation,
 } from "@comis/core";
 import { err, fromPromise, isSilentResponse, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
@@ -1102,6 +1103,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const providerSettledRunIds = new Set<string>();
   const deliverySuppressedRunIds = new Set<string>();
   const deliveryAdmissionRunIds = new Set<string>();
+  const producerTransferAttemptedRunIds = new Set<string>();
   const producerAdmissionAbort = new AbortController();
   const forcedTerminalRunIds = new Set<string>();
   const durableAdmittedRunIds = new Set<string>();
@@ -1450,7 +1452,8 @@ function classifyCompletionErrorKind(
     }
   }
 
-  function trackFailureNotification(promise: Promise<void>): void {
+  function trackFailureNotification(runId: string, promise: Promise<void>): void {
+    producerTransferAttemptedRunIds.add(runId);
     const tracked = promise.then(
       () => undefined,
       () => undefined,
@@ -1950,6 +1953,7 @@ function classifyCompletionErrorKind(
     return deps.deadLetterQueue.prepareTerminalDecisionRetirement(
       [completionKey],
       {
+        kind: "session",
         tenantId: run.conversationScope.tenantId,
         agentId: run.agentId,
         conversationRef: run.conversationRef,
@@ -1972,6 +1976,7 @@ function classifyCompletionErrorKind(
     trajectoryClosedRunIds.delete(runId);
     resumeDescriptors.delete(runId);
     archivedSessionRunIds.delete(runId);
+    producerTransferAttemptedRunIds.delete(runId);
   };
 
   const scheduleRunArchive = (
@@ -2196,7 +2201,7 @@ function classifyCompletionErrorKind(
 
       // Deliver failure notification using stored announce channel
       if (!completionClaimedByWait && run.announceChannelType && run.announceChannelId) {
-        trackFailureNotification(deliverFailureNotification({
+        trackFailureNotification(runId, deliverFailureNotification({
           channelType: run.announceChannelType,
           channelId: run.announceChannelId,
           task: run.task,
@@ -3176,8 +3181,59 @@ function classifyCompletionErrorKind(
           && run.callerEndpoint
           && deps.deadLetterQueue?.reserveProducer
         ) {
-          const reservedProducer = await deps.deadLetterQueue.reserveProducer(
+          const projectedCaller = conversationScopeToSessionKey(
+            params.callerConversation.conversationScope,
+          );
+          if (!projectedCaller.ok) {
+            throw new DurableSubAgentAdmissionError(
+              "Sub-agent announcement producer identity failed",
+              projectedCaller.error,
+            );
+          }
+          const resolvedRoot = deps.resolveRootRunId?.(
+            params.callerAgentId,
+            projectedCaller.value,
+          );
+          const completionKey = buildAnnounceKey(params.callerSessionKey, runId);
+          if (!completionKey) {
+            throw new DurableSubAgentAdmissionError(
+              "Sub-agent announcement producer identity failed",
+            );
+          }
+          const producerReservation: AnnouncementProducerReservation = {
+            idempotencyKey: completionKey,
+            agentId: params.callerAgentId,
             runId,
+            sessionKey: params.callerSessionKey,
+            announcementText: "A background task finished, but its completion notification was interrupted before delivery ownership transferred.",
+            channelType: params.announceChannelType,
+            channelId: params.announceChannelId,
+            failedAt: clock.now(),
+            rootRunId: resolvedRoot?.ok
+              ? resolvedRoot.value
+              : `announcement:${params.callerSessionKey}`,
+            deliveryAuthority: {
+              tenantId: params.callerConversation.conversationScope.tenantId,
+              agentId: params.callerAgentId,
+              conversationRef: params.callerConversation.conversationRef,
+            },
+            destinationEndpoint: run.callerEndpoint,
+            completionKeys: [completionKey],
+            retirementKeys: [completionKey],
+            ...(resolveAnnouncementThreadId(
+              params.requesterOrigin,
+              params.announceChannelType,
+              params.announceChannelId,
+            ) ? {
+                threadId: resolveAnnouncementThreadId(
+                  params.requesterOrigin,
+                  params.announceChannelType,
+                  params.announceChannelId,
+                ),
+              } : {}),
+          };
+          const reservedProducer = await deps.deadLetterQueue.reserveProducer(
+            producerReservation,
             producerAdmissionAbort.signal,
           );
           if (!reservedProducer.ok) {
@@ -3775,6 +3831,7 @@ function classifyCompletionErrorKind(
           // the only user-facing response for this terminal result.
         } else if (result.finishReason === "provider_degraded") {
           if (params.announceChannelType && params.announceChannelId) {
+            producerTransferAttemptedRunIds.add(runId);
             deliveryAdmissionRunIds.add(runId);
             try {
               await deliverFailureNotification({
@@ -3864,6 +3921,7 @@ function classifyCompletionErrorKind(
                 sourceAgentId: params.agentId,
                 path: output.resolvedPath ?? output.path,
               })) ?? [];
+            producerTransferAttemptedRunIds.add(runId);
             deliveryAdmissionRunIds.add(runId);
             try {
               await deliverAnnouncement({
@@ -4129,6 +4187,7 @@ function classifyCompletionErrorKind(
           && params.announceChannelType
           && params.announceChannelId
         ) {
+          producerTransferAttemptedRunIds.add(runId);
           await deliverFailureNotification({
             channelType: params.announceChannelType,
             channelId: params.announceChannelId,
@@ -4196,8 +4255,10 @@ function classifyCompletionErrorKind(
         // ingesting other sessions' events into its trajectory file (stamped
         // with the dead child's sessionId).
         closeTrajectoryOnce(run);
-        if (!deliverySuppressedRunIds.has(runId)) {
+        if (producerTransferAttemptedRunIds.has(runId)) {
           await deps.deadLetterQueue?.releaseProducer?.(runId);
+        } else {
+          await deps.deadLetterQueue?.cancelProducer?.(runId);
         }
       }
     })();
@@ -4292,7 +4353,7 @@ function classifyCompletionErrorKind(
         && params.announceChannelType
         && params.announceChannelId
       ) {
-        trackFailureNotification(deliverFailureNotification({
+        trackFailureNotification(runId, deliverFailureNotification({
           channelType: params.announceChannelType,
           channelId: params.announceChannelId,
           task: params.task,
@@ -4576,7 +4637,7 @@ function classifyCompletionErrorKind(
       && run.announceChannelType
       && run.announceChannelId
     ) {
-      trackFailureNotification(deliverFailureNotification({
+      trackFailureNotification(runId, deliverFailureNotification({
         channelType: run.announceChannelType,
         channelId: run.announceChannelId,
         task: run.task,
@@ -4857,7 +4918,7 @@ function classifyCompletionErrorKind(
             });
           }
           if (run.announceChannelType && run.announceChannelId) {
-            trackFailureNotification(deliverFailureNotification({
+            trackFailureNotification(runId, deliverFailureNotification({
               channelType: run.announceChannelType,
               channelId: run.announceChannelId,
               task: run.task,

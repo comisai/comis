@@ -22,6 +22,7 @@ import type {
   ChannelEndpoint,
   ConversationLocator,
   ErrorKind,
+  AnnouncementDeadLetterQueuePort,
 } from "@comis/core";
 import type {
   AnnouncementBatcher,
@@ -129,6 +130,7 @@ export interface GraphRunState {
   cachePrewarmed?: boolean;
   /** Maximum chars for announcement text before truncation + button. Default: 3000. */
   maxAnnouncementChars?: number;
+  announcementProducerReserved?: boolean;
 }
 
 /** Per-node driver execution state. */
@@ -302,6 +304,13 @@ export interface GraphCoordinatorDeps {
   dataDir: string;
   maxParallelSpawns?: number;    // default 10 -- per-node cap on spawn_all
   maxGlobalSubAgents?: number;   // default 20 -- cross-graph sub-agent cap
+  announcementDeadLetterQueue?: Pick<
+    AnnouncementDeadLetterQueuePort,
+    | "reserveProducer"
+    | "releaseProducer"
+    | "cancelProducer"
+    | "prepareTerminalDecisionRetirement"
+  >;
   /** Delay (ms) between concurrent sub-agent spawns in the same wave. */
   spawnStaggerMs?: number;
   /** Timeout (ms) waiting for cache write signal before fallback spawn. Default: 30000.
