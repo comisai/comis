@@ -174,7 +174,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
   });
 
-  it("enqueue enforces maxEntries cap for retryable entries", async () => {
+  it("retains every entry when the review threshold is exceeded", async () => {
     const eventBus = createMockEventBus();
     const logger = createMockLogger();
     const dlq = createAnnouncementDeadLetterQueue({
@@ -189,13 +189,14 @@ describe("AnnouncementDeadLetterQueue", () => {
     await dlq.enqueue(makeEntry({ runId: "run-3" }));
     await dlq.enqueue(makeEntry({ runId: "run-4" }));
 
-    expect(dlq.size()).toBe(3);
-    expect(logger.error).toHaveBeenCalledWith(
+    expect(dlq.size()).toBe(4);
+    expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
+        entryCount: 4,
         errorKind: "resource",
-        hint: "resolve retryable dead letters before the queue reaches capacity",
+        hint: "resolve retained dead letters; delivery evidence is never capacity-evicted",
       }),
-      "Retryable dead-letter queue reached capacity",
+      "Dead-letter quarantine exceeds its review threshold",
     );
   });
 
@@ -288,7 +289,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
   });
 
-  it("drain drops entries after maxRetries", async () => {
+  it("parks entries after maxRetries until an operator releases them", async () => {
     const eventBus = createMockEventBus();
     const entry = makeFullEntry({ attemptCount: 5 });
 
@@ -304,10 +305,14 @@ describe("AnnouncementDeadLetterQueue", () => {
     await dlq.drain(sendToChannel);
 
     expect(sendToChannel).not.toHaveBeenCalled();
-    expect(dlq.size()).toBe(0);
+    expect(dlq.size()).toBe(1);
+    expect(await dlq.listQuarantined()).toMatchObject([{
+      kind: "entry",
+      lastError: "attempt_limit_reached",
+    }]);
   });
 
-  it("drain drops entries after maxAgeMs", async () => {
+  it("parks entries after maxAgeMs until an operator releases them", async () => {
     const eventBus = createMockEventBus();
     const entry = makeFullEntry({
       failedAt: Date.now() - 3_700_000,
@@ -325,7 +330,11 @@ describe("AnnouncementDeadLetterQueue", () => {
     const sendToChannel = vi.fn().mockResolvedValue(true);
     await dlq.drain(sendToChannel);
     expect(sendToChannel).not.toHaveBeenCalled();
-    expect(dlq.size()).toBe(0);
+    expect(dlq.size()).toBe(1);
+    expect(await dlq.listQuarantined()).toMatchObject([{
+      kind: "entry",
+      lastError: "retention_window_elapsed",
+    }]);
   });
 
   it("drain skips entries not yet eligible for retry", async () => {

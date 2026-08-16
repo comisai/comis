@@ -218,6 +218,24 @@ describe("announcement dead-letter file", () => {
     });
   });
 
+  it("rejects invalid in-memory rows before replacing a durable snapshot", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    const entry = makeEntry();
+    await writeDeadLetterEntries(filePath, [entry]);
+    const original = await readFile(filePath, "utf8");
+
+    const result = await writeDeadLetterEntries(filePath, [
+      { recordType: "parent_decision_reservation", id: "incomplete" },
+    ]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { state: "snapshot_unchanged" },
+    });
+    expect(await readFile(filePath, "utf8")).toBe(original);
+  });
+
   it("isolates a malformed row while preserving valid persisted rows", async () => {
     directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
     const filePath = join(directory, "dead-letters.jsonl");
