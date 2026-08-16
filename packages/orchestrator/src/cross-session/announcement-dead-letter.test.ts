@@ -1470,6 +1470,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       status: "accepted",
       platformMessageId: "telegram-receipt-9",
     }));
+    const ensureSessionObservation = vi.fn(() => ok(undefined));
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus,
@@ -1477,7 +1478,8 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       retryIntervalMs: 0,
       outwardLedger: ledger,
       governedSendToChannel,
-    });
+      ensureSessionObservation,
+    } as never);
     const sendToChannel = vi.fn().mockResolvedValue(true);
     const onDelivered = vi.fn();
 
@@ -1507,6 +1509,21 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       "root-uncommitted-1",
       9,
       "telegram-receipt-9",
+    );
+    expect(ensureSessionObservation).toHaveBeenCalledWith({
+      agentId: "parent-agent",
+      sessionKey: entry.sessionKey,
+    });
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "delivery:outward_ledger_transition",
+      expect.objectContaining({
+        rootRunId: "root-uncommitted-1",
+        stepIndex: 9,
+        transition: "commit",
+        outcome: "committed",
+        sessionKey: entry.sessionKey,
+        platformMessageId: "telegram-receipt-9",
+      }),
     );
     expect(ledger.parkUncertain).not.toHaveBeenCalled();
     expect(vi.mocked(ledger.begin).mock.invocationCallOrder[0])
