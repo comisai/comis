@@ -491,6 +491,7 @@ function materializeManagedWorkspaceGitMounts(
     makeManagedGitDirectory(safePath(privateCommon, "refs"));
     makeManagedGitDirectory(safePath(privateCommon, "info"));
     writeManagedGitFile(safePath(privateWorktree, "HEAD"), head);
+    writeManagedGitFile(safePath(privateCommon, "HEAD"), head);
     writeManagedGitFile(safePath(privateWorktree, "commondir"), `${safePath(privateRootTarget, "common")}\n`);
     writeManagedGitFile(safePath(privateWorktree, "gitdir"), `${safePath(workspace, ".git")}\n`);
     const indexPath = safePath(gitDir, "index");
