@@ -320,6 +320,7 @@ describe("createCrossSessionSender", () => {
     const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const suppressAnnouncementProducer = vi.fn(async () => ok(true));
     const prepareAnnouncementRetirement = vi.fn(async () => ok(undefined));
     const sender = createCrossSessionSender({
       ...deps,
@@ -327,6 +328,7 @@ describe("createCrossSessionSender", () => {
       reserveAnnouncementProducer,
       releaseAnnouncementProducer,
       cancelAnnouncementProducer,
+      suppressAnnouncementProducer,
       prepareAnnouncementRetirement,
     });
     const params: CrossSessionSendParams = {
@@ -373,10 +375,52 @@ describe("createCrossSessionSender", () => {
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
+  it("durably records announce skip before consuming producer ownership", async () => {
+    vi.mocked(deps.executeInSession).mockResolvedValue({
+      response: "private result ANNOUNCE_SKIP",
+      tokensUsed: { total: 50 },
+      cost: { total: 0.005 },
+    });
+    const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const suppressAnnouncementProducer = vi.fn(async () => ok(true));
+    const sendRecoverableAnnouncement = vi.fn();
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer,
+      releaseAnnouncementProducer,
+      cancelAnnouncementProducer,
+      suppressAnnouncementProducer,
+      sendRecoverableAnnouncement,
+    });
+
+    const result = await sender.send({
+      target: QUERY_ONE,
+      text: "do something privately",
+      mode: "wait",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "announce-tool-call-skip",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    });
+
+    expect(result).toMatchObject({ response: "private result", announced: false });
+    expect(suppressAnnouncementProducer).toHaveBeenCalledWith("announce-tool-call-skip");
+    expect(sendRecoverableAnnouncement).not.toHaveBeenCalled();
+    expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
+    expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
+  });
+
   it("cancels producer ownership when ping-pong fails before completion", async () => {
     const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const suppressAnnouncementProducer = vi.fn(async () => ok(true));
     vi.mocked(deps.executeInSession)
       .mockResolvedValueOnce({
         response: "continue",
@@ -389,6 +433,7 @@ describe("createCrossSessionSender", () => {
       reserveAnnouncementProducer,
       releaseAnnouncementProducer,
       cancelAnnouncementProducer,
+      suppressAnnouncementProducer,
     });
 
     await expect(sender.send({

@@ -229,6 +229,7 @@ export type {
   AnnouncementDeadLetterStatus,
   AnnouncementRetirementProducer,
   QuarantinedAnnouncement,
+  QuarantinedInvalidAnnouncementRecord,
   QuarantineReleaseOutcome,
   AnnouncementDeadLetterQueuePort,
 } from "./announcement-dead-letter.js";

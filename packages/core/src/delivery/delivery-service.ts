@@ -619,6 +619,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           const result: Result<DeliveryChunkSendOutcome, Error> = await sendPromise;
 
           if (result.ok) {
+            if (result.value.kind === "halted") break;
             if (result.value.kind === "settled") {
               chunkResults.push({
                 status: "settled",

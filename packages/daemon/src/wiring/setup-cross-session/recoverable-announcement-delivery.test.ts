@@ -237,6 +237,39 @@ describe("recoverable completion announcement delivery", () => {
 });
 
 describe("receipt-aware completion announcement delivery", () => {
+  it("halts a chunk group when an operator suppressed one chunk", async () => {
+    let reserveCount = 0;
+    const sendMessage = vi.fn(async () => ok("unexpected-message"));
+    const delivery = createReceiptAwareRecoverableAnnouncementDelivery({
+      adaptersByType: new Map([
+        ["telegram", { channelId: "telegram-primary", channelType: "telegram", sendMessage }],
+      ]),
+      deadLetterQueue: {
+        lookupDecision: vi.fn(async () => ok(undefined)),
+        lookupDecisionTextChunks: vi.fn(async () => ok(undefined)),
+        reserveDecision: vi.fn(async () => {
+          reserveCount++;
+          return reserveCount === 2
+            ? ok({ created: false, terminalDecision: "discarded" as const })
+            : ok({ created: true });
+        }),
+        recordDecisionTextChunks: vi.fn(async () => ok(undefined)),
+        replaceDecisions: vi.fn(async () => ok({ created: true })),
+        beginDeliveryAttempt: vi.fn(async () => ok({ claimed: true })),
+        settleDeliveryAttempt: vi.fn(async () => ok(true)),
+      },
+      deliveryService: makeChunkingDeliveryService(),
+    });
+
+    await expect(delivery({
+      ...makeRequest(),
+      text: "First durable paragraph.\n\nSecond durable paragraph.\n\nThird durable paragraph.",
+    })).resolves.toEqual(ok({ delivered: false, terminalDecision: "discarded" }));
+
+    expect(reserveCount).toBe(2);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("persists chunk identities and does not replay an accepted prefix", async () => {
     const tmpDir = await mkdtemp(join(tmpdir(), "receipt-aware-announcement-"));
     const filePath = join(tmpDir, "dead-letter.jsonl");
@@ -305,6 +338,9 @@ describe("receipt-aware completion announcement delivery", () => {
         .toEqual([undefined, undefined]);
       const chunkReservations = deadLetterQueue.replaceDecisions.mock.calls.at(-1)?.[1] ?? [];
       expect(chunkReservations.filter((entry) => entry.textChunks !== undefined)).toHaveLength(1);
+      expect(chunkReservations.map((entry) => entry.terminalGroupKey))
+        .toEqual(chunkReservations.map(() => chunkReservations[0]?.terminalGroupKey));
+      expect(chunkReservations[0]?.terminalGroupKey).toEqual(expect.any(String));
       expect(deadLetterQueue.settleDeliveryAttempt.mock.calls.map(([, outcome]) => outcome))
         .toEqual(["accepted", "unknown"]);
       const firstPassRows = (await readFile(filePath, "utf8"))
@@ -314,11 +350,13 @@ describe("receipt-aware completion announcement delivery", () => {
           idempotencyKey: string;
           lastError?: string;
           recordType?: string;
+          terminalGroupKey?: string;
         });
       expect(firstPassRows).toHaveLength(2);
       expect(firstPassRows[0]).toEqual(expect.objectContaining({
         idempotencyKey: claimedKeys[1],
         lastError: "outward_operation_unresolved",
+        terminalGroupKey: chunkReservations[0]?.terminalGroupKey,
       }));
       expect(firstPassRows[1]).toEqual(expect.objectContaining({
         recordType: "parent_decision_reservation",

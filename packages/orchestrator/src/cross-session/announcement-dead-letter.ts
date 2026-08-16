@@ -516,6 +516,17 @@ export function createAnnouncementDeadLetterQueue(
     if (existing && !sameAnnouncementProducerReservation(existing, reservation)) {
       return err(new Error("Announcement producer reservation identity mismatch"));
     }
+    if (existing?.terminalState === "no_reply_pending") {
+      activeProducerKeys.delete(producerKey);
+      const terminalized = await terminalizeOwner(
+        publicProducerReservation(existing),
+        "no_reply",
+        entries,
+        decisionReservations,
+      );
+      if (!terminalized.ok) return terminalized;
+      return cancelProducerDurably(producerKey);
+    }
     if (!existing && !canPersistProducerOwnership(
       producerHandoffs.length + producerReservations.length + 1,
     )) {
@@ -574,6 +585,51 @@ export function createAnnouncementDeadLetterQueue(
     return ok(undefined);
   }
 
+  async function suppressProducerDurably(producerKey: string): Promise<Result<boolean, Error>> {
+    const loadedFromDisk = await loadFromDisk();
+    if (!loadedFromDisk.ok) return loadedFromDisk;
+    const record = producerReservations.find((candidate) => candidate.runId === producerKey);
+    if (!record) {
+      activeProducerKeys.delete(producerKey);
+      return ok(false);
+    }
+    const pendingRecord: ProducerReservationRecord = {
+      ...record,
+      terminalState: "no_reply_pending",
+    };
+    if (record.terminalState !== "no_reply_pending") {
+      const next = producerReservations.map((candidate) =>
+        candidate.runId === producerKey ? pendingRecord : candidate);
+      const persisted = await persist(
+        entries,
+        decisionReservations,
+        invalidRecords,
+        producerHandoffs,
+        next,
+      );
+      if (!persisted.ok) {
+        if (producerReservations.some((candidate) =>
+          candidate.runId === producerKey
+          && candidate.terminalState === "no_reply_pending")) {
+          activeProducerKeys.delete(producerKey);
+        }
+        return persisted;
+      }
+    }
+    activeProducerKeys.delete(producerKey);
+    const reservation = publicProducerReservation(pendingRecord);
+    const terminalized = await terminalizeOwner(
+      reservation,
+      "no_reply",
+      entries,
+      decisionReservations,
+    );
+    if (!terminalized.ok) return terminalized;
+    const removed = await cancelProducerDurably(producerKey);
+    if (!removed.ok) return removed;
+    return ok(true);
+  }
+
   async function consumeProducerReservationsDurably(
     producerKeys: readonly string[],
   ): Promise<Result<void, Error>> {
@@ -630,6 +686,7 @@ export function createAnnouncementDeadLetterQueue(
   }
 
   async function prepareReservedAttachment<T extends {
+    idempotencyKey: string;
     attachment?: AnnouncementDeadLetterEntryInput["attachment"];
   }>(
     entry: T,
@@ -640,9 +697,8 @@ export function createAnnouncementDeadLetterQueue(
   }, Error>> {
     if (!isSourceAttachment(entry.attachment)) return ok({ entry });
     const existing = reusable.find((reservation) =>
-      reservation.attachment?.kind === "snapshot"
-      && reservation.attachment.sourceAgentId === entry.attachment?.sourceAgentId
-      && reservation.attachment.sourcePath === entry.attachment?.path);
+      reservation.idempotencyKey === entry.idempotencyKey
+      && reservation.attachment?.kind === "snapshot");
     if (existing?.attachment?.kind === "snapshot") {
       return ok({ entry: { ...entry, attachment: existing.attachment } });
     }
@@ -735,11 +791,25 @@ export function createAnnouncementDeadLetterQueue(
   async function lookupTerminalDecision(
     owner: AnnouncementDeadLetterEntryInput | AnnouncementParentDecisionReservation,
   ): Promise<Result<AnnouncementTerminalDecision | undefined, Error>> {
-    if (outwardLedger) {
-      const identity = terminalDecisionIdentity(owner);
+    const lookupOwner = (
+      candidate: AnnouncementDeadLetterEntryInput | AnnouncementParentDecisionReservation,
+    ): Promise<Result<AnnouncementTerminalDecision | undefined, Error>> => {
+      if (!outwardLedger) return terminalDecisionStore.lookup(candidate);
+      const identity = terminalDecisionIdentity(candidate);
       return outwardLedger.lookupTerminalDecision(identity.rootRunId, identity.operationId);
-    }
-    return terminalDecisionStore.lookup(owner);
+    };
+    const direct = await lookupOwner(owner);
+    if (!direct.ok || direct.value !== undefined) return direct;
+    if (
+      owner.terminalGroupKey === undefined
+      || owner.terminalGroupKey === owner.idempotencyKey
+    ) return direct;
+    return lookupOwner({
+      ...owner,
+      idempotencyKey: owner.terminalGroupKey,
+      completionKeys: [owner.terminalGroupKey],
+      terminalGroupKey: undefined,
+    });
   }
 
   async function recordTerminalDecision(
@@ -772,6 +842,19 @@ export function createAnnouncementDeadLetterQueue(
     retainedEntries: readonly DeadLetterEntry[],
     retainedReservations: readonly AnnouncementParentDecisionReservation[],
   ): Promise<Result<void, Error>> {
+    if (
+      outcome !== "delivered"
+      && owner.terminalGroupKey !== undefined
+      && owner.terminalGroupKey !== owner.idempotencyKey
+    ) {
+      const groupTerminalized = await recordTerminalDecision({
+        ...owner,
+        idempotencyKey: owner.terminalGroupKey,
+        completionKeys: [owner.terminalGroupKey],
+        terminalGroupKey: undefined,
+      }, outcome);
+      if (!groupTerminalized.ok) return groupTerminalized;
+    }
     const terminalized = await recordTerminalDecision(owner, outcome);
     if (!terminalized.ok) return terminalized;
     const completionKeys = [...new Set(owner.completionKeys ?? [])];
@@ -2547,7 +2630,12 @@ export function createAnnouncementDeadLetterQueue(
   function publicProducerReservation(
     record: ProducerReservationRecord,
   ): AnnouncementProducerReservation {
-    const { recordType: _recordType, id: _id, ...reservation } = record;
+    const {
+      recordType: _recordType,
+      id: _id,
+      terminalState: _terminalState,
+      ...reservation
+    } = record;
     return reservation;
   }
 
@@ -2555,6 +2643,17 @@ export function createAnnouncementDeadLetterQueue(
     for (const record of [...producerReservations]) {
       if (activeProducerKeys.has(record.runId)) continue;
       const reservation = publicProducerReservation(record);
+      if (record.terminalState === "no_reply_pending") {
+        const terminalized = await terminalizeOwner(
+          reservation,
+          "no_reply",
+          entries,
+          decisionReservations,
+        );
+        if (!terminalized.ok) continue;
+        await cancelProducerDurably(record.runId);
+        continue;
+      }
       const terminal = await lookupTerminalDecision(reservation);
       if (!terminal.ok) continue;
       if (terminal.value !== undefined) {
@@ -2666,6 +2765,9 @@ export function createAnnouncementDeadLetterQueue(
     ),
     cancelProducer: (producerKey) => serializeStateChange(
       () => cancelProducerDurably(producerKey),
+    ),
+    suppressProducer: (producerKey) => serializeStateChange(
+      () => suppressProducerDurably(producerKey),
     ),
     enqueue: (entry, signal) => admitWithBackpressure(() => enqueueDurably(entry), signal),
     beginDeliveryAttempt: (entry, signal) =>

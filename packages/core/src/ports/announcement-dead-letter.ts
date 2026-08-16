@@ -67,6 +67,7 @@ export interface AnnouncementDeadLetterEntryInput {
   completionKeys?: readonly string[];
   /** Producer-owned keys that keep terminal replay guards live. */
   retirementKeys?: readonly string[];
+  terminalGroupKey?: string;
   textChunks?: AnnouncementTextChunkManifest;
 }
 
@@ -99,6 +100,7 @@ export interface AnnouncementParentDecisionReservation {
   completionKeys: readonly string[];
   /** Producer-owned keys that keep terminal replay guards live. */
   retirementKeys?: readonly string[];
+  terminalGroupKey?: string;
   textChunks?: AnnouncementTextChunkManifest;
 }
 
@@ -114,6 +116,7 @@ export interface AnnouncementProducerReservationRecord
   extends AnnouncementProducerReservation {
   recordType: "producer_reservation";
   id: string;
+  terminalState?: "no_reply_pending";
 }
 
 /** Content-free operator projection of a retained delivery. */
@@ -201,6 +204,9 @@ export interface AnnouncementDeadLetterQueuePort {
   cancelProducer(
     producerKey: string,
   ): Promise<Result<void, Error>>;
+  suppressProducer(
+    producerKey: string,
+  ): Promise<Result<boolean, Error>>;
   enqueue(
     entry: AnnouncementDeadLetterEntryInput,
     signal?: AbortSignal,

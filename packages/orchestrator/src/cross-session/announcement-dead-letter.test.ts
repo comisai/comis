@@ -1589,6 +1589,115 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(restarted.size()).toBe(0);
   });
 
+  it("durably suppresses a producer before removing its reservation", async () => {
+    const producer = decisionInput({
+      idempotencyKey: "suppressed-producer-operation",
+      runId: "suppressed-producer-run",
+      completionKeys: ["suppressed-producer-operation"],
+      retirementKeys: ["suppressed-producer-operation"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+
+    await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
+    expect(queue.size()).toBe(0);
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision(producer)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+  });
+
+  it("finishes a pending producer suppression when admission resumes", async () => {
+    const producer = decisionInput({
+      idempotencyKey: "pending-suppression-operation",
+      runId: "pending-suppression-run",
+      completionKeys: ["pending-suppression-operation"],
+      retirementKeys: ["pending-suppression-operation"],
+    });
+    const terminalRecord = createTerminalDecisionRecord(producer, "no_reply", 100);
+    if (!terminalRecord.ok) throw terminalRecord.error;
+    const decisionsPath = join(tmpDir, "dlq.jsonl.terminal-decisions", "decisions");
+    const blockedShard = join(decisionsPath, terminalRecord.value.keyDigest.slice(0, 2));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await mkdir(decisionsPath, { recursive: true });
+    await writeFile(blockedShard, "blocked", "utf8");
+
+    await expect(queue.suppressProducer(producer.runId)).resolves.toMatchObject({ ok: false });
+    await unlink(blockedShard);
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(restarted.reserveDecision(producer)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+  });
+
+  it("commits chunk-group suppression before individual terminal aliases", async () => {
+    const groupKey = "chunk-group-terminal";
+    const groupOwner = decisionInput({
+      idempotencyKey: groupKey,
+      runId: "chunk-group-run",
+      completionKeys: [groupKey],
+    });
+    const groupRecord = createTerminalDecisionRecord(groupOwner, "discarded", 100);
+    if (!groupRecord.ok) throw groupRecord.error;
+    let childKey = "chunk-child-terminal";
+    let child = decisionInput({
+      idempotencyKey: childKey,
+      runId: "chunk-group-run",
+      partId: "summary:chunk:1",
+      completionKeys: [groupKey],
+      terminalGroupKey: groupKey,
+    });
+    let childRecord = createTerminalDecisionRecord(child, "discarded", 100);
+    if (!childRecord.ok) throw childRecord.error;
+    while (childRecord.value.keyDigest.slice(0, 2) === groupRecord.value.keyDigest.slice(0, 2)) {
+      childKey += "x";
+      child = { ...child, idempotencyKey: childKey };
+      childRecord = createTerminalDecisionRecord(child, "discarded", 100);
+      if (!childRecord.ok) throw childRecord.error;
+    }
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await queue.enqueue({
+      ...child,
+      attemptCount: 5,
+      lastError: "outward_operation_unresolved",
+    });
+    const childShard = join(
+      tmpDir,
+      "dlq.jsonl.terminal-decisions",
+      "decisions",
+      childRecord.value.keyDigest.slice(0, 2),
+    );
+    await mkdir(join(tmpDir, "dlq.jsonl.terminal-decisions", "decisions"), { recursive: true });
+    await writeFile(childShard, "blocked", "utf8");
+    const retained = (await listQuarantined(queue))[0];
+    if (!retained) throw new Error("Expected retained chunk quarantine row");
+
+    await expect(queue.release(retained.id, "discarded")).resolves.toMatchObject({ ok: false });
+    await expect(createAnnouncementTerminalDecisionStore(filePath).lookup(groupOwner))
+      .resolves.toEqual(ok("discarded"));
+  });
+
   it("consumes persisted producer ownership on terminal admission replay", async () => {
     const operation = decisionInput({
       idempotencyKey: "terminal-producer-operation",
@@ -1854,6 +1963,81 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     });
     expect(prepareAttachment).toHaveBeenCalledOnce();
     expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it("preserves distinct immutable snapshots for repeated source paths", async () => {
+    let snapshotIndex = 0;
+    const prepareAttachment = vi.fn(async (attachment) => {
+      snapshotIndex++;
+      return ok({
+        kind: "snapshot" as const,
+        sourceAgentId: attachment.sourceAgentId,
+        sourcePath: attachment.path,
+        path: `/durable/completion-attachments/report-${snapshotIndex}.csv`,
+        fileName: "report.csv",
+        mimeType: "text/csv",
+        contentDigest: String(snapshotIndex).repeat(64),
+        sizeBytes: 12,
+        cleanup: vi.fn(async () => ok(undefined)),
+      });
+    });
+    const first = decisionInput({
+      idempotencyKey: "same-path-first",
+      runId: "same-path-run-first",
+      partId: "attachment:0",
+      attachment: {
+        kind: "source",
+        sourceAgentId: "worker-a",
+        path: "/workspace/report.csv",
+      },
+      completionKeys: ["same-path-first", "completion-first"],
+    });
+    const second = decisionInput({
+      idempotencyKey: "same-path-second",
+      runId: "same-path-run-second",
+      partId: "attachment:0",
+      attachment: {
+        kind: "source",
+        sourceAgentId: "worker-a",
+        path: "/workspace/report.csv",
+      },
+      completionKeys: ["same-path-second", "completion-second"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      prepareAttachment,
+    });
+    await expect(queue.replaceDecisions([], [first, second]))
+      .resolves.toEqual(ok({ created: true }));
+
+    await expect(queue.replaceDecisions(
+      [first.idempotencyKey, second.idempotencyKey],
+      [
+        { ...first, completionKeys: [first.idempotencyKey, "completion-first", "completion-second"] },
+        { ...second, completionKeys: [second.idempotencyKey, "completion-first", "completion-second"] },
+      ],
+    )).resolves.toEqual(ok({ created: true }));
+
+    await expect(queue.lookupDecision(first.idempotencyKey)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        attachment: {
+          path: "/durable/completion-attachments/report-1.csv",
+          contentDigest: "1".repeat(64),
+        },
+      },
+    });
+    await expect(queue.lookupDecision(second.idempotencyKey)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        attachment: {
+          path: "/durable/completion-attachments/report-2.csv",
+          contentDigest: "2".repeat(64),
+        },
+      },
+    });
+    expect(prepareAttachment).toHaveBeenCalledTimes(2);
   });
 
   it("finds a persisted text chunk manifest through every represented completion", async () => {

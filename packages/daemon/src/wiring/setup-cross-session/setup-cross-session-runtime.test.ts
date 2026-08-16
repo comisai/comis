@@ -3929,6 +3929,9 @@ describe("setupCrossSession durable-store injection", () => {
     const setupCrossSession = await getSetupCrossSession();
     const dataDir = `${os.tmpdir()}/comis-ledgerless-batcher-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     mkdirSync(dataDir, { recursive: true });
+    let uuidCounter = 0;
+    mockRandomUUID.mockImplementation(() =>
+      `30000000-0000-4000-8000-${String(++uuidCounter).padStart(12, "0")}`);
     const deps = createMinimalDeps();
     deps.container.config.dataDir = dataDir;
     const platformSend = deps.adaptersByType.get("telegram").sendMessage;
@@ -3998,6 +4001,7 @@ describe("setupCrossSession durable-store injection", () => {
       expect(senderArgs.reserveAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.releaseAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.cancelAnnouncementProducer).toEqual(expect.any(Function));
+      expect(senderArgs.suppressAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.prepareAnnouncementRetirement).toEqual(expect.any(Function));
       expect(runnerArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
       expect(result.sendRecoverableAnnouncement).toEqual(expect.any(Function));
@@ -4036,6 +4040,7 @@ describe("setupCrossSession durable-store injection", () => {
         "second durable chunk",
       ]);
     } finally {
+      mockRandomUUID.mockImplementation(() => "30000000-0000-4000-8000-000000000003");
       rmSync(dataDir, { recursive: true, force: true });
     }
   });

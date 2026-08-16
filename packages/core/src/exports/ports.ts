@@ -168,6 +168,7 @@ export type {
   AnnouncementDeadLetterStatus,
   AnnouncementRetirementProducer,
   QuarantinedAnnouncement,
+  QuarantinedInvalidAnnouncementRecord,
   QuarantineReleaseOutcome,
   AnnouncementDeadLetterQueuePort,
   ImageGenInput,

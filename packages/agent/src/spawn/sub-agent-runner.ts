@@ -3136,6 +3136,7 @@ function classifyCompletionErrorKind(
     // Async execution
     const execPromise = (async () => {
       let rollbackHandle: { rollback: () => Promise<void> } | undefined;
+      let producerSuppressionAttempted = false;
       const traceId = params.graphTraceId ?? randomUUID();
 
       try {
@@ -3855,8 +3856,17 @@ function classifyCompletionErrorKind(
             }
           }
         } else if (params.announceChannelType && params.announceChannelId) {
-          // Announce with stats
-          if (!result.response.includes("ANNOUNCE_SKIP")) {
+          if (result.response.includes("ANNOUNCE_SKIP")) {
+            const suppressProducer = deps.deadLetterQueue?.suppressProducer;
+            if (deps.deadLetterQueue?.reserveProducer && !suppressProducer) {
+              throw new Error("Announcement producer lifecycle is incomplete");
+            }
+            if (suppressProducer) {
+              producerSuppressionAttempted = true;
+              const suppressed = await suppressProducer(runId);
+              if (!suppressed.ok) throw suppressed.error;
+            }
+          } else {
             // Use NarrativeCaster for tagged result announcement.
             // Skip NarrativeCaster for error results — buildAnnouncementMessage
             // enriches the status label with errorContext (e.g., "Halted (PromptTimeout, retryable)")
@@ -4255,10 +4265,12 @@ function classifyCompletionErrorKind(
         // ingesting other sessions' events into its trajectory file (stamped
         // with the dead child's sessionId).
         closeTrajectoryOnce(run);
-        if (producerTransferAttemptedRunIds.has(runId)) {
-          await deps.deadLetterQueue?.releaseProducer?.(runId);
-        } else {
-          await deps.deadLetterQueue?.cancelProducer?.(runId);
+        if (!producerSuppressionAttempted) {
+          if (producerTransferAttemptedRunIds.has(runId)) {
+            await deps.deadLetterQueue?.releaseProducer?.(runId);
+          } else {
+            await deps.deadLetterQueue?.cancelProducer?.(runId);
+          }
         }
       }
     })();

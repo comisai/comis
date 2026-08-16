@@ -1068,6 +1068,59 @@ describe("createSubAgentRunner", () => {
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
+  it("durably terminalizes announce skip before completing the run", async () => {
+    vi.useRealTimers();
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "private result ANNOUNCE_SKIP",
+      tokensUsed: { total: 100 },
+      cost: { total: 0.01 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    const suppressProducer = vi.fn(async () => ok(true));
+    const reserveProducer = vi.fn(async () => ok(undefined));
+    deps.deadLetterQueue = {
+      reserveProducer,
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer,
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "silent task",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+
+    await vi.waitFor(() => expect(reserveProducer).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "completed",
+    }));
+    expect(suppressProducer).toHaveBeenCalledWith(runId);
+    expect(deps.deadLetterQueue.releaseProducer).not.toHaveBeenCalled();
+    expect(deps.deadLetterQueue.cancelProducer).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
   it("missing completion route emits a child-routed delivery-skipped event", async () => {
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({

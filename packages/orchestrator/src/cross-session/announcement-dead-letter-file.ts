@@ -204,6 +204,9 @@ function publicDecision(
     ...(record.partId !== undefined ? { partId: record.partId } : {}),
     completionKeys: record.completionKeys,
     ...(record.retirementKeys !== undefined ? { retirementKeys: record.retirementKeys } : {}),
+    ...(record.terminalGroupKey !== undefined
+      ? { terminalGroupKey: record.terminalGroupKey }
+      : {}),
     ...(record.textChunks !== undefined ? { textChunks: record.textChunks } : {}),
   };
 }
@@ -226,7 +229,7 @@ function decisionFingerprint(
 }
 
 function sameDecision(
-  left: ParentDecisionReservationRecord,
+  left: ParentDecisionReservation,
   right: ParentDecisionReservation,
 ): boolean {
   return left.idempotencyKey === right.idempotencyKey
@@ -253,6 +256,7 @@ function sameDecision(
     && left.completionKeys.length === right.completionKeys.length
     && left.completionKeys.every((key, index) => key === right.completionKeys[index])
     && JSON.stringify(left.retirementKeys) === JSON.stringify(right.retirementKeys)
+    && left.terminalGroupKey === right.terminalGroupKey
     && sameDeliveryAuthority(left.deliveryAuthority, right.deliveryAuthority)
     && sameChannelEndpoint(left.destinationEndpoint, right.destinationEndpoint);
 }
@@ -282,6 +286,8 @@ export function isValidAnnouncementDecision(entry: ParentDecisionReservation): b
     && (entry.textChunks === undefined || isAnnouncementTextChunks(entry.textChunks))
     && isCompletionKeys(entry.completionKeys)
     && (entry.retirementKeys === undefined || isCompletionKeys(entry.retirementKeys))
+    && (entry.terminalGroupKey === undefined
+      || (typeof entry.terminalGroupKey === "string" && entry.terminalGroupKey.length > 0))
     && isRecoveryRoute(entry as unknown as Record<string, unknown>);
 }
 
@@ -601,6 +607,8 @@ function isParentDecisionReservationRecord(
     && record.rootRunId.length > 0
     && isCompletionKeys(record.completionKeys)
     && (record.retirementKeys === undefined || isCompletionKeys(record.retirementKeys))
+    && (record.terminalGroupKey === undefined
+      || (typeof record.terminalGroupKey === "string" && record.terminalGroupKey.length > 0))
     && isOptionalString(record.partId)
     && (record.attachment === undefined || isDeadLetterAttachmentSnapshot(record.attachment))
     && (record.textChunks === undefined || isAnnouncementTextChunks(record.textChunks))
@@ -618,7 +626,8 @@ function isAnnouncementProducerReservationRecord(
   const record = value as Record<string, unknown>;
   return record.recordType === "producer_reservation"
     && typeof record.id === "string"
-    && record.id.length > 0;
+    && record.id.length > 0
+    && (record.terminalState === undefined || record.terminalState === "no_reply_pending");
 }
 
 function isDeadLetterEntry(
@@ -656,6 +665,8 @@ function isDeadLetterEntry(
     && (record.textChunks === undefined || isAnnouncementTextChunks(record.textChunks))
     && (record.completionKeys === undefined || isCompletionKeys(record.completionKeys))
     && (record.retirementKeys === undefined || isCompletionKeys(record.retirementKeys))
+    && (record.terminalGroupKey === undefined
+      || (typeof record.terminalGroupKey === "string" && record.terminalGroupKey.length > 0))
     && (
       record.stepIndex === undefined
       || (typeof record.stepIndex === "number" && Number.isSafeInteger(record.stepIndex) && record.stepIndex >= 0)

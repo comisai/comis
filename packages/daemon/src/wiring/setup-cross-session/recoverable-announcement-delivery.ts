@@ -120,6 +120,7 @@ function reservationMatches(
     && existingDigest.value.operationFingerprint === expectedDigest.value.operationFingerprint
     && existing.rootRunId === expected.rootRunId
     && existing.partId === expected.partId
+    && existing.terminalGroupKey === expected.terminalGroupKey
     && attachmentsMatch
     && existing.deliveryAuthority.tenantId === expected.deliveryAuthority.tenantId
     && existing.deliveryAuthority.agentId === expected.deliveryAuthority.agentId
@@ -392,27 +393,30 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
       chunks: readonly string[],
     ): AnnouncementParentDecisionReservation[] => chunks.map((chunk, chunkIndex) => {
       const chunkPartId = createStableAnnouncementChunkPartId(request.partId, chunkIndex);
-      return reservationFor(
-        {
-          ...request,
-          text: chunk,
-          partId: chunkPartId,
-          ...(chunkIndex === chunks.length - 1
-            ? { preparedTextChunks: chunks }
-            : {}),
-        },
-        route.callerConversation,
-        route.destinationEndpoint,
-        `announcement:${request.callerSessionKey}`,
-        createStableAnnouncementChunkOperationId(
-          request.agentId,
-          request.callerSessionKey,
-          request.runId,
-          request.partId,
-          chunkIndex,
+      return {
+        ...reservationFor(
+          {
+            ...request,
+            text: chunk,
+            partId: chunkPartId,
+            ...(chunkIndex === chunks.length - 1
+              ? { preparedTextChunks: chunks }
+              : {}),
+          },
+          route.callerConversation,
+          route.destinationEndpoint,
+          `announcement:${request.callerSessionKey}`,
+          createStableAnnouncementChunkOperationId(
+            request.agentId,
+            request.callerSessionKey,
+            request.runId,
+            request.partId,
+            chunkIndex,
+          ),
+          completionKeys,
         ),
-        completionKeys,
-      );
+        terminalGroupKey: operationId,
+      };
     });
     const replaceWithChunks = async (
       chunks: readonly string[],
@@ -505,7 +509,7 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
         const terminalDecision = reservedBoundary.value.value.terminalDecision;
         if (terminalDecision !== undefined) {
           if (terminalDecision !== "delivered") suppressedTerminal = terminalDecision;
-          return ok({ kind: "settled" });
+          return ok({ kind: terminalDecision === "delivered" ? "settled" : "halted" });
         }
       }
       const claimedBoundary = await fromPromise(
@@ -527,6 +531,7 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
           ...(chunkReservation.retirementKeys
             ? { retirementKeys: chunkReservation.retirementKeys }
             : {}),
+          terminalGroupKey: chunkReservation.terminalGroupKey,
           ...(chunkReservation.textChunks
             ? { textChunks: chunkReservation.textChunks }
             : {}),
@@ -540,7 +545,7 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
       const terminalDecision = claimedBoundary.value.value.terminalDecision;
       if (terminalDecision !== undefined) {
         if (terminalDecision !== "delivered") suppressedTerminal = terminalDecision;
-        return ok({ kind: "settled" });
+        return ok({ kind: terminalDecision === "delivered" ? "settled" : "halted" });
       }
       if (!claimedBoundary.value.value.claimed) {
         return err(new Error("Recoverable announcement chunk outcome is unresolved"));
@@ -616,6 +621,7 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
       ),
     );
     if (!deliveredBoundary.ok) return err(deliveredBoundary.error);
+    if (suppressedTerminal !== undefined) return ok(terminalOutcome(suppressedTerminal));
     const delivered = resolvePlatformDeliveryResult(deliveredBoundary.value);
     if (!delivered.ok) return err(delivered.error);
     const platformStatus = delivered.value.platform.status;
@@ -625,7 +631,6 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
         status: platformStatus === "rejected" ? "rejected" : "unknown",
       });
     }
-    if (suppressedTerminal !== undefined) return ok(terminalOutcome(suppressedTerminal));
     return ok({
       delivered: true,
       status: "accepted",

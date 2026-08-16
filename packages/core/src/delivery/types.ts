@@ -53,7 +53,8 @@ export interface DeliveryChunkSendInput {
 
 export type DeliveryChunkSendOutcome =
   | { readonly kind: "sent"; readonly messageId: string }
-  | { readonly kind: "settled" };
+  | { readonly kind: "settled" }
+  | { readonly kind: "halted" };
 
 export type DeliveryChunkSender = (
   input: DeliveryChunkSendInput,
