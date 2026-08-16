@@ -19,19 +19,15 @@ import { systemNowMs } from "@comis/core";
 /**
  * Operator guidance for a standing announcement quarantine.
  *
- * Names the file's LIFECYCLE, not just its path: the dead-letter file exists
- * only while the queue is non-empty and is unlinked the moment it drains, so an
- * operator reading this WARN after the fact finds nothing at that path. Without
- * the lifecycle, that absence reads as "the announcement was lost" when the
- * usual cause is the opposite — the entry was dropped because the outward ledger
- * proved the user had already been told.
+ * Routes operators through the content-free control-plane view. Direct JSONL
+ * inspection can expose message content and can disagree with the running
+ * queue's in-memory authority.
  */
 export const ANNOUNCEMENT_QUARANTINE_HINT =
   "Quarantined background-task announcements are awaiting an operator decision; nothing drains "
-  + "them automatically because retrying risks a duplicate delivery. Inspect "
-  + "<dataDir>/dead-letters.jsonl and decide whether the user was already informed. That file is "
-  + "removed once the queue drains, so if it is absent the quarantine has already resolved — look "
-  + "for the matching dead-letter resolution line rather than treating the announcement as lost.";
+  + "them automatically because retrying risks a duplicate delivery. Run "
+  + "`node packages/cli/dist/cli.js quarantine list` and explicitly release each item after "
+  + "deciding whether the user was already informed.";
 
 export function wireHealthLogging(deps: {
   container: BootContext["container"];
