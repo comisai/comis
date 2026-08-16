@@ -2,6 +2,7 @@
 import { TypedEventBus } from "@comis/core";
 import { describe, expect, it, vi } from "vitest";
 import {
+  announcementDeadLetteredEventToRow,
   announcementQuarantineEventToRow,
   cronModelDriftEventToRow,
   cronStoreResetEventToRow,
@@ -9,6 +10,31 @@ import {
   cronTimerHealthEventToRow,
   wireSchedulerDiagnostics,
 } from "./obs-scheduler-rows.js";
+
+describe("announcementDeadLetteredEventToRow", () => {
+  it("attributes durable admission to the affected session without message content", () => {
+    const row = announcementDeadLetteredEventToRow({
+      runId: "run-1",
+      sessionKey: "default:agent-a:telegram:chat-1:user_a",
+      channelType: "telegram",
+      reason: "parent_decision_reserved",
+      timestamp: 100,
+    } as never);
+
+    expect(row).toMatchObject({
+      category: "health_signal",
+      severity: "warning",
+      sessionKey: "default:agent-a:telegram:chat-1:user_a",
+      message: "announcement:dead_lettered",
+    });
+    expect(JSON.parse(row.details)).toEqual({
+      signal: "announcement_dead_lettered",
+      channelType: "telegram",
+      reason: "parent_decision_reserved",
+    });
+    expect(JSON.stringify(row)).not.toContain("run-1");
+  });
+});
 
 describe("scheduler ownership diagnostic persistence", () => {
   it("persists cron timer degradation and recovery as content-free health transitions", () => {

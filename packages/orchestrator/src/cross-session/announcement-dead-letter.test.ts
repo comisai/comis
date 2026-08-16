@@ -144,8 +144,9 @@ describe("AnnouncementDeadLetterQueue", () => {
       "announcement:dead_lettered",
       expect.objectContaining({
         runId: "run-event-001",
+        sessionKey: "default:agent-a:telegram:chat-123:user_a",
         channelType: "discord",
-        reason: "connection_timeout",
+        reason: "delivery_failed",
         timestamp: expect.any(Number),
       }),
     );
@@ -878,6 +879,26 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await restarted.drain(sendToChannel);
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(restarted.size()).toBe(1);
+  });
+
+  it("emits a session-attributed diagnostic after reserving a parent decision", async () => {
+    const eventBus = createMockEventBus();
+    const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus });
+
+    await expect(queue.reserveDecision(decisionInput())).resolves.toEqual(
+      ok({ created: true }),
+    );
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "announcement:dead_lettered",
+      expect.objectContaining({
+        runId: "run-parent-1",
+        sessionKey: "default:user:telegram:chat-1",
+        channelType: "telegram",
+        reason: "parent_decision_reserved",
+        timestamp: expect.any(Number),
+      }),
+    );
   });
 
   it("rejects a parent decision that has no adjudicable ledger root", async () => {
