@@ -12,6 +12,7 @@ import {
   type RootRunIdResolver,
 } from "@comis/core";
 import {
+  createAnnouncementOperationDigests,
   type CompletionAnnouncementSendRequest,
   type SendGovernedCompletionAnnouncement,
 } from "@comis/orchestrator";
@@ -33,6 +34,28 @@ function reservationMatches(
   existing: AnnouncementParentDecisionReservation,
   expected: AnnouncementParentDecisionReservation,
 ): boolean {
+  const existingDigest = createAnnouncementOperationDigests({
+    channelType: existing.channelType,
+    channelId: existing.channelId,
+    text: existing.announcementText,
+    ...(existing.threadId || existing.extra ? {
+      options: {
+        ...(existing.threadId ? { threadId: existing.threadId } : {}),
+        ...(existing.extra ? { extra: existing.extra } : {}),
+      },
+    } : {}),
+  });
+  const expectedDigest = createAnnouncementOperationDigests({
+    channelType: expected.channelType,
+    channelId: expected.channelId,
+    text: expected.announcementText,
+    ...(expected.threadId || expected.extra ? {
+      options: {
+        ...(expected.threadId ? { threadId: expected.threadId } : {}),
+        ...(expected.extra ? { extra: expected.extra } : {}),
+      },
+    } : {}),
+  });
   return existing.idempotencyKey === expected.idempotencyKey
     && existing.agentId === expected.agentId
     && existing.runId === expected.runId
@@ -41,6 +64,9 @@ function reservationMatches(
     && existing.channelType === expected.channelType
     && existing.channelId === expected.channelId
     && existing.threadId === expected.threadId
+    && existingDigest.ok
+    && expectedDigest.ok
+    && existingDigest.value.operationFingerprint === expectedDigest.value.operationFingerprint
     && existing.rootRunId === expected.rootRunId
     && existing.partId === expected.partId
     && existing.attachment?.sourceAgentId === expected.attachment?.sourceAgentId
@@ -83,6 +109,7 @@ function reservationFor(
     destinationEndpoint,
     completionKeys,
     ...(request.options?.threadId ? { threadId: request.options.threadId } : {}),
+    ...(request.options?.extra ? { extra: request.options.extra } : {}),
     ...(request.partId ? { partId: request.partId } : {}),
     ...(request.attachment ? { attachment: request.attachment } : {}),
   };
@@ -152,6 +179,20 @@ export function createRecoverableAnnouncementDelivery(
       operationId,
       completionKeys,
     );
+    const reservationDigest = createAnnouncementOperationDigests({
+      channelType: reservation.channelType,
+      channelId: reservation.channelId,
+      text: reservation.announcementText,
+      ...(reservation.threadId || reservation.extra ? {
+        options: {
+          ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
+          ...(reservation.extra ? { extra: reservation.extra } : {}),
+        },
+      } : {}),
+    });
+    if (!reservationDigest.ok) {
+      return ok({ delivered: false, failure: "operation_validation_blocked" });
+    }
     const lookupBoundary = await fromPromise(
       deps.deadLetterQueue.lookupDecision(operationId),
     );

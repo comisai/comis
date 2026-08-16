@@ -66,6 +66,7 @@ export interface AnnouncementParentDecisionReservation {
   channelId: string;
   failedAt: number;
   threadId?: string;
+  extra?: Record<string, unknown>;
   rootRunId: string;
   deliveryAuthority: DeliveryAuthority;
   destinationEndpoint: ChannelEndpoint;
@@ -117,6 +118,11 @@ export type QuarantinedAnnouncement =
 
 export type QuarantineReleaseOutcome = "delivered" | "discarded";
 
+export interface AnnouncementDeadLetterStatus {
+  readonly activeRecoveryCount: number;
+  readonly quarantinedCount: number;
+}
+
 /**
  * Durable completion-delivery recovery boundary shared by producers and the
  * orchestrator adapter.
@@ -147,8 +153,7 @@ export interface AnnouncementDeadLetterQueuePort {
     ) => Promise<boolean>,
     onDelivered?: (idempotencyKey: string) => void,
   ): Promise<void>;
-  /** Load the durable store before returning its complete retained-item count. */
-  durableSize(): Promise<Result<number, Error>>;
+  durableStatus(): Promise<Result<AnnouncementDeadLetterStatus, Error>>;
   size(): number;
   listQuarantined(): Promise<Result<readonly QuarantinedAnnouncement[], Error>>;
   release(

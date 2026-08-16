@@ -398,6 +398,23 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       sessionKey: request.sessionKey,
       ...(request.partId === undefined ? {} : { partId: request.partId }),
     };
+    const operatorDecision = await deps.ledger.lookupOperatorDecision(
+      request.rootRunId,
+      request.operationId,
+    );
+    if (!operatorDecision.ok) {
+      logFailure(
+        { agentId: request.agentId, rootRunId: request.rootRunId },
+        "operator_decision_lookup",
+        "dependency",
+        "repair outward operator-decision storage before retrying the retained completion",
+        "Completion announcement operator decision lookup failed",
+      );
+      return ok({ delivered: false, failure: "lookup_blocked" });
+    }
+    if (operatorDecision.value !== undefined) {
+      return ok({ delivered: false, failure: "operation_retained" });
+    }
     const allocated = await deps.ledger.allocateStep(request.rootRunId, request.operationId);
     if (!allocated.ok) {
       logFailure(

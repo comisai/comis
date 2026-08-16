@@ -13,6 +13,8 @@ import {
 
 function makeLedger(overrides: Partial<OutwardSendLedgerPort> = {}): OutwardSendLedgerPort {
   return {
+    lookupOperatorDecision: vi.fn(async () => ok(undefined)),
+    recordOperatorDecision: vi.fn(async () => ok(undefined)),
     allocateStep: vi.fn(async () => ok(7)),
     lookup: vi.fn(async () => ok(undefined)),
     begin: vi.fn(async () => ok(undefined)),
@@ -45,6 +47,23 @@ const request = {
 };
 
 describe("governed announcement sender", () => {
+  it("suppresses a send after a terminal operator decision", async () => {
+    const ledger = makeLedger({
+      lookupOperatorDecision: vi.fn(async () => ok("discarded")),
+    });
+    const sendToPlatform = vi.fn();
+    const sender = createGovernedAnnouncementSender({ ledger, sendToPlatform });
+
+    const result = await sender.send(request);
+
+    expect(result).toEqual({
+      ok: true,
+      value: { delivered: false, failure: "operation_retained" },
+    });
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+    expect(sendToPlatform).not.toHaveBeenCalled();
+  });
+
   it("records the stable operation before one platform attempt and commits its receipt", async () => {
     const order: string[] = [];
     const ledger = makeLedger({

@@ -303,18 +303,27 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
   });
 
-  it("emits a fresh admission after a matching quarantine row is released", async () => {
+  it("suppresses readmission after a matching quarantine row is discarded", async () => {
     const eventBus = createMockEventBus();
     const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus });
-    const entry = makeEntry({ runId: "run-released-and-readmitted" });
+    const entry = makeEntry({
+      runId: "run-released-and-readmitted",
+      attemptCount: 5,
+    });
 
     await dlq.enqueue(entry);
     const id = (await listQuarantined(dlq))[0]!.id;
     await dlq.release(id, "discarded");
     await dlq.enqueue(entry);
 
-    expect(eventBus.emit).toHaveBeenCalledTimes(2);
-    expect(dlq.size()).toBe(1);
+    expect(eventBus.emit).toHaveBeenCalledTimes(1);
+    expect(dlq.size()).toBe(0);
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await restarted.enqueue(entry);
+    expect(restarted.size()).toBe(0);
   });
 
   it("emits a fresh admission after a matching quarantine row is delivered", async () => {
@@ -715,13 +724,9 @@ describe("AnnouncementDeadLetterQueue", () => {
       eventBus: createMockEventBus(),
     });
 
-    const result = await (fresh as unknown as {
-      durableSize(): Promise<
-        { ok: true; value: number } | { ok: false; error: Error }
-      >;
-    }).durableSize();
+    const result = await fresh.durableStatus();
 
-    expect(result).toEqual(ok(1));
+    expect(result).toEqual(ok({ activeRecoveryCount: 1, quarantinedCount: 0 }));
     expect(fresh.size()).toBe(1);
   });
 
@@ -1276,6 +1281,8 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
   it("logs a stuck governed entry once, not on every sweep", async () => {
     const logger = createMockLogger();
     const ledger = {
+      lookupOperatorDecision: vi.fn(async () => ok(undefined)),
+      recordOperatorDecision: vi.fn(async () => ok(undefined)),
       // Definitive absent lookup, so the drain proceeds to the transport check.
       lookup: vi.fn(async () => ok(undefined)),
       allocateStep: vi.fn(async () => ok({ ok: true, value: { stepIndex: 1 } })),
@@ -1330,6 +1337,8 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
 
     let retainedRecord: OutwardSendRecord | undefined;
     const ledger: OutwardSendLedgerPort = {
+      lookupOperatorDecision: vi.fn(async () => ok(undefined)),
+      recordOperatorDecision: vi.fn(async () => ok(undefined)),
       allocateStep: vi.fn(async () => ok(7)),
       lookup: vi.fn(async () => ok(retainedRecord)),
       begin: vi.fn(async (input) => {
@@ -1442,6 +1451,40 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(ledger.allocateStep).toHaveBeenCalled();
   });
 
+  it("replays persisted delivery extras with the original operation", async () => {
+    const extra = {
+      reply_markup: { inline_keyboard: [[{ text: "Open", callback_data: "open:1" }]] },
+    };
+    const seeded = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await seeded.reserveDecision(decisionInput({ extra }));
+    const { ledger } = makeStubLedger();
+    const governedSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-extra-1",
+    }));
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel,
+      retryIntervalMs: 0,
+    });
+
+    await restarted.drain(vi.fn(async () => true));
+
+    expect(governedSendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-1",
+      "scrubbed parent decision input",
+      expect.objectContaining({ extra }),
+    );
+    expect(restarted.size()).toBe(0);
+  });
+
   it("does not adjudicate a parent decision while its rewrite can still be running", async () => {
     const { ledger } = makeStubLedger();
     const governedSendToChannel = vi.fn(async () =>
@@ -1463,6 +1506,11 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(ledger.allocateStep).not.toHaveBeenCalled();
     expect(governedSendToChannel).not.toHaveBeenCalled();
     expect(queue.size()).toBe(1);
+    expect(await queue.durableStatus()).toEqual(ok({
+      activeRecoveryCount: 1,
+      quarantinedCount: 0,
+    }));
+    expect(await listQuarantined(queue)).toHaveLength(0);
   });
 
   it("leaves a reservation parked when the ledger cannot answer", async () => {
@@ -1610,6 +1658,8 @@ function makeStubLedger(
 ): { ledger: OutwardSendLedgerPort; lookupCalls: Array<[string, number]> } {
   const lookupCalls: Array<[string, number]> = [];
   const ledger: OutwardSendLedgerPort = {
+    lookupOperatorDecision: vi.fn(async () => ok(undefined)),
+    recordOperatorDecision: vi.fn(async () => ok(undefined)),
     allocateStep: vi.fn(async () => ok(0)),
     lookup: vi.fn(async (rootRunId: string, stepIndex: number) => {
       lookupCalls.push([rootRunId, stepIndex]);
@@ -1974,6 +2024,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     });
     vi.mocked(ledger.allocateStep).mockResolvedValue(ok(14));
     const governedSendToChannel = vi.fn();
+    const ensureSessionObservation = vi.fn(() => ok(undefined));
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
@@ -1981,12 +2032,17 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       outwardLedger: ledger,
       governedSendToChannel,
       prepareAttachment,
+      ensureSessionObservation,
     });
 
     await dlq.drain(vi.fn(async () => true));
 
     expect(prepareAttachment).not.toHaveBeenCalled();
     expect(governedSendToChannel).not.toHaveBeenCalled();
+    expect(ensureSessionObservation).toHaveBeenCalledWith({
+      agentId: "parent-agent",
+      sessionKey: entry.sessionKey,
+    });
     expect(dlq.size()).toBe(0);
   });
 
@@ -2428,6 +2484,27 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("separates active recovery from operator quarantine", async () => {
+    const { ledger } = makeStubLedger();
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    await queue.enqueue(makeEntry({
+      runId: "run-retryable",
+      idempotencyKey: "operation-retryable",
+      rootRunId: "root-retryable",
+      stepIndex: 1,
+      lastError: "outward_ledger_lookup_blocked",
+    }));
+    expect(await queue.durableStatus()).toEqual({
+      ok: true,
+      value: { activeRecoveryCount: 1, quarantinedCount: 0 },
+    });
+    expect(await listQuarantined(queue)).toHaveLength(0);
+  });
+
   it("lists a quarantined announcement by id without exposing its text", async () => {
     const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
     await queue.enqueue(makeEntry({
@@ -2436,6 +2513,7 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
       channelId: "678314278",
       announcementText: "the answer the user never saw",
       lastError: "outward_operation_unresolved",
+      attemptCount: 5,
     }));
 
     const rows = await listQuarantined(queue);
@@ -2461,7 +2539,10 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
     // the exact state the command exists to surface. Reproduced live on
     // comis-moshe against a real parked announcement.
     const seeded = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
-    await seeded.enqueue(makeEntry({ runId: "run-from-a-previous-boot" }));
+    await seeded.enqueue(makeEntry({
+      runId: "run-from-a-previous-boot",
+      attemptCount: 5,
+    }));
 
     // A brand-new queue over the same file: nothing has loaded it yet.
     const fresh = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
@@ -2473,7 +2554,8 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
 
   it("releases a quarantined announcement by id and persists the removal", async () => {
     const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
-    await queue.enqueue(makeEntry({ runId: "run-stuck" }));
+    const entry = makeEntry({ runId: "run-stuck", attemptCount: 5 });
+    await queue.enqueue(entry);
     const id = (await listQuarantined(queue))[0]!.id;
 
     const released = await queue.release(id, "discarded");
@@ -2483,8 +2565,42 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
     expect(queue.size()).toBe(0);
     // Durable: a fresh queue over the same file must not resurrect it.
     const reloaded = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
+    await reloaded.enqueue(entry);
     await reloaded.drain(vi.fn().mockResolvedValue(true));
     expect(reloaded.size()).toBe(0);
+  });
+
+  it("records governed operator decisions before removing quarantine evidence", async () => {
+    const { ledger } = makeStubLedger();
+    let decision: "delivered" | "discarded" | undefined;
+    vi.mocked(ledger.lookupOperatorDecision).mockImplementation(async () => ok(decision));
+    vi.mocked(ledger.recordOperatorDecision).mockImplementation(async (_root, _operation, outcome) => {
+      decision = outcome;
+      return ok(undefined);
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    const entry = makeEntry({
+      runId: "run-governed-release",
+      idempotencyKey: "operation-governed-release",
+      rootRunId: "root-governed-release",
+      stepIndex: 4,
+      lastError: "outward_operation_unresolved",
+    });
+    await queue.enqueue(entry);
+    const id = (await listQuarantined(queue))[0]!.id;
+
+    expect(await queue.release(id, "discarded")).toEqual(ok(true));
+    expect(ledger.recordOperatorDecision).toHaveBeenCalledWith(
+      "root-governed-release",
+      "operation-governed-release",
+      "discarded",
+    );
+    await queue.enqueue(entry);
+    expect(queue.size()).toBe(0);
   });
 
   it("reports an unknown id as not released rather than failing the call", async () => {

@@ -131,7 +131,12 @@ describe("ANNOUNCEMENT_QUARANTINE_HINT", () => {
     const eventBus = createMockEventBus();
     const logger = { warn: vi.fn() };
     const pending = createAnnouncementQuarantineHealthReporter({
-      deadLetterQueue: { durableSize: vi.fn(async () => ok(2)) },
+      deadLetterQueue: {
+        durableStatus: vi.fn(async () => ok({
+          activeRecoveryCount: 3,
+          quarantinedCount: 2,
+        })),
+      },
       eventBus,
       logger,
       now: () => 100,
@@ -143,6 +148,7 @@ describe("ANNOUNCEMENT_QUARANTINE_HINT", () => {
     expect(eventBus.emit).toHaveBeenCalledTimes(2);
     expect(eventBus.emit).toHaveBeenNthCalledWith(2, "announcement:quarantine_pending", {
       pendingCount: 2,
+      activeRecoveryCount: 3,
       timestamp: 100,
     });
     expect(logger.warn).toHaveBeenCalledOnce();
@@ -151,7 +157,7 @@ describe("ANNOUNCEMENT_QUARANTINE_HINT", () => {
     const unreadableLogger = { warn: vi.fn() };
     const unreadable = createAnnouncementQuarantineHealthReporter({
       deadLetterQueue: {
-        durableSize: vi.fn(async () => err(new Error("storage unavailable"))),
+        durableStatus: vi.fn(async () => err(new Error("storage unavailable"))),
       },
       eventBus: unreadableBus,
       logger: unreadableLogger,
@@ -168,6 +174,28 @@ describe("ANNOUNCEMENT_QUARANTINE_HINT", () => {
       { timestamp: 200 },
     );
     expect(unreadableLogger.warn).toHaveBeenCalledOnce();
+  });
+
+  it("emits a current clear state after quarantine recovery", async () => {
+    const eventBus = createMockEventBus();
+    const durableStatus = vi.fn()
+      .mockResolvedValueOnce(err(new Error("storage unavailable")))
+      .mockResolvedValueOnce(ok({ activeRecoveryCount: 1, quarantinedCount: 0 }));
+    const reporter = createAnnouncementQuarantineHealthReporter({
+      deadLetterQueue: { durableStatus },
+      eventBus,
+      logger: { warn: vi.fn() },
+      now: () => 300,
+    });
+
+    await reporter.sample();
+    await reporter.sample();
+
+    expect(eventBus.emit).toHaveBeenLastCalledWith("announcement:quarantine_pending", {
+      pendingCount: 0,
+      activeRecoveryCount: 1,
+      timestamp: 300,
+    });
   });
 });
 

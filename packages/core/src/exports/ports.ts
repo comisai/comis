@@ -160,6 +160,7 @@ export type {
   AnnouncementDeadLetterAttachment,
   AnnouncementParentDecisionReservation,
   AnnouncementParentDecisionReservationRecord,
+  AnnouncementDeadLetterStatus,
   QuarantinedAnnouncement,
   QuarantineReleaseOutcome,
   AnnouncementDeadLetterQueuePort,

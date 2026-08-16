@@ -66,13 +66,25 @@ describe("recoverable completion announcement delivery", () => {
       send,
     });
 
-    const result = await delivery(makeRequest());
+    const result = await delivery({
+      ...makeRequest(),
+      options: {
+        threadId: "topic-1",
+        extra: { reply_markup: { inline_keyboard: [[{ text: "Open", callback_data: "open:1" }]] } },
+      },
+      destinationEndpoint: {
+        ...makeRequest().destinationEndpoint,
+        threadId: "topic-1",
+      },
+    });
 
     expect(result).toMatchObject({ ok: true, value: { delivered: false } });
     expect(order).toEqual(["lookup", "reserve", "send"]);
     expect(retained).toMatchObject({
       rootRunId: "root-1",
       completionKeys: ["default:user_a:telegram:chat-1::run-1"],
+      threadId: "topic-1",
+      extra: { reply_markup: { inline_keyboard: [[{ text: "Open", callback_data: "open:1" }]] } },
     });
     expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
   });

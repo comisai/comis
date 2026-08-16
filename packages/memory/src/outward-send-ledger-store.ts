@@ -48,6 +48,7 @@ import {
   type OutwardSendRecord,
   type OutwardSendBeginInput,
   type OutwardSendState,
+  type OutwardOperatorDecision,
   type StoredOutwardOperationKind,
 } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
@@ -63,6 +64,18 @@ const outwardSequenceMapper = createRowMapper(
 );
 const outwardOperationMapper = createRowMapper(
   z.strictObject({ step_index: z.number().int().min(0) }),
+);
+const outwardOperatorDecisionMapper = createRowMapper(
+  z.strictObject({ outcome: z.enum(["delivered", "discarded"]) }),
+);
+const outwardOperationLedgerStateMapper = createRowMapper(
+  z.strictObject({ state: z.enum([
+    "send_attempt_started",
+    "unknown_after_send",
+    "committed",
+    "failed",
+    "unresolved",
+  ]) }),
 );
 const outwardUncertaintyCountMapper = createRowMapper(
   z.strictObject({ count: z.number().int().min(0) }),
@@ -175,6 +188,35 @@ export function createSqliteOutwardSendLedger(
     ) VALUES (?, ?, ?, ?, ?)
   `);
 
+  const lookupOperatorDecisionStmt = db.prepare(`
+    SELECT outcome FROM outward_send_operator_decisions
+    WHERE root_run_id = ? AND operation_id = ?
+  `);
+
+  const insertOperatorDecisionStmt = db.prepare(`
+    INSERT INTO outward_send_operator_decisions (
+      root_run_id, operation_id, outcome, decided_at_ms
+    ) VALUES (?, ?, ?, ?)
+  `);
+
+  const lookupOperationLedgerStateStmt = db.prepare(`
+    SELECT ledger.state
+    FROM outward_send_operations AS operation
+    JOIN outward_send_ledger AS ledger
+      ON ledger.root_run_id = operation.root_run_id
+      AND ledger.step_index = operation.step_index
+    WHERE operation.root_run_id = ? AND operation.operation_id = ?
+  `);
+
+  const lookupOperatorDecisionByStepStmt = db.prepare(`
+    SELECT decision.outcome
+    FROM outward_send_operations AS operation
+    JOIN outward_send_operator_decisions AS decision
+      ON decision.root_run_id = operation.root_run_id
+      AND decision.operation_id = operation.operation_id
+    WHERE operation.root_run_id = ? AND operation.step_index = ?
+  `);
+
   const lookupStmt = db.prepare(
     `SELECT * FROM outward_send_ledger WHERE root_run_id = ? AND step_index = ?`,
   );
@@ -224,9 +266,104 @@ export function createSqliteOutwardSendLedger(
     LIMIT ?
   `);
 
+  const beginOperation = db.transaction((input: OutwardSendBeginInput, timestamp: number) => {
+    const retainedDecision = outwardOperatorDecisionMapper.parseOptionalRow(
+      lookupOperatorDecisionByStepStmt.get(input.rootRunId, input.stepIndex),
+    );
+    if (!retainedDecision.ok) {
+      throw new Error(`Row validation failed: ${retainedDecision.error.message}`);
+    }
+    if (retainedDecision.value !== undefined) {
+      throw new Error("outward operation has a terminal operator decision");
+    }
+    beginStmt.run(
+      `${input.rootRunId}:${input.stepIndex}`,
+      input.rootRunId,
+      input.stepIndex,
+      input.agentId,
+      input.channelType,
+      input.channelId,
+      input.operationKind,
+      input.operationFingerprint,
+      input.contentDigest,
+      timestamp,
+      timestamp,
+    );
+  });
+
   // --- Store implementation ---
 
   const store: OutwardSendLedgerPort = {
+    lookupOperatorDecision(
+      rootRunId: string,
+      operationId: string,
+    ): Promise<Result<OutwardOperatorDecision | undefined, Error>> {
+      try {
+        if (rootRunId.length === 0 || operationId.length === 0 || operationId.length > 256) {
+          return Promise.resolve(err(new Error("outward operator decision identity is invalid")));
+        }
+        const parsed = outwardOperatorDecisionMapper.parseOptionalRow(
+          lookupOperatorDecisionStmt.get(rootRunId, digestOperationId(operationId)),
+        );
+        if (!parsed.ok) {
+          return Promise.resolve(err(new Error(`Row validation failed: ${parsed.error.message}`)));
+        }
+        return Promise.resolve(ok(parsed.value?.outcome));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
+      }
+    },
+
+    recordOperatorDecision(
+      rootRunId: string,
+      operationId: string,
+      outcome: OutwardOperatorDecision,
+    ): Promise<Result<void, Error>> {
+      try {
+        if (
+          rootRunId.length === 0
+          || operationId.length === 0
+          || operationId.length > 256
+          || (outcome !== "delivered" && outcome !== "discarded")
+        ) {
+          return Promise.resolve(err(new Error("outward operator decision is invalid")));
+        }
+        const operationDigest = digestOperationId(operationId);
+        const recordDecision = db.transaction(() => {
+          const existing = outwardOperatorDecisionMapper.parseOptionalRow(
+            lookupOperatorDecisionStmt.get(rootRunId, operationDigest),
+          );
+          if (!existing.ok) throw new Error(`Row validation failed: ${existing.error.message}`);
+          if (existing.value !== undefined) {
+            if (existing.value.outcome !== outcome) {
+              throw new Error("outward operator decision conflicts with its durable outcome");
+            }
+            return;
+          }
+          const ledgerState = outwardOperationLedgerStateMapper.parseOptionalRow(
+            lookupOperationLedgerStateStmt.get(rootRunId, operationDigest),
+          );
+          if (!ledgerState.ok) {
+            throw new Error(`Row validation failed: ${ledgerState.error.message}`);
+          }
+          if (
+            ledgerState.value !== undefined
+            && (
+              ledgerState.value.state === "send_attempt_started"
+              || ledgerState.value.state === "unknown_after_send"
+            )
+          ) {
+            throw new Error("outward operation is still in flight");
+          }
+          insertOperatorDecisionStmt.run(rootRunId, operationDigest, outcome, nowMs());
+        });
+        recordDecision.immediate();
+        return Promise.resolve(ok(undefined));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
+      }
+    },
+
     allocateStep(rootRunId: string, operationId: string): Promise<Result<number, Error>> {
       try {
         if (rootRunId.length === 0 || operationId.length === 0 || operationId.length > 256) {
@@ -270,19 +407,7 @@ export function createSqliteOutwardSendLedger(
         // The UNIQUE (root_run_id, step_index) index throws here on a repeated
         // step — the boundary-catch turns it into err, which the wrap site
         // treats as "already in flight, do NOT double-send".
-        beginStmt.run(
-          `${input.rootRunId}:${input.stepIndex}`,
-          input.rootRunId,
-          input.stepIndex,
-          input.agentId,
-          input.channelType,
-          input.channelId,
-          input.operationKind,
-          input.operationFingerprint,
-          input.contentDigest,
-          t, // created_at_ms
-          t, // updated_at_ms
-        );
+        beginOperation.immediate(input, t);
         return Promise.resolve(ok(undefined));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));

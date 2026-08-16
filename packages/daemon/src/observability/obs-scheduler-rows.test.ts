@@ -363,7 +363,11 @@ describe("announcementQuarantineEventToRow", () => {
   // the only trace was one daemon WARN — `comis system-health`, the documented
   // first stop for triage, showed nothing and the user had to ask for the work.
   it("reports a quarantined announcement as a warning-severity health signal", () => {
-    const row = announcementQuarantineEventToRow({ pendingCount: 1, timestamp: 1_700_000_000_000 });
+    const row = announcementQuarantineEventToRow({
+      pendingCount: 1,
+      activeRecoveryCount: 2,
+      timestamp: 1_700_000_000_000,
+    });
     expect(row.category).toBe("health_signal");
     // Never "info": info-severity rows are excluded from findings by design.
     expect(row.severity).toBe("warning");
@@ -371,10 +375,29 @@ describe("announcementQuarantineEventToRow", () => {
   });
 
   it("carries the closed signal label and the count, and no announcement text", () => {
-    const row = announcementQuarantineEventToRow({ pendingCount: 3, timestamp: 1 });
+    const row = announcementQuarantineEventToRow({
+      pendingCount: 3,
+      activeRecoveryCount: 2,
+      timestamp: 1,
+    });
     const details = JSON.parse(row.details) as Record<string, unknown>;
     expect(details.signal).toBe("announcement_quarantine");
     expect(details.pendingCount).toBe(3);
-    expect(Object.keys(details).sort()).toEqual(["pendingCount", "signal"]);
+    expect(details.activeRecoveryCount).toBe(2);
+    expect(Object.keys(details).sort()).toEqual([
+      "activeRecoveryCount",
+      "pendingCount",
+      "signal",
+    ]);
+  });
+
+  it("maps a current clean quarantine state as informational", () => {
+    const row = announcementQuarantineEventToRow({
+      pendingCount: 0,
+      activeRecoveryCount: 4,
+      timestamp: 2,
+    });
+
+    expect(row.severity).toBe("info");
   });
 });

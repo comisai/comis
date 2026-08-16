@@ -65,19 +65,42 @@ function latestBackgroundRecoveryScan(
   return latestRow === undefined ? null : backgroundRecoveryScanFromRow(latestRow);
 }
 
+const ANNOUNCEMENT_QUARANTINE_SIGNALS = new Set([
+  "announcement_quarantine",
+  "announcement_quarantine_read_failed",
+]);
+
+function latestAnnouncementQuarantineRow(
+  rows: readonly DiagnosticRow[],
+): DiagnosticRow | undefined {
+  let latest: DiagnosticRow | undefined;
+  for (const row of rows) {
+    if (
+      ANNOUNCEMENT_QUARANTINE_SIGNALS.has(healthSignalLabel(row))
+      && (latest === undefined || row.timestamp >= latest.timestamp)
+    ) latest = row;
+  }
+  return latest;
+}
+
 /** Count active warning state, folding recovery scans by their latest status. */
 export function activeHealthSignalWarningCount(rows: readonly DiagnosticRow[]): number {
   const nonScanWarningCount = rows.filter(
-    (row) => row.severity !== "info" && healthSignalLabel(row) !== "background_task_recovery_scan",
+    (row) => row.severity !== "info"
+      && healthSignalLabel(row) !== "background_task_recovery_scan"
+      && !ANNOUNCEMENT_QUARANTINE_SIGNALS.has(healthSignalLabel(row)),
   ).length;
   const scanRows = rows.filter(
     (row) => healthSignalLabel(row) === "background_task_recovery_scan",
   );
   const latestScan = latestBackgroundRecoveryScan(scanRows);
-  if (latestScan === null) {
-    return nonScanWarningCount + scanRows.filter((row) => row.severity !== "info").length;
-  }
-  return nonScanWarningCount + (latestScan.status === "failed" ? 1 : 0);
+  const scanWarningCount = latestScan === null
+    ? scanRows.filter((row) => row.severity !== "info").length
+    : latestScan.status === "failed" ? 1 : 0;
+  const latestQuarantine = latestAnnouncementQuarantineRow(rows);
+  return nonScanWarningCount
+    + scanWarningCount
+    + (latestQuarantine !== undefined && latestQuarantine.severity !== "info" ? 1 : 0);
 }
 
 /**
@@ -193,6 +216,7 @@ export function buildFindings(
     if (row.severity === "info") continue;
     const label = healthSignalLabel(row);
     if (DEDICATED_SCRIPT_SIGNALS.has(label)) continue;
+    if (ANNOUNCEMENT_QUARANTINE_SIGNALS.has(label)) continue;
     bySignal.set(label, (bySignal.get(label) ?? 0) + 1);
     const reason = healthSignalReason(row);
     if (reason !== undefined) {
@@ -222,6 +246,27 @@ export function buildFindings(
           : label === "announcement_quarantine_read_failed"
             ? "Restore access to the configured dead-letter store, then rerun `node packages/cli/dist/cli.js quarantine list`."
           : "run `comis explain` on an affected session; inspect the recurring health WARNs",
+    });
+  }
+
+  const latestQuarantine = latestAnnouncementQuarantineRow(healthSignals);
+  if (latestQuarantine !== undefined && latestQuarantine.severity !== "info") {
+    const label = healthSignalLabel(latestQuarantine);
+    const details = parseDetailsObject(latestQuarantine.details);
+    const pendingCount = typeof details.pendingCount === "number"
+      && Number.isSafeInteger(details.pendingCount)
+      && details.pendingCount > 0
+      ? details.pendingCount
+      : 1;
+    findings.push({
+      code: `health_signal:${label}`,
+      detail: label === "announcement_quarantine"
+        ? `${pendingCount} announcement(s) currently require an operator decision`
+        : "The current announcement quarantine count is unknown",
+      count: pendingCount,
+      hint: label === "announcement_quarantine"
+        ? "Run `node packages/cli/dist/cli.js quarantine list` and explicitly release each retained item after reconciling its delivery outcome."
+        : "Restore access to the configured dead-letter store, then rerun `node packages/cli/dist/cli.js quarantine list`.",
     });
   }
 

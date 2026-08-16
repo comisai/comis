@@ -12,6 +12,7 @@
 
 import { ok, type Result } from "@comis/shared";
 import type {
+  AnnouncementDeadLetterStatus,
   QuarantinedAnnouncement,
   QuarantineReleaseOutcome,
 } from "@comis/core";
@@ -27,6 +28,47 @@ import type { InvalidDeadLetterRecord } from "./announcement-dead-letter-invalid
  * an operator deciding its fate needs the route and the reason, not the message.
  */
 export type { QuarantinedAnnouncement, QuarantineReleaseOutcome } from "@comis/core";
+
+export interface AnnouncementQuarantineClassification {
+  readonly actionableIds: ReadonlySet<string>;
+  readonly rows: readonly QuarantinedAnnouncement[];
+  readonly status: AnnouncementDeadLetterStatus;
+}
+
+const GOVERNED_OPERATOR_ERRORS = new Set([
+  "identity_incomplete",
+  "operation_validation_blocked",
+  "outward_committed_receipt_missing",
+  "outward_operation_failed",
+  "outward_operation_identity_mismatch",
+  "outward_operation_mapping_mismatch",
+  "outward_operation_unresolved",
+]);
+
+export function classifyQuarantined(input: {
+  readonly entries: readonly DeadLetterEntry[];
+  readonly reservations: readonly ParentDecisionReservationRecord[];
+  readonly invalidRecords: readonly InvalidDeadLetterRecord[];
+  readonly governed: boolean;
+  readonly maxRetries: number;
+  readonly maxAgeMs: number;
+  readonly now: number;
+}): AnnouncementQuarantineClassification {
+  const actionableEntries = input.entries.filter((entry) => input.governed
+    ? entry.lastError !== undefined && GOVERNED_OPERATOR_ERRORS.has(entry.lastError)
+    : entry.attemptCount >= input.maxRetries || input.now - entry.failedAt >= input.maxAgeMs);
+  const rows = projectQuarantined(actionableEntries, [], input.invalidRecords);
+  return {
+    actionableIds: new Set(rows.map((row) => row.id)),
+    rows,
+    status: {
+      activeRecoveryCount: input.entries.length
+        - actionableEntries.length
+        + input.reservations.length,
+      quarantinedCount: rows.length,
+    },
+  };
+}
 
 
 /**

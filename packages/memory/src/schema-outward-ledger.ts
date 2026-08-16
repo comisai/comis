@@ -274,4 +274,13 @@ export function ensureOutwardLedgerTable(db: Database.Database): void {
       UNIQUE (root_run_id, step_index)
     )
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS outward_send_operator_decisions (
+      root_run_id         TEXT NOT NULL,
+      operation_id       TEXT NOT NULL CHECK(length(operation_id) = 64 AND operation_id NOT GLOB '*[^0-9a-f]*'),
+      outcome            TEXT NOT NULL CHECK(outcome IN ('delivered','discarded')),
+      decided_at_ms      INTEGER NOT NULL,
+      PRIMARY KEY (root_run_id, operation_id)
+    )
+  `);
 }

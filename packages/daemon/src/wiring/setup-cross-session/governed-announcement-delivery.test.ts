@@ -29,6 +29,8 @@ function makeDeliveryService(): DeliveryService {
 
 function makeLedger(): OutwardSendLedgerPort {
   return {
+    lookupOperatorDecision: vi.fn(async () => ok(undefined)),
+    recordOperatorDecision: vi.fn(async () => ok(undefined)),
     allocateStep: vi.fn(async () => ok(0)),
     lookup: vi.fn(async () => ok(undefined)),
     begin: vi.fn(async () => ok(undefined)),

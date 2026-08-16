@@ -30,6 +30,13 @@ import {
   type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
 import {
+  createOperatorDecisionRecord,
+  findOperatorDecision,
+  isAnnouncementOperatorDecisionRecord,
+  operatorDecisionIdentity,
+  type AnnouncementOperatorDecisionRecord,
+} from "./announcement-dead-letter-operator-decision.js";
+import {
   announcementRecoveryKey,
   isSameAnnouncementRecovery,
   isSameGovernedDeadLetterOperation,
@@ -47,7 +54,7 @@ export type {
   DeadLetterEntry,
   ParentDecisionReservation,
 } from "./announcement-dead-letter-file.js";
-import { projectQuarantined, releaseQuarantined } from "./announcement-dead-letter-quarantine.js";
+import { classifyQuarantined, releaseQuarantined } from "./announcement-dead-letter-quarantine.js";
 export type {
   QuarantinedAnnouncement,
   QuarantineReleaseOutcome,
@@ -82,6 +89,7 @@ export function createAnnouncementDeadLetterQueue(
   let entries: DeadLetterEntry[] = [];
   let decisionReservations: ParentDecisionReservationRecord[] = [];
   let invalidRecords: InvalidDeadLetterRecord[] = [];
+  let operatorDecisions: AnnouncementOperatorDecisionRecord[] = [];
   const emittedAdmissionKeys = new Set<string>();
   const suppressedDecisionKeys = new Set<string>();
   let loaded = false;
@@ -131,9 +139,12 @@ export function createAnnouncementDeadLetterQueue(
         }
       }
       entries = read.value.entries.filter((entry): entry is DeadLetterEntry =>
-        !isParentDecisionReservation(entry) && !isInvalidDeadLetterRecord(entry));
+        !isParentDecisionReservation(entry)
+        && !isInvalidDeadLetterRecord(entry)
+        && !isAnnouncementOperatorDecisionRecord(entry));
       decisionReservations = read.value.entries.filter(isParentDecisionReservation);
       invalidRecords = read.value.entries.filter(isInvalidDeadLetterRecord);
+      operatorDecisions = read.value.entries.filter(isAnnouncementOperatorDecisionRecord);
       loaded = true;
       logger?.debug(
         { entryCount: entries.length + decisionReservations.length + invalidRecords.length },
@@ -155,10 +166,11 @@ export function createAnnouncementDeadLetterQueue(
     nextEntries: readonly DeadLetterEntry[],
     nextReservations: readonly ParentDecisionReservationRecord[] = decisionReservations,
     nextInvalidRecords: readonly InvalidDeadLetterRecord[] = invalidRecords,
+    nextOperatorDecisions: readonly AnnouncementOperatorDecisionRecord[] = operatorDecisions,
   ): Promise<Result<void, Error>> {
     const written = await writeDeadLetterEntries(
       filePath,
-      [...nextEntries, ...nextReservations, ...nextInvalidRecords],
+      [...nextEntries, ...nextReservations, ...nextInvalidRecords, ...nextOperatorDecisions],
       fileOperations,
     );
     if (written.ok) return written;
@@ -166,6 +178,7 @@ export function createAnnouncementDeadLetterQueue(
       entries = [...nextEntries];
       decisionReservations = [...nextReservations];
       invalidRecords = [...nextInvalidRecords];
+      operatorDecisions = [...nextOperatorDecisions];
     }
     return err(written.error.error);
   }
@@ -200,6 +213,29 @@ export function createAnnouncementDeadLetterQueue(
     },
     logger,
   });
+
+  function quarantineClassification() {
+    return classifyQuarantined({
+      entries,
+      reservations: decisionReservations,
+      invalidRecords,
+      governed: outwardLedger !== undefined,
+      maxRetries,
+      maxAgeMs,
+      now: systemNowMs(),
+    });
+  }
+
+  async function lookupOperatorDecision(
+    owner: AnnouncementDeadLetterEntryInput | AnnouncementParentDecisionReservation,
+  ): Promise<Result<"delivered" | "discarded" | undefined, Error>> {
+    if (outwardLedger) {
+      const identity = operatorDecisionIdentity(owner);
+      return outwardLedger.lookupOperatorDecision(identity.rootRunId, identity.operationId);
+    }
+    const found = findOperatorDecision(operatorDecisions, owner);
+    return found.ok ? ok(found.value?.outcome) : found;
+  }
 
   function sameRetainedOwner(
     reservation: {
@@ -241,8 +277,11 @@ export function createAnnouncementDeadLetterQueue(
       channelId: reservation.channelId,
       channelType: reservation.channelType,
       text: reservation.announcementText,
-      ...(reservation.threadId
-        ? { options: { threadId: reservation.threadId } }
+      ...(reservation.threadId || reservation.extra
+        ? { options: {
+            ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
+            ...(reservation.extra ? { extra: reservation.extra } : {}),
+          } }
         : {}),
     });
     if (!digests.ok) return digests;
@@ -446,25 +485,6 @@ export function createAnnouncementDeadLetterQueue(
       return "retained";
     }
     const identity = identityResult.value;
-    const ensureSessionObservation = opts.ensureSessionObservation;
-    if (ensureSessionObservation) {
-      const observed = tryCatch(() => ensureSessionObservation({
-        agentId: identity.agentId,
-        sessionKey: identity.sessionKey,
-      }));
-      if (!observed.ok || !observed.value.ok) {
-        logger?.warn(
-          {
-            runId: identity.runId,
-            rootRunId: identity.rootRunId,
-            stepIndex: identity.stepIndex,
-            errorKind: "resource" as const,
-            hint: "repair session trajectory storage; delivery recovery remains governed by its durable ledger",
-          },
-          "Dead-letter recovery session diagnostics could not be initialized",
-        );
-      }
-    }
 
     const existing = await ledger.lookup(identity.rootRunId, identity.stepIndex);
     if (!existing.ok) {
@@ -680,6 +700,26 @@ export function createAnnouncementDeadLetterQueue(
     ledger: OutwardSendLedgerPort,
     entry: DeadLetterEntry,
   ): Promise<GovernedDrainOutcome> {
+    const ensureSessionObservation = opts.ensureSessionObservation;
+    const recoveryAgentId = entry.agentId;
+    if (ensureSessionObservation && recoveryAgentId) {
+      const observed = tryCatch(() => ensureSessionObservation({
+        agentId: recoveryAgentId,
+        sessionKey: entry.sessionKey,
+      }));
+      if (!observed.ok || !observed.value.ok) {
+        logger?.warn(
+          {
+            runId: entry.runId,
+            ...(entry.rootRunId ? { rootRunId: entry.rootRunId } : {}),
+            ...(entry.stepIndex !== undefined ? { stepIndex: entry.stepIndex } : {}),
+            errorKind: "resource" as const,
+            hint: "repair session trajectory storage; delivery recovery remains governed by its durable ledger",
+          },
+          "Dead-letter recovery session diagnostics could not be initialized",
+        );
+      }
+    }
     if (
       entry.attachment
       && entry.rootRunId
@@ -790,6 +830,9 @@ export function createAnnouncementDeadLetterQueue(
   ): Promise<Result<void, Error>> {
     const load = await loadFromDisk();
     if (!load.ok) return load;
+    const operatorDecision = await lookupOperatorDecision(entry);
+    if (!operatorDecision.ok) return operatorDecision;
+    if (operatorDecision.value !== undefined) return ok(undefined);
     const entryRecoveryKey = announcementRecoveryKey(entry);
     const keyedEntry = entries.find(
       (candidate) => announcementRecoveryKey(candidate) === entryRecoveryKey,
@@ -953,6 +996,7 @@ export function createAnnouncementDeadLetterQueue(
         ...(reservation.partId ? { partId: reservation.partId } : {}),
         ...(reservation.attachment ? { attachment: reservation.attachment } : {}),
         ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
+        ...(reservation.extra ? { extra: reservation.extra } : {}),
       } as DeadLetterEntry);
       settled.push(reservation.idempotencyKey);
     }
@@ -1128,6 +1172,11 @@ export function createAnnouncementDeadLetterQueue(
   return {
     enqueue: (entry) => serialize(() => enqueueDurably(entry)),
     reserveDecision: (entry) => serialize(async () => {
+      const loaded = await loadFromDisk();
+      if (!loaded.ok) return loaded;
+      const operatorDecision = await lookupOperatorDecision(entry);
+      if (!operatorDecision.ok) return operatorDecision;
+      if (operatorDecision.value !== undefined) return ok({ created: false });
       const reserved = await decisionStore.reserve(entry);
       if (reserved.ok && reserved.value.created) {
         emitObservationalEventSafely(
@@ -1149,14 +1198,21 @@ export function createAnnouncementDeadLetterQueue(
     resolveDecision: (idempotencyKey, outcome) =>
       serialize(() => resolveDecisionDurably(idempotencyKey, outcome)),
     replaceDecisions: (expectedKeys, operations) =>
-      serialize(() => decisionStore.replace(expectedKeys, operations)),
+      serialize(async () => {
+        const loaded = await loadFromDisk();
+        if (!loaded.ok) return loaded;
+        for (const operation of operations) {
+          const operatorDecision = await lookupOperatorDecision(operation);
+          if (!operatorDecision.ok) return operatorDecision;
+          if (operatorDecision.value !== undefined) return ok({ created: false });
+        }
+        return decisionStore.replace(expectedKeys, operations);
+      }),
     drain: (sendToChannel, onDelivered) =>
       serialize(() => drainSerialized(sendToChannel, onDelivered)),
-    durableSize: () => serialize(async () => {
+    durableStatus: () => serialize(async () => {
       const load = await loadFromDisk();
-      return load.ok
-        ? ok(entries.length + decisionReservations.length + invalidRecords.length)
-        : load;
+      return load.ok ? ok(quarantineClassification().status) : load;
     }),
     size: () => entries.length + decisionReservations.length + invalidRecords.length,
     listQuarantined: () => serialize(async () => {
@@ -1174,13 +1230,45 @@ export function createAnnouncementDeadLetterQueue(
         );
         return loadedFromDisk;
       }
-      return ok(projectQuarantined(entries, decisionReservations, invalidRecords));
+      return ok(quarantineClassification().rows);
     }),
     release: (id, outcome) => serialize(async () => {
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
+      if (!quarantineClassification().actionableIds.has(id)) return ok(false);
       const releasedEntry = entries.find((candidate) => candidate.id === id);
       const releasedReservation = decisionReservations.find((candidate) => candidate.id === id);
+      const releasedDelivery = releasedEntry ?? releasedReservation;
+      let nextOperatorDecisions = operatorDecisions;
+      if (releasedDelivery) {
+        if (outwardLedger) {
+          const identity = operatorDecisionIdentity(releasedDelivery);
+          const terminalized = await outwardLedger.recordOperatorDecision(
+            identity.rootRunId,
+            identity.operationId,
+            outcome,
+          );
+          if (!terminalized.ok) return terminalized;
+        } else {
+          const existing = findOperatorDecision(operatorDecisions, releasedDelivery);
+          if (!existing.ok) return existing;
+          if (existing.value && existing.value.outcome !== outcome) {
+            return err(new Error("Operator decision conflicts with its durable outcome"));
+          }
+          if (!existing.value) {
+            if (operatorDecisions.length >= maxEntries) {
+              return err(new Error("Operator decision capacity exhausted"));
+            }
+            const created = createOperatorDecisionRecord(
+              releasedDelivery,
+              outcome,
+              systemNowMs(),
+            );
+            if (!created.ok) return created;
+            nextOperatorDecisions = [...operatorDecisions, created.value];
+          }
+        }
+      }
       const released = await releaseQuarantined({
         id,
         outcome,
@@ -1189,11 +1277,17 @@ export function createAnnouncementDeadLetterQueue(
         invalidRecords,
         logger,
         persist: async (nextEntries, nextReservations, nextInvalidRecords) => {
-          const written = await persist(nextEntries, nextReservations, nextInvalidRecords);
+          const written = await persist(
+            nextEntries,
+            nextReservations,
+            nextInvalidRecords,
+            nextOperatorDecisions,
+          );
           if (written.ok) {
             entries = [...nextEntries];
             decisionReservations = [...nextReservations];
             invalidRecords = [...nextInvalidRecords];
+            operatorDecisions = [...nextOperatorDecisions];
           }
           return written;
         },

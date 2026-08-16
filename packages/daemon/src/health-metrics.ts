@@ -34,20 +34,20 @@ export const ANNOUNCEMENT_QUARANTINE_HINT =
   + "deciding whether the user was already informed.";
 
 export function createAnnouncementQuarantineHealthReporter(deps: {
-  deadLetterQueue: Pick<AnnouncementDeadLetterQueuePort, "durableSize"> | undefined;
+  deadLetterQueue: Pick<AnnouncementDeadLetterQueuePort, "durableStatus"> | undefined;
   eventBus: Pick<TypedEventBus, "emitSafely">;
   logger: Pick<ComisLogger, "warn">;
   now(): number;
 }): { sample(): Promise<number | undefined> } {
-  let lastSize = 0;
+  let lastQuarantinedCount = 0;
   let readFailed = false;
   return {
     async sample(): Promise<number | undefined> {
-      const durableSize = deps.deadLetterQueue
-        ? await deps.deadLetterQueue.durableSize()
+      const durableStatus = deps.deadLetterQueue
+        ? await deps.deadLetterQueue.durableStatus()
         : undefined;
-      if (durableSize === undefined) return 0;
-      if (!durableSize.ok) {
+      if (durableStatus === undefined) return 0;
+      if (!durableStatus.ok) {
         if (!readFailed) {
           deps.logger.warn({
             hint: "Restore dead-letter storage access; the quarantine count is unknown until the durable read succeeds",
@@ -61,21 +61,22 @@ export function createAnnouncementQuarantineHealthReporter(deps: {
         return undefined;
       }
       readFailed = false;
-      if (durableSize.value > 0) {
-        if (durableSize.value !== lastSize) {
+      if (durableStatus.value.quarantinedCount > 0) {
+        if (durableStatus.value.quarantinedCount !== lastQuarantinedCount) {
           deps.logger.warn({
-            deadLetterQueueSize: durableSize.value,
+            deadLetterQueueSize: durableStatus.value.quarantinedCount,
             hint: ANNOUNCEMENT_QUARANTINE_HINT,
             errorKind: "internal" as const,
           }, "Announcements quarantined awaiting an operator decision");
         }
-        deps.eventBus.emitSafely("announcement:quarantine_pending", {
-          pendingCount: durableSize.value,
-          timestamp: deps.now(),
-        });
       }
-      lastSize = durableSize.value;
-      return durableSize.value;
+      deps.eventBus.emitSafely("announcement:quarantine_pending", {
+        pendingCount: durableStatus.value.quarantinedCount,
+        activeRecoveryCount: durableStatus.value.activeRecoveryCount,
+        timestamp: deps.now(),
+      });
+      lastQuarantinedCount = durableStatus.value.quarantinedCount;
+      return durableStatus.value.quarantinedCount + durableStatus.value.activeRecoveryCount;
     },
   };
 }

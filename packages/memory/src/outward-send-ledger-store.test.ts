@@ -264,6 +264,46 @@ describe("createSqliteOutwardSendLedger — durable outward sequence", () => {
   });
 });
 
+describe("createSqliteOutwardSendLedger — operator decisions", () => {
+  it("persists a stable decision and blocks a later send intent", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    expect(await ledger.recordOperatorDecision(
+      "run-operator",
+      "operation-operator",
+      "discarded",
+    )).toEqual({ ok: true, value: undefined });
+    expect(await ledger.lookupOperatorDecision("run-operator", "operation-operator"))
+      .toEqual({ ok: true, value: "discarded" });
+    const step = await ledger.allocateStep("run-operator", "operation-operator");
+    if (!step.ok) throw step.error;
+
+    expect((await ledger.begin(makeBegin({
+      rootRunId: "run-operator",
+      stepIndex: step.value,
+    }))).ok).toBe(false);
+    expect(await ledger.lookup("run-operator", step.value)).toEqual({
+      ok: true,
+      value: undefined,
+    });
+  });
+
+  it("rejects a terminal decision while the governed send is in flight", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    const step = await ledger.allocateStep("run-active", "operation-active");
+    if (!step.ok) throw step.error;
+    await ledger.begin(makeBegin({ rootRunId: "run-active", stepIndex: step.value }));
+
+    expect((await ledger.recordOperatorDecision(
+      "run-active",
+      "operation-active",
+      "delivered",
+    )).ok).toBe(false);
+    expect(await ledger.lookupOperatorDecision("run-active", "operation-active"))
+      .toEqual({ ok: true, value: undefined });
+  });
+});
+
 describe("createSqliteOutwardSendLedger — failure + uncertainty parking", () => {
   it("rejects a truncated digest before persisting the send intent", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);

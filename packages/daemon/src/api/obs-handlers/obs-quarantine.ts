@@ -65,7 +65,9 @@ export function bindObsQuarantineHandlers(deps: ObsHandlerDeps): Record<string, 
       // announcement was already gone while it is still parked.
       if (!released.ok) throw released.error;
 
-      const result = { released: released.value, remaining: queue.size() };
+      const remaining = await queue.listQuarantined();
+      if (!remaining.ok) throw remaining.error;
+      const result = { released: released.value, remaining: remaining.value.length };
       if (IS_DEV) ObsQuarantineReleaseContract.response.parse(result);
       return result;
     },

@@ -1032,6 +1032,54 @@ describe("buildFindings — health_signal rollup counts only degraded (warning) 
     expect(finding?.hint).not.toMatch(/comis explain/i);
   });
 
+  it("uses the latest quarantine state instead of retaining stale warnings", () => {
+    const rows: DiagnosticRow[] = [
+      {
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "announcement:quarantine_pending",
+        details: JSON.stringify({ signal: "announcement_quarantine", pendingCount: 2 }),
+      },
+      {
+        timestamp: 2_000,
+        category: "health_signal",
+        severity: "info",
+        message: "announcement:quarantine_pending",
+        details: JSON.stringify({
+          signal: "announcement_quarantine",
+          pendingCount: 0,
+          activeRecoveryCount: 1,
+        }),
+      },
+    ];
+
+    expect(activeHealthSignalWarningCount(rows)).toBe(0);
+    expect(buildFindings(rows, [], [])).toEqual([]);
+  });
+
+  it("clears a quarantine read failure after a successful current sample", () => {
+    const rows: DiagnosticRow[] = [
+      {
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "announcement:quarantine_read_failed",
+        details: JSON.stringify({ signal: "announcement_quarantine_read_failed" }),
+      },
+      {
+        timestamp: 2_000,
+        category: "health_signal",
+        severity: "info",
+        message: "announcement:quarantine_pending",
+        details: JSON.stringify({ signal: "announcement_quarantine", pendingCount: 0 }),
+      },
+    ];
+
+    expect(activeHealthSignalWarningCount(rows)).toBe(0);
+    expect(buildFindings(rows, [], [])).toEqual([]);
+  });
+
   it("keeps protected background recovery incidents aligned with system health", () => {
     const rows: DiagnosticRow[] = [{
       timestamp: 1_000,

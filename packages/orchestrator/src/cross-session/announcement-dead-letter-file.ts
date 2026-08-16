@@ -23,6 +23,11 @@ import {
   MAX_DEAD_LETTER_ROW_BYTES,
   type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
+import { createAnnouncementOperationDigests } from "./announcement-outward-operation.js";
+import {
+  isAnnouncementOperatorDecisionRecord,
+  type AnnouncementOperatorDecisionRecord,
+} from "./announcement-dead-letter-operator-decision.js";
 
 interface StorageLogger {
   warn(obj: Record<string, unknown>, message: string): void;
@@ -112,6 +117,7 @@ function isCompletionKeys(value: unknown): value is readonly string[] {
 export type StoredDeadLetterEntry =
   | DeadLetterEntry
   | ParentDecisionReservationRecord
+  | AnnouncementOperatorDecisionRecord
   | InvalidDeadLetterRecord;
 
 export interface DeadLetterReadSnapshot {
@@ -144,6 +150,7 @@ function publicDecision(
     channelId: record.channelId,
     failedAt: record.failedAt,
     ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
+    ...(record.extra !== undefined ? { extra: record.extra } : {}),
     rootRunId: record.rootRunId,
     deliveryAuthority: record.deliveryAuthority,
     destinationEndpoint: record.destinationEndpoint,
@@ -151,6 +158,23 @@ function publicDecision(
     ...(record.partId !== undefined ? { partId: record.partId } : {}),
     completionKeys: record.completionKeys,
   };
+}
+
+function decisionFingerprint(
+  entry: Pick<ParentDecisionReservation, "channelType" | "channelId" | "announcementText" | "threadId" | "extra">,
+): string | undefined {
+  const digests = createAnnouncementOperationDigests({
+    channelType: entry.channelType,
+    channelId: entry.channelId,
+    text: entry.announcementText,
+    ...(entry.threadId || entry.extra ? {
+      options: {
+        ...(entry.threadId ? { threadId: entry.threadId } : {}),
+        ...(entry.extra ? { extra: entry.extra } : {}),
+      },
+    } : {}),
+  });
+  return digests.ok ? digests.value.operationFingerprint : undefined;
 }
 
 function sameDecision(
@@ -168,6 +192,8 @@ function sameDecision(
     && left.rootRunId === right.rootRunId
     && left.partId === right.partId
     && JSON.stringify(left.attachment) === JSON.stringify(right.attachment)
+    && decisionFingerprint(left) !== undefined
+    && decisionFingerprint(left) === decisionFingerprint(right)
     && left.completionKeys.length === right.completionKeys.length
     && left.completionKeys.every((key, index) => key === right.completionKeys[index])
     && sameDeliveryAuthority(left.deliveryAuthority, right.deliveryAuthority)
@@ -175,7 +201,8 @@ function sameDecision(
 }
 
 function validDecision(entry: ParentDecisionReservation): boolean {
-  return typeof entry.idempotencyKey === "string"
+  return decisionFingerprint(entry) !== undefined
+    && typeof entry.idempotencyKey === "string"
     && entry.idempotencyKey.length > 0
     && typeof entry.agentId === "string"
     && entry.agentId.length > 0
@@ -432,6 +459,10 @@ function isParentDecisionReservationRecord(
     && typeof record.failedAt === "number"
     && Number.isFinite(record.failedAt)
     && isOptionalString(record.threadId)
+    && (
+      record.extra === undefined
+      || (typeof record.extra === "object" && record.extra !== null && !Array.isArray(record.extra))
+    )
     && typeof record.rootRunId === "string"
     && record.rootRunId.length > 0
     && isCompletionKeys(record.completionKeys)
@@ -517,6 +548,10 @@ function parseEntries(
       continue;
     }
     if (parsed.ok && isParentDecisionReservationRecord(value)) {
+      entries.push(value);
+      continue;
+    }
+    if (parsed.ok && isAnnouncementOperatorDecisionRecord(value)) {
       entries.push(value);
       continue;
     }
@@ -641,6 +676,7 @@ export async function writeDeadLetterEntries(
   if (entries.some((entry) =>
     !isDeadLetterEntry(entry)
     && !isParentDecisionReservationRecord(entry)
+    && !isAnnouncementOperatorDecisionRecord(entry)
     && !isInvalidDeadLetterRecord(entry))) {
     return writeFailure(
       new Error("Dead-letter snapshot contains an invalid record"),

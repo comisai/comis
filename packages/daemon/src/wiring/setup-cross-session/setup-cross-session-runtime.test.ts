@@ -3874,6 +3874,8 @@ describe("setupCrossSession durable-store injection", () => {
   it("threads the receipt-aware announcement sender into createCrossSessionSender", async () => {
     const setupCrossSession = await getSetupCrossSession();
     const outwardLedger = {
+      lookupOperatorDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      recordOperatorDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
       allocateStep: vi.fn(async () => ({ ok: true as const, value: 0 })),
       lookup: vi.fn(async () => undefined),
       begin: vi.fn(async () => ({ ok: true as const, value: undefined })),
@@ -3896,6 +3898,8 @@ describe("setupCrossSession durable-store injection", () => {
     const setupCrossSession = await getSetupCrossSession();
     const order: string[] = [];
     const outwardLedger = {
+      lookupOperatorDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      recordOperatorDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
       allocateStep: vi.fn(async () => {
         order.push("allocate");
         return { ok: true as const, value: 4 };
@@ -3993,6 +3997,8 @@ describe("setupCrossSession durable-store injection", () => {
     const setupCrossSession = await getSetupCrossSession();
     let row: Record<string, unknown> | undefined;
     const outwardLedger = {
+      lookupOperatorDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      recordOperatorDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
       allocateStep: vi.fn(async () => ({ ok: true as const, value: 6 })),
       lookup: vi.fn(async () => ({ ok: true as const, value: row })),
       begin: vi.fn(async (input: Record<string, unknown>) => {
@@ -4112,6 +4118,8 @@ describe("setupCrossSession durable-store injection", () => {
     // never received the ledger (dead-code wiring), it would re-send. lookup
     // returns Result<OutwardSendRecord|undefined, Error> (the port contract).
     const outwardLedger = {
+      lookupOperatorDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      recordOperatorDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
       lookup: vi.fn(async () => ({
         ok: true as const,
         value: {

@@ -889,15 +889,15 @@ export interface MessagingEvents {
   };
 
   /**
-   * A STANDING count of background-task announcements held in the dead-letter
-   * store, emitted on each non-zero transition of the health tick.
+   * The current background-task announcement recovery state.
    *
    * Distinct from `announcement:dead_lettered`, which fires once per durable
-   * admission. This event reports the complete standing count, including rows
-   * recovered during boot and invalid records that cannot be replayed.
+   * admission. `pendingCount` requires an operator; `activeRecoveryCount` still
+   * belongs to automatic recovery. A zero pending count clears older warnings.
    */
   "announcement:quarantine_pending": {
     pendingCount: number;
+    activeRecoveryCount: number;
     timestamp: number;
   };
 
