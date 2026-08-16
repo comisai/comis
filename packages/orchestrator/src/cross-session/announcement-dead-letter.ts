@@ -687,8 +687,9 @@ export function createAnnouncementDeadLetterQueue(
       "announcement:dead_lettered",
       {
         runId: fullEntry.runId,
+        sessionKey: fullEntry.sessionKey,
         channelType: fullEntry.channelType,
-        reason: fullEntry.lastError ?? "delivery_failed",
+        reason: "delivery_failed",
         timestamp: systemNowMs(),
       },
     );
@@ -894,7 +895,23 @@ export function createAnnouncementDeadLetterQueue(
 
   return {
     enqueue: (entry) => serialize(() => enqueueDurably(entry)),
-    reserveDecision: (entry) => serialize(() => decisionStore.reserve(entry)),
+    reserveDecision: (entry) => serialize(async () => {
+      const reserved = await decisionStore.reserve(entry);
+      if (reserved.ok && reserved.value.created) {
+        emitObservationalEventSafely(
+          { eventBus, logger },
+          "announcement:dead_lettered",
+          {
+            runId: entry.runId,
+            sessionKey: entry.sessionKey,
+            channelType: entry.channelType,
+            reason: "parent_decision_reserved",
+            timestamp: systemNowMs(),
+          },
+        );
+      }
+      return reserved;
+    }),
     lookupDecision: (idempotencyKey) =>
       serialize(() => decisionStore.lookup(idempotencyKey)),
     resolveDecision: (idempotencyKey, outcome) =>

@@ -389,14 +389,15 @@ describe("MessagingEvents payload structure", () => {
     ]);
   });
 
-  it("announcement:dead_lettered delivers runId, channelType, reason, timestamp", () => {
+  it("announcement:dead_lettered carries session attribution and a closed reason", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const now = Date.now();
     const payload: EventMap["announcement:dead_lettered"] = {
       runId: "run-dlq-001",
+      sessionKey: "default:agent-a:telegram:chat-1:user_a",
       channelType: "telegram",
-      reason: "connection_timeout",
+      reason: "delivery_failed",
       timestamp: now,
     };
 
@@ -407,7 +408,8 @@ describe("MessagingEvents payload structure", () => {
     const received = handler.mock.calls[0]![0] as EventMap["announcement:dead_lettered"];
     expect(received.runId).toBe("run-dlq-001");
     expect(received.channelType).toBe("telegram");
-    expect(received.reason).toBe("connection_timeout");
+    expect(received.sessionKey).toBe("default:agent-a:telegram:chat-1:user_a");
+    expect(received.reason).toBe("delivery_failed");
     expect(received.timestamp).toBe(now);
   });
 

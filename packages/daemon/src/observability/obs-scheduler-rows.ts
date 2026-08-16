@@ -152,6 +152,9 @@ export function wireSchedulerDiagnostics(input: {
   eventBus: TypedEventBus;
   diagnosticBuffer: { push(row: DiagnosticRow): void };
 }): void {
+  input.eventBus.on("announcement:dead_lettered", (payload) => {
+    input.diagnosticBuffer.push(announcementDeadLetteredEventToRow(payload));
+  });
   input.eventBus.on("announcement:quarantine_pending", (payload) => {
     input.diagnosticBuffer.push(announcementQuarantineEventToRow(payload));
   });
@@ -194,6 +197,26 @@ export function wireSchedulerDiagnostics(input: {
   input.eventBus.on("scheduler:task_store_reset", (payload) => {
     input.diagnosticBuffer.push(taskEventToRow("scheduler:task_store_reset", payload));
   });
+}
+
+/** Map one durable announcement admission to its owning session and system health. */
+export function announcementDeadLetteredEventToRow(
+  payload: EventMap["announcement:dead_lettered"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: "",
+    sessionKey: payload.sessionKey,
+    message: "announcement:dead_lettered",
+    details: JSON.stringify({
+      signal: "announcement_dead_lettered",
+      channelType: payload.channelType,
+      reason: payload.reason,
+    }),
+    traceId: undefined,
+  };
 }
 
 /**
