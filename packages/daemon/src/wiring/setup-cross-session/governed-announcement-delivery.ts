@@ -3,15 +3,18 @@
 
 import {
   conversationScopeToSessionKey,
+  classifySendError,
   createStableAnnouncementOperationId,
   emitObservationalEventSafely,
   resolvePlatformDeliveryResult,
   systemNowMs,
   type AttachmentPayload,
   type AttachmentSendReceipt,
+  type AnnouncementDeadLetterAttachmentSource,
   type ChannelEndpoint,
   type ComisLogger,
   type DeliverToChannelOptions,
+  type DeliveryAuthority,
   type DeliveryService,
   type OutwardSendLedgerPort,
   type SendMessageOptions,
@@ -21,8 +24,9 @@ import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
   createGovernedAnnouncementSender,
   type AnnouncementPlatformSendOutcome,
-  type CompletionAttachmentRef,
   type GovernedAnnouncementAttachment,
+  type GovernedAnnouncementRequest,
+  type GovernedAnnouncementSendOutcome,
   type SendGovernedCompletionAnnouncement,
 } from "@comis/orchestrator";
 import type { PreparedCompletionAttachment } from "./completion-attachment.js";
@@ -52,8 +56,11 @@ interface AnnouncementDeliveryDeps {
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   prepareCompletionAttachment?: (
-    attachment: CompletionAttachmentRef,
+    attachment: AnnouncementDeadLetterAttachmentSource,
   ) => Promise<Result<PreparedCompletionAttachment, Error>>;
+  verifyCompletionAttachment?: (
+    attachment: GovernedAnnouncementAttachment,
+  ) => Promise<Result<GovernedAnnouncementAttachment, Error>>;
 }
 
 type AnnouncementDeliveryOptions = Omit<DeliverToChannelOptions, "completionMode">;
@@ -80,6 +87,11 @@ export interface AnnouncementDelivery {
     options?: AnnouncementDeliveryOptions,
   ): Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   sendLedgerAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendGovernedTextToChannelWithReceipt?: (
+    request: GovernedAnnouncementRequest,
+    destinationEndpoint: ChannelEndpoint,
+    deliveryAuthority: DeliveryAuthority,
+  ) => Promise<Result<GovernedAnnouncementSendOutcome, Error>>;
 }
 
 export function createAnnouncementDelivery(
@@ -163,6 +175,108 @@ export function createAnnouncementDelivery(
     return result.ok && result.value.delivered;
   };
 
+  const sendGovernedTextToChannelWithReceipt = async (
+    request: GovernedAnnouncementRequest,
+    destinationEndpoint: ChannelEndpoint,
+    deliveryAuthority: DeliveryAuthority,
+  ): Promise<Result<GovernedAnnouncementSendOutcome, Error>> => {
+    const ledger = deps.outwardLedger;
+    const adapter = deps.adaptersByType.get(request.channelType);
+    if (!ledger || !adapter) {
+      return ok({ delivered: false, failure: "allocation_blocked" });
+    }
+    const terminalDecision = await ledger.lookupTerminalDecision(
+      request.rootRunId,
+      request.operationId,
+    );
+    if (!terminalDecision.ok) {
+      return ok({ delivered: false, failure: "lookup_blocked" });
+    }
+    if (terminalDecision.value !== undefined) {
+      return ok({ delivered: false, terminalDecision: terminalDecision.value });
+    }
+
+    let settledOutcome: GovernedAnnouncementSendOutcome | undefined;
+    const result = await deps.deliveryService.deliverToChannel(
+      adapter,
+      request.channelId,
+      request.text,
+      {
+        completionMode: "settled",
+        ...(request.options?.threadId ? { threadId: request.options.threadId } : {}),
+        ...(request.options?.extra ? { extra: request.options.extra } : {}),
+        authority: deliveryAuthority,
+        destinationEndpoint,
+      },
+      async (chunk) => {
+        const chunkPartId = `${request.partId ?? "text"}:chunk:${chunk.chunkIndex}`;
+        const { threadId, ...chunkExtra } = chunk.options;
+        const chunkOperation: GovernedAnnouncementRequest = {
+          ...request,
+          operationId: createStableAnnouncementOperationId(
+            request.agentId,
+            request.sessionKey,
+            request.runId,
+            chunkPartId,
+          ),
+          partId: chunkPartId,
+          text: chunk.text,
+          options: {
+            ...(threadId ? { threadId } : {}),
+            ...(Object.keys(chunkExtra).length > 0 ? { extra: chunkExtra } : {}),
+          },
+        };
+        const governed = createGovernedAnnouncementSender({
+          ledger,
+          sendToPlatform: async () => {
+            const sent = await chunk.adapter.sendMessage(
+              chunk.channelId,
+              chunk.text,
+              chunk.options,
+            );
+            if (sent.ok) {
+              return ok({
+                  delivered: true,
+                  status: "accepted",
+                  platformMessageId: sent.value,
+                });
+            }
+            return ok({
+              delivered: false,
+              status: classifySendError(sent.error) === "uncertain"
+                ? "unknown"
+                : "rejected",
+            });
+          },
+          eventBus: deps.eventBus,
+          ...(deps.logger ? { logger: deps.logger } : {}),
+        });
+        const outcome = await governed.send(chunkOperation);
+        if (!outcome.ok) return outcome;
+        settledOutcome = outcome.value;
+        if (outcome.value.delivered && outcome.value.platformMessageId) {
+          return ok(outcome.value.platformMessageId);
+        }
+        if (
+          "terminalDecision" in outcome.value
+          && outcome.value.terminalDecision === "delivered"
+        ) {
+          return ok(`terminal:${chunkOperation.operationId}`);
+        }
+        return err(new Error("400 governed announcement chunk was not delivered"));
+      },
+    );
+    if (settledOutcome && !settledOutcome.delivered) return ok(settledOutcome);
+    if (!result.ok) return ok({ delivered: false, failure: "transport_failed" });
+    const delivery = resolvePlatformDeliveryResult(result);
+    if (!delivery.ok || delivery.value.platform.status !== "accepted") {
+      return ok({ delivered: false, failure: "transport_rejected" });
+    }
+    return settledOutcome
+      ? ok(settledOutcome)
+      : ok({ delivered: false, failure: "transport_failed" });
+  };
+
   const sendPreparedAttachmentToChannelWithReceipt = async (
     channelType: string,
     channelId: string,
@@ -191,13 +305,36 @@ export function createAnnouncementDelivery(
       }, "Completion attachment adapter unavailable");
       return ok({ delivered: false, status: "rejected" });
     }
+    if (!deps.verifyCompletionAttachment) {
+      deps.logger?.error({
+        channelType,
+        channelId,
+        durationMs: systemNowMs() - startedAt,
+        errorKind: "precondition" as const,
+        hint: "Wire completion snapshot verification before retrying the retained attachment",
+        step: "completion-attachment-delivery",
+      }, "Completion attachment snapshot verification unavailable");
+      return ok({ delivered: false, status: "rejected" });
+    }
+    const verified = await deps.verifyCompletionAttachment(attachment);
+    if (!verified.ok) {
+      deps.logger?.warn({
+        channelType,
+        channelId,
+        durationMs: systemNowMs() - startedAt,
+        errorKind: "validation" as const,
+        hint: "Inspect the retained attachment snapshot and admit a distinct operation for changed content",
+        step: "completion-attachment-delivery",
+      }, "Completion attachment snapshot verification failed");
+      return err(verified.error);
+    }
     const sentBoundary = await fromPromise(adapter.sendAttachment(
       channelId,
       {
         type: "file",
-        url: attachment.path,
-        fileName: attachment.fileName,
-        mimeType: attachment.mimeType,
+        url: verified.value.path,
+        fileName: verified.value.fileName,
+        mimeType: verified.value.mimeType,
         ...(text.trim().length > 0 ? { caption: text } : {}),
       },
       options
@@ -235,7 +372,7 @@ export function createAnnouncementDelivery(
       channelId,
       durationMs: systemNowMs() - startedAt,
       receiptTracked: receipt.kind === "tracked",
-      sizeBytes: attachment.sizeBytes,
+      sizeBytes: verified.value.sizeBytes,
       step: "completion-attachment-delivery",
     }, "Completion attachment delivery completed");
     return ok({
@@ -325,8 +462,9 @@ export function createAnnouncementDelivery(
       );
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
-    let prepared: PreparedCompletionAttachment | undefined;
-    if (request.attachment) {
+    let prepared: GovernedAnnouncementAttachment | undefined = request.preparedAttachment;
+    let transientPrepared: PreparedCompletionAttachment | undefined;
+    if (!prepared && request.attachment) {
       const emitPreparationFailure = (): void => {
         emitObservationalEventSafely(
           { eventBus: deps.eventBus, logger: deps.logger },
@@ -352,7 +490,11 @@ export function createAnnouncementDelivery(
         emitPreparationFailure();
         return ok({ delivered: false, failure: "attachment_preparation_blocked" });
       }
-      const preparedResult = await deps.prepareCompletionAttachment(request.attachment);
+      const preparedResult = await deps.prepareCompletionAttachment({
+        kind: "source",
+        sourceAgentId: request.attachment.sourceAgentId,
+        path: request.attachment.path,
+      });
       if (!preparedResult.ok) {
         deps.logger?.warn({
           errorKind: "validation" as const,
@@ -362,7 +504,8 @@ export function createAnnouncementDelivery(
         emitPreparationFailure();
         return ok({ delivered: false, failure: "attachment_preparation_blocked" });
       }
-      prepared = preparedResult.value;
+      transientPrepared = preparedResult.value;
+      prepared = transientPrepared;
       emitObservationalEventSafely(
         { eventBus: deps.eventBus, logger: deps.logger },
         "delivery:outward_ledger_transition",
@@ -396,6 +539,13 @@ export function createAnnouncementDelivery(
       ...(request.options ? { options: request.options } : {}),
       ...(prepared ? { attachment: prepared } : {}),
     };
+    if (!prepared) {
+      return sendGovernedTextToChannelWithReceipt(
+        operation,
+        destinationEndpoint,
+        deliveryAuthority,
+      );
+    }
     const governedSender = createGovernedAnnouncementSender({
       ledger: outwardLedger,
       sendToPlatform: (channelType, channelId, text, options, attachment) =>
@@ -419,8 +569,8 @@ export function createAnnouncementDelivery(
     try {
       return await governedSender.send(operation);
     } finally {
-      if (prepared) {
-        const cleaned = await prepared.cleanup();
+      if (transientPrepared) {
+        const cleaned = await transientPrepared.cleanup();
         if (!cleaned.ok) {
           deps.logger?.warn({
             errorKind: "resource" as const,
@@ -437,5 +587,6 @@ export function createAnnouncementDelivery(
     sendToChannel,
     sendPreparedAttachmentToChannelWithReceipt,
     sendLedgerAnnouncement,
+    sendGovernedTextToChannelWithReceipt,
   };
 }

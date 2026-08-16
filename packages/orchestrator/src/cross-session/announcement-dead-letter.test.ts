@@ -67,6 +67,19 @@ function makeDestinationEndpoint(
   };
 }
 
+function snapshotAttachment(sourceAgentId: string, sourcePath: string) {
+  return {
+    kind: "snapshot" as const,
+    sourceAgentId,
+    sourcePath,
+    path: `/snapshots/${sourceAgentId}-${sourcePath.replaceAll("/", "-")}`,
+    fileName: sourcePath.split("/").at(-1) ?? "attachment.bin",
+    mimeType: "application/octet-stream",
+    contentDigest: createHash("sha256").update(`${sourceAgentId}:${sourcePath}`).digest("hex"),
+    sizeBytes: 12,
+  };
+}
+
 function makeEntry(
   overrides: Partial<Omit<DeadLetterEntry, "id" | "lastAttemptAt">> = {},
 ): Omit<DeadLetterEntry, "id" | "lastAttemptAt"> {
@@ -1144,14 +1157,14 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       idempotencyKey: "attachment-operation-a",
       runId: "run-parent-a",
       partId: "attachment:0",
-      attachment: { sourceAgentId: "worker-a", path: "a.csv" },
+      attachment: snapshotAttachment("worker-a", "a.csv"),
       completionKeys: ["completion-a"],
     });
     const secondOperation = decisionInput({
       idempotencyKey: "attachment-operation-b",
       runId: "run-parent-b",
       partId: "attachment:0",
-      attachment: { sourceAgentId: "worker-b", path: "b.csv" },
+      attachment: snapshotAttachment("worker-b", "b.csv"),
       completionKeys: ["completion-b"],
     });
 
@@ -1165,6 +1178,56 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       ],
     )).resolves.toEqual(ok({ created: true }));
     expect(queue.size()).toBe(2);
+  });
+
+  it("persists an immutable attachment snapshot during reservation admission", async () => {
+    const cleanup = vi.fn(async () => ok(undefined));
+    const prepareAttachment = vi.fn(async (attachment) => ok({
+      kind: "snapshot" as const,
+      sourceAgentId: attachment.sourceAgentId,
+      sourcePath: attachment.path,
+      path: "/durable/completion-attachments/report.csv",
+      fileName: "report.csv",
+      mimeType: "text/csv",
+      contentDigest: "a".repeat(64),
+      sizeBytes: 12,
+      cleanup,
+    }));
+    const decision = decisionInput({
+      idempotencyKey: "attachment-admission",
+      partId: "attachment:0",
+      attachment: {
+        kind: "source",
+        sourceAgentId: "worker-a",
+        path: "/workspace/report.csv",
+      },
+      completionKeys: ["completion-a"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      prepareAttachment,
+    });
+
+    await expect(queue.reserveDecision(decision)).resolves.toEqual(ok({ created: true }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.lookupDecision(decision.idempotencyKey)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        attachment: {
+          kind: "snapshot",
+          sourcePath: "/workspace/report.csv",
+          path: "/durable/completion-attachments/report.csv",
+          contentDigest: "a".repeat(64),
+        },
+      },
+    });
+    expect(prepareAttachment).toHaveBeenCalledOnce();
+    expect(cleanup).not.toHaveBeenCalled();
   });
 
   it("atomically replaces parent decisions with exact outward operations", async () => {
@@ -1191,7 +1254,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
         idempotencyKey: "operation-attachment",
         partId: "attachment:0",
         announcementText: "",
-        attachment: { sourceAgentId: "worker-a", path: "report.txt" },
+        attachment: snapshotAttachment("worker-a", "report.txt"),
         completionKeys: [secondKey],
       }),
     ];
@@ -1221,6 +1284,42 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       operations,
     )).resolves.toEqual(ok({ created: false }));
     expect(restarted.size()).toBe(2);
+  });
+
+  it("settles terminal operations while reserving remaining outward work", async () => {
+    const { ledger } = makeStubLedger();
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    const completionKey = decisionInput().idempotencyKey;
+    const terminalOperation = decisionInput({
+      idempotencyKey: "terminal-summary",
+      partId: "summary",
+      completionKeys: [completionKey],
+    });
+    const pendingOperation = decisionInput({
+      idempotencyKey: "pending-attachment",
+      partId: "attachment:0",
+      completionKeys: [completionKey],
+    });
+    await queue.reserveDecision(decisionInput());
+    await ledger.recordTerminalDecision(
+      terminalOperation.rootRunId,
+      terminalOperation.idempotencyKey,
+      "delivered",
+    );
+
+    await expect(queue.replaceDecisions(
+      [completionKey],
+      [terminalOperation, pendingOperation],
+    )).resolves.toEqual(ok({ created: true }));
+
+    await expect(queue.lookupDecision(completionKey)).resolves.toEqual(ok(undefined));
+    await expect(queue.lookupDecision("terminal-summary")).resolves.toEqual(ok(undefined));
+    await expect(queue.lookupDecision("pending-attachment"))
+      .resolves.toEqual(ok(pendingOperation));
   });
 
   it("emits a session-attributed diagnostic after reserving a parent decision", async () => {
@@ -1452,15 +1551,16 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     // that returns undefined means no send was ever attempted at that step.
     const { ledger } = makeStubLedger(); // lookup -> ok(undefined) = never sent
     const sendToChannel = vi.fn(async () => true);
+    const governedSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "m-1",
+    }));
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
       outwardLedger: ledger,
-      governedSendToChannel: vi.fn(async () => ok({
-        delivered: true,
-        status: "accepted",
-        platformMessageId: "m-1",
-      })),
+      governedSendToChannel,
     });
     await queue.reserveDecision(decisionInput({ rootRunId: "root-parent-1" }));
     expect(queue.size()).toBe(1);
@@ -1469,7 +1569,9 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
 
     // The reservation is adjudicated and no longer parked.
     expect(queue.size()).toBe(0);
-    expect(ledger.allocateStep).toHaveBeenCalled();
+    expect(governedSendToChannel).toHaveBeenCalledOnce();
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
   });
 
   it("replays persisted delivery extras with the original operation", async () => {
@@ -1981,20 +2083,11 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       agentId: "parent-agent",
       announcementText: "attachment caption",
       partId: "attachment:0",
-      attachment: { sourceAgentId: "worker-a", path: "report.txt" },
+      attachment: snapshotAttachment("worker-a", "report.txt"),
       completionKeys: [completionKey],
     }) as GovernedDeadLetterEntry;
     await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
-    const cleanup = vi.fn(async () => ok(undefined));
-    const preparedAttachment = {
-      path: "/snapshots/report.txt",
-      fileName: "report.txt",
-      mimeType: "text/plain",
-      contentDigest: "attachment-digest",
-      sizeBytes: 24,
-      cleanup,
-    };
-    const prepareAttachment = vi.fn(async () => ok(preparedAttachment));
+    const cleanupAttachment = vi.fn(async () => ok(undefined));
     const governedSendToChannel = vi.fn(async () => ok({
       delivered: true as const,
       status: "accepted" as const,
@@ -2008,15 +2101,11 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       retryIntervalMs: 0,
       outwardLedger: ledger,
       governedSendToChannel,
-      prepareAttachment,
+      cleanupAttachment,
     });
 
     await dlq.drain(vi.fn(async () => true), onDelivered);
 
-    expect(prepareAttachment).toHaveBeenCalledWith({
-      sourceAgentId: "worker-a",
-      path: "report.txt",
-    });
     expect(governedSendToChannel).toHaveBeenCalledWith(
       "telegram",
       "chat-123",
@@ -2025,14 +2114,14 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
         authority: entry.deliveryAuthority,
         destinationEndpoint: entry.destinationEndpoint,
       }),
-      preparedAttachment,
+      entry.attachment,
     );
     expect(ledger.commit).toHaveBeenCalledWith(
       "root-attachment-recovery",
       10,
       "attachment-receipt",
     );
-    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanupAttachment).toHaveBeenCalledWith(entry.attachment);
     expect(onDelivered).toHaveBeenCalledWith(completionKey);
     expect(dlq.size()).toBe(0);
   });
@@ -2045,11 +2134,10 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       stepIndex: 14,
       agentId: "parent-agent",
       partId: "attachment:0",
-      attachment: { sourceAgentId: "worker-a", path: "missing-report.txt" },
+      attachment: snapshotAttachment("worker-a", "missing-report.txt"),
       completionKeys: ["completion-attachment-committed"],
     }) as GovernedDeadLetterEntry;
     await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
-    const prepareAttachment = vi.fn(async () => err(new Error("source file missing")));
     const { ledger } = makeStubLedger({
       lookupResult: ok(ledgerRow(entry, "committed")),
     });
@@ -2062,13 +2150,11 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       retryIntervalMs: 0,
       outwardLedger: ledger,
       governedSendToChannel,
-      prepareAttachment,
       ensureSessionObservation,
     });
 
     await dlq.drain(vi.fn(async () => true));
 
-    expect(prepareAttachment).not.toHaveBeenCalled();
     expect(governedSendToChannel).not.toHaveBeenCalled();
     expect(ensureSessionObservation).toHaveBeenCalledWith({
       agentId: "parent-agent",
@@ -2092,11 +2178,10 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
         stepIndex: 15,
         agentId: "parent-agent",
         partId: "attachment:0",
-        attachment: { sourceAgentId: "worker-a", path: "missing-report.txt" },
+        attachment: snapshotAttachment("worker-a", "missing-report.txt"),
         completionKeys: [`completion-attachment-${state}`],
       }) as GovernedDeadLetterEntry;
       await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
-      const prepareAttachment = vi.fn(async () => err(new Error("source file missing")));
       const { ledger } = makeStubLedger({
         lookupResult: ok(ledgerRow(entry, state)),
       });
@@ -2108,12 +2193,10 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
         retryIntervalMs: 0,
         outwardLedger: ledger,
         governedSendToChannel,
-        prepareAttachment,
       });
 
       await dlq.drain(vi.fn(async () => true));
 
-      expect(prepareAttachment).not.toHaveBeenCalled();
       expect(governedSendToChannel).not.toHaveBeenCalled();
       expect((await listQuarantined(dlq))[0]).toMatchObject({
         lastError: expectedReason,

@@ -79,7 +79,7 @@ describe("recoverable completion announcement delivery", () => {
     });
 
     expect(result).toMatchObject({ ok: true, value: { delivered: false } });
-    expect(order).toEqual(["lookup", "reserve", "send"]);
+    expect(order).toEqual(["lookup", "reserve", "lookup", "send"]);
     expect(retained).toMatchObject({
       rootRunId: "root-1",
       completionKeys: ["default:user_a:telegram:chat-1::run-1"],
@@ -108,6 +108,54 @@ describe("recoverable completion announcement delivery", () => {
 
     expect(result).toMatchObject({ ok: false });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("sends the immutable attachment retained by durable admission", async () => {
+    let retained: AnnouncementParentDecisionReservation | undefined;
+    const snapshot = {
+      kind: "snapshot" as const,
+      sourceAgentId: "worker-a",
+      sourcePath: "/workspace/report.csv",
+      path: "/data/completion-attachments/snapshot.csv",
+      fileName: "report.csv",
+      mimeType: "text/csv",
+      contentDigest: "a".repeat(64),
+      sizeBytes: 12,
+    };
+    const send = vi.fn(async () => ok({
+      delivered: true as const,
+      identity: { agentId: "agent-1", rootRunId: "root-1", stepIndex: 3 },
+      platformMessageId: "message-1",
+    }));
+    const deadLetterQueue = {
+      lookupDecision: vi.fn(async () => ok(retained
+        ? { ...retained, attachment: snapshot }
+        : undefined)),
+      reserveDecision: vi.fn(async (reservation: AnnouncementParentDecisionReservation) => {
+        retained = reservation;
+        return ok({ created: true });
+      }),
+      resolveDecision: vi.fn(async () => ok(true)),
+    };
+    const delivery = createRecoverableAnnouncementDelivery({
+      adaptersByType: new Map([
+        ["telegram", { channelId: "telegram-primary", channelType: "telegram" }],
+      ]),
+      deadLetterQueue,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
+      send,
+    });
+
+    const result = await delivery({
+      ...makeRequest(),
+      attachment: { sourceAgentId: "worker-a", path: "/workspace/report.csv" },
+    });
+
+    expect(result).toMatchObject({ ok: true, value: { delivered: true } });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      preparedAttachment: snapshot,
+    }));
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledOnce();
   });
 
   it("returns terminal settlement evidence when durable admission is already decided", async () => {

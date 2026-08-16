@@ -28,6 +28,7 @@ export { createStableAnnouncementOperationId } from "../delivery/announcement-op
 export {
   createRetryEngine,
   createBlockRetryGuard,
+  classifySendError,
   isSafeToRetrySendError,
   AMBIGUOUS_SEND_OUTCOME_ERROR,
   EXPLICIT_SEND_REJECTION_ERROR,
@@ -75,6 +76,8 @@ export {
 export type {
   DeliveryStrategy,
   DeliveryAdapter,
+  DeliveryChunkSendInput,
+  DeliveryChunkSender,
   DeliverToChannelOptions,
   ChunkDeliveryResult,
   DeliveryResult,

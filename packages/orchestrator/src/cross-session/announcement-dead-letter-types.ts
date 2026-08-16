@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
-  AnnouncementDeadLetterAttachment,
+  AnnouncementDeadLetterAttachmentSnapshot,
+  AnnouncementDeadLetterAttachmentSource,
   ChannelEndpoint,
   DeliveryAuthority,
   OutwardSendLedgerPort,
@@ -20,9 +21,17 @@ import type {
 export type RecoveryDeliveryOptions = AnnouncementDeliveryOptions & {
   authority?: DeliveryAuthority;
   destinationEndpoint?: ChannelEndpoint;
+  governedText?: {
+    operationId: string;
+    rootRunId: string;
+    runId: string;
+    agentId: string;
+    sessionKey: string;
+    partId?: string;
+  };
 };
 
-export interface PreparedRecoveryAttachment extends GovernedAnnouncementAttachment {
+export interface PreparedRecoveryAttachment extends AnnouncementDeadLetterAttachmentSnapshot {
   cleanup(): Promise<import("@comis/shared").Result<void, Error>>;
 }
 
@@ -62,8 +71,11 @@ export interface AnnouncementDeadLetterQueueOptions {
   ) => Promise<import("@comis/shared").Result<AnnouncementPlatformSendOutcome, Error>>;
   /** Rebuild a validated immutable snapshot before attachment recovery. */
   prepareAttachment?: (
-    attachment: AnnouncementDeadLetterAttachment,
+    attachment: AnnouncementDeadLetterAttachmentSource,
   ) => Promise<import("@comis/shared").Result<PreparedRecoveryAttachment, Error>>;
+  cleanupAttachment?: (
+    attachment: AnnouncementDeadLetterAttachmentSnapshot,
+  ) => Promise<import("@comis/shared").Result<void, Error>>;
   /** Materialize the owning session observer before off-turn recovery events fire. */
   ensureSessionObservation?: (input: {
     agentId: string;

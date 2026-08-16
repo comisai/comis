@@ -466,6 +466,7 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
       channelType: "discord",
       channelId: "guild-channel-42",
       text: "test response",
+      completionKeys: ["announce-tool-call-1"],
     });
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
@@ -485,6 +486,42 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
 
     expect(result.announced).toBe(false);
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("passes the authenticated topic to governed announcement delivery", async () => {
+    const sendGovernedAnnouncement = vi.fn(async () => ok({
+      delivered: true as const,
+      identity: { agentId: "parent-agent", rootRunId: "root-user2", stepIndex: 7 },
+    }));
+    const callerEndpoint = { ...PARENT_TWO_ENDPOINT, threadId: "topic-17" };
+    const sender = createCrossSessionSender({
+      ...deps,
+      sendGovernedAnnouncement,
+    });
+
+    const result = await sender.send({ ...ledgeredParams, callerEndpoint });
+
+    expect(result.announced).toBe(true);
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      destinationEndpoint: callerEndpoint,
+      options: { threadId: "topic-17" },
+    }));
+  });
+
+  it("reports an operator-confirmed terminal delivery as announced", async () => {
+    const sendGovernedAnnouncement = vi.fn(async () => ok({
+      delivered: false as const,
+      terminalDecision: "delivered" as const,
+    }));
+    const sender = createCrossSessionSender({
+      ...deps,
+      sendGovernedAnnouncement,
+    });
+
+    const result = await sender.send(ledgeredParams);
+
+    expect(result.announced).toBe(true);
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 

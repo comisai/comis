@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, describe, expect, it } from "vitest";
-import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { safePath } from "@comis/core";
+import { ok } from "@comis/shared";
 import {
   createCompletionAttachmentPreparer,
   prepareCompletionAttachment,
+  verifyCompletionAttachmentSnapshot,
 } from "./completion-attachment.js";
 
 const roots: string[] = [];
@@ -66,10 +68,39 @@ describe("completion attachment preparation", () => {
       agents: { default: {} },
     });
 
-    const result = await prepare({ sourceAgentId: "report-agent", path: sourcePath });
+    const result = await prepare({
+      kind: "source",
+      sourceAgentId: "report-agent",
+      path: sourcePath,
+    });
 
     expect(result.ok).toBe(true);
     if (result.ok) await result.value.cleanup();
+  });
+
+  it("keeps admitted bytes stable and rejects a changed snapshot", async () => {
+    const { dataDir, workspaceDir } = await makeLayout();
+    const sourcePath = safePath(workspaceDir, "report.txt");
+    await writeFile(sourcePath, "admitted", { mode: 0o600 });
+    const prepared = await prepareCompletionAttachment({
+      dataDir,
+      workspaceDir,
+      sourcePath,
+      sourceAgentId: "worker-a",
+    });
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+
+    await writeFile(sourcePath, "replaced", { mode: 0o600 });
+    await expect(readFile(prepared.value.path, "utf8")).resolves.toBe("admitted");
+    await expect(verifyCompletionAttachmentSnapshot(dataDir, prepared.value))
+      .resolves.toEqual(ok(prepared.value));
+
+    await chmod(prepared.value.path, 0o600);
+    await writeFile(prepared.value.path, "tampered", { mode: 0o600 });
+    const verified = await verifyCompletionAttachmentSnapshot(dataDir, prepared.value);
+    expect(verified.ok).toBe(false);
+    await prepared.value.cleanup();
   });
 
   it("rejects files outside the producing workspace and symbolic links", async () => {

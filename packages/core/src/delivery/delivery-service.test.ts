@@ -33,6 +33,7 @@ import { ok, err } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import type {
   DeliveryAdapter,
+  DeliveryChunkSendInput,
   DeliverToChannelOptions,
 } from "./types.js";
 import {
@@ -618,6 +619,37 @@ describe("DeliveryService — full pipeline behavior", () => {
       if (result.ok) {
         expect(result.value.chunks.length).toBeGreaterThan(1);
       }
+    });
+
+    it("delegates each prepared chunk to the supplied irreversible send boundary", async () => {
+      const service = makeDeliveryService({ maxCharsOverride: 150 });
+      const adapter = createMockAdapter("discord");
+      const sendChunk = vi.fn(async ({ chunkIndex }: DeliveryChunkSendInput) =>
+        ok(`governed-${chunkIndex}`));
+      const destinationEndpoint: ChannelEndpoint = {
+        channelType: "discord",
+        channelInstanceId: adapter.channelId,
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      };
+
+      const result = await service.deliverToChannel(
+        adapter,
+        "chat-1",
+        makeLongMarkdown(500),
+        {
+          completionMode: "settled",
+          authority: TEST_DELIVERY_AUTHORITY,
+          destinationEndpoint,
+        },
+        sendChunk,
+      );
+
+      expect(result.ok).toBe(true);
+      expect(sendChunk.mock.calls.length).toBeGreaterThan(1);
+      expect(sendChunk.mock.calls.map(([input]) => input.chunkIndex))
+        .toEqual(sendChunk.mock.calls.map((_, index) => index));
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
     });
 
     it("does not chunk gateway messages", async () => {

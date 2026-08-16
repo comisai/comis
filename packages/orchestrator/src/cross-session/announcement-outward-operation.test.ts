@@ -95,6 +95,7 @@ describe("governed announcement sender", () => {
     expect(result).toEqual(ok({
       delivered: true,
       identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 7 },
+      platformMessageId: "telegram-message-1",
     }));
     expect(order).toEqual(["allocate", "begin", "mark-unknown", "platform", "commit"]);
     expect(ledger.commit).toHaveBeenCalledWith("root-1", 7, "telegram-message-1");
@@ -116,6 +117,9 @@ describe("governed announcement sender", () => {
     await sender.send({
       ...request,
       attachment: {
+        kind: "snapshot",
+        sourceAgentId: "worker-a",
+        sourcePath: "/workspace/report.md",
         path: "/private/report.md",
         fileName: "report.md",
         mimeType: "text/markdown",
@@ -150,6 +154,9 @@ describe("governed announcement sender", () => {
     const result = await sender.send({
       ...request,
       attachment: {
+        kind: "snapshot",
+        sourceAgentId: "worker-a",
+        sourcePath: "/workspace/report.md",
         path: "/private/report.md",
         fileName: "report.md",
         mimeType: "text/markdown",
@@ -310,6 +317,9 @@ describe("governed announcement sender", () => {
 describe("announcement operation fingerprinting", () => {
   it("binds generated-file content but not the private snapshot path", () => {
     const attachment = {
+      kind: "snapshot" as const,
+      sourceAgentId: "worker-a",
+      sourcePath: "/workspace/monthly.csv",
       path: "/private/snapshot-one.csv",
       fileName: "monthly.csv",
       mimeType: "text/csv",

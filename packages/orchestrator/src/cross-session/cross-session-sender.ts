@@ -27,7 +27,10 @@ import {
   systemSetTimeout,
 } from "@comis/core";
 import { fromPromise, type Result } from "@comis/shared";
-import type { SendGovernedCompletionAnnouncement } from "./announcement-outward-operation.js";
+import {
+  isGovernedAnnouncementConfirmedDelivered,
+  type SendGovernedCompletionAnnouncement,
+} from "./announcement-outward-operation.js";
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -146,6 +149,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       channelId,
       text,
       completionKeys: [announceOperationId],
+      ...(callerEndpoint.threadId ? { options: { threadId: callerEndpoint.threadId } } : {}),
     }));
     if (!boundary.ok || !boundary.value.ok) {
       deps.logger?.error(
@@ -158,7 +162,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       );
       return false;
     }
-    return boundary.value.value.delivered;
+    return isGovernedAnnouncementConfirmedDelivered(boundary.value.value);
   }
 
   function stripAnnounceSkip(text: string): { stripped: string; hadSkip: boolean } {

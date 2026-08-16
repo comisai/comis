@@ -15,11 +15,26 @@ interface AnnouncementDeadLetterDeliveryOptions {
   readonly destinationEndpoint?: ChannelEndpoint;
 }
 
-/** Generated-file reference retained for an attachment delivery operation. */
-export interface AnnouncementDeadLetterAttachment {
+export interface AnnouncementDeadLetterAttachmentSource {
+  readonly kind: "source";
   readonly sourceAgentId: string;
   readonly path: string;
 }
+
+export interface AnnouncementDeadLetterAttachmentSnapshot {
+  readonly kind: "snapshot";
+  readonly sourceAgentId: string;
+  readonly sourcePath: string;
+  readonly path: string;
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly contentDigest: string;
+  readonly sizeBytes: number;
+}
+
+export type AnnouncementDeadLetterAttachment =
+  | AnnouncementDeadLetterAttachmentSource
+  | AnnouncementDeadLetterAttachmentSnapshot;
 
 /** Failed completion admitted to durable delivery recovery. */
 export interface AnnouncementDeadLetterEntryInput {

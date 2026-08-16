@@ -6,6 +6,7 @@ import {
   emitObservationalEventSafely,
   systemNowMs,
   type ComisLogger,
+  type AnnouncementDeadLetterAttachmentSnapshot,
   type ChannelEndpoint,
   type ConversationLocator,
   type OutwardSendLedgerPort,
@@ -36,13 +37,7 @@ export interface GovernedAnnouncementRequest {
 }
 
 /** Immutable prepared snapshot metadata bound into one outward operation. */
-export interface GovernedAnnouncementAttachment {
-  path: string;
-  fileName: string;
-  mimeType: string;
-  contentDigest: string;
-  sizeBytes: number;
-}
+export type GovernedAnnouncementAttachment = AnnouncementDeadLetterAttachmentSnapshot;
 
 /** Untrusted generated-file reference resolved by the daemon composition root. */
 export interface CompletionAttachmentRef {
@@ -82,13 +77,24 @@ export type GovernedAnnouncementFailure =
   | "commit_blocked";
 
 export type GovernedAnnouncementSendOutcome =
-  | { delivered: true; identity: AnnouncementOperationIdentity }
+  | {
+      delivered: true;
+      identity: AnnouncementOperationIdentity;
+      platformMessageId?: string;
+    }
   | { delivered: false; terminalDecision: OutwardTerminalDecision }
   | {
       delivered: false;
       identity?: AnnouncementOperationIdentity;
       failure: GovernedAnnouncementFailure;
     };
+
+export function isGovernedAnnouncementConfirmedDelivered(
+  outcome: GovernedAnnouncementSendOutcome,
+): boolean {
+  return outcome.delivered
+    || ("terminalDecision" in outcome && outcome.terminalDecision === "delivered");
+}
 
 export type SendGovernedAnnouncement = (
   request: GovernedAnnouncementRequest,
@@ -109,6 +115,7 @@ export interface CompletionAnnouncementSendRequest {
   /** Distinguishes independently governed files emitted by the same run. */
   partId?: string;
   attachment?: CompletionAttachmentRef;
+  preparedAttachment?: GovernedAnnouncementAttachment;
   completionKeys?: readonly string[];
 }
 
@@ -468,7 +475,11 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
           ...deliveryEvidence,
           platformMessageId: existing.value.platformMessageId,
         });
-        return ok({ delivered: true, identity });
+        return ok({
+          delivered: true,
+          identity,
+          platformMessageId: existing.value.platformMessageId,
+        });
       }
       if (
         existing.value.state === "send_attempt_started"
@@ -568,7 +579,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       ...deliveryEvidence,
       platformMessageId: receipt,
     });
-    return ok({ delivered: true, identity });
+    return ok({ delivered: true, identity, platformMessageId: receipt });
   };
 
   return { send };

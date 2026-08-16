@@ -66,7 +66,7 @@ describe("announcement batch operation reservations", () => {
           {
             partId: "attachment:0",
             completionKeys: ["completion-1", "completion-2"],
-            attachment: { sourceAgentId: "worker-a", path: "report.txt" },
+            attachment: { kind: "source", sourceAgentId: "worker-a", path: "report.txt" },
           },
         ],
       },

@@ -39,7 +39,11 @@ import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
 import { createRecoverableAnnouncementDelivery } from "./recoverable-announcement-delivery.js";
-import { createCompletionAttachmentPreparer } from "./completion-attachment.js";
+import {
+  cleanupCompletionAttachmentSnapshot,
+  createCompletionAttachmentPreparer,
+  verifyCompletionAttachmentSnapshot,
+} from "./completion-attachment.js";
 import { createAnnouncementFailureNoticeRenderer } from "./announcement-failure-locale.js";
 import { resolvePreservedCrossSessionRoute } from "./cross-session-route.js";
 import { createInternalTurnScope } from "./internal-turn-scope.js";
@@ -270,6 +274,7 @@ export function setupCrossSession(deps: {
     sendToChannel,
     sendPreparedAttachmentToChannelWithReceipt,
     sendLedgerAnnouncement,
+    sendGovernedTextToChannelWithReceipt,
   } = createAnnouncementDelivery({
     adaptersByType,
     deliveryService: deps.deliveryService,
@@ -279,6 +284,10 @@ export function setupCrossSession(deps: {
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
     prepareCompletionAttachment,
+    verifyCompletionAttachment: (attachment) => verifyCompletionAttachmentSnapshot(
+      container.config.dataDir,
+      attachment,
+    ),
   });
   // executeSubAgent built via setup-cross-session-graph.ts.
   const executeSubAgent = buildExecuteSubAgent({
@@ -418,9 +427,63 @@ export function setupCrossSession(deps: {
             options,
           );
         }
-        return sendToChannelWithReceipt(channelType, channelId, text, options);
+        const governedText = options?.governedText;
+        const destinationEndpoint = options?.destinationEndpoint;
+        const deliveryAuthority = options?.authority;
+        if (
+          !governedText
+          || !destinationEndpoint
+          || !deliveryAuthority
+          || !sendGovernedTextToChannelWithReceipt
+        ) {
+          return Promise.resolve(err(new Error(
+            "Retained text announcement has no governed operation identity",
+          )));
+        }
+        return sendGovernedTextToChannelWithReceipt({
+          ...governedText,
+          channelType,
+          channelId,
+          text,
+          ...(options?.threadId || options?.extra ? {
+            options: {
+              ...(options?.threadId ? { threadId: options.threadId } : {}),
+              ...(options?.extra ? { extra: options.extra } : {}),
+            },
+          } : {}),
+        }, destinationEndpoint, deliveryAuthority).then((result) => {
+          if (!result.ok) return result;
+          const outcome = result.value;
+          if (outcome.delivered) {
+            return ok({
+              delivered: true,
+              status: "accepted" as const,
+              ...(outcome.platformMessageId
+                ? { platformMessageId: outcome.platformMessageId }
+                : {}),
+            });
+          }
+          if (
+            "terminalDecision" in outcome
+            && outcome.terminalDecision === "delivered"
+          ) {
+            return ok({
+              delivered: true,
+              status: "accepted" as const,
+              platformMessageId: `terminal:${governedText.operationId}`,
+            });
+          }
+          return ok({
+            delivered: false,
+            status: "unknown" as const,
+          });
+        });
       },
       prepareAttachment: prepareCompletionAttachment,
+      cleanupAttachment: (attachment) => cleanupCompletionAttachmentSnapshot(
+        container.config.dataDir,
+        attachment,
+      ),
     } : {}),
     ...(deps.ensureDeadLetterRecoveryObservation
       ? { ensureSessionObservation: deps.ensureDeadLetterRecoveryObservation }

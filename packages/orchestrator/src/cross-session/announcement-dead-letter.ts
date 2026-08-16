@@ -4,6 +4,8 @@
 import { randomUUID } from "node:crypto";
 import type {
   AnnouncementDeadLetterEntryInput,
+  AnnouncementDeadLetterAttachmentSnapshot,
+  AnnouncementDeadLetterAttachmentSource,
   AnnouncementDeadLetterQueuePort,
   AnnouncementParentDecisionReservation,
   OutwardSendLedgerPort,
@@ -40,6 +42,7 @@ import {
 } from "./announcement-dead-letter-identity.js";
 import type {
   AnnouncementDeadLetterQueueOptions,
+  PreparedRecoveryAttachment,
   RecoveryDeliveryOptions,
 } from "./announcement-dead-letter-types.js";
 export { isAnnouncementChannelType } from "./announcement-dead-letter-file.js";
@@ -77,6 +80,7 @@ export function createAnnouncementDeadLetterQueue(
     outwardLedger,
     governedSendToChannel,
     prepareAttachment,
+    cleanupAttachment,
     fileOperations,
   } = opts;
   let entries: DeadLetterEntry[] = [];
@@ -187,6 +191,74 @@ export function createAnnouncementDeadLetterQueue(
     return false;
   }
 
+  function isSourceAttachment(
+    attachment: AnnouncementDeadLetterEntryInput["attachment"],
+  ): attachment is AnnouncementDeadLetterAttachmentSource {
+    return attachment?.kind === "source";
+  }
+
+  function preparedSnapshot(
+    attachment: PreparedRecoveryAttachment,
+  ): AnnouncementDeadLetterAttachmentSnapshot {
+    return {
+      kind: "snapshot",
+      sourceAgentId: attachment.sourceAgentId,
+      sourcePath: attachment.sourcePath,
+      path: attachment.path,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      contentDigest: attachment.contentDigest,
+      sizeBytes: attachment.sizeBytes,
+    };
+  }
+
+  async function prepareReservedAttachment<T extends {
+    attachment?: AnnouncementDeadLetterEntryInput["attachment"];
+  }>(
+    entry: T,
+    reusable: readonly AnnouncementParentDecisionReservation[] = [],
+  ): Promise<Result<{
+    entry: T;
+    cleanup?: () => Promise<Result<void, Error>>;
+  }, Error>> {
+    if (!isSourceAttachment(entry.attachment)) return ok({ entry });
+    const existing = reusable.find((reservation) =>
+      reservation.attachment?.kind === "snapshot"
+      && reservation.attachment.sourceAgentId === entry.attachment?.sourceAgentId
+      && reservation.attachment.sourcePath === entry.attachment?.path);
+    if (existing?.attachment?.kind === "snapshot") {
+      return ok({ entry: { ...entry, attachment: existing.attachment } });
+    }
+    if (!prepareAttachment) {
+      return err(new Error("Completion attachment snapshot admission is unavailable"));
+    }
+    const prepared = await fromPromise(prepareAttachment(entry.attachment));
+    if (!prepared.ok) return prepared;
+    if (!prepared.value.ok) return prepared.value;
+    return ok({
+      entry: { ...entry, attachment: preparedSnapshot(prepared.value.value) },
+      cleanup: prepared.value.value.cleanup,
+    });
+  }
+
+  async function cleanupSnapshots(
+    attachments: readonly AnnouncementDeadLetterAttachmentSnapshot[],
+  ): Promise<void> {
+    if (!cleanupAttachment) return;
+    for (const attachment of attachments) {
+      const cleaned = await cleanupAttachment(attachment);
+      if (!cleaned.ok) {
+        logger?.warn(
+          {
+            errorKind: "resource" as const,
+            hint: "remove the stale completion snapshot and verify attachment storage permissions",
+          },
+          "Completion attachment snapshot cleanup failed",
+        );
+      }
+    }
+  }
+
   const decisionStore = createParentDecisionReservationStore({
     load: loadFromDisk,
     hasDeliveryKey: (idempotencyKey) =>
@@ -257,13 +329,17 @@ export function createAnnouncementDeadLetterQueue(
     idempotencyKey: string,
     outcome: "receipt_committed" | "no_reply",
   ): Promise<Result<boolean, Error>> {
-    if (outcome === "receipt_committed") {
-      return decisionStore.resolve(idempotencyKey, outcome);
-    }
     const reservation = await decisionStore.lookup(idempotencyKey);
     if (!reservation.ok || reservation.value === undefined) return reservation.ok
       ? ok(false)
       : reservation;
+    if (outcome === "receipt_committed") {
+      const resolved = await decisionStore.resolve(idempotencyKey, outcome);
+      if (resolved.ok && resolved.value && reservation.value.attachment?.kind === "snapshot") {
+        await cleanupSnapshots([reservation.value.attachment]);
+      }
+      return resolved;
+    }
     const existing = await lookupTerminalDecision(reservation.value);
     if (!existing.ok) return existing;
     if (existing.value !== undefined && existing.value !== "no_reply") {
@@ -288,6 +364,9 @@ export function createAnnouncementDeadLetterQueue(
     const resolved = await persist(entries, nextReservations, invalidRecords);
     if (resolved.ok) {
       decisionReservations = nextReservations;
+      if (reservation.value.attachment?.kind === "snapshot") {
+        await cleanupSnapshots([reservation.value.attachment]);
+      }
       return ok(true);
     }
     return err(resolved.error);
@@ -675,6 +754,48 @@ export function createAnnouncementDeadLetterQueue(
         );
       }
     }
+    if (!entry.attachment) {
+      if (entry.stepIndex !== undefined) {
+        return drainPreparedGovernedEntry(ledger, entry);
+      }
+      if (
+        !governedSendToChannel
+        || !entry.rootRunId
+        || !entry.agentId
+        || !entry.idempotencyKey
+        || !entry.deliveryAuthority
+        || !entry.destinationEndpoint
+      ) {
+        retainBlockedEntry(entry, "identity_incomplete");
+        return "retained";
+      }
+      const boundary = await fromPromise(governedSendToChannel(
+        entry.channelType,
+        entry.channelId,
+        entry.announcementText,
+        {
+          ...(entry.threadId ? { threadId: entry.threadId } : {}),
+          ...(entry.extra ? { extra: entry.extra } : {}),
+          authority: entry.deliveryAuthority,
+          destinationEndpoint: entry.destinationEndpoint,
+          governedText: {
+            operationId: entry.idempotencyKey,
+            rootRunId: entry.rootRunId,
+            runId: entry.runId,
+            agentId: entry.agentId,
+            sessionKey: entry.sessionKey,
+            ...(entry.partId ? { partId: entry.partId } : {}),
+          },
+        },
+      ));
+      entry.attemptCount++;
+      entry.lastAttemptAt = systemNowMs();
+      if (!boundary.ok || !boundary.value.ok || !boundary.value.value.delivered) {
+        entry.lastError = "outward_operation_unresolved";
+        return "retained";
+      }
+      return "receipt_committed_now";
+    }
     if (
       entry.attachment
       && entry.rootRunId
@@ -758,13 +879,7 @@ export function createAnnouncementDeadLetterQueue(
       }
     }
     return drainWithPreparedRecoveryAttachment({
-      attachment: entry.attachment,
-      runId: entry.runId,
-      ...(logger ? { logger } : {}),
-      ...(prepareAttachment ? { prepareAttachment } : {}),
-      retain: (reason) => retainBlockedEntry(entry, reason),
-      logFailure: (transition, errorKind, hint, message) =>
-        logLedgerFailure(entry, transition, errorKind, hint, message),
+      attachment: entry.attachment?.kind === "snapshot" ? entry.attachment : undefined,
       drainPrepared: (attachment) => drainPreparedGovernedEntry(ledger, entry, attachment),
     });
   }
@@ -790,6 +905,9 @@ export function createAnnouncementDeadLetterQueue(
     const terminalDecision = await lookupTerminalDecision(entry);
     if (!terminalDecision.ok) return terminalDecision;
     if (terminalDecision.value !== undefined) return ok(undefined);
+    if (entry.attachment?.kind === "source") {
+      return err(new Error("Dead-letter attachment must be snapshotted before enqueue"));
+    }
     const entryRecoveryKey = announcementRecoveryKey(entry);
     const keyedEntry = entries.find(
       (candidate) => announcementRecoveryKey(candidate) === entryRecoveryKey,
@@ -930,16 +1048,18 @@ export function createAnnouncementDeadLetterQueue(
         );
         continue;
       }
-      const step = await fromPromise(
-        ledger.allocateStep(reservation.rootRunId, reservation.idempotencyKey),
-      );
-      if (!step.ok || !step.value.ok) {
-        logger?.debug(
-          { runId: reservation.runId },
-          "Parent decision reservation left parked: outward step could not be resolved",
-        );
-        continue;
-      }
+      const step = reservation.attachment
+        ? await fromPromise(
+            ledger.allocateStep(reservation.rootRunId, reservation.idempotencyKey),
+          )
+        : undefined;
+      if (step && (!step.ok || !step.value.ok)) {
+          logger?.debug(
+            { runId: reservation.runId },
+            "Parent decision reservation left parked: outward step could not be resolved",
+          );
+          continue;
+        }
       logger?.warn(
         {
           runId: reservation.runId,
@@ -962,7 +1082,7 @@ export function createAnnouncementDeadLetterQueue(
         lastAttemptAt: 0,
         idempotencyKey: reservation.idempotencyKey,
         rootRunId: reservation.rootRunId,
-        stepIndex: step.value.value,
+        ...(step?.ok && step.value.ok ? { stepIndex: step.value.value } : {}),
         deliveryAuthority: reservation.deliveryAuthority,
         destinationEndpoint: reservation.destinationEndpoint,
         completionKeys: reservation.completionKeys,
@@ -1114,6 +1234,8 @@ export function createAnnouncementDeadLetterQueue(
       return;
     }
     entries = nextEntries;
+    await cleanupSnapshots(deliveredEntries.flatMap(({ entry }) =>
+      entry.attachment?.kind === "snapshot" ? [entry.attachment] : []));
     for (const delivered of deliveredEntries) {
       emittedAdmissionKeys.delete(announcementRecoveryKey(delivered.entry));
     }
@@ -1173,7 +1295,19 @@ export function createAnnouncementDeadLetterQueue(
       const terminalDecision = await lookupTerminalDecision(entry);
       if (!terminalDecision.ok) return terminalDecision;
       if (terminalDecision.value !== undefined) return ok({ created: false });
-      const reserved = await decisionStore.reserve(entry);
+      const existing = await decisionStore.lookup(entry.idempotencyKey);
+      if (!existing.ok) return existing;
+      const prepared = await prepareReservedAttachment(
+        entry,
+        existing.value ? [existing.value] : [],
+      );
+      if (!prepared.ok) return prepared;
+      const reserved = await decisionStore.reserve(
+        prepared.value.entry as AnnouncementParentDecisionReservation,
+      );
+      if ((!reserved.ok || !reserved.value.created) && prepared.value.cleanup) {
+        await prepared.value.cleanup();
+      }
       if (reserved.ok && reserved.value.created) {
         emitObservationalEventSafely(
           { eventBus, logger },
@@ -1197,12 +1331,57 @@ export function createAnnouncementDeadLetterQueue(
       serialize(async () => {
         const loaded = await loadFromDisk();
         if (!loaded.ok) return loaded;
+        const nonterminalOperations: AnnouncementParentDecisionReservation[] = [];
+        const settledCompletionKeys = new Set<string>();
+        const expected = new Set(expectedKeys);
+        const reusable = decisionReservations.filter((reservation) =>
+          expected.has(reservation.idempotencyKey));
         for (const operation of operations) {
           const terminalDecision = await lookupTerminalDecision(operation);
           if (!terminalDecision.ok) return terminalDecision;
-          if (terminalDecision.value !== undefined) return ok({ created: false });
+          if (terminalDecision.value === undefined) {
+            nonterminalOperations.push(operation);
+            continue;
+          }
+          for (const completionKey of operation.completionKeys) {
+            settledCompletionKeys.add(completionKey);
+          }
         }
-        return decisionStore.replace(expectedKeys, operations);
+        const pendingOperations: AnnouncementParentDecisionReservation[] = [];
+        const transientCleanups: Array<() => Promise<Result<void, Error>>> = [];
+        for (const operation of nonterminalOperations) {
+          const prepared = await prepareReservedAttachment(operation, reusable);
+          if (!prepared.ok) {
+            for (const cleanup of transientCleanups) await cleanup();
+            return prepared;
+          }
+          pendingOperations.push(
+            prepared.value.entry as AnnouncementParentDecisionReservation,
+          );
+          if (prepared.value.cleanup) transientCleanups.push(prepared.value.cleanup);
+        }
+        const replaced = await decisionStore.replace(
+          expectedKeys,
+          pendingOperations,
+          [...settledCompletionKeys],
+        );
+        if (!replaced.ok || !replaced.value.created) {
+          for (const cleanup of transientCleanups) await cleanup();
+        }
+        if (replaced.ok) {
+          const retainedSnapshotPaths = new Set(
+            decisionReservations.flatMap((reservation) =>
+              reservation.attachment?.kind === "snapshot"
+                ? [reservation.attachment.path]
+                : []),
+          );
+          await cleanupSnapshots(reusable.flatMap((reservation) =>
+            reservation.attachment?.kind === "snapshot"
+              && !retainedSnapshotPaths.has(reservation.attachment.path)
+              ? [reservation.attachment]
+              : []));
+        }
+        return replaced;
       }),
     drain: (sendToChannel, onDelivered) =>
       serialize(() => drainSerialized(sendToChannel, onDelivered)),
@@ -1260,6 +1439,9 @@ export function createAnnouncementDeadLetterQueue(
       });
       if (released.ok && released.value && releasedEntry) {
         emittedAdmissionKeys.delete(announcementRecoveryKey(releasedEntry));
+      }
+      if (released.ok && released.value && releasedDelivery?.attachment?.kind === "snapshot") {
+        await cleanupSnapshots([releasedDelivery.attachment]);
       }
       return released;
     }),

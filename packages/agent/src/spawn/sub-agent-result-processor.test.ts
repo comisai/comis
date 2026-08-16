@@ -351,6 +351,32 @@ describe("deliverFailureNotification", () => {
     expect(deliveryDedup.size).toBe(0);
   });
 
+  it("accepts an operator-confirmed governed failure notice delivery", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const deliveryDedup = createDeliveryDedup();
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: false as const,
+      terminalDecision: "delivered" as const,
+    }));
+
+    await deliverFailureNotification({
+      channelType: "telegram",
+      channelId: "chat-1",
+      task: "failed child task",
+      runtimeMs: 1_000,
+      runId: "run-terminal-delivered",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:user_a:chat-1",
+      callerConversation: makeCallerConversation("parent-agent"),
+      destinationEndpoint: makeCallerEndpoint(),
+    }, { sendToChannel, sendGovernedAnnouncement, deliveryDedup });
+
+    expect(deliveryDedup.has(
+      "default:user_a:chat-1::run-terminal-delivered",
+    )).toBe(true);
+    expect(sendToChannel).not.toHaveBeenCalled();
+  });
+
   it("joins concurrent governed failure notices onto one operation", async () => {
     let settle!: (value: ReturnType<typeof ok>) => void;
     const sendGovernedAnnouncement = vi.fn().mockReturnValue(new Promise((resolve) => {
@@ -1009,14 +1035,18 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         idempotencyKey: firstKey,
         partId: "attachment:0",
         announcementText: "",
-        attachment: { sourceAgentId: "worker-a", path: "/workspace/files/first.txt" },
+        attachment: {
+          kind: "source",
+          sourceAgentId: "worker-a",
+          path: "/workspace/files/first.txt",
+        },
         completionKeys: [`${callerSessionKey}::run-attachments`],
       }),
       expect.objectContaining({
         idempotencyKey: secondKey,
         partId: "attachment:1",
         announcementText: "",
-        attachment: { sourceAgentId: "worker-a", path: "second.txt" },
+        attachment: { kind: "source", sourceAgentId: "worker-a", path: "second.txt" },
         completionKeys: [`${callerSessionKey}::run-attachments`],
       }),
     ]);

@@ -34,6 +34,20 @@ function reservationMatches(
   existing: AnnouncementParentDecisionReservation,
   expected: AnnouncementParentDecisionReservation,
 ): boolean {
+  const attachmentsMatch = (
+    existing.attachment === undefined
+    && expected.attachment === undefined
+  ) || (
+    existing.attachment?.kind === "snapshot"
+    && expected.attachment?.kind === "source"
+    && existing.attachment.sourceAgentId === expected.attachment.sourceAgentId
+    && existing.attachment.sourcePath === expected.attachment.path
+  ) || (
+    existing.attachment?.kind === "snapshot"
+    && expected.attachment?.kind === "snapshot"
+    && existing.attachment.path === expected.attachment.path
+    && existing.attachment.contentDigest === expected.attachment.contentDigest
+  );
   const existingDigest = createAnnouncementOperationDigests({
     channelType: existing.channelType,
     channelId: existing.channelId,
@@ -69,8 +83,7 @@ function reservationMatches(
     && existingDigest.value.operationFingerprint === expectedDigest.value.operationFingerprint
     && existing.rootRunId === expected.rootRunId
     && existing.partId === expected.partId
-    && existing.attachment?.sourceAgentId === expected.attachment?.sourceAgentId
-    && existing.attachment?.path === expected.attachment?.path
+    && attachmentsMatch
     && existing.deliveryAuthority.tenantId === expected.deliveryAuthority.tenantId
     && existing.deliveryAuthority.agentId === expected.deliveryAuthority.agentId
     && existing.deliveryAuthority.conversationRef === expected.deliveryAuthority.conversationRef
@@ -111,7 +124,13 @@ function reservationFor(
     ...(request.options?.threadId ? { threadId: request.options.threadId } : {}),
     ...(request.options?.extra ? { extra: request.options.extra } : {}),
     ...(request.partId ? { partId: request.partId } : {}),
-    ...(request.attachment ? { attachment: request.attachment } : {}),
+    ...(request.attachment ? {
+      attachment: {
+        kind: "source" as const,
+        sourceAgentId: request.attachment.sourceAgentId,
+        path: request.attachment.path,
+      },
+    } : {}),
   };
 }
 
@@ -217,7 +236,18 @@ export function createRecoverableAnnouncementDelivery(
       if (!reserveBoundary.ok) return err(reserveBoundary.error);
       if (!reserveBoundary.value.ok) return reserveBoundary.value;
     }
-    const sendBoundary = await fromPromise(deps.send(request));
+    const storedBoundary = await fromPromise(
+      deps.deadLetterQueue.lookupDecision(operationId),
+    );
+    if (!storedBoundary.ok) return err(storedBoundary.error);
+    if (!storedBoundary.value.ok) return storedBoundary.value;
+    const storedAttachment = storedBoundary.value.value?.attachment;
+    const sendBoundary = await fromPromise(deps.send({
+      ...request,
+      ...(storedAttachment?.kind === "snapshot"
+        ? { preparedAttachment: storedAttachment }
+        : {}),
+    }));
     if (!sendBoundary.ok) return err(sendBoundary.error);
     if (!sendBoundary.value.ok) return sendBoundary.value;
     const outcome = sendBoundary.value.value;

@@ -158,6 +158,8 @@ export type {
   AnnouncementDeadLetterEntryInput,
   AnnouncementDeadLetterEntry,
   AnnouncementDeadLetterAttachment,
+  AnnouncementDeadLetterAttachmentSource,
+  AnnouncementDeadLetterAttachmentSnapshot,
   AnnouncementParentDecisionReservation,
   AnnouncementParentDecisionReservationRecord,
   AnnouncementDeadLetterStatus,

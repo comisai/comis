@@ -4,18 +4,19 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, unlink, type FileHandle } from "node:fs/promises";
 import { basename, extname, relative, resolve, sep } from "node:path";
-import { resolveWorkspaceDir, safePath, type AgentConfig } from "@comis/core";
+import {
+  resolveWorkspaceDir,
+  safePath,
+  type AgentConfig,
+  type AnnouncementDeadLetterAttachmentSnapshot,
+  type AnnouncementDeadLetterAttachmentSource,
+} from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
 const DEFAULT_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const SNAPSHOT_DIRECTORY = "completion-attachments";
 
-export interface PreparedCompletionAttachment {
-  path: string;
-  fileName: string;
-  mimeType: string;
-  contentDigest: string;
-  sizeBytes: number;
+export interface PreparedCompletionAttachment extends AnnouncementDeadLetterAttachmentSnapshot {
   cleanup(): Promise<Result<void, Error>>;
 }
 
@@ -29,7 +30,9 @@ export interface PrepareCompletionAttachmentInput {
 export function createCompletionAttachmentPreparer(input: {
   dataDir: string;
   agents: Record<string, AgentConfig>;
-}): (attachment: { sourceAgentId: string; path: string }) => Promise<Result<PreparedCompletionAttachment, Error>> {
+}): (
+  attachment: AnnouncementDeadLetterAttachmentSource,
+) => Promise<Result<PreparedCompletionAttachment, Error>> {
   return (attachment) => {
     const sourceAgentConfig = input.agents[attachment.sourceAgentId]
       ?? input.agents["default"]
@@ -42,6 +45,7 @@ export function createCompletionAttachmentPreparer(input: {
         input.dataDir || undefined,
       ),
       sourcePath: attachment.path,
+      sourceAgentId: attachment.sourceAgentId,
     });
   };
 }
@@ -71,6 +75,71 @@ function isConfinedPath(workspacePath: string, candidatePath: string): boolean {
   return reconstructed.ok && resolve(reconstructed.value) === resolve(candidatePath);
 }
 
+function resolveSnapshotPath(
+  dataDir: string,
+  attachment: AnnouncementDeadLetterAttachmentSnapshot,
+): Result<string, Error> {
+  const snapshotDirResult = tryCatch(() => safePath(dataDir, SNAPSHOT_DIRECTORY));
+  if (!snapshotDirResult.ok) return snapshotDirResult;
+  const snapshotDir = resolve(snapshotDirResult.value);
+  const snapshotPath = resolve(attachment.path);
+  const segment = relative(snapshotDir, snapshotPath);
+  if (
+    segment.length === 0
+    || segment === ".."
+    || segment.startsWith(`..${sep}`)
+    || segment.includes(sep)
+  ) {
+    return err(new Error("Completion attachment snapshot path is invalid"));
+  }
+  return ok(snapshotPath);
+}
+
+async function readPinnedFile(
+  path: string,
+  expectedSize: number,
+): Promise<Result<Buffer, Error>> {
+  const opened = await fromPromise(open(path, constants.O_RDONLY | constants.O_NOFOLLOW));
+  if (!opened.ok) return opened;
+  const handle = opened.value;
+  const initialStat = await fromPromise(handle.stat());
+  if (
+    !initialStat.ok
+    || !initialStat.value.isFile()
+    || initialStat.value.nlink !== 1
+    || initialStat.value.size !== expectedSize
+  ) {
+    await close(handle);
+    return err(new Error("Completion attachment snapshot metadata is invalid"));
+  }
+  const content = Buffer.alloc(initialStat.value.size);
+  let offset = 0;
+  while (offset < content.length) {
+    const read = await fromPromise(handle.read(content, offset, content.length - offset, offset));
+    if (!read.ok) {
+      await close(handle);
+      return read;
+    }
+    if (read.value.bytesRead === 0) {
+      await close(handle);
+      return err(new Error("Completion attachment snapshot changed while reading"));
+    }
+    offset += read.value.bytesRead;
+  }
+  const finalStat = await fromPromise(handle.stat());
+  const closed = await close(handle);
+  if (!finalStat.ok) return finalStat;
+  if (!closed.ok) return closed;
+  if (
+    finalStat.value.dev !== initialStat.value.dev
+    || finalStat.value.ino !== initialStat.value.ino
+    || finalStat.value.size !== initialStat.value.size
+  ) {
+    return err(new Error("Completion attachment snapshot changed while reading"));
+  }
+  return ok(content);
+}
+
 /**
  * Pin, bound, hash, and snapshot one generated file before it crosses a
  * channel boundary. The source must be a single-link regular file inside the
@@ -78,7 +147,7 @@ function isConfinedPath(workspacePath: string, candidatePath: string): boolean {
  * immutable snapshot.
  */
 export async function prepareCompletionAttachment(
-  input: PrepareCompletionAttachmentInput,
+  input: PrepareCompletionAttachmentInput & { sourceAgentId?: string },
 ): Promise<Result<PreparedCompletionAttachment, Error>> {
   const maxBytes = input.maxBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
@@ -206,12 +275,43 @@ export async function prepareCompletionAttachment(
   }
 
   const sourceName = basename(input.sourcePath);
-  return ok({
+  const snapshot: AnnouncementDeadLetterAttachmentSnapshot = {
+    kind: "snapshot",
+    sourceAgentId: input.sourceAgentId ?? "default",
+    sourcePath: input.sourcePath,
     path: snapshotPath,
     fileName: sourceName.length <= 255 ? sourceName : sourceName.slice(-255),
     mimeType: mimeTypeFor(input.sourcePath),
     contentDigest: createHash("sha256").update(content).digest("hex"),
     sizeBytes: content.length,
-    cleanup: () => fromPromise(unlink(snapshotPath)),
+  };
+  return ok({
+    ...snapshot,
+    cleanup: () => cleanupCompletionAttachmentSnapshot(input.dataDir, snapshot),
   });
+}
+
+export async function verifyCompletionAttachmentSnapshot(
+  dataDir: string,
+  attachment: AnnouncementDeadLetterAttachmentSnapshot,
+): Promise<Result<AnnouncementDeadLetterAttachmentSnapshot, Error>> {
+  const snapshotPath = resolveSnapshotPath(dataDir, attachment);
+  if (!snapshotPath.ok) return snapshotPath;
+  const content = await readPinnedFile(snapshotPath.value, attachment.sizeBytes);
+  if (!content.ok) return content;
+  const digest = createHash("sha256").update(content.value).digest("hex");
+  return digest === attachment.contentDigest
+    ? ok(attachment)
+    : err(new Error("Completion attachment snapshot digest does not match"));
+}
+
+export async function cleanupCompletionAttachmentSnapshot(
+  dataDir: string,
+  attachment: AnnouncementDeadLetterAttachmentSnapshot,
+): Promise<Result<void, Error>> {
+  const snapshotPath = resolveSnapshotPath(dataDir, attachment);
+  if (!snapshotPath.ok) return snapshotPath;
+  const removed = await fromPromise(unlink(snapshotPath.value));
+  if (!removed.ok && (removed.error as NodeJS.ErrnoException).code !== "ENOENT") return removed;
+  return ok(undefined);
 }

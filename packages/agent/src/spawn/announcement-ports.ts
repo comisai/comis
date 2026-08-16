@@ -39,13 +39,24 @@ export interface CompletionAttachmentShape {
 }
 
 export type GovernedCompletionAnnouncementOutcome =
-  | { delivered: true; identity: AnnouncementOperationIdentity }
+  | {
+      delivered: true;
+      identity: AnnouncementOperationIdentity;
+      platformMessageId?: string;
+    }
   | { delivered: false; terminalDecision: OutwardTerminalDecision }
   | {
       delivered: false;
       identity?: AnnouncementOperationIdentity;
       failure: string;
     };
+
+export function isGovernedCompletionAnnouncementConfirmedDelivered(
+  outcome: GovernedCompletionAnnouncementOutcome,
+): boolean {
+  return outcome.delivered
+    || ("terminalDecision" in outcome && outcome.terminalDecision === "delivered");
+}
 
 export type SendGovernedCompletionAnnouncement = (
   request: GovernedCompletionAnnouncementRequest,

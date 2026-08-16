@@ -713,13 +713,13 @@ describe("AnnouncementBatcher", () => {
         }),
         expect.objectContaining({
           partId: "attachment:0",
-          attachment: item.attachments?.[0],
+          attachment: { kind: "source", ...item.attachments?.[0] },
           announcementText: "",
           completionKeys: ["attachment-admission"],
         }),
         expect.objectContaining({
           partId: "attachment:1",
-          attachment: item.attachments?.[1],
+          attachment: { kind: "source", ...item.attachments?.[1] },
           announcementText: "",
           completionKeys: ["attachment-admission"],
         }),
@@ -971,8 +971,19 @@ describe("AnnouncementBatcher", () => {
       first.runId,
       "summary",
     );
+    const secondSummaryKey = createStableAnnouncementOperationId(
+      "agent-main",
+      second.callerSessionKey,
+      second.runId,
+      "summary",
+    );
     expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith(
-      expect.arrayContaining([summaryKey, firstAttachmentKey, secondAttachmentKey]),
+      expect.arrayContaining([
+        summaryKey,
+        firstAttachmentKey,
+        secondSummaryKey,
+        secondAttachmentKey,
+      ]),
       expect.arrayContaining([
         expect.objectContaining({
           idempotencyKey: summaryKey,
@@ -982,13 +993,13 @@ describe("AnnouncementBatcher", () => {
         expect.objectContaining({
           idempotencyKey: firstAttachmentKey,
           announcementText: "",
-          attachment: first.attachments?.[0],
+          attachment: { kind: "source", ...first.attachments?.[0] },
           completionKeys: ["completion-a", "completion-b"],
         }),
         expect.objectContaining({
           idempotencyKey: secondAttachmentKey,
           announcementText: "",
-          attachment: second.attachments?.[0],
+          attachment: { kind: "source", ...second.attachments?.[0] },
           completionKeys: ["completion-a", "completion-b"],
         }),
       ]),

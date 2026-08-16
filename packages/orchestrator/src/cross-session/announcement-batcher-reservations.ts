@@ -78,7 +78,13 @@ export function createAnnouncementReservationPlan(
         ? { threadId: operation.item.announceThreadId }
         : {}),
       ...(operation.partId ? { partId: operation.partId } : {}),
-      ...(operation.attachment ? { attachment: operation.attachment } : {}),
+      ...(operation.attachment ? {
+        attachment: {
+          kind: "source" as const,
+          sourceAgentId: operation.attachment.sourceAgentId,
+          path: operation.attachment.path,
+        },
+      } : {}),
     });
   }
   return ok({ expectedKeys, reservations });

@@ -14,6 +14,9 @@ import {
   runWithContext,
   SUB_AGENT_TOOL_DENYLIST,
   TypedEventBus,
+  type DeliverToChannelOptions,
+  type DeliveryAdapter,
+  type DeliveryChunkSender,
   type RequestContext,
 } from "@comis/core";
 import { createSessionTrajectoryHandleRegistry } from "@comis/observability";
@@ -213,6 +216,7 @@ vi.mock("@comis/agent", async (importOriginal) => {
     createSubAgentRunner: mockCreateSubAgentRunner,
     createSpawnPacketBuilder: mockCreateSpawnPacketBuilder,
     buildAnnouncementRewriteInput: actual.buildAnnouncementRewriteInput,
+    createCompletionAnnouncementOperationPlan: actual.createCompletionAnnouncementOperationPlan,
     enforceAnnouncementTerminalOutcome: actual.enforceAnnouncementTerminalOutcome,
     buildBackgroundTaskFailedNotice: actual.buildBackgroundTaskFailedNotice,
     catalogFromLocalePacks: actual.catalogFromLocalePacks,
@@ -3949,14 +3953,35 @@ describe("setupCrossSession durable-store injection", () => {
       hasUncertainty: vi.fn(async () => ({ ok: true as const, value: false })),
       listUnreconciled: vi.fn(async () => ({ ok: true as const, value: [] })),
     };
-    const deliverToChannel = vi.fn(async () => {
-      order.push("platform");
+    const deliverToChannel = vi.fn(async (
+      adapter: DeliveryAdapter,
+      channelId: string,
+      text: string,
+      options: DeliverToChannelOptions,
+      sendChunk?: DeliveryChunkSender,
+    ) => {
+      if (!sendChunk) throw new Error("governed chunk sender unavailable");
+      const sent = await sendChunk({
+        adapter: {
+          ...adapter,
+          sendMessage: vi.fn(async () => {
+            order.push("platform");
+            return { ok: true as const, value: "telegram-receipt-4" };
+          }),
+        },
+        channelId,
+        text,
+        options: options.threadId ? { threadId: options.threadId } : {},
+        chunkIndex: 0,
+        totalChunks: 1,
+      });
+      if (!sent.ok) throw sent.error;
       return {
         ok: true as const,
         value: {
           chunks: [{
             status: "accepted" as const,
-            messageId: "telegram-receipt-4",
+            messageId: sent.value,
             charCount: 20,
             retried: false,
           }],
@@ -3988,7 +4013,7 @@ describe("setupCrossSession durable-store injection", () => {
     mkdirSync(deps.container.config.dataDir, { recursive: true });
     const result = setupCrossSession(deps);
 
-    result.announcementBatcher.enqueue({
+    const admitted = await result.announcementBatcher.enqueue({
       announcementText: "[System Message]\nResult: completed",
       terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
@@ -4006,6 +4031,7 @@ describe("setupCrossSession durable-store injection", () => {
       idempotencyKey: "default:agent:agent-1:user1:chan1::completion-run-1",
       reservationRootRunId: "root-completion",
     });
+    expect(admitted).toEqual({ ok: true, value: "queued" });
     await result.announcementBatcher.flush();
 
     expect(order).toEqual(["allocate", "begin", "mark-unknown", "platform", "commit"]);
@@ -4051,29 +4077,53 @@ describe("setupCrossSession durable-store injection", () => {
       hasUncertainty: vi.fn(async () => ({ ok: true as const, value: true })),
       listUnreconciled: vi.fn(async () => ({ ok: true as const, value: [] })),
     };
-    const deliverToChannel = mode === "response-loss"
-      ? vi.fn().mockRejectedValue(new Error("response lost after platform call"))
-      : vi.fn(async () => ({
-          ok: true as const,
-          value: {
-            chunks: [{
-              status: "rejected" as const,
-              error: new Error("transport rejected"),
-              errorKind: "platform" as const,
-              charCount: 20,
-              retried: false,
-            }],
-            totalChars: 20,
-            platform: {
-              status: "rejected" as const,
-              errorKind: "platform" as const,
-              deliveredChunks: 0,
-              failedChunks: 1,
-              settledAtMs: 1,
-            },
-            queueDisposition: "settled" as const,
+    const deliverToChannel = vi.fn(async (
+      adapter: DeliveryAdapter,
+      channelId: string,
+      text: string,
+      options: DeliverToChannelOptions,
+      sendChunk?: DeliveryChunkSender,
+    ) => {
+      if (!sendChunk) throw new Error("governed chunk sender unavailable");
+      const sent = await sendChunk({
+        adapter: {
+          ...adapter,
+          sendMessage: vi.fn(async () => {
+            if (mode === "response-loss") {
+              throw new Error("response lost after platform call");
+            }
+            return { ok: false as const, error: new Error("400 transport rejected") };
+          }),
+        },
+        channelId,
+        text,
+        options: options.threadId ? { threadId: options.threadId } : {},
+        chunkIndex: 0,
+        totalChunks: 1,
+      });
+      const error = sent.ok ? new Error("expected governed chunk rejection") : sent.error;
+      return {
+        ok: true as const,
+        value: {
+          chunks: [{
+            status: "rejected" as const,
+            error,
+            errorKind: "platform" as const,
+            charCount: 20,
+            retried: false,
+          }],
+          totalChars: 20,
+          platform: {
+            status: "rejected" as const,
+            errorKind: "platform" as const,
+            deliveredChunks: 0,
+            failedChunks: 1,
+            settledAtMs: 1,
           },
-        }));
+          queueDisposition: "settled" as const,
+        },
+      };
+    });
     const deps = createMinimalDeps({
       outwardLedger,
       resolveRootRunId: vi.fn(() => ({ ok: true as const, value: "root-retained" })),
@@ -4091,7 +4141,7 @@ describe("setupCrossSession durable-store injection", () => {
     mkdirSync(deps.container.config.dataDir, { recursive: true });
     const result = setupCrossSession(deps);
 
-    result.announcementBatcher.enqueue({
+    const admitted = await result.announcementBatcher.enqueue({
       announcementText: "[System Message]\nResult: retained",
       terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
@@ -4109,6 +4159,7 @@ describe("setupCrossSession durable-store injection", () => {
       idempotencyKey: `default:agent:agent-1:user1:chan1::completion-${mode}`,
       reservationRootRunId: "root-retained",
     });
+    expect(admitted).toEqual({ ok: true, value: "queued" });
     await result.announcementBatcher.flush();
 
     expect(deliverToChannel).toHaveBeenCalledOnce();

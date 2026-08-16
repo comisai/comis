@@ -32,11 +32,12 @@ import {
 import { fromPromise, TimeoutError, withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type {
-  AnnouncementBatcher,
-  AnnouncementDeadLetterQueue,
-  CompletionAttachmentShape,
-  SendGovernedCompletionAnnouncement,
+import {
+  isGovernedCompletionAnnouncementConfirmedDelivered,
+  type AnnouncementBatcher,
+  type AnnouncementDeadLetterQueue,
+  type CompletionAttachmentShape,
+  type SendGovernedCompletionAnnouncement,
 } from "./announcement-ports.js";
 import { createCompletionAnnouncementOperationPlan } from "./completion-announcement-operations.js";
 import { buildAnnounceKey, type DeliveryDedup } from "./announce-key.js";
@@ -713,7 +714,13 @@ export async function deliverAnnouncement(params: {
         completionKeys: [announceKey],
         ...(threadId ? { threadId } : {}),
         ...(operation.partId ? { partId: operation.partId } : {}),
-        ...(operation.attachment ? { attachment: operation.attachment } : {}),
+        ...(operation.attachment ? {
+          attachment: {
+            kind: "source" as const,
+            sourceAgentId: operation.attachment.sourceAgentId,
+            path: operation.attachment.path,
+          },
+        } : {}),
       };
     });
     const transitioned = await fromPromise(deps.deadLetterQueue.replaceDecisions(
@@ -951,7 +958,9 @@ async function deliverFailureNotificationOnce(
       completionKeys: [announceKey],
       ...(threadId ? { options: { threadId } } : {}),
     }));
-    delivered = boundary.ok && boundary.value.ok && boundary.value.value.delivered;
+    delivered = boundary.ok
+      && boundary.value.ok
+      && isGovernedCompletionAnnouncementConfirmedDelivered(boundary.value.value);
   } else {
     const boundary = await fromPromise(deps.sendToChannel(
       params.channelType,

@@ -57,6 +57,7 @@ import {
   type DeliveryQueueTransition,
   type DeliveryQueueTransitionFailure,
   type DeliveryAdapter,
+  type DeliveryChunkSender,
   type DeliverToChannelOptions,
   type DeliveryStrategy,
   type ChunkDeliveryResult,
@@ -254,6 +255,7 @@ export interface DeliveryService {
     channelId: string,
     text: string,
     options: DeliverToChannelOptions & { abortSignal?: AbortSignal },
+    sendChunk?: DeliveryChunkSender,
   ): Promise<Result<DeliveryResult, Error>>;
 
   /**
@@ -293,6 +295,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
       channelId: string,
       text: string,
       options: DeliverToChannelOptions & { abortSignal?: AbortSignal },
+      sendChunk?: DeliveryChunkSender,
     ): Promise<Result<DeliveryResult, Error>> {
       const startTime = deps.clock.now();
 
@@ -535,46 +538,46 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 adapter.channelType,
               ));
             } else {
-            // Persist only non-authority send metadata in optionsJson. The
-            // authority triple and endpoint have dedicated typed columns.
-            const persistedOptions: Record<string, unknown> = { ...sendOpts };
-            if (participantId !== undefined) persistedOptions.participantId = participantId;
-            const enqueueResult = await deps.deliveryQueue.enqueueInFlight({
-              text: chunk,
-              channelType: adapter.channelType,
-              channelId,
-              tenantId: persistenceScope.value.authority.tenantId,
-              agentId: persistenceScope.value.authority.agentId,
-              conversationRef: persistenceScope.value.authority.conversationRef,
-              destinationEndpoint: persistenceScope.value.destinationEndpoint,
-              optionsJson: JSON.stringify(persistedOptions),
-              origin: options?.origin ?? "unknown",
-              maxAttempts: 5,
-              createdAt: deps.clock.now(),
-              scheduledAt: deps.clock.now(),
-              expireAt: deps.clock.now() + 3_600_000, // 1 hour
-              traceId,
-            });
+              // Persist only non-authority send metadata in optionsJson. The
+              // authority triple and endpoint have dedicated typed columns.
+              const persistedOptions: Record<string, unknown> = { ...sendOpts };
+              if (participantId !== undefined) persistedOptions.participantId = participantId;
+              const enqueueResult = await deps.deliveryQueue.enqueueInFlight({
+                text: chunk,
+                channelType: adapter.channelType,
+                channelId,
+                tenantId: persistenceScope.value.authority.tenantId,
+                agentId: persistenceScope.value.authority.agentId,
+                conversationRef: persistenceScope.value.authority.conversationRef,
+                destinationEndpoint: persistenceScope.value.destinationEndpoint,
+                optionsJson: JSON.stringify(persistedOptions),
+                origin: options?.origin ?? "unknown",
+                maxAttempts: 5,
+                createdAt: deps.clock.now(),
+                scheduledAt: deps.clock.now(),
+                expireAt: deps.clock.now() + 3_600_000, // 1 hour
+                traceId,
+              });
 
-            if (enqueueResult.ok) {
-              entryId = enqueueResult.value;
-              // delivery:enqueued is emitted by the adapter (SqliteDeliveryQueueAdapter
-              // emits inside enqueueInFlight after the INSERT succeeds -- single source of
-              // truth). No-op here.
-            } else {
-              queueTransitionFailures.push(reportQueueTransitionFailure(
-                deps, "enqueue_in_flight", null, enqueueResult.error,
-                channelId, adapter.channelType,
-              ));
-            }
-            // The platform send still proceeds so the returned transition error
-            // can retain the real send outcome instead of guessing whether the
-            // user received the chunk.
+              if (enqueueResult.ok) {
+                entryId = enqueueResult.value;
+                // delivery:enqueued is emitted by the adapter (SqliteDeliveryQueueAdapter
+                // emits inside enqueueInFlight after the INSERT succeeds -- single source of
+                // truth). No-op here.
+              } else {
+                queueTransitionFailures.push(reportQueueTransitionFailure(
+                  deps, "enqueue_in_flight", null, enqueueResult.error,
+                  channelId, adapter.channelType,
+                ));
+              }
+              // The platform send still proceeds so the returned transition error
+              // can retain the real send outcome instead of guessing whether the
+              // user received the chunk.
             }
           }
 
           // Send with or without retry
-          const retried = Boolean(deps.retryEngine);
+          const retried = sendChunk === undefined && Boolean(deps.retryEngine);
           const chunkSendStart = deps.clock.now();
 
           // Build the send promise WITHOUT awaiting yet, so we can register it
@@ -584,8 +587,17 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           // and `drainInFlight()` will await it before tearing down adapters
           // (avoids orphaned SQLite delivery-queue acks and the resulting
           // duplicate-message retry on the next instance).
-          const sendPromise: Promise<Result<string, Error>> = deps.retryEngine
-            ? deps.retryEngine.sendWithRetry(
+          const sendPromise: Promise<Result<string, Error>> = sendChunk
+            ? sendChunk({
+                adapter,
+                channelId,
+                text: chunk,
+                options: sendOpts,
+                chunkIndex: i,
+                totalChunks: chunks.length,
+              })
+            : deps.retryEngine
+              ? deps.retryEngine.sendWithRetry(
                 // RetryEngine expects a ChannelPort-like adapter -- our
                 // DeliveryAdapter has the same sendMessage signature, so cast
                 // through unknown
@@ -594,7 +606,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 chunk,
                 sendOpts,
               )
-            : adapter.sendMessage(channelId, chunk, sendOpts);
+              : adapter.sendMessage(channelId, chunk, sendOpts);
 
           const tracked: Promise<unknown> = sendPromise;
           inFlightSends.add(tracked);

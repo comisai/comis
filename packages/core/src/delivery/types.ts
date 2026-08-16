@@ -42,6 +42,19 @@ export interface DeliveryAdapter {
   ): Promise<Result<string, Error>>;
 }
 
+export interface DeliveryChunkSendInput {
+  readonly adapter: DeliveryAdapter;
+  readonly channelId: string;
+  readonly text: string;
+  readonly options: SendMessageOptions;
+  readonly chunkIndex: number;
+  readonly totalChunks: number;
+}
+
+export type DeliveryChunkSender = (
+  input: DeliveryChunkSendInput,
+) => Promise<Result<string, Error>>;
+
 // -------------------------------------------------------------------------
 // Per-call options
 // -------------------------------------------------------------------------

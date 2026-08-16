@@ -9,7 +9,7 @@ import {
   ConversationRefSchema,
   toSafeErrorLogString,
   type AnnouncementChannelType,
-  type AnnouncementDeadLetterAttachment,
+  type AnnouncementDeadLetterAttachmentSnapshot,
   type AnnouncementDeadLetterEntry,
   type AnnouncementParentDecisionReservation,
   type AnnouncementParentDecisionReservationRecord,
@@ -91,16 +91,28 @@ function sameChannelEndpoint(
     && left.conversationKind === right.conversationKind;
 }
 
-function isDeadLetterAttachment(
+export function isDeadLetterAttachmentSnapshot(
   value: unknown,
-): value is AnnouncementDeadLetterAttachment {
+): value is AnnouncementDeadLetterAttachmentSnapshot {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return Object.keys(record).length === 2
+  return Object.keys(record).length === 8
+    && record.kind === "snapshot"
     && typeof record.sourceAgentId === "string"
     && record.sourceAgentId.length > 0
+    && typeof record.sourcePath === "string"
+    && record.sourcePath.length > 0
     && typeof record.path === "string"
-    && record.path.length > 0;
+    && record.path.length > 0
+    && typeof record.fileName === "string"
+    && record.fileName.length > 0
+    && typeof record.mimeType === "string"
+    && record.mimeType.length > 0
+    && typeof record.contentDigest === "string"
+    && /^[a-f0-9]{64}$/u.test(record.contentDigest)
+    && typeof record.sizeBytes === "number"
+    && Number.isSafeInteger(record.sizeBytes)
+    && record.sizeBytes >= 0;
 }
 
 function isCompletionKeys(value: unknown): value is readonly string[] {
@@ -216,7 +228,7 @@ function validDecision(entry: ParentDecisionReservation): boolean {
     && typeof entry.rootRunId === "string"
     && entry.rootRunId.length > 0
     && (entry.partId === undefined || (typeof entry.partId === "string" && entry.partId.length > 0))
-    && (entry.attachment === undefined || isDeadLetterAttachment(entry.attachment))
+    && (entry.attachment === undefined || isDeadLetterAttachmentSnapshot(entry.attachment))
     && isCompletionKeys(entry.completionKeys)
     && isRecoveryRoute(entry as unknown as Record<string, unknown>);
 }
@@ -237,6 +249,7 @@ export function createParentDecisionReservationStore(
   replace(
     expectedKeys: readonly string[],
     operations: readonly ParentDecisionReservation[],
+    settledCompletionKeys?: readonly string[],
   ): Promise<Result<{ created: boolean }, Error>>;
 } {
   async function reserve(
@@ -339,13 +352,16 @@ export function createParentDecisionReservationStore(
   async function replace(
     expectedKeys: readonly string[],
     operations: readonly ParentDecisionReservation[],
+    settledCompletionKeys: readonly string[] = [],
   ): Promise<Result<{ created: boolean }, Error>> {
     const load = await deps.load();
     if (!load.ok) return load;
     if (
       new Set(expectedKeys).size !== expectedKeys.length
       || expectedKeys.some((key) => typeof key !== "string" || key.length === 0)
-      || operations.length === 0
+      || new Set(settledCompletionKeys).size !== settledCompletionKeys.length
+      || settledCompletionKeys.some((key) => typeof key !== "string" || key.length === 0)
+      || operations.length + settledCompletionKeys.length === 0
       || operations.some((operation) => !validDecision(operation))
       || new Set(operations.map((operation) => operation.idempotencyKey)).size
         !== operations.length
@@ -355,7 +371,10 @@ export function createParentDecisionReservationStore(
 
     const current = deps.getReservations();
     const expected = new Set(expectedKeys);
-    const completionKeys = new Set(operations.flatMap((operation) => operation.completionKeys));
+    const completionKeys = new Set([
+      ...operations.flatMap((operation) => operation.completionKeys),
+      ...settledCompletionKeys,
+    ]);
     const expectedReservations = current.filter((reservation) =>
       expected.has(reservation.idempotencyKey));
     const alreadyTransitioned = current.some((reservation) =>
@@ -397,7 +416,7 @@ export function createParentDecisionReservationStore(
     const persisted = await deps.persist(next);
     if (!persisted.ok) return persisted;
     deps.replaceReservations(next);
-    return ok({ created: true });
+    return ok({ created: operations.length > 0 });
   }
 
   return { reserve, lookup, resolve, replace };
@@ -462,7 +481,7 @@ function isParentDecisionReservationRecord(
     && record.rootRunId.length > 0
     && isCompletionKeys(record.completionKeys)
     && isOptionalString(record.partId)
-    && (record.attachment === undefined || isDeadLetterAttachment(record.attachment))
+    && (record.attachment === undefined || isDeadLetterAttachmentSnapshot(record.attachment))
     && isRecoveryRoute(record);
 }
 
@@ -497,7 +516,7 @@ function isDeadLetterEntry(
     && isOptionalString(record.idempotencyKey)
     && isOptionalString(record.rootRunId)
     && isOptionalString(record.partId)
-    && (record.attachment === undefined || isDeadLetterAttachment(record.attachment))
+    && (record.attachment === undefined || isDeadLetterAttachmentSnapshot(record.attachment))
     && (record.completionKeys === undefined || isCompletionKeys(record.completionKeys))
     && (
       record.stepIndex === undefined
