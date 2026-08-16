@@ -76,7 +76,7 @@ import type {
   SendGovernedCompletionAnnouncement,
   SendRecoverableCompletionAnnouncement,
 } from "./announcement-ports.js";
-import type { DeliveryDedup } from "./announce-key.js";
+import { buildAnnounceKey, type DeliveryDedup } from "./announce-key.js";
 import {
   activelyAwaitedChildRunIds,
   hasIndependentAnnouncementAuthority,
@@ -1939,6 +1939,16 @@ function classifyCompletionErrorKind(
     deps.batcher?.markDelivered(idempotencyKey);
   };
 
+  const retireAnnouncementReplayGuards = (run: SubAgentRun): void => {
+    const completionKey = buildAnnounceKey(run.callerSessionKey, run.runId);
+    if (!completionKey || !deps.deadLetterQueue?.retireTerminalDecisions) return;
+    suppressError(
+      deps.deadLetterQueue.retireTerminalDecisions([completionKey]),
+      "retire archived announcement replay guards",
+      (message) => deps.logger?.debug({ runId: run.runId }, message),
+    );
+  };
+
   const sweepInterval = timers.setInterval(() => {
     const now = clock.now();
     const retentionMs = deps.config.subAgentRetentionMs;
@@ -1970,6 +1980,7 @@ function classifyCompletionErrorKind(
         // Belt-and-suspenders: terminal-transition sites already remove the
         // dedup entry, but archive is the last chance to evict if those missed.
         removeDedupEntry(run);
+        retireAnnouncementReplayGuards(run);
         runs.delete(runId);
         completionDeferreds.delete(runId);
         startDeferreds.delete(runId);
@@ -2000,6 +2011,7 @@ function classifyCompletionErrorKind(
       for (let i = 0; i < toRemove && i < completedRuns.length; i++) {
         const [pruneRunId, pruneRun] = completedRuns[i]!;
         removeDedupEntry(pruneRun);
+        retireAnnouncementReplayGuards(pruneRun);
         runs.delete(pruneRunId);
         completionDeferreds.delete(pruneRunId);
         startDeferreds.delete(pruneRunId);

@@ -707,6 +707,7 @@ export interface BootContext {
   shutdownBackgroundProcesses?: ReturnType<typeof setupTools>["shutdownBackgroundProcesses"];
   /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
   proxyTypingCleanup?: ReturnType<typeof setupCrossSession>["proxyTypingCleanup"];
+  closeAnnouncementAdmission?: ReturnType<typeof setupCrossSession>["closeAnnouncementAdmission"];
   /** Output retention housekeeper handle (from setupOutputRetention). Undefined when defaultWorkspaceDir is empty. */
   outputRetentionHandle?: ReturnType<typeof setupOutputRetention>;
 

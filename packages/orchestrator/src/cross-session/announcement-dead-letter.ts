@@ -23,12 +23,14 @@ import type { GovernedAnnouncementAttachment } from "./announcement-outward-oper
 import { drainWithPreparedRecoveryAttachment } from "./announcement-dead-letter-attachment.js";
 import {
   createParentDecisionReservationStore,
+  isAnnouncementProducerHandoff,
   isAnnouncementTextChunks,
   isParentDecisionReservation,
   readDeadLetterSnapshot,
   writeDeadLetterEntries,
   type ChannelType,
   type DeadLetterEntry,
+  type AnnouncementProducerHandoffRecord,
   type ParentDecisionReservationRecord,
 } from "./announcement-dead-letter-file.js";
 import {
@@ -97,6 +99,7 @@ export function createAnnouncementDeadLetterQueue(
   } = opts;
   let entries: DeadLetterEntry[] = [];
   let decisionReservations: ParentDecisionReservationRecord[] = [];
+  let producerHandoffs: AnnouncementProducerHandoffRecord[] = [];
   let invalidRecords: InvalidDeadLetterRecord[] = [];
   const emittedAdmissionKeys = new Set<string>();
   const terminalDecisionStore = createAnnouncementTerminalDecisionStore(filePath);
@@ -212,9 +215,14 @@ export function createAnnouncementDeadLetterQueue(
       }
       const loadedEntries = read.value.entries.filter((entry): entry is DeadLetterEntry =>
         !isParentDecisionReservation(entry)
+        && !isAnnouncementProducerHandoff(entry)
         && !isInvalidDeadLetterRecord(entry));
       decisionReservations = read.value.entries.filter(isParentDecisionReservation);
+      producerHandoffs = read.value.entries.filter(isAnnouncementProducerHandoff);
       invalidRecords = read.value.entries.filter(isInvalidDeadLetterRecord);
+      if (producerHandoffs.length > maxEntries) {
+        return err(new Error("Announcement producer handoff capacity is invalid"));
+      }
       const recoveredInFlight = loadedEntries.some((entry) =>
         entry.lastError === "outward_operation_in_flight"
         || entry.lastError?.startsWith(CHUNK_IN_FLIGHT_PREFIX) === true);
@@ -233,7 +241,7 @@ export function createAnnouncementDeadLetterQueue(
       if (recoveredInFlight) {
         const recovered = await writeDeadLetterEntries(
           filePath,
-          [...entries, ...decisionReservations, ...invalidRecords],
+          [...entries, ...decisionReservations, ...producerHandoffs, ...invalidRecords],
           fileOperations,
         );
         if (!recovered.ok) return err(recovered.error.error);
@@ -244,6 +252,10 @@ export function createAnnouncementDeadLetterQueue(
             entry.attachment?.kind === "snapshot" ? [entry.attachment.path] : []),
           ...decisionReservations.flatMap((reservation) =>
             reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
+          ...producerHandoffs.flatMap((handoff) =>
+            handoff.operation.attachment?.kind === "snapshot"
+              ? [handoff.operation.attachment.path]
+              : []),
         ];
         const reconciled = await fromPromise(reconcileAttachments(referencedPaths));
         if (!reconciled.ok || !reconciled.value.ok) {
@@ -259,7 +271,10 @@ export function createAnnouncementDeadLetterQueue(
       }
       loaded = true;
       logger?.debug(
-        { entryCount: entries.length + decisionReservations.length + invalidRecords.length },
+        {
+          entryCount: entries.length + decisionReservations.length + invalidRecords.length,
+          producerHandoffCount: producerHandoffs.length,
+        },
         "Loaded dead-letter entries from disk",
       );
       return ok(undefined);
@@ -278,10 +293,11 @@ export function createAnnouncementDeadLetterQueue(
     nextEntries: readonly DeadLetterEntry[],
     nextReservations: readonly ParentDecisionReservationRecord[] = decisionReservations,
     nextInvalidRecords: readonly InvalidDeadLetterRecord[] = invalidRecords,
+    nextProducerHandoffs: readonly AnnouncementProducerHandoffRecord[] = producerHandoffs,
   ): Promise<Result<void, Error>> {
     const written = await writeDeadLetterEntries(
       filePath,
-      [...nextEntries, ...nextReservations, ...nextInvalidRecords],
+      [...nextEntries, ...nextReservations, ...nextProducerHandoffs, ...nextInvalidRecords],
       fileOperations,
     );
     if (written.ok) return written;
@@ -289,6 +305,7 @@ export function createAnnouncementDeadLetterQueue(
       entries = [...nextEntries];
       decisionReservations = [...nextReservations];
       invalidRecords = [...nextInvalidRecords];
+      producerHandoffs = [...nextProducerHandoffs];
     }
     return err(written.error.error);
   }
@@ -305,6 +322,20 @@ export function createAnnouncementDeadLetterQueue(
         hint: "release retained dead letters before admitting new completion operations; existing evidence remains intact",
       },
       "Dead-letter quarantine capacity exhausted",
+    );
+    return false;
+  }
+
+  function canPersistProducerHandoffs(nextCount: number): boolean {
+    if (nextCount <= maxEntries || nextCount <= producerHandoffs.length) return true;
+    logger?.warn(
+      {
+        producerHandoffCount: producerHandoffs.length,
+        maxEntries,
+        errorKind: "resource" as const,
+        hint: "allow retained announcements to drain before stopping additional completion producers",
+      },
+      "Announcement producer handoff capacity exhausted",
     );
     return false;
   }
@@ -370,6 +401,10 @@ export function createAnnouncementDeadLetterQueue(
         entry.attachment?.kind === "snapshot" ? [entry.attachment.path] : []),
       ...decisionReservations.flatMap((reservation) =>
         reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
+      ...producerHandoffs.flatMap((handoff) =>
+        handoff.operation.attachment?.kind === "snapshot"
+          ? [handoff.operation.attachment.path]
+          : []),
     ]);
     const cleanedPaths = new Set<string>();
     for (const candidate of candidates) {
@@ -513,7 +548,9 @@ export function createAnnouncementDeadLetterQueue(
         announcementText,
         partId,
         idempotencyKey,
-        completionKeys: [idempotencyKey],
+        completionKeys: owner.completionKeys?.some((key) => key !== owner.idempotencyKey)
+          ? [...new Set(owner.completionKeys.filter((key) => key !== owner.idempotencyKey))]
+          : [idempotencyKey],
       };
     });
   }
@@ -1349,11 +1386,17 @@ export function createAnnouncementDeadLetterQueue(
       if (!same.ok) return same;
       if (!same.value) return err(new Error("Dead-letter recovery key identity mismatch"));
       if (existing.lastError !== "transport_rejected") return ok({ claimed: false });
+      const now = systemNowMs();
+      if (
+        existing.attemptCount >= maxRetries
+        || now - existing.failedAt >= maxAgeMs
+        || now - existing.lastAttemptAt < retryIntervalMs
+      ) return ok({ claimed: false });
       const reclaimedEntries = entries.map((candidate) => candidate.id === existing.id
         ? {
             ...candidate,
             attemptCount: candidate.attemptCount + 1,
-            lastAttemptAt: systemNowMs(),
+            lastAttemptAt: now,
             lastError: "outward_operation_in_flight",
           }
         : candidate);
@@ -1777,6 +1820,7 @@ export function createAnnouncementDeadLetterQueue(
   ): Promise<void> {
     const load = await loadFromDisk();
     if (!load.ok) return;
+    await promoteProducerHandoffs();
     await adjudicateReservations(outwardLedger);
     if (entries.length === 0) return;
     const now = systemNowMs();
@@ -2042,7 +2086,6 @@ export function createAnnouncementDeadLetterQueue(
 
   async function reserveDecisionDurably(
     entry: AnnouncementParentDecisionReservation,
-    allowCapacityOverflow: boolean = false,
   ) {
     const loaded = await loadFromDisk();
     if (!loaded.ok) return loaded;
@@ -2060,6 +2103,9 @@ export function createAnnouncementDeadLetterQueue(
     }
     const existing = await decisionStore.lookup(entry.idempotencyKey);
     if (!existing.ok) return existing;
+    const deferred = producerHandoffs.find((handoff) =>
+      handoff.operation.idempotencyKey === entry.idempotencyKey);
+    if (deferred) return ok({ created: false, deferred: true });
     const prepared = await prepareReservedAttachment(
       entry,
       existing.value ? [existing.value] : [],
@@ -2067,7 +2113,6 @@ export function createAnnouncementDeadLetterQueue(
     if (!prepared.ok) return prepared;
     const reserved = await decisionStore.reserve(
       prepared.value.entry as AnnouncementParentDecisionReservation,
-      allowCapacityOverflow,
     );
     if (
       (!reserved.ok || !reserved.value.created)
@@ -2095,6 +2140,148 @@ export function createAnnouncementDeadLetterQueue(
     return reserved;
   }
 
+  async function handoffDecisionsDurably(
+    expectedKeys: readonly string[],
+    operations: readonly AnnouncementParentDecisionReservation[],
+  ): Promise<Result<{ created: boolean; deferred: boolean }, Error>> {
+    const loaded = await loadFromDisk();
+    if (!loaded.ok) return loaded;
+    if (operations.length === 0 || operations.length > maxEntries) {
+      return err(new Error("Announcement producer handoff set is invalid"));
+    }
+    const operationKeys = new Set(operations.map((operation) => operation.idempotencyKey));
+    if (operationKeys.size !== operations.length) {
+      return err(new Error("Announcement producer handoff identities are invalid"));
+    }
+    const existing = producerHandoffs.filter((handoff) =>
+      operationKeys.has(handoff.operation.idempotencyKey));
+    const reusable = existing.map((handoff) => handoff.operation);
+    const preparedOperations: AnnouncementParentDecisionReservation[] = [];
+    const transientSnapshots: Array<{
+      attachment: AnnouncementDeadLetterAttachmentSnapshot;
+      cleanup: () => Promise<Result<void, Error>>;
+    }> = [];
+    for (const operation of operations) {
+      const prepared = await prepareReservedAttachment(operation, reusable);
+      if (!prepared.ok) {
+        await cleanupUnreferencedSnapshots(transientSnapshots);
+        return prepared;
+      }
+      const preparedOperation = prepared.value.entry as AnnouncementParentDecisionReservation;
+      preparedOperations.push(preparedOperation);
+      if (prepared.value.cleanup && preparedOperation.attachment?.kind === "snapshot") {
+        transientSnapshots.push({
+          attachment: preparedOperation.attachment,
+          cleanup: prepared.value.cleanup,
+        });
+      }
+    }
+    if (existing.length > 0) {
+      const existingKeys = new Set(existing.map((handoff) => handoff.operation.idempotencyKey));
+      const exact = existing.length === preparedOperations.length
+        && preparedOperations.every((operation) => {
+          const retained = existing.find((handoff) =>
+            handoff.operation.idempotencyKey === operation.idempotencyKey);
+          return retained !== undefined
+            && JSON.stringify(retained.operation) === JSON.stringify(operation)
+            && JSON.stringify(retained.expectedKeys) === JSON.stringify(expectedKeys);
+        })
+        && existingKeys.size === operationKeys.size;
+      await cleanupUnreferencedSnapshots(transientSnapshots);
+      return exact
+        ? ok({ created: false, deferred: true })
+        : err(new Error("Announcement producer handoff identity mismatch"));
+    }
+    if (!canPersistProducerHandoffs(producerHandoffs.length + preparedOperations.length)) {
+      await cleanupUnreferencedSnapshots(transientSnapshots);
+      return err(new Error("Announcement producer handoff capacity exhausted"));
+    }
+    const transitionId = tryCatch(() => randomUUID());
+    if (!transitionId.ok) {
+      await cleanupUnreferencedSnapshots(transientSnapshots);
+      return transitionId;
+    }
+    const records: AnnouncementProducerHandoffRecord[] = preparedOperations.map((operation) => ({
+      recordType: "producer_handoff",
+      id: `${transitionId.value}:${operation.idempotencyKey}`,
+      transitionId: transitionId.value,
+      expectedKeys: [...expectedKeys],
+      operation,
+    }));
+    const persisted = await persist(
+      entries,
+      decisionReservations,
+      invalidRecords,
+      [...producerHandoffs, ...records],
+    );
+    if (!persisted.ok) {
+      await cleanupUnreferencedSnapshots(transientSnapshots);
+      return persisted;
+    }
+    producerHandoffs = [...producerHandoffs, ...records];
+    return ok({ created: false, deferred: true });
+  }
+
+  async function promoteProducerHandoffs(): Promise<void> {
+    const transitionIds = [...new Set(producerHandoffs.map((handoff) => handoff.transitionId))];
+    for (const transitionId of transitionIds) {
+      const group = producerHandoffs.filter((handoff) => handoff.transitionId === transitionId);
+      const expectedKeys = group[0]?.expectedKeys;
+      if (!expectedKeys || group.some((handoff) =>
+        JSON.stringify(handoff.expectedKeys) !== JSON.stringify(expectedKeys))) continue;
+      const promotable: AnnouncementParentDecisionReservation[] = [];
+      const settledCompletionKeys = new Set<string>();
+      let terminalLookupFailed = false;
+      for (const handoff of group) {
+        const terminal = await lookupTerminalDecision(handoff.operation);
+        if (!terminal.ok) {
+          terminalLookupFailed = true;
+          break;
+        }
+        if (terminal.value === undefined) {
+          promotable.push(handoff.operation);
+          continue;
+        }
+        const terminalized = await terminalizeOwner(
+          handoff.operation,
+          terminal.value,
+          entries,
+          decisionReservations,
+        );
+        if (!terminalized.ok) {
+          terminalLookupFailed = true;
+          break;
+        }
+        for (const completionKey of handoff.operation.completionKeys) {
+          settledCompletionKeys.add(completionKey);
+        }
+      }
+      if (terminalLookupFailed) continue;
+      const promoted = await decisionStore.replace(
+        expectedKeys,
+        promotable,
+        [...settledCompletionKeys],
+      );
+      if (!promoted.ok) {
+        if (promoted.error.message !== "Dead-letter quarantine capacity exhausted") {
+          logger?.warn(
+            {
+              errorKind: "resource" as const,
+              hint: "restore dead-letter storage before retrying the retained producer handoff",
+            },
+            "Announcement producer handoff could not be promoted",
+          );
+        }
+        continue;
+      }
+      const remaining = producerHandoffs.filter((handoff) =>
+        handoff.transitionId !== transitionId);
+      const removed = await persist(entries, decisionReservations, invalidRecords, remaining);
+      if (!removed.ok) continue;
+      producerHandoffs = remaining;
+    }
+  }
+
   return {
     enqueue: (entry, signal) => admitWithBackpressure(() => enqueueDurably(entry), signal),
     beginDeliveryAttempt: (entry, signal) =>
@@ -2104,7 +2291,7 @@ export function createAnnouncementDeadLetterQueue(
     reserveDecision: (entry, signal) => admitWithBackpressure(
       () => reserveDecisionDurably(entry),
       signal,
-      () => reserveDecisionDurably(entry, true),
+      () => handoffDecisionsDurably([], [entry]),
     ),
     lookupDecision: (idempotencyKey) =>
       serialize(() => decisionStore.lookup(idempotencyKey)),
@@ -2201,14 +2388,26 @@ export function createAnnouncementDeadLetterQueue(
             ? [{ attachment: reservation.attachment }]
             : []));
         return replaced;
-      }, signal),
+      }, signal, () => handoffDecisionsDurably(expectedKeys, operations)),
+    retireTerminalDecisions: (completionKeys) => serialize(async () => {
+      if (outwardLedger) return ok(undefined);
+      return terminalDecisionStore.retire(completionKeys);
+    }),
     drain: (sendToChannel, onDelivered) =>
       serializeStateChange(() => drainSerialized(sendToChannel, onDelivered)),
     durableStatus: () => serialize(async () => {
       const load = await loadFromDisk();
-      return load.ok ? ok(quarantineClassification().status) : load;
+      if (!load.ok) return load;
+      const status = quarantineClassification().status;
+      return ok({
+        ...status,
+        activeRecoveryCount: status.activeRecoveryCount + producerHandoffs.length,
+      });
     }),
-    size: () => entries.length + decisionReservations.length + invalidRecords.length,
+    size: () => entries.length
+      + decisionReservations.length
+      + producerHandoffs.length
+      + invalidRecords.length,
     listQuarantined: () => serialize(async () => {
       // Load before projecting: the in-memory lists are empty until some
       // operation has faulted the file in, and `list` is usually the FIRST

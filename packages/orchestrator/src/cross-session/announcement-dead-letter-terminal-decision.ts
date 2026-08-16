@@ -20,16 +20,15 @@ export interface AnnouncementTerminalDecisionRecord {
   readonly keyDigest: string;
   readonly outcome: AnnouncementTerminalDecision;
   readonly decidedAt: number;
+  readonly retirementKeyDigests: readonly string[];
 }
 
 type TerminalDecisionOwner = AnnouncementDeadLetterEntryInput
   | AnnouncementParentDecisionReservation;
 
 interface TerminalDecisionStoreOptions {
-  readonly maxRecords?: number;
+  readonly syncDirectory?: (path: string) => Promise<Result<void, Error>>;
 }
-
-const DEFAULT_MAX_TERMINAL_DECISIONS = 10_000;
 
 export function terminalDecisionIdentity(owner: TerminalDecisionOwner): {
   rootRunId: string;
@@ -46,6 +45,23 @@ function decisionDigest(owner: TerminalDecisionOwner): Result<string, Error> {
   return tryCatch(() => createHash("sha256")
     .update(`${identity.rootRunId}\u0000${identity.operationId}`, "utf8")
     .digest("hex"));
+}
+
+function retirementDigest(key: string): Result<string, Error> {
+  return tryCatch(() => createHash("sha256").update(key, "utf8").digest("hex"));
+}
+
+function retirementKeys(owner: TerminalDecisionOwner): Result<readonly string[], Error> {
+  const operationId = terminalDecisionIdentity(owner).operationId;
+  const logicalKeys = owner.completionKeys?.filter((key) => key !== operationId) ?? [];
+  const keys = logicalKeys.length > 0 ? [...new Set(logicalKeys)] : [operationId];
+  const digests: string[] = [];
+  for (const key of keys) {
+    const digest = retirementDigest(key);
+    if (!digest.ok) return digest;
+    digests.push(digest.value);
+  }
+  return ok(digests);
 }
 
 function decisionFilePath(filePath: string): Result<string, Error> {
@@ -77,7 +93,9 @@ export function createTerminalDecisionRecord(
   decidedAt: number,
 ): Result<AnnouncementTerminalDecisionRecord, Error> {
   const keyDigest = decisionDigest(owner);
-  return keyDigest.ok
+  if (!keyDigest.ok) return keyDigest;
+  const retirementKeyDigests = retirementKeys(owner);
+  return retirementKeyDigests.ok
     ? {
         ok: true,
         value: {
@@ -86,9 +104,10 @@ export function createTerminalDecisionRecord(
           keyDigest: keyDigest.value,
           outcome,
           decidedAt,
+          retirementKeyDigests: retirementKeyDigests.value,
         },
       }
-    : keyDigest;
+    : retirementKeyDigests;
 }
 
 export function isAnnouncementTerminalDecisionRecord(
@@ -108,7 +127,12 @@ export function isAnnouncementTerminalDecisionRecord(
       || record.outcome === "no_reply"
     )
     && typeof record.decidedAt === "number"
-    && Number.isFinite(record.decidedAt);
+    && Number.isFinite(record.decidedAt)
+    && Array.isArray(record.retirementKeyDigests)
+    && record.retirementKeyDigests.length > 0
+    && record.retirementKeyDigests.every((digest) =>
+      typeof digest === "string" && /^[a-f0-9]{64}$/u.test(digest))
+    && new Set(record.retirementKeyDigests).size === record.retirementKeyDigests.length;
 }
 
 export function createAnnouncementTerminalDecisionStore(
@@ -117,8 +141,8 @@ export function createAnnouncementTerminalDecisionStore(
 ): {
   lookup(owner: TerminalDecisionOwner): Promise<Result<AnnouncementTerminalDecision | undefined, Error>>;
   record(owner: TerminalDecisionOwner, outcome: AnnouncementTerminalDecision): Promise<Result<void, Error>>;
+  retire(completionKeys: readonly string[]): Promise<Result<void, Error>>;
 } {
-  const maxRecords = options.maxRecords ?? DEFAULT_MAX_TERMINAL_DECISIONS;
   const records = new Map<string, AnnouncementTerminalDecisionRecord>();
   let loaded = false;
   let operationTail: Promise<void> = Promise.resolve();
@@ -129,19 +153,8 @@ export function createAnnouncementTerminalDecisionStore(
     return result;
   }
 
-  function trimIndex(): void {
-    while (records.size > maxRecords) {
-      const oldest = records.keys().next().value;
-      if (oldest === undefined) return;
-      records.delete(oldest);
-    }
-  }
-
   async function load(): Promise<Result<void, Error>> {
     if (loaded) return ok(undefined);
-    if (!Number.isInteger(maxRecords) || maxRecords <= 0) {
-      return err(new Error("Announcement terminal decision capacity is invalid"));
-    }
     const path = decisionFilePath(filePath);
     if (!path.ok) return path;
     const content = await fromPromise(readFile(path.value, "utf8"));
@@ -165,43 +178,49 @@ export function createAnnouncementTerminalDecisionStore(
       records.delete(parsed.value.keyDigest);
       records.set(parsed.value.keyDigest, parsed.value);
     }
-    trimIndex();
     loaded = true;
     return ok(undefined);
   }
 
-  async function persist(): Promise<Result<void, Error>> {
+  async function persist(): Promise<{
+    result: Result<void, Error>;
+    snapshotVisible: boolean;
+  }> {
     const path = decisionFilePath(filePath);
-    if (!path.ok) return path;
+    if (!path.ok) return { result: path, snapshotVisible: false };
     const directory = dirname(path.value);
     const createdDirectory = await fromPromise(mkdir(directory, { recursive: true, mode: 0o700 }));
-    if (!createdDirectory.ok) return createdDirectory;
+    if (!createdDirectory.ok) return { result: createdDirectory, snapshotVisible: false };
     const nonce = tryCatch(() => randomUUID());
-    if (!nonce.ok) return nonce;
+    if (!nonce.ok) return { result: nonce, snapshotVisible: false };
     const temporaryPath = tryCatch(() => safePath(
       directory,
       `${basename(path.value)}.${nonce.value}.tmp`,
     ));
-    if (!temporaryPath.ok) return temporaryPath;
+    if (!temporaryPath.ok) return { result: temporaryPath, snapshotVisible: false };
     const serialized = tryCatch(() => records.size === 0
       ? ""
       : `${[...records.values()].map((record) => JSON.stringify(record)).join("\n")}\n`);
-    if (!serialized.ok) return serialized;
+    if (!serialized.ok) return { result: serialized, snapshotVisible: false };
     const handle = await fromPromise(open(temporaryPath.value, "wx", 0o600));
-    if (!handle.ok) return handle;
+    if (!handle.ok) return { result: handle, snapshotVisible: false };
     const written = await fromPromise(handle.value.writeFile(serialized.value, "utf8"));
     const synced = written.ok ? await fromPromise(handle.value.sync()) : written;
     const closed = await fromPromise(handle.value.close());
     if (!written.ok || !synced.ok || !closed.ok) {
       await removeFile(temporaryPath.value);
-      return !written.ok ? written : !synced.ok ? synced : closed;
+      return {
+        result: !written.ok ? written : !synced.ok ? synced : closed,
+        snapshotVisible: false,
+      };
     }
     const replaced = await fromPromise(rename(temporaryPath.value, path.value));
     if (!replaced.ok) {
       await removeFile(temporaryPath.value);
-      return replaced;
+      return { result: replaced, snapshotVisible: false };
     }
-    return syncDirectory(directory);
+    const directorySynced = await (options.syncDirectory ?? syncDirectory)(directory);
+    return { result: directorySynced, snapshotVisible: true };
   }
 
   async function lookupLoaded(
@@ -229,13 +248,49 @@ export function createAnnouncementTerminalDecisionStore(
       }
       const previous = new Map(records);
       records.set(created.value.keyDigest, created.value);
-      trimIndex();
       const persisted = await persist();
-      if (!persisted.ok) {
+      if (!persisted.result.ok && !persisted.snapshotVisible) {
         records.clear();
         for (const [key, record] of previous) records.set(key, record);
       }
-      return persisted;
+      return persisted.result;
+    }),
+    retire: (completionKeys) => serialize(async () => {
+      const loadedIndex = await load();
+      if (!loadedIndex.ok) return loadedIndex;
+      if (
+        completionKeys.length === 0
+        || completionKeys.some((key) => typeof key !== "string" || key.length === 0)
+      ) {
+        return err(new Error("Announcement terminal decision retirement is invalid"));
+      }
+      const retiredDigests = new Set<string>();
+      for (const key of new Set(completionKeys)) {
+        const digest = retirementDigest(key);
+        if (!digest.ok) return digest;
+        retiredDigests.add(digest.value);
+      }
+      const previous = new Map(records);
+      for (const [keyDigest, record] of records) {
+        const remaining = record.retirementKeyDigests.filter(
+          (digest) => !retiredDigests.has(digest),
+        );
+        if (remaining.length === record.retirementKeyDigests.length) continue;
+        if (remaining.length === 0) {
+          records.delete(keyDigest);
+        } else {
+          records.set(keyDigest, { ...record, retirementKeyDigests: remaining });
+        }
+      }
+      if (records.size === previous.size && [...records].every(
+        ([key, record]) => previous.get(key) === record,
+      )) return ok(undefined);
+      const persisted = await persist();
+      if (!persisted.result.ok && !persisted.snapshotVisible) {
+        records.clear();
+        for (const [key, record] of previous) records.set(key, record);
+      }
+      return persisted.result;
     }),
   };
 }

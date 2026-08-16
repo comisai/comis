@@ -79,6 +79,7 @@ export interface CrossSessionResult {
   deadLetterQueue?: ReturnType<typeof createAnnouncementDeadLetterQueue>;
   /** Announcement batcher for coalescing concurrent graph/sub-agent completions. */
   announcementBatcher: ReturnType<typeof createAnnouncementBatcher>;
+  closeAnnouncementAdmission: () => void;
   /**
    * Cleanup function for proxy-typing controllers + TTL sweep timer. Threaded
    * to the composition root for invocation via
@@ -273,6 +274,7 @@ export function setupCrossSession(deps: {
     dataDir: container.config.dataDir,
     agents: container.config.agents,
   });
+  const announcementAdmissionAbort = new AbortController();
   let textChunkQueue: ReturnType<typeof createAnnouncementDeadLetterQueue> | undefined;
   const {
     sendToChannelWithReceipt,
@@ -510,6 +512,7 @@ export function setupCrossSession(deps: {
         adaptersByType,
         deadLetterQueue,
         send: sendLedgerAnnouncement,
+        lifecycleSignal: announcementAdmissionAbort.signal,
         ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
         ...(deps.logger ? { logger: deps.logger } : {}),
       })
@@ -520,6 +523,7 @@ export function setupCrossSession(deps: {
         adaptersByType,
         deadLetterQueue,
         deliveryService: deps.deliveryService,
+        lifecycleSignal: announcementAdmissionAbort.signal,
         ...(deps.logger ? { logger: deps.logger } : {}),
       });
   const crossSessionSender = createCrossSessionSender({
@@ -720,6 +724,7 @@ export function setupCrossSession(deps: {
     announceToParent,
     deadLetterQueue,
     announcementBatcher,
+    closeAnnouncementAdmission: () => announcementAdmissionAbort.abort(),
     proxyTypingCleanup,
   };
 }

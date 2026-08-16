@@ -581,6 +581,46 @@ describe("AnnouncementDeadLetterQueue", () => {
     expect(dlq.size()).toBe(0);
   });
 
+  it("refuses direct reentry after its recovery attempts are exhausted", async () => {
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxRetries: 1,
+      retryIntervalMs: 0,
+    });
+    const entry = makeEntry({
+      idempotencyKey: "bounded-direct-reentry",
+      completionKeys: ["bounded-direct-reentry"],
+    });
+
+    await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: true }));
+    await dlq.settleDeliveryAttempt("bounded-direct-reentry", "rejected");
+    await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: true }));
+    await dlq.settleDeliveryAttempt("bounded-direct-reentry", "rejected");
+
+    await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: false }));
+  });
+
+  it("refuses direct reentry after its recovery retention window", async () => {
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxRetries: 5,
+      maxAgeMs: 1,
+      retryIntervalMs: 0,
+    });
+    const entry = makeEntry({
+      idempotencyKey: "aged-direct-reentry",
+      completionKeys: ["aged-direct-reentry"],
+      failedAt: Date.now() - 1_000,
+    });
+
+    await dlq.beginDeliveryAttempt(entry);
+    await dlq.settleDeliveryAttempt("aged-direct-reentry", "rejected");
+
+    await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: false }));
+  });
+
   it("parks entries after maxAgeMs until an operator releases them", async () => {
     const eventBus = createMockEventBus();
     const entry = makeFullEntry({
@@ -1314,7 +1354,8 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       eventBus: createMockEventBus(),
       maxEntries: 1,
     });
-    await expect(queue.reserveDecision(decisionInput())).resolves.toEqual(
+    const first = decisionInput({ failedAt: Date.now() });
+    await expect(queue.reserveDecision(first)).resolves.toEqual(
       ok({ created: true }),
     );
     const controller = new AbortController();
@@ -1322,15 +1363,85 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       idempotencyKey: "shutdown-handoff",
       runId: "run-shutdown-handoff",
       completionKeys: ["shutdown-handoff"],
+      failedAt: Date.now(),
     }), controller.signal);
 
     await delay(10);
     controller.abort();
 
-    await expect(retained).resolves.toEqual(ok({ created: true }));
+    await expect(retained).resolves.toEqual(ok({ created: false, deferred: true }));
+    await expect(queue.lookupDecision("shutdown-handoff")).resolves.toEqual(ok(undefined));
+    expect(queue.size()).toBe(2);
+
+    await expect(queue.resolveDecision(first.idempotencyKey, "no_reply"))
+      .resolves.toEqual(ok(true));
+    await queue.drain(vi.fn(async () => false));
     await expect(queue.lookupDecision("shutdown-handoff")).resolves.toMatchObject({
       ok: true,
       value: { idempotencyKey: "shutdown-handoff" },
+    });
+    expect(queue.size()).toBe(1);
+  });
+
+  it("hands off a cancelled attachment replacement atomically within its bound", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 2,
+    });
+    const first = decisionInput({ failedAt: Date.now() });
+    const second = decisionInput({
+      idempotencyKey: "capacity-owner-2",
+      runId: "capacity-run-2",
+      completionKeys: ["capacity-owner-2"],
+      failedAt: Date.now(),
+    });
+    await queue.replaceDecisions([], [first, second]);
+    const controller = new AbortController();
+    const attachment = decisionInput({
+      idempotencyKey: "attachment-handoff",
+      runId: "attachment-handoff-run",
+      completionKeys: ["attachment-handoff"],
+      failedAt: Date.now(),
+      partId: "attachment:0",
+      attachment: snapshotAttachment("worker-a", "handoff.txt"),
+    });
+    const summary = decisionInput({
+      idempotencyKey: "summary-handoff",
+      runId: "attachment-handoff-run",
+      completionKeys: ["summary-handoff"],
+      failedAt: Date.now(),
+    });
+    const retained = queue.replaceDecisions([], [attachment, summary], controller.signal);
+
+    await delay(10);
+    controller.abort();
+
+    await expect(retained).resolves.toEqual(ok({ created: false, deferred: true }));
+    expect(queue.size()).toBe(4);
+    const overflowController = new AbortController();
+    const overflow = queue.reserveDecision(decisionInput({
+      idempotencyKey: "overflow-handoff",
+      runId: "overflow-handoff-run",
+      completionKeys: ["overflow-handoff"],
+    }), overflowController.signal);
+    await delay(10);
+    overflowController.abort();
+    await expect(overflow).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Announcement producer handoff capacity exhausted" },
+    });
+    expect(queue.size()).toBe(4);
+    await queue.resolveDecision(first.idempotencyKey, "no_reply");
+    await queue.resolveDecision(second.idempotencyKey, "no_reply");
+    await queue.drain(vi.fn(async () => false));
+    await expect(queue.lookupDecision("attachment-handoff")).resolves.toMatchObject({
+      ok: true,
+      value: { idempotencyKey: "attachment-handoff" },
+    });
+    await expect(queue.lookupDecision("summary-handoff")).resolves.toMatchObject({
+      ok: true,
+      value: { idempotencyKey: "summary-handoff" },
     });
     expect(queue.size()).toBe(2);
   });

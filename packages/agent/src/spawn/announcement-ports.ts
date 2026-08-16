@@ -143,4 +143,4 @@ export interface AnnouncementBatcher {
 export type AnnouncementDeadLetterQueue = Pick<
   AnnouncementDeadLetterQueuePort,
   "enqueue" | "reserveDecision" | "lookupDecision" | "resolveDecision" | "replaceDecisions" | "drain" | "size"
->;
+> & Partial<Pick<AnnouncementDeadLetterQueuePort, "retireTerminalDecisions">>;

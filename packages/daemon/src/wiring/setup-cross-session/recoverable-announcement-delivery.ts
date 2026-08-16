@@ -39,6 +39,7 @@ interface RecoverableAnnouncementDeliveryDeps {
   resolveRootRunId?: RootRunIdResolver;
   send: SendGovernedCompletionAnnouncement;
   logger?: Pick<ComisLogger, "error" | "warn">;
+  lifecycleSignal?: AbortSignal;
 }
 
 interface ReceiptAwareRecoverableAnnouncementDeliveryDeps {
@@ -63,6 +64,7 @@ interface ReceiptAwareRecoverableAnnouncementDeliveryDeps {
   >;
   deliveryService: DeliveryService;
   logger?: Pick<ComisLogger, "error" | "warn">;
+  lifecycleSignal?: AbortSignal;
 }
 
 function reservationMatches(
@@ -184,6 +186,7 @@ export function createRecoverableAnnouncementDelivery(
   deps: RecoverableAnnouncementDeliveryDeps,
 ): SendGovernedCompletionAnnouncement {
   return async (request) => {
+    const admissionSignal = request.signal ?? deps.lifecycleSignal;
     const route = validateCompletionAnnouncementRoute(
       request,
       deps.adaptersByType.get(request.channelType),
@@ -278,10 +281,13 @@ export function createRecoverableAnnouncementDelivery(
     }
     if (!existing) {
       const reserveBoundary = await fromPromise(
-        deps.deadLetterQueue.reserveDecision(reservation, request.signal),
+        deps.deadLetterQueue.reserveDecision(reservation, admissionSignal),
       );
       if (!reserveBoundary.ok) return err(reserveBoundary.error);
       if (!reserveBoundary.value.ok) return reserveBoundary.value;
+      if (reserveBoundary.value.value.deferred) {
+        return ok({ delivered: false, failure: "operation_retained" });
+      }
     }
     const storedBoundary = await fromPromise(
       deps.deadLetterQueue.lookupDecision(operationId),
@@ -328,6 +334,7 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
   deps: ReceiptAwareRecoverableAnnouncementDeliveryDeps,
 ): SendRecoverableCompletionAnnouncement {
   return async (request) => {
+    const admissionSignal = request.signal ?? deps.lifecycleSignal;
     const route = validateCompletionAnnouncementRoute(
       request,
       deps.adaptersByType.get(request.channelType),
@@ -398,17 +405,17 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
     const replaceWithChunks = async (
       chunks: readonly string[],
       expectedKeys: readonly string[],
-    ): Promise<Result<void, Error>> => {
+    ): Promise<Result<boolean, Error>> => {
       const replacedBoundary = await fromPromise(
         deps.deadLetterQueue.replaceDecisions(
           expectedKeys,
           chunkReservations(chunks),
-          request.signal,
+          admissionSignal,
         ),
       );
       if (!replacedBoundary.ok) return err(replacedBoundary.error);
       if (!replacedBoundary.value.ok) return replacedBoundary.value;
-      return ok(undefined);
+      return ok(replacedBoundary.value.value.deferred !== true);
     };
     const existingBoundary = await fromPromise(
       deps.deadLetterQueue.lookupDecision(operationId),
@@ -422,10 +429,13 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
     let preparedChunks = existing?.textChunks;
     if (!existing) {
       const reservedBoundary = await fromPromise(
-        deps.deadLetterQueue.reserveDecision(reservation, request.signal),
+        deps.deadLetterQueue.reserveDecision(reservation, admissionSignal),
       );
       if (!reservedBoundary.ok) return err(reservedBoundary.error);
       if (!reservedBoundary.value.ok) return reservedBoundary.value;
+      if (reservedBoundary.value.value.deferred) {
+        return ok({ delivered: false, status: "unknown" });
+      }
       if (!reservedBoundary.value.value.created) {
         if (reservedBoundary.value.value.terminalDecision !== undefined) {
           return ok(terminalOutcome(reservedBoundary.value.value.terminalDecision));
@@ -444,7 +454,8 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
         preparedChunks,
         existing ? [operationId] : [],
       );
-      if (!transitioned.ok) return transitioned;
+      if (!transitioned.ok) return err(transitioned.error);
+      if (!transitioned.value) return ok({ delivered: false, status: "unknown" });
     }
     let activeChunks = preparedChunks;
     let suppressedTerminal: Exclude<OutwardTerminalDecision, "delivered"> | undefined;
@@ -472,10 +483,13 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
       }
       if (!storedBoundary.value.value) {
         const reservedBoundary = await fromPromise(
-          deps.deadLetterQueue.reserveDecision(chunkReservation, request.signal),
+          deps.deadLetterQueue.reserveDecision(chunkReservation, admissionSignal),
         );
         if (!reservedBoundary.ok) return err(reservedBoundary.error);
         if (!reservedBoundary.value.ok) return reservedBoundary.value;
+        if (reservedBoundary.value.value.deferred) {
+          return err(new Error("Recoverable announcement chunk was deferred"));
+        }
         const terminalDecision = reservedBoundary.value.value.terminalDecision;
         if (terminalDecision !== undefined) {
           if (terminalDecision !== "delivered") suppressedTerminal = terminalDecision;
@@ -504,7 +518,7 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
           ...(chunkReservation.threadId ? { threadId: chunkReservation.threadId } : {}),
           ...(chunkReservation.extra ? { extra: chunkReservation.extra } : {}),
           ...(chunkReservation.partId ? { partId: chunkReservation.partId } : {}),
-        }, request.signal),
+        }, admissionSignal),
       );
       if (!claimedBoundary.ok) return err(claimedBoundary.error);
       if (!claimedBoundary.value.ok) return claimedBoundary.value;
@@ -576,7 +590,10 @@ export function createReceiptAwareRecoverableAnnouncementDelivery(
                 if (!recordedBoundary.ok) return err(recordedBoundary.error);
                 if (!recordedBoundary.value.ok) return recordedBoundary.value;
                 const transitioned = await replaceWithChunks(chunks, [operationId]);
-                if (!transitioned.ok) return transitioned;
+                if (!transitioned.ok) return err(transitioned.error);
+                if (!transitioned.value) {
+                  return err(new Error("Recoverable announcement chunks were deferred"));
+                }
                 activeChunks = [...chunks];
                 return ok(undefined);
               },

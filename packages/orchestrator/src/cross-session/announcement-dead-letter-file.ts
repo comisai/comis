@@ -40,6 +40,14 @@ export type DeadLetterEntry = AnnouncementDeadLetterEntry;
 export type ParentDecisionReservation = AnnouncementParentDecisionReservation;
 export type ParentDecisionReservationRecord = AnnouncementParentDecisionReservationRecord;
 
+export interface AnnouncementProducerHandoffRecord {
+  readonly recordType: "producer_handoff";
+  readonly id: string;
+  readonly transitionId: string;
+  readonly expectedKeys: readonly string[];
+  readonly operation: AnnouncementParentDecisionReservation;
+}
+
 function isDeliveryAuthority(value: unknown): value is DeliveryAuthority {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
@@ -131,6 +139,7 @@ export function isAnnouncementTextChunks(value: unknown): value is readonly stri
 export type StoredDeadLetterEntry =
   | DeadLetterEntry
   | ParentDecisionReservationRecord
+  | AnnouncementProducerHandoffRecord
   | InvalidDeadLetterRecord;
 
 export interface DeadLetterReadSnapshot {
@@ -249,12 +258,30 @@ function validDecision(entry: ParentDecisionReservation): boolean {
     && isRecoveryRoute(entry as unknown as Record<string, unknown>);
 }
 
+export function isAnnouncementProducerHandoffRecord(
+  value: unknown,
+): value is AnnouncementProducerHandoffRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.recordType === "producer_handoff"
+    && typeof record.id === "string"
+    && record.id.length > 0
+    && typeof record.transitionId === "string"
+    && record.transitionId.length > 0
+    && Array.isArray(record.expectedKeys)
+    && new Set(record.expectedKeys).size === record.expectedKeys.length
+    && record.expectedKeys.every((key) => typeof key === "string" && key.length > 0)
+    && typeof record.operation === "object"
+    && record.operation !== null
+    && !Array.isArray(record.operation)
+    && validDecision(record.operation as AnnouncementParentDecisionReservation);
+}
+
 export function createParentDecisionReservationStore(
   deps: ParentDecisionReservationStoreDeps,
 ): {
   reserve(
     entry: ParentDecisionReservation,
-    allowCapacityOverflow?: boolean,
   ): Promise<Result<{ created: boolean }, Error>>;
   lookup(
     idempotencyKey: string,
@@ -271,7 +298,6 @@ export function createParentDecisionReservationStore(
 } {
   async function reserve(
     entry: ParentDecisionReservation,
-    allowCapacityOverflow: boolean = false,
   ): Promise<Result<{ created: boolean }, Error>> {
     const load = await deps.load();
     if (!load.ok) return load;
@@ -302,7 +328,7 @@ export function createParentDecisionReservationStore(
       ...deps.getReservations(),
       { ...entry, recordType: "parent_decision_reservation" as const, id: id.value },
     ];
-    if (!allowCapacityOverflow && !deps.canPersistReservationCount(next.length)) {
+    if (!deps.canPersistReservationCount(next.length)) {
       return err(new Error("Dead-letter quarantine capacity exhausted"));
     }
     const persisted = await deps.persist(next);
@@ -578,6 +604,12 @@ export function isParentDecisionReservation(
     && value.recordType === "parent_decision_reservation";
 }
 
+export function isAnnouncementProducerHandoff(
+  value: StoredDeadLetterEntry,
+): value is AnnouncementProducerHandoffRecord {
+  return "recordType" in value && value.recordType === "producer_handoff";
+}
+
 function parseEntries(
   content: string,
   logger?: StorageLogger,
@@ -603,6 +635,10 @@ function parseEntries(
       continue;
     }
     if (parsed.ok && isParentDecisionReservationRecord(value)) {
+      entries.push(value);
+      continue;
+    }
+    if (parsed.ok && isAnnouncementProducerHandoffRecord(value)) {
       entries.push(value);
       continue;
     }
@@ -727,6 +763,7 @@ export async function writeDeadLetterEntries(
   if (entries.some((entry) =>
     !isDeadLetterEntry(entry)
     && !isParentDecisionReservationRecord(entry)
+    && !isAnnouncementProducerHandoffRecord(entry)
     && !isInvalidDeadLetterRecord(entry))) {
     return writeFailure(
       new Error("Dead-letter snapshot contains an invalid record"),

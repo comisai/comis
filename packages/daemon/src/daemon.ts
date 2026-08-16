@@ -2274,7 +2274,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     sessionAdapters: handle.piSessionAdapters,
     trajectoryRegistry: handle.trajectoryRegistry,
   });
-  const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup } = setupCrossSession({
+  const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, closeAnnouncementAdmission, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
     sessionResolver, deliveryQueue, deliveryService,
@@ -2415,7 +2415,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
     suspendedAgents, modelCatalog, channelConfig, promptTimeoutTimestamps,
     // Teardown handles surfaced for ShutdownDeps wiring.
-    shutdownBackgroundProcesses, proxyTypingCleanup,
+    shutdownBackgroundProcesses, closeAnnouncementAdmission, proxyTypingCleanup,
     outputRetentionHandle,
   });
 }
@@ -2647,7 +2647,7 @@ async function bootShutdown(
     | "sessionStoreBridge" | "shutdownRef" | "hotAdd" | "hotRemove" | "rpcDispatchDeps"
     | "activeExecutions" | "getActiveConnectionCount" | "wsConnections"
     | "heartbeatRunner" | "duplicateDetector" | "heartbeatCoordinator"
-    | "stopChannelHealthMonitor" | "stopChannelLivenessMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
+    | "stopChannelHealthMonitor" | "stopChannelLivenessMonitor" | "shutdownBackgroundProcesses" | "closeAnnouncementAdmission" | "proxyTypingCleanup"
     | "outputRetentionHandle"
     | "bgCompletionRunnerContext" | "trajectoryRegistry"
     | "auditAggregator" | "onSuspiciousContent"
@@ -2682,8 +2682,8 @@ async function bootShutdown(
     sessionStoreBridge, shutdownRef, gatewayHandle,
     activeExecutions, getActiveConnectionCount,
     trajectoryRegistry,
-    // 9 new teardown handles surfaced through BootContext.
-    shutdownBackgroundProcesses, proxyTypingCleanup,
+    // Teardown handles surfaced through BootContext.
+    shutdownBackgroundProcesses, closeAnnouncementAdmission, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
     bgCompletionRunnerContext, terminalWakeContext, stopChannelHealthMonitor, stopChannelLivenessMonitor, mcpClientManager,
     // The background video poller (undefined when video disabled) —
@@ -2728,14 +2728,13 @@ async function bootShutdown(
     disposeActivityStream, otelShutdown: otelHandle ? () => otelHandle.shutdown() : undefined, // drain ActivityStream; flush+close the OTLP/Prometheus exporter (stops /metrics listener)
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
-    // 9 new teardown fields (8 production subscribers + setup-tools
-    // split into background-processes + mcp-client-manager).
-    // Each was previously a silent no-op subscriber.
+    // Teardown fields surfaced by subsystem composition roots.
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll: () => mcpClientManager.disconnectAll(),
     bgCompletionRunnerShutdown: () => bgCompletionRunnerContext.runner.shutdown(),
     // Drain the terminal wake-FSM (unsubscribe + await in-flight woken turns).
     terminalWakeShutdown: terminalWakeContext ? () => terminalWakeContext.shutdown() : undefined,
+    closeAnnouncementAdmission,
     proxyTypingCleanup,
     shutdownDeliveryQueue,
     // SIGTERM clears the poller's sweeper interval + stops in-flight

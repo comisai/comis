@@ -964,11 +964,17 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   it("auto-archive removes old completed runs after retention period", async () => {
     deps.config.subAgentRetentionMs = 60_000; // 1 minute for test
+    const retireTerminalDecisions = vi.fn(async () => ok(undefined));
+    deps.deadLetterQueue = {
+      retireTerminalDecisions,
+      drain: vi.fn(async () => undefined),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
 
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
       task: "short task",
       agentId: "default",
+      callerSessionKey: "default:user_a:telegram:chat-1",
     });
 
     // Complete the run
@@ -991,6 +997,9 @@ describe("createSubAgentRunner", () => {
 
     // sessionStore.delete should have been called
     expect(deps.sessionStore.delete).toHaveBeenCalledTimes(1);
+    expect(retireTerminalDecisions).toHaveBeenCalledWith([
+      `default:user_a:telegram:chat-1::${runId}`,
+    ]);
 
     // Archive event should have been emitted
     expect(deps.eventBus.emit).toHaveBeenCalledWith(

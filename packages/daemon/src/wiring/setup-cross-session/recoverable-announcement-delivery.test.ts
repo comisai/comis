@@ -387,4 +387,47 @@ describe("receipt-aware completion announcement delivery", () => {
     );
     expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
   });
+
+  it("cancels direct admission through the shared delivery lifecycle", async () => {
+    const lifecycle = new AbortController();
+    const deliveryService = { deliverToChannel: vi.fn() };
+    const reserveDecision = vi.fn((_entry, signal?: AbortSignal) =>
+      new Promise<{ ok: true; value: { created: boolean; deferred: boolean } }>((resolve) => {
+        const retain = (): void => {
+          resolve(ok({ created: false, deferred: true }));
+        };
+        if (signal?.aborted) {
+          retain();
+        } else {
+          signal?.addEventListener("abort", retain, { once: true });
+        }
+      }));
+    const delivery = createReceiptAwareRecoverableAnnouncementDelivery({
+      adaptersByType: new Map([
+        ["telegram", {
+          channelId: "telegram-primary",
+          channelType: "telegram",
+          sendMessage: vi.fn(),
+        }],
+      ]),
+      deadLetterQueue: {
+        lookupDecision: vi.fn(async () => ok(undefined)),
+        lookupDecisionTextChunks: vi.fn(async () => ok(undefined)),
+        reserveDecision,
+        recordDecisionTextChunks: vi.fn(async () => ok(undefined)),
+        replaceDecisions: vi.fn(async () => ok({ created: false })),
+        beginDeliveryAttempt: vi.fn(async () => ok({ claimed: false })),
+        settleDeliveryAttempt: vi.fn(async () => ok(false)),
+      },
+      deliveryService: deliveryService as unknown as DeliveryService,
+      lifecycleSignal: lifecycle.signal,
+    });
+
+    const pending = delivery(makeRequest());
+    lifecycle.abort();
+
+    await expect(pending).resolves.toEqual(ok({ delivered: false, status: "unknown" }));
+    expect(reserveDecision).toHaveBeenCalledWith(expect.any(Object), lifecycle.signal);
+    expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
+  });
 });

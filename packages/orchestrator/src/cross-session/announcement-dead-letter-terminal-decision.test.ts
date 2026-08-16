@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { err } from "@comis/shared";
 import {
   createAnnouncementTerminalDecisionStore,
   createTerminalDecisionRecord,
@@ -60,23 +61,46 @@ describe("announcement terminal decisions", () => {
     await expect(store.record(owner, "discarded")).resolves.toMatchObject({ ok: false });
   });
 
-  it("compacts the ledgerless decision index to its replay horizon", async () => {
-    const store = createAnnouncementTerminalDecisionStore(filePath, { maxRecords: 2 });
+  it("retires replay guards only when their producer completion retires", async () => {
+    const store = createAnnouncementTerminalDecisionStore(filePath);
     const second = { ...owner, runId: "run-2", idempotencyKey: "operation-2" };
     const third = { ...owner, runId: "run-3", idempotencyKey: "operation-3" };
 
     await store.record(owner, "delivered");
     await store.record(second, "discarded");
-    await store.record(third, "no_reply");
+    await store.record({
+      ...third,
+      completionKeys: ["completion-3a", "completion-3b"],
+    }, "no_reply");
 
-    await expect(store.lookup(owner)).resolves.toEqual({ ok: true, value: undefined });
+    await expect(store.retire(["completion-3a"])).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    await expect(store.lookup(owner)).resolves.toEqual({ ok: true, value: "delivered" });
     await expect(store.lookup(second)).resolves.toEqual({ ok: true, value: "discarded" });
     await expect(store.lookup(third)).resolves.toEqual({ ok: true, value: "no_reply" });
+    await expect(store.retire(["completion-3b"])).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    await expect(store.lookup(third)).resolves.toEqual({ ok: true, value: undefined });
     expect(await readdir(directory)).toEqual(["dead-letters.jsonl.terminal-decisions.jsonl"]);
     const rows = (await readFile(
       join(directory, "dead-letters.jsonl.terminal-decisions.jsonl"),
       "utf8",
     )).trim().split("\n");
     expect(rows).toHaveLength(2);
+  });
+
+  it("keeps a terminal guard authoritative after its renamed index is visible", async () => {
+    const store = createAnnouncementTerminalDecisionStore(filePath, {
+      syncDirectory: async () => err(new Error("directory sync failed")),
+    });
+
+    await expect(store.record(owner, "no_reply")).resolves.toMatchObject({ ok: false });
+    await expect(store.lookup(owner)).resolves.toEqual({ ok: true, value: "no_reply" });
+    await expect(createAnnouncementTerminalDecisionStore(filePath).lookup(owner))
+      .resolves.toEqual({ ok: true, value: "no_reply" });
   });
 });

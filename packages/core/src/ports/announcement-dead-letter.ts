@@ -150,6 +150,7 @@ export interface AnnouncementDeliveryAttemptClaim {
 
 export interface AnnouncementDecisionReservationOutcome {
   readonly created: boolean;
+  readonly deferred?: boolean;
   readonly terminalDecision?: OutwardTerminalDecision;
 }
 
@@ -193,7 +194,10 @@ export interface AnnouncementDeadLetterQueuePort {
     expectedKeys: readonly string[],
     operations: readonly AnnouncementParentDecisionReservation[],
     signal?: AbortSignal,
-  ): Promise<Result<{ created: boolean }, Error>>;
+  ): Promise<Result<{ created: boolean; deferred?: boolean }, Error>>;
+  retireTerminalDecisions(
+    completionKeys: readonly string[],
+  ): Promise<Result<void, Error>>;
   drain(
     sendToChannel: (
       type: AnnouncementChannelType,
