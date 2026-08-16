@@ -15,6 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok, type Result } from "@comis/shared";
 import type {
+  ChannelEndpoint,
+  DeliveryAuthority,
   OutwardSendLedgerPort,
   OutwardSendRecord,
   OutwardSendState,
@@ -1340,14 +1342,32 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
   it("commits a receipt-aware absent-row delivery before removing the dead letter", async () => {
     const eventBus = createMockEventBus();
     const logger = createMockLogger();
-    const entry = makeFullEntry({
-      runId: "run-uncommitted-1",
-      idempotencyKey: "default:u1:c1::run-uncommitted-1",
-      rootRunId: "root-uncommitted-1",
-      stepIndex: 9,
+    const deliveryAuthority = {
+      tenantId: "default",
       agentId: "parent-agent",
-      announcementText: "private completion payload",
-    } as Partial<DeadLetterEntry>) as GovernedDeadLetterEntry;
+      conversationRef: "cv_1234567890123456789012345678901234567890123",
+    } as DeliveryAuthority;
+    const destinationEndpoint = {
+      channelType: "telegram",
+      channelInstanceId: "telegram-bot-a",
+      conversationId: "chat-123",
+      conversationKind: "direct",
+    } satisfies ChannelEndpoint;
+    const entry = {
+      ...makeFullEntry({
+        runId: "run-uncommitted-1",
+        idempotencyKey: "default:u1:c1::run-uncommitted-1",
+        rootRunId: "root-uncommitted-1",
+        stepIndex: 9,
+        agentId: "parent-agent",
+        announcementText: "private completion payload",
+      } as Partial<DeadLetterEntry>),
+      deliveryAuthority,
+      destinationEndpoint,
+    } as GovernedDeadLetterEntry & {
+      deliveryAuthority: DeliveryAuthority;
+      destinationEndpoint: ChannelEndpoint;
+    };
     await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
 
     const { ledger, lookupCalls } = makeStubLedger({ lookupResult: ok(undefined) });
@@ -1372,6 +1392,12 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(lookupCalls).toEqual([["root-uncommitted-1", 9]]);
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(governedSendToChannel).toHaveBeenCalledOnce();
+    expect(governedSendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-123",
+      "private completion payload",
+      { authority: deliveryAuthority, destinationEndpoint },
+    );
     expect(ledger.begin).toHaveBeenCalledWith({
       rootRunId: "root-uncommitted-1",
       stepIndex: 9,
