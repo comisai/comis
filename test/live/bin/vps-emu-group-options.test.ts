@@ -9,7 +9,7 @@
  * made the group's bot member a different bot than the daemon authenticates as, so
  * `isBotMentioned` was permanently false. Both must throw, naming the expected shape.
  */
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   assertValidGroupSpec,
   EMULATOR_BOT_ID,
@@ -20,11 +20,25 @@ import {
 
 const members = [{ id: 678314278, firstName: "U1", username: "u1" }];
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("nextStandaloneMessageIdBase", () => {
   it("does not rewind message identity when ephemeral launcher state is absent", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
 
     expect(nextStandaloneMessageIdBase(undefined)).toBe(1_786_863_916);
+  });
+
+  it("keeps a persisted reservation that is ahead of the wall-clock floor", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
+
+    expect(nextStandaloneMessageIdBase({ messageIdBase: 2_000_000_000 })).toBe(2_001_000_000);
+  });
+
+  it("advances stale persisted state to the wall-clock floor", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
+
+    expect(nextStandaloneMessageIdBase({ messageIdBase: 100 })).toBe(1_786_863_916);
   });
 });
 

@@ -15,6 +15,7 @@ export interface StandaloneGroupSpec {
 
 const FIRST_MESSAGE_ID = 100;
 const RESTART_MESSAGE_ID_BLOCK = 1_000_000;
+const MESSAGE_ID_TIME_UNIT_MS = 1_000;
 
 interface StandaloneEmulatorState {
   readonly messageIdBase?: unknown;
@@ -24,15 +25,20 @@ interface StandaloneEmulatorState {
  * Reserve a fresh message-id block for each standalone emulator process.
  *
  * Telegram message ids do not rewind when a bot reconnects. The standalone
- * harness persists only this block base, so a restart cannot reuse a stable
- * `(bot, chat, message_id)` identity against an existing Comis session.
+ * harness advances the persisted block base and also applies a wall-clock
+ * floor. Losing an ephemeral wiring file therefore cannot reuse a stable
+ * `(bot, chat, message_id)` identity retained by an existing Comis session.
  */
 export function nextStandaloneMessageIdBase(
   previous: StandaloneEmulatorState | undefined,
 ): number {
-  if (previous === undefined) return FIRST_MESSAGE_ID;
+  const freshBase = Math.max(
+    FIRST_MESSAGE_ID,
+    Math.floor(Date.now() / MESSAGE_ID_TIME_UNIT_MS),
+  );
+  if (previous === undefined) return freshBase;
   if (previous.messageIdBase === undefined) {
-    return FIRST_MESSAGE_ID + RESTART_MESSAGE_ID_BLOCK;
+    return Math.max(freshBase, FIRST_MESSAGE_ID + RESTART_MESSAGE_ID_BLOCK);
   }
   if (
     typeof previous.messageIdBase !== "number" ||
@@ -42,7 +48,10 @@ export function nextStandaloneMessageIdBase(
   ) {
     throw new TypeError("Standalone emulator state has an invalid messageIdBase");
   }
-  return previous.messageIdBase + RESTART_MESSAGE_ID_BLOCK;
+  return Math.max(
+    freshBase,
+    previous.messageIdBase + RESTART_MESSAGE_ID_BLOCK,
+  );
 }
 
 /** The emulator's own bot identity — a group's bot member MUST match it or mentions can never fire. */
