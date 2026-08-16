@@ -78,6 +78,7 @@ import {
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
   createBackgroundRecoveryRecorder,
+  createDeadLetterRecoveryObserver,
   setupTerminalWake,
   setupMcp,
   selectMcpTokenStore,
@@ -2265,6 +2266,14 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // shutdown — modeled on the durable-resume two-phase boot hook.
   const worktreeRegistry = createWorktreeRegistry();
   const worktreeGitExec = toLifecycleGitExec(handle.execGit);
+  const ensureDeadLetterRecoveryObservation = createDeadLetterRecoveryObserver({
+    dataDir: boot.dataDir,
+    eventBus: container.eventBus,
+    logger: daemonLogger,
+    trajectoryConfig: resolveEffectiveTrajectoryConfig(container.config),
+    sessionAdapters: handle.piSessionAdapters,
+    trajectoryRegistry: handle.trajectoryRegistry,
+  });
   const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
@@ -2280,6 +2289,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     ...(durableRunFacts ? { durableRunFacts } : {}),
     // Trajectory-recorder release on sub-agent terminal settle — without it a dead child's recorder stays bus-subscribed and ingests other sessions' events.
     closeTrajectory: (formattedSessionKey: string) => handle.trajectoryRegistry.close(formattedSessionKey),
+    ensureDeadLetterRecoveryObservation,
     // The same outward ledger + rootRunId resolver gives announce() and DLQ
     // drain one retained operation identity (off ⇒ pass-through).
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),

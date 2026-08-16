@@ -4137,7 +4137,14 @@ describe("setupCrossSession durable-store injection", () => {
     };
     // Isolate the DLQ JSONL onto a unique temp dataDir so no stray
     // process.cwd()/dead-letters.jsonl leaks pre-existing entries into drain.
-    const deps = createMinimalDeps({ outwardLedger });
+    const ensureDeadLetterRecoveryObservation = vi.fn(() => ({
+      ok: true as const,
+      value: undefined,
+    }));
+    const deps = createMinimalDeps({
+      outwardLedger,
+      ensureDeadLetterRecoveryObservation,
+    });
     deps.container.config.dataDir = `${os.tmpdir()}/comis-dlq-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     mkdirSync(deps.container.config.dataDir, { recursive: true });
     const result = setupCrossSession(deps);
@@ -4189,6 +4196,10 @@ describe("setupCrossSession durable-store injection", () => {
 
     // The ledger was consulted and reported committed ⇒ the re-send was skipped.
     expect(outwardLedger.lookup).toHaveBeenCalledWith("root-dlq", 3);
+    expect(ensureDeadLetterRecoveryObservation).toHaveBeenCalledWith({
+      agentId: "parent-agent",
+      sessionKey: "default:u1:c1",
+    });
     expect(sendSpy).not.toHaveBeenCalled();
     expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-dlq");
     expect(dlq!.size()).toBe(0);

@@ -182,6 +182,11 @@ export function setupCrossSession(deps: {
    * lifetime and keeps ingesting events into the dead child's trajectory.
    */
   closeTrajectory?: (formattedSessionKey: string) => Promise<void>;
+  /** Ensures boot/off-turn recovery has a session-scoped trajectory bridge. */
+  ensureDeadLetterRecoveryObservation?: (input: {
+    agentId: string;
+    sessionKey: string;
+  }) => import("@comis/shared").Result<void, Error>;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
   // Build the three callback closures from injected deps.
@@ -398,6 +403,9 @@ export function setupCrossSession(deps: {
     // is the authoritative no-double-notify signal). Absent ⇒ at-least-once delivery.
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     ...(deps.outwardLedger ? { governedSendToChannel: sendToChannelWithReceipt } : {}),
+    ...(deps.ensureDeadLetterRecoveryObservation
+      ? { ensureSessionObservation: deps.ensureDeadLetterRecoveryObservation }
+      : {}),
   });
 
   // ONE bounded delivered-key store shared across every

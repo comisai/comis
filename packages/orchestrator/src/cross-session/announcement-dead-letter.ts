@@ -95,6 +95,11 @@ interface AnnouncementDeadLetterQueueOptions {
     text: string,
     options?: RecoveryDeliveryOptions,
   ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
+  /** Materialize the owning session observer before off-turn recovery events fire. */
+  ensureSessionObservation?: (input: {
+    agentId: string;
+    sessionKey: string;
+  }) => Result<void, Error>;
   fileOperations?: DeadLetterWriteOperations;
 }
 /** Create a JSONL-backed announcement dead-letter queue. */
@@ -234,6 +239,7 @@ export function createAnnouncementDeadLetterQueue(
     identity: Pick<GovernedEntryIdentity, "rootRunId" | "stepIndex" | "runId" | "sessionKey">,
     transition: LedgerTransition,
     outcome: LedgerOutcome,
+    details: { platformMessageId?: string } = {},
   ): void {
     emitObservationalEventSafely(
       { eventBus, logger },
@@ -245,6 +251,7 @@ export function createAnnouncementDeadLetterQueue(
         transition,
         outcome,
         sessionKey: identity.sessionKey,
+        ...details,
         timestamp: systemNowMs(),
       },
     );
@@ -435,6 +442,25 @@ export function createAnnouncementDeadLetterQueue(
       return "retained";
     }
     const identity = identityResult.value;
+    const ensureSessionObservation = opts.ensureSessionObservation;
+    if (ensureSessionObservation) {
+      const observed = tryCatch(() => ensureSessionObservation({
+        agentId: identity.agentId,
+        sessionKey: identity.sessionKey,
+      }));
+      if (!observed.ok || !observed.value.ok) {
+        logger?.warn(
+          {
+            runId: identity.runId,
+            rootRunId: identity.rootRunId,
+            stepIndex: identity.stepIndex,
+            errorKind: "resource" as const,
+            hint: "repair session trajectory storage; delivery recovery remains governed by its durable ledger",
+          },
+          "Dead-letter recovery session diagnostics could not be initialized",
+        );
+      }
+    }
 
     const existing = await ledger.lookup(identity.rootRunId, identity.stepIndex);
     if (!existing.ok) {
@@ -482,7 +508,9 @@ export function createAnnouncementDeadLetterQueue(
             retainBlockedEntry(entry, "outward_committed_receipt_missing");
             return "retained";
           }
-          emitLedgerTransition(identity, "lookup", "committed");
+          emitLedgerTransition(identity, "lookup", "committed", {
+            platformMessageId: existing.value.platformMessageId,
+          });
           return "receipt_already_committed";
         case "send_attempt_started":
         case "unknown_after_send":
@@ -621,7 +649,9 @@ export function createAnnouncementDeadLetterQueue(
       await parkGovernedEntry(ledger, entry, identity);
       return "retained";
     }
-    emitLedgerTransition(identity, "commit", "committed");
+    emitLedgerTransition(identity, "commit", "committed", {
+      platformMessageId: receipt,
+    });
     return "receipt_committed_now";
   }
 
