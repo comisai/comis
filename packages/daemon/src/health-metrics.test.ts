@@ -116,16 +116,11 @@ describe("promptTimeoutsLast5m sliding window counter", () => {
 // ---------------------------------------------------------------------------
 
 describe("ANNOUNCEMENT_QUARANTINE_HINT", () => {
-  // The hint sent operators to <dataDir>/dead-letters.jsonl, but the file is
-  // unlinked as soon as the queue drains to zero. Live, reading the WARN after a
-  // correct resolution meant finding no file at that path and concluding the
-  // user's announcement had been lost — the opposite of what had happened.
-  it("states that an absent dead-letter file means the quarantine already resolved", () => {
-    expect(ANNOUNCEMENT_QUARANTINE_HINT).toMatch(/dead-letters\.jsonl/);
-    // The lifecycle is the load-bearing half: naming the path without it is what
-    // turned a resolved quarantine into a phantom data-loss report.
-    expect(ANNOUNCEMENT_QUARANTINE_HINT).toMatch(/removed|absent|no longer|drain/i);
-    expect(ANNOUNCEMENT_QUARANTINE_HINT).toMatch(/resolved|already/i);
+  it("routes operators through the content-free quarantine command", () => {
+    expect(ANNOUNCEMENT_QUARANTINE_HINT).toContain(
+      "node packages/cli/dist/cli.js quarantine list",
+    );
+    expect(ANNOUNCEMENT_QUARANTINE_HINT).not.toContain("dead-letters.jsonl");
   });
 });
 
