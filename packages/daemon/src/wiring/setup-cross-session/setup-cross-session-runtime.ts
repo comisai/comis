@@ -444,8 +444,9 @@ export function setupCrossSession(deps: {
             "Retained text announcement has no governed operation identity",
           )));
         }
+        const { persistTextChunks, ...governedRequest } = governedText;
         return sendGovernedTextToChannelWithReceipt({
-          ...governedText,
+          ...governedRequest,
           channelType,
           channelId,
           text,
@@ -455,7 +456,7 @@ export function setupCrossSession(deps: {
               ...(options?.extra ? { extra: options.extra } : {}),
             },
           } : {}),
-        }, destinationEndpoint, deliveryAuthority).then((result) => {
+        }, destinationEndpoint, deliveryAuthority, persistTextChunks).then((result) => {
           if (!result.ok) return result;
           const outcome = result.value;
           if (outcome.delivered) {

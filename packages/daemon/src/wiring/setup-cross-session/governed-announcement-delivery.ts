@@ -95,6 +95,9 @@ export interface AnnouncementDelivery {
     request: GovernedAnnouncementRequest,
     destinationEndpoint: ChannelEndpoint,
     deliveryAuthority: DeliveryAuthority,
+    persistTextChunks?: (
+      chunks: readonly string[],
+    ) => Promise<Result<void, Error>>,
   ) => Promise<Result<GovernedAnnouncementSendOutcome, Error>>;
 }
 
@@ -183,13 +186,21 @@ export function createAnnouncementDelivery(
     request: GovernedAnnouncementRequest,
     destinationEndpoint: ChannelEndpoint,
     deliveryAuthority: DeliveryAuthority,
+    persistTextChunks?: (
+      chunks: readonly string[],
+    ) => Promise<Result<void, Error>>,
   ): Promise<Result<GovernedAnnouncementSendOutcome, Error>> => {
     const ledger = deps.outwardLedger;
     const adapter = deps.adaptersByType.get(request.channelType);
     if (!ledger || !adapter) {
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
-    if (!request.preparedTextChunks && !deps.recordTextChunks) {
+    const textChunkWriter = persistTextChunks
+      ?? (deps.recordTextChunks
+        ? (chunks: readonly string[]) => deps.recordTextChunks?.(request.operationId, chunks)
+          ?? Promise.resolve(err(new Error("Announcement text chunk storage is unavailable")))
+        : undefined);
+    if (!request.preparedTextChunks && !textChunkWriter) {
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
     const terminalDecision = await ledger.lookupTerminalDecision(
@@ -276,7 +287,7 @@ export function createAnnouncementDelivery(
         ? { kind: "prepared", chunks: request.preparedTextChunks }
         : {
             kind: "persist",
-            persist: (chunks) => deps.recordTextChunks?.(request.operationId, chunks)
+            persist: (chunks) => textChunkWriter?.(chunks)
               ?? Promise.resolve(err(new Error("Announcement text chunk storage is unavailable"))),
           },
     );

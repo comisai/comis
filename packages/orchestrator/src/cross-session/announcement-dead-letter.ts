@@ -804,7 +804,12 @@ export function createAnnouncementDeadLetterQueue(
             agentId: entry.agentId,
             sessionKey: entry.sessionKey,
             ...(entry.partId ? { partId: entry.partId } : {}),
-            ...(entry.textChunks ? { preparedTextChunks: entry.textChunks } : {}),
+            ...(entry.textChunks
+              ? { preparedTextChunks: entry.textChunks }
+              : {
+                  persistTextChunks: (chunks: readonly string[]) =>
+                    recordDrainingEntryTextChunks(entry, chunks),
+                }),
           },
         },
       ));
@@ -1082,6 +1087,21 @@ export function createAnnouncementDeadLetterQueue(
       decisionReservations = nextReservations;
     }
     return persisted;
+  }
+
+  async function recordDrainingEntryTextChunks(
+    entry: DeadLetterEntry,
+    chunks: readonly string[],
+  ): Promise<Result<void, Error>> {
+    if (!entry.idempotencyKey) {
+      return err(new Error("Announcement text chunk owner has no durable identity"));
+    }
+    const recorded = await recordDecisionTextChunksDurably(entry.idempotencyKey, chunks);
+    const authoritativeEntry = entries.find((candidate) => candidate.id === entry.id);
+    if (authoritativeEntry?.textChunks) {
+      entry.textChunks = [...authoritativeEntry.textChunks];
+    }
+    return recorded;
   }
 
   /** Settle reservations after the rewrite grace. The ledger decides whether

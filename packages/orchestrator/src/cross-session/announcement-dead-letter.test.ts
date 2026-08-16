@@ -13,6 +13,7 @@ import {
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { err, ok, type Result } from "@comis/shared";
 import {
   createConversationLocator,
@@ -25,12 +26,14 @@ import {
 
 import {
   createAnnouncementDeadLetterQueue,
+  type AnnouncementDeadLetterQueue,
   type ChannelType,
   type DeadLetterEntry,
   type AnnouncementLogger,
 } from "./announcement-dead-letter.js";
 import type { DeadLetterWriteOperations } from "./announcement-dead-letter-file.js";
 import { isSameAnnouncementRecovery } from "./announcement-dead-letter-identity.js";
+import type { RecoveryDeliveryOptions } from "./announcement-dead-letter-types.js";
 import { createMockLogger as _createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 
@@ -1669,6 +1672,46 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(governedSendToChannel).toHaveBeenCalledOnce();
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(ledger.allocateStep).not.toHaveBeenCalled();
+  });
+
+  it("persists a recovered chunk manifest without reentering the drain serializer", async () => {
+    const { ledger } = makeStubLedger();
+    let queue: AnnouncementDeadLetterQueue;
+    const governedSendToChannel = vi.fn(async (
+      _type: ChannelType,
+      _id: string,
+      _text: string,
+      options?: RecoveryDeliveryOptions,
+    ) => {
+      const operationId = options?.governedText?.operationId;
+      if (!operationId) return err(new Error("governed operation missing"));
+      const persistTextChunks = options.governedText.persistTextChunks
+        ?? ((chunks: readonly string[]) => queue.recordDecisionTextChunks(operationId, chunks));
+      const persisted = await persistTextChunks(["persisted recovery chunk"]);
+      if (!persisted.ok) return persisted;
+      return ok({
+        delivered: true as const,
+        status: "accepted" as const,
+        platformMessageId: "message-recovered-chunk",
+      });
+    });
+    queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel,
+      retryIntervalMs: 0,
+    });
+    await queue.reserveDecision(decisionInput({ rootRunId: "root-recovered-chunk" }));
+
+    const outcome = await Promise.race([
+      queue.drain(vi.fn(async () => true)).then(() => "drained" as const),
+      delay(250, "timed_out" as const),
+    ]);
+
+    expect(outcome).toBe("drained");
+    expect(governedSendToChannel).toHaveBeenCalledOnce();
+    expect(queue.size()).toBe(0);
   });
 
   it("replays persisted delivery extras with the original operation", async () => {

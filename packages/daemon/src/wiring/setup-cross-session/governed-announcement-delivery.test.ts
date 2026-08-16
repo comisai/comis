@@ -348,6 +348,47 @@ describe("completion announcement delivery wiring", () => {
     expect(adapter.sendMessage).toHaveBeenCalledTimes(2);
   });
 
+  it("uses a recovery-scoped chunk writer before the shared queue writer", async () => {
+    const ledger = makeLedger();
+    const deliveryService = makeDeliveryService();
+    const adapter = {
+      channelId: "telegram-primary",
+      channelType: "telegram",
+      sendMessage: vi.fn(async () => ok("message-recovered")),
+    };
+    const sharedWriter = vi.fn(async () => err(new Error("serializer reentry")));
+    const recoveryWriter = vi.fn(async () => ok(undefined));
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", adapter]]),
+      deliveryService,
+      eventBus,
+      outwardLedger: ledger,
+      recordTextChunks: sharedWriter,
+    });
+    const caller = makeChannelPrincipalCaller();
+
+    const result = await delivery.sendGovernedTextToChannelWithReceipt?.({
+      operationId: "operation-recovered",
+      rootRunId: "root-recovered",
+      runId: "run-recovered",
+      agentId: "agent-1",
+      sessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "recovered completion",
+      options: { threadId: "topic-7" },
+    }, caller.endpoint, {
+      tenantId: "tenant-a",
+      agentId: "agent-1",
+      conversationRef: caller.locator.conversationRef,
+    }, recoveryWriter);
+
+    expect(result).toMatchObject({ ok: true, value: { delivered: true } });
+    expect(recoveryWriter).toHaveBeenCalledWith(["recovered completion"]);
+    expect(sharedWriter).not.toHaveBeenCalled();
+    expect(adapter.sendMessage).toHaveBeenCalledOnce();
+  });
+
   it("preserves an unknown platform outcome as an uncertain governed failure", async () => {
     const ledger = makeLedger();
     const deliveryService = makeDeliveryService();

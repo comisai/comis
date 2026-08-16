@@ -29,6 +29,9 @@ export type RecoveryDeliveryOptions = AnnouncementDeliveryOptions & {
     sessionKey: string;
     partId?: string;
     preparedTextChunks?: readonly string[];
+    persistTextChunks?: (
+      chunks: readonly string[],
+    ) => Promise<import("@comis/shared").Result<void, Error>>;
   };
 };
 
