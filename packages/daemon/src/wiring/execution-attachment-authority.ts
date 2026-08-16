@@ -54,13 +54,20 @@ export interface ExecutionAttachmentRecoverySummary {
   readonly preserved: readonly string[];
 }
 
+export interface ExecutionAttachmentRecoveryInput {
+  readonly updatedBeforeMs: number;
+  readonly limit: number;
+}
+
+export interface ExecutionAttachmentServiceRecoveryInput extends ExecutionAttachmentRecoveryInput {
+  readonly serviceInstanceId: string;
+}
+
 export interface ExecutionAttachmentAuthority {
   create(input: ExecutionAttachmentCreateInput): Promise<Result<ExecutionAttachmentAuthorityCreateOutcome, Error>>;
   validateActive(record: ExecutionAttachmentRecord): Result<void, Error>;
-  reconcileAll(input: {
-    readonly updatedBeforeMs: number;
-    readonly limit: number;
-  }): Promise<Result<ExecutionAttachmentRecoverySummary, Error>>;
+  reconcileAll(input: ExecutionAttachmentRecoveryInput): Promise<Result<ExecutionAttachmentRecoverySummary, Error>>;
+  reconcileService(input: ExecutionAttachmentServiceRecoveryInput): Promise<Result<ExecutionAttachmentRecoverySummary, Error>>;
 }
 
 function digest(kind: string, value: string): string {
@@ -264,9 +271,8 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
     return ok({ kind: created.value.kind, record: created.value.record });
   }
 
-  async function reconcileAll(input: {
-    readonly updatedBeforeMs: number;
-    readonly limit: number;
+  async function reconcile(input: ExecutionAttachmentRecoveryInput & {
+    readonly serviceInstanceId?: string;
   }): Promise<Result<ExecutionAttachmentRecoverySummary, Error>> {
     const recovered: string[] = [];
     const preserved: string[] = [];
@@ -280,6 +286,9 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
       }));
       if (!scanned.ok) return scanned;
       for (const record of scanned.value.records) {
+        if (input.serviceInstanceId !== undefined && record.serviceInstanceId !== input.serviceInstanceId) {
+          continue;
+        }
         const instance = deps.instances.find(
           (candidate) => candidate.serviceInstanceId === record.serviceInstanceId && candidate.enabled,
         );
@@ -340,5 +349,10 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
     return ok({ recovered, preserved });
   }
 
-  return Object.freeze({ create, validateActive, reconcileAll });
+  return Object.freeze({
+    create,
+    validateActive,
+    reconcileAll: (input: ExecutionAttachmentRecoveryInput) => reconcile(input),
+    reconcileService: (input: ExecutionAttachmentServiceRecoveryInput) => reconcile(input),
+  });
 }

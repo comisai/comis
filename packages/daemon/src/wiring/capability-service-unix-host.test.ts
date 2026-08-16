@@ -808,8 +808,9 @@ describe("daemon-owned capability-service Unix host", () => {
     const firstReply = firstPeer.next();
     let firstSettled = false;
     void firstReply.then(() => { firstSettled = true; });
-    await waitForTurn();
-    expect(onAuthenticatedSession).toHaveBeenNthCalledWith(1, "service-instance_a");
+    await vi.waitFor(() => {
+      expect(onAuthenticatedSession).toHaveBeenNthCalledWith(1, "service-instance_a");
+    });
     expect(firstSettled).toBe(false);
     releases.shift()?.();
     expect(await firstReply).toHaveProperty("result");
@@ -823,8 +824,9 @@ describe("daemon-owned capability-service Unix host", () => {
     const secondReply = secondPeer.next();
     let secondSettled = false;
     void secondReply.then(() => { secondSettled = true; });
-    await waitForTurn();
-    expect(onAuthenticatedSession).toHaveBeenNthCalledWith(2, "service-instance_a");
+    await vi.waitFor(() => {
+      expect(onAuthenticatedSession).toHaveBeenNthCalledWith(2, "service-instance_a");
+    });
     expect(secondSettled).toBe(false);
     releases.shift()?.();
     expect(await secondReply).toHaveProperty("result");

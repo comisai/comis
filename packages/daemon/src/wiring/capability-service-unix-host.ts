@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash, timingSafeEqual } from "node:crypto";
-import { chmodSync, lstatSync, realpathSync, unlinkSync } from "node:fs";
+import { chmodSync } from "node:fs";
 import net from "node:net";
-import { dirname, isAbsolute, normalize, relative, sep } from "node:path";
 import type { z } from "zod";
 import {
   CAPABILITY_SERVICE_LIMITS,
@@ -21,7 +20,7 @@ import {
   type CapabilityServiceErrorKind,
 } from "@comis/capability-service-sdk";
 import {
-  safePath,
+  sanitizeLogString,
   type CapabilityServiceAbandonAcknowledgement,
   type CapabilityServiceAbandonCommand,
   type CapabilityServiceActivateAcknowledgement,
@@ -60,8 +59,12 @@ import {
   classifyCapabilityServiceWireFailure,
 } from "./capability-service-wire-error.js";
 import { pruneCapabilityServiceReplayEntries } from "./capability-service-replay.js";
+import {
+  removeStaleCapabilityServiceSocket,
+  verifyCapabilityServiceSocketPath,
+  verifyCapabilityServiceSocketRoot,
+} from "./capability-service-unix-socket.js";
 
-const MAXIMUM_UNIX_SOCKET_PATH_BYTES = 103;
 const REQUEST_KEYS = ["bearer", "id", "jsonrpc", "method", "params"] as const;
 
 interface ConfiguredInstance {
@@ -110,6 +113,7 @@ export interface UnixCapabilityServiceHostRuntimeDeps {
   readonly clock: ClockPort;
   readonly timers: TimerPort;
   readonly logger: ComisLogger;
+  readonly onAuthenticatedSession: (serviceInstanceId: string) => Promise<Result<void, Error>>;
 }
 
 interface Endpoint {
@@ -150,89 +154,6 @@ function canonical(value: unknown): Result<string, Error> {
   return tryCatch(() => JSON.stringify(value));
 }
 
-function verifySocketRoot(root: string): Result<void, Error> {
-  if (!isAbsolute(root) || normalize(root) !== root) {
-    return err(new Error("capability-service socket root must be absolute and canonical"));
-  }
-  const checked = tryCatch(() => {
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- the composition root supplies this absolute confined root
-    const stat = lstatSync(root);
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- canonicality is checked against the same configured root
-    const canonicalRoot = realpathSync(root);
-    return { stat, canonicalRoot };
-  });
-  if (!checked.ok) return err(checked.error);
-  if (
-    !checked.value.stat.isDirectory()
-    || checked.value.stat.isSymbolicLink()
-    || (checked.value.stat.mode & 0o077) !== 0
-    || checked.value.canonicalRoot !== root
-  ) {
-    return err(new Error("capability-service socket root must be a real owner-only directory"));
-  }
-  return ok(undefined);
-}
-
-function verifySocketPath(root: string, socketPath: string): Result<void, Error> {
-  if (!isAbsolute(socketPath) || normalize(socketPath) !== socketPath) {
-    return err(new Error("capability-service socket path must be absolute and normalized"));
-  }
-  const relativePath = relative(root, socketPath);
-  if (
-    relativePath.length === 0
-    || relativePath === ".."
-    || relativePath.startsWith(`..${sep}`)
-    || isAbsolute(relativePath)
-  ) {
-    return err(new Error("capability-service socket path must remain beneath the configured root"));
-  }
-  const reconstructed = tryCatch(() => safePath(root, ...relativePath.split(sep)));
-  if (!reconstructed.ok || reconstructed.value !== socketPath) {
-    return err(new Error("capability-service socket path failed confinement"));
-  }
-  if (Buffer.byteLength(socketPath, "utf8") > MAXIMUM_UNIX_SOCKET_PATH_BYTES) {
-    return err(new Error("capability-service socket path exceeds the platform limit"));
-  }
-  const parent = dirname(socketPath);
-  const checked = tryCatch(() => {
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- parent is derived from a safePath-confined socket path
-    const stat = lstatSync(parent);
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- canonicality is checked on the safePath-confined parent
-    const canonicalParent = realpathSync(parent);
-    return { stat, canonicalParent };
-  });
-  if (!checked.ok) return err(checked.error);
-  if (
-    !checked.value.stat.isDirectory()
-    || checked.value.stat.isSymbolicLink()
-    || (checked.value.stat.mode & 0o077) !== 0
-    || checked.value.canonicalParent !== parent
-  ) {
-    return err(new Error("capability-service socket parent must be a real owner-only directory"));
-  }
-  return ok(undefined);
-}
-
-function removeStaleSocket(socketPath: string): Result<void, Error> {
-  const existing = tryCatch(() => {
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- socketPath passed confinement and parent verification
-    return lstatSync(socketPath);
-  });
-  if (!existing.ok) {
-    return (existing.error as NodeJS.ErrnoException).code === "ENOENT"
-      ? ok(undefined)
-      : err(existing.error);
-  }
-  if (!existing.value.isSocket() || existing.value.isSymbolicLink()) {
-    return err(new Error("capability-service socket path is occupied by a non-socket entry"));
-  }
-  const removed = tryCatch(() => {
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- removes only the verified stale socket at the confined path
-    unlinkSync(socketPath);
-  });
-  return removed.ok ? ok(undefined) : err(removed.error);
-}
-
 function writeLine(socket: net.Socket, value: unknown): Result<void, Error> {
   const serialized = canonical(value);
   if (!serialized.ok) return serialized;
@@ -253,9 +174,9 @@ function createEndpoint(
   unregister: () => void,
 ): Promise<Result<Endpoint, Error>> {
   return (async () => {
-    const pathCheck = verifySocketPath(deps.socketRoot, configured.instance.control.socketPath);
+    const pathCheck = verifyCapabilityServiceSocketPath(deps.socketRoot, configured.instance.control.socketPath);
     if (!pathCheck.ok) return pathCheck;
-    const removed = removeStaleSocket(configured.instance.control.socketPath);
+    const removed = removeStaleCapabilityServiceSocket(configured.instance.control.socketPath);
     if (!removed.ok) return removed;
 
     const sockets = new Set<net.Socket>();
@@ -413,16 +334,51 @@ function createEndpoint(
       );
     }
 
-    function routeHandshake(
+    async function recoverAuthenticatedSession(
+      socket: net.Socket,
+      operationId: string,
+      requestId: string,
+    ): Promise<boolean> {
+      const startedAtMs = deps.clock.now();
+      deps.logger.debug({
+        serviceInstanceId: configured.instance.serviceInstanceId,
+        step: "capability-service-session-recovery",
+      }, "Recovering authenticated capability-service session authority");
+      const invoked = await fromPromise(deps.onAuthenticatedSession(configured.instance.serviceInstanceId));
+      const recovered = invoked.ok ? invoked.value : err(invoked.error);
+      if (!recovered.ok) {
+        replay.delete(operationId);
+        deps.logger.error({
+          serviceInstanceId: configured.instance.serviceInstanceId,
+          failureCause: sanitizeLogString(recovered.error.message),
+          errorKind: "internal" as const,
+          hint: "Inspect execution-attachment recovery and retry the exact capability-service connection",
+        }, "Capability-service authenticated session recovery failed");
+        reply(socket, capabilityServiceErrorResponse("internal_error", requestId));
+        return false;
+      }
+      deps.logger.info({
+        serviceInstanceId: configured.instance.serviceInstanceId,
+        durationMs: Math.max(0, deps.clock.now() - startedAtMs),
+      }, "Capability-service authenticated session recovery completed");
+      return true;
+    }
+
+    async function routeHandshake(
       socket: net.Socket,
       request: z.infer<typeof CapabilityHandshakeRequestSchema>,
-    ): void {
+    ): Promise<void> {
       const operationId = request.params.operationId;
       const replayState = beginReplay(operationId, request);
       if (!replayState.ok) {
         if (typeof replayState.error === "object") {
           const replayed = asRecord(replayState.error.response);
           if (replayed !== undefined && "result" in replayed) {
+            if (boundSocket !== undefined && boundSocket !== socket && !boundSocket.destroyed) {
+              rejectRequest(socket, "precondition_failed", request.id);
+              return;
+            }
+            if (!await recoverAuthenticatedSession(socket, operationId, request.id)) return;
             if (boundSocket !== undefined && boundSocket !== socket && !boundSocket.destroyed) {
               rejectRequest(socket, "precondition_failed", request.id);
               return;
@@ -450,6 +406,13 @@ function createEndpoint(
         reply(socket, response);
         return;
       }
+      if (boundSocket !== undefined && boundSocket !== socket && !boundSocket.destroyed) {
+        const response = capabilityServiceErrorResponse("precondition_failed", request.id);
+        rememberResponse(operationId, response);
+        reply(socket, response);
+        return;
+      }
+      if (!await recoverAuthenticatedSession(socket, operationId, request.id)) return;
       if (boundSocket !== undefined && boundSocket !== socket && !boundSocket.destroyed) {
         const response = capabilityServiceErrorResponse("precondition_failed", request.id);
         rememberResponse(operationId, response);
@@ -555,7 +518,7 @@ function createEndpoint(
           rejectRequest(socket, "invalid_params", id);
           return;
         }
-        routeHandshake(socket, parsed.data);
+        trackInbound(routeHandshake(socket, parsed.data));
         return;
       }
       if (frame["method"] === "capabilityServices.health") {
@@ -750,7 +713,7 @@ function createEndpoint(
     });
     if (!restricted.ok) {
       await fromPromise(new Promise<void>((resolveClose) => server.close(() => resolveClose())));
-      removeStaleSocket(configured.instance.control.socketPath);
+      removeStaleCapabilityServiceSocket(configured.instance.control.socketPath);
       return err(restricted.error);
     }
 
@@ -840,7 +803,7 @@ function createEndpoint(
         const closedServer = await fromPromise(new Promise<void>((resolveClose, rejectClose) => {
           server.close((closeError) => closeError ? rejectClose(closeError) : resolveClose());
         }));
-        const removedSocket = removeStaleSocket(configured.instance.control.socketPath);
+        const removedSocket = removeStaleCapabilityServiceSocket(configured.instance.control.socketPath);
         if (!drained.ok) return drained;
         if (!closedServer.ok) return closedServer;
         return removedSocket;
@@ -892,7 +855,7 @@ function createEndpoint(
 export function createUnixCapabilityServiceHostRuntime(
   deps: UnixCapabilityServiceHostRuntimeDeps,
 ): Result<UnixCapabilityServiceHostRuntime, Error> {
-  const rootCheck = verifySocketRoot(deps.socketRoot);
+  const rootCheck = verifyCapabilityServiceSocketRoot(deps.socketRoot);
   if (!rootCheck.ok) return rootCheck;
   const definitions = new Map<string, PlannedCapabilityServiceDefinition>();
   for (const definition of deps.definitions) {

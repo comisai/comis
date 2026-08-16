@@ -358,6 +358,7 @@ export async function setupCapabilityServices(
     }
     credentials.set(instance.serviceInstanceId, resolveCredential);
   }
+  let recoverAuthenticatedSession = async (_serviceInstanceId: string): Promise<Result<void, Error>> => ok(undefined);
   const host = createUnixCapabilityServiceHostRuntime({
     definitions: plan.value.orderedDefinitions,
     instances: plan.value.orderedInstances,
@@ -372,6 +373,7 @@ export async function setupCapabilityServices(
     clock: deps.clock,
     timers: deps.timers,
     logger: deps.logger,
+    onAuthenticatedSession: (serviceInstanceId) => recoverAuthenticatedSession(serviceInstanceId),
   });
   if (!host.ok) {
     logSetupFailure(deps, "capability-service-host", "config");
@@ -402,6 +404,22 @@ export async function setupCapabilityServices(
     ),
     logger: deps.logger,
   });
+  recoverAuthenticatedSession = async (serviceInstanceId) => {
+    const startedAtMs = deps.clock.now();
+    const reconciled = await attachmentAuthority.reconcileService({
+      serviceInstanceId,
+      updatedBeforeMs: startedAtMs,
+      limit: deps.config.recoveryBatchSize,
+    });
+    if (!reconciled.ok) return reconciled;
+    deps.logger.info({
+      serviceInstanceId,
+      recoveredAttachmentCount: reconciled.value.recovered.length,
+      preservedAttachmentCount: reconciled.value.preserved.length,
+      durationMs: Math.max(0, deps.clock.now() - startedAtMs),
+    }, "Capability-service reconnect attachments reconciled");
+    return ok(undefined);
+  };
   const activationCoordinator = createManagedRunActivationCoordinator({
     store,
     contentStore,
