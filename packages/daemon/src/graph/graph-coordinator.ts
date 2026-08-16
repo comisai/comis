@@ -108,6 +108,10 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   );
   const announcementLifecycle = new AbortController();
   const pendingAnnouncementAdmissions = new Set<Promise<Result<boolean, Error>>>();
+  async function cancelGraphAnnouncementProducer(graphId: string): Promise<Result<void, Error>> {
+    if (!deps.announcementDeadLetterQueue) return ok(undefined);
+    return deps.announcementDeadLetterQueue.cancelProducer(graphId);
+  }
   async function reserveGraphAnnouncementProducerInternal(
     gs: GraphRunState,
   ): Promise<Result<boolean, Error>> {
@@ -158,7 +162,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         : reserved;
     }
     if (announcementLifecycle.signal.aborted) {
-      await deps.announcementDeadLetterQueue.cancelProducer(gs.graphId);
+      const cancelled = await cancelGraphAnnouncementProducer(gs.graphId);
+      if (!cancelled.ok) return cancelled;
       return err(new Error("Graph coordinator is shutting down"));
     }
     const retirement = await deps.announcementDeadLetterQueue
@@ -168,7 +173,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         graphId: gs.graphId,
       });
     if (!retirement.ok || announcementLifecycle.signal.aborted) {
-      await deps.announcementDeadLetterQueue.cancelProducer(gs.graphId);
+      const cancelled = await cancelGraphAnnouncementProducer(gs.graphId);
+      if (!cancelled.ok) return cancelled;
       return announcementLifecycle.signal.aborted
         ? err(new Error("Graph coordinator is shutting down"))
         : retirement;
@@ -626,7 +632,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     if (!announcementProducer.ok) return err(announcementProducer.error.message);
     if (announcementLifecycle.signal.aborted) {
       if (gs.announcementProducerReserved) {
-        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+        const cancelled = await cancelGraphAnnouncementProducer(graphId);
+        if (!cancelled.ok) return err(cancelled.error.message);
       }
       return err("Graph coordinator is shutting down");
     }
@@ -634,7 +641,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     const createdSharedDir = tryCatch(() => mkdirSync(sharedDir, { recursive: true, mode: 0o700 }));
     if (!createdSharedDir.ok) {
       if (gs.announcementProducerReserved) {
-        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+        const cancelled = await cancelGraphAnnouncementProducer(graphId);
+        if (!cancelled.ok) return err(cancelled.error.message);
       }
       return err("Graph shared directory could not be created");
     }
@@ -769,7 +777,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         state.graphs.delete(graphId);
         clearAllTimers(deps, gs);
         if (gs.announcementProducerReserved) {
-          await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+          const cancelled = await cancelGraphAnnouncementProducer(graphId);
+          if (!cancelled.ok) return err(cancelled.error.message);
         }
         return err("Graph could not establish durable authority");
       }
@@ -779,7 +788,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     if (!(await awaitDurableTransitions(gs))) {
       discardGraphState(state, deps, gs, releaseDurableRetention);
       if (gs.announcementProducerReserved) {
-        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+        const cancelled = await cancelGraphAnnouncementProducer(graphId);
+        if (!cancelled.ok) return err(cancelled.error.message);
       }
       return err("Graph durable launch authority failed");
     }
@@ -1037,14 +1047,16 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     if (!announcementProducer.ok) return announcementProducer;
     if (announcementLifecycle.signal.aborted) {
       if (gs.announcementProducerReserved) {
-        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+        const cancelled = await cancelGraphAnnouncementProducer(graphId);
+        if (!cancelled.ok) return cancelled;
       }
       return err(new Error("Graph coordinator is shutting down"));
     }
     const createdSharedDir = tryCatch(() => mkdirSync(sharedDir, { recursive: true, mode: 0o700 }));
     if (!createdSharedDir.ok) {
       if (gs.announcementProducerReserved) {
-        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+        const cancelled = await cancelGraphAnnouncementProducer(graphId);
+        if (!cancelled.ok) return cancelled;
       }
       return err(new Error("resumeGraph: graph shared directory could not be created"));
     }
@@ -1073,7 +1085,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       if (!completed) {
         discardGraphState(state, deps, gs, releaseDurableRetention);
         if (gs.announcementProducerReserved) {
-          await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+          const cancelled = await cancelGraphAnnouncementProducer(graphId);
+          if (!cancelled.ok) return cancelled;
         }
         return err(new Error("resumeGraph: terminal authority could not be persisted"));
       }
@@ -1088,7 +1101,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         if (!(await awaitDurableTransitions(gs))) {
           discardGraphState(state, deps, gs, releaseDurableRetention);
           if (gs.announcementProducerReserved) {
-            await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+            const cancelled = await cancelGraphAnnouncementProducer(graphId);
+            if (!cancelled.ok) return cancelled;
           }
           return err(new Error("resumeGraph: timeout authority could not be persisted"));
         }
@@ -1109,7 +1123,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     if (!(await awaitDurableTransitions(gs))) {
       discardGraphState(state, deps, gs, releaseDurableRetention);
       if (gs.announcementProducerReserved) {
-        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+        const cancelled = await cancelGraphAnnouncementProducer(graphId);
+        if (!cancelled.ok) return cancelled;
       }
       return err(new Error("resumeGraph: durable launch authority failed"));
     }

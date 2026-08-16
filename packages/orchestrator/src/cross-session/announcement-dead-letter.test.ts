@@ -35,6 +35,7 @@ import {
 } from "./announcement-dead-letter.js";
 import type { DeadLetterWriteOperations } from "./announcement-dead-letter-file.js";
 import { isSameAnnouncementRecovery } from "./announcement-dead-letter-identity.js";
+import { createAnnouncementOperationDigests } from "./announcement-outward-operation.js";
 import {
   createAnnouncementTerminalDecisionStore,
   createTerminalDecisionRecord,
@@ -1589,6 +1590,32 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(restarted.size()).toBe(0);
   });
 
+  it("finishes a durable producer cancellation without promoting its fallback", async () => {
+    const producer = decisionInput({
+      idempotencyKey: "cancel-pending-operation",
+      runId: "cancel-pending-run",
+      completionKeys: ["cancel-pending-operation"],
+      retirementKeys: ["cancel-pending-operation"],
+    });
+    await writeFile(filePath, `${JSON.stringify({
+      ...producer,
+      recordType: "producer_reservation",
+      id: "cancel-pending-record",
+      terminalState: "cancel_pending",
+    })}\n`, "utf8");
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const send = vi.fn(async () => true);
+
+    await restarted.drain(send);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(restarted.size()).toBe(0);
+  });
+
   it("durably suppresses a producer before removing its reservation", async () => {
     const producer = decisionInput({
       idempotencyKey: "suppressed-producer-operation",
@@ -1640,6 +1667,36 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       completionKeys: [completionKey],
       retirementKeys: [completionKey],
     }))).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+  });
+
+  it("suppresses announcement ownership after it transfers to a decision reservation", async () => {
+    const producer = decisionInput({
+      idempotencyKey: "transferred-suppression-operation",
+      runId: "transferred-suppression-run",
+      completionKeys: ["transferred-suppression-operation", "transferred-suppression-run"],
+      retirementKeys: ["transferred-suppression-run"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveDecision(producer)).resolves.toEqual(ok({ created: true }));
+
+    await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
+    expect(queue.size()).toBe(0);
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision({
+      ...producer,
+      idempotencyKey: "transferred-operation-alias",
+    })).resolves.toEqual(ok({
       created: false,
       terminalDecision: "no_reply",
     }));
@@ -3050,19 +3107,6 @@ function makeStubLedger(
 
 type GovernedDeadLetterEntry = DeadLetterEntry & { agentId: string };
 
-function operationFingerprint(entry: DeadLetterEntry): string {
-  return createHash("sha256")
-    .update(JSON.stringify({
-      channelId: entry.channelId,
-      channelType: entry.channelType,
-      kind: "cross_session_announcement",
-      options: null,
-      targetMessageId: null,
-      text: entry.announcementText,
-    }))
-    .digest("hex");
-}
-
 /** A ledger row for the exact persisted announcement operation. */
 function ledgerRow(
   entry: GovernedDeadLetterEntry,
@@ -3071,6 +3115,19 @@ function ledgerRow(
 ): OutwardSendRecord {
   const rootRunId = entry.rootRunId!;
   const stepIndex = entry.stepIndex!;
+  const digests = createAnnouncementOperationDigests({
+    channelType: entry.channelType,
+    channelId: entry.channelId,
+    text: entry.announcementText,
+    ...(entry.threadId || entry.extra ? {
+      options: {
+        ...(entry.threadId ? { threadId: entry.threadId } : {}),
+        ...(entry.extra ? { extra: entry.extra } : {}),
+      },
+    } : {}),
+    ...(entry.attachment?.kind === "snapshot" ? { attachment: entry.attachment } : {}),
+  });
+  if (!digests.ok) throw digests.error;
   return {
     id: `${rootRunId}:${stepIndex}`,
     rootRunId,
@@ -3080,8 +3137,8 @@ function ledgerRow(
     channelId: entry.channelId,
     state,
     operationKind: "cross_session_announcement",
-    operationFingerprint: operationFingerprint(entry),
-    contentDigest: createHash("sha256").update(entry.announcementText).digest("hex"),
+    operationFingerprint: digests.value.operationFingerprint,
+    contentDigest: digests.value.contentDigest,
     attemptCount: 1,
     attemptedAtMs: entry.failedAt,
     ...(state === "committed" ? { platformMessageId: "msg-prior" } : {}),
@@ -3399,6 +3456,40 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       sessionKey: entry.sessionKey,
     });
     expect(dlq.size()).toBe(0);
+  });
+
+  it("retains a committed attachment whose exact payload identity differs", async () => {
+    const entry = makeFullEntry({
+      runId: "run-attachment-mismatched-receipt",
+      idempotencyKey: "operation-attachment-mismatched-receipt",
+      rootRunId: "root-attachment-mismatched-receipt",
+      stepIndex: 16,
+      agentId: "parent-agent",
+      announcementText: "expected attachment caption",
+      partId: "attachment:0",
+      attachment: snapshotAttachment("worker-a", "expected-report.txt"),
+      completionKeys: ["completion-attachment-mismatched-receipt"],
+    }) as GovernedDeadLetterEntry;
+    await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+    const { ledger } = makeStubLedger({
+      lookupResult: ok(ledgerRow(entry, "committed", {
+        contentDigest: createHash("sha256").update("different bytes").digest("hex"),
+      })),
+    });
+    vi.mocked(ledger.allocateStep).mockResolvedValue(ok(16));
+    const governedSendToChannel = vi.fn();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+      governedSendToChannel,
+    });
+
+    await dlq.drain(vi.fn(async () => true));
+
+    expect(governedSendToChannel).not.toHaveBeenCalled();
+    expect(dlq.size()).toBe(1);
   });
 
   it.each([

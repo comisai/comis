@@ -247,8 +247,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         );
       }
       let reservedProducerKey: string | undefined;
-      let producerShouldRemain = false;
-      let producerOwnershipSettled = false;
+      let producerDisposition: "cancel" | "release" | "retain" | "settled" = "cancel";
       if (
         params.mode !== "fire-and-forget"
         && params.announceOperationId !== undefined
@@ -311,11 +310,15 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
 
       const suppressAnnouncementProducer = async (): Promise<void> => {
         if (reservedProducerKey === undefined) return;
-        producerOwnershipSettled = true;
+        producerDisposition = "retain";
         const suppress = deps.suppressAnnouncementProducer;
         if (suppress === undefined) throw new Error("Announcement producer lifecycle is incomplete");
         const suppressed = await suppress(reservedProducerKey);
         if (!suppressed.ok) throw suppressed.error;
+        if (!suppressed.value) {
+          throw new Error("Announcement producer suppression did not find durable ownership");
+        }
+        producerDisposition = "settled";
       };
 
       try {
@@ -386,8 +389,8 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         // 8. Wait mode: announce and return
         if (params.mode === "wait") {
           const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
-          producerShouldRemain = !hadSkip;
           if (hadSkip) await suppressAnnouncementProducer();
+          else producerDisposition = "release";
           const announced = hadSkip
             ? false
             : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
@@ -450,8 +453,8 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
 
         // 10. Announce final result
         const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
-        producerShouldRemain = !hadSkip;
         if (hadSkip) await suppressAnnouncementProducer();
+        else producerDisposition = "release";
         const announced = hadSkip
           ? false
           : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
@@ -468,14 +471,12 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           },
         };
       } finally {
-        if (reservedProducerKey !== undefined && !producerOwnershipSettled) {
-          if (!producerShouldRemain) {
-            if (deps.cancelAnnouncementProducer) {
-              await deps.cancelAnnouncementProducer(reservedProducerKey);
-            }
-          } else if (deps.releaseAnnouncementProducer) {
-            await deps.releaseAnnouncementProducer(reservedProducerKey);
-          }
+        if (reservedProducerKey !== undefined && producerDisposition !== "settled"
+          && producerDisposition !== "retain") {
+          const transition = producerDisposition === "cancel"
+            ? await deps.cancelAnnouncementProducer!(reservedProducerKey)
+            : await deps.releaseAnnouncementProducer!(reservedProducerKey);
+          if (!transition.ok) throw transition.error;
         }
       }
     },

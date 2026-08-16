@@ -627,7 +627,11 @@ function isAnnouncementProducerReservationRecord(
   return record.recordType === "producer_reservation"
     && typeof record.id === "string"
     && record.id.length > 0
-    && (record.terminalState === undefined || record.terminalState === "no_reply_pending");
+    && (
+      record.terminalState === undefined
+      || record.terminalState === "no_reply_pending"
+      || record.terminalState === "cancel_pending"
+    );
 }
 
 function isDeadLetterEntry(

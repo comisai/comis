@@ -416,6 +416,42 @@ describe("createCrossSessionSender", () => {
     expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
   });
 
+  it("retains producer ownership when announce skip finds no durable owner", async () => {
+    vi.mocked(deps.executeInSession).mockResolvedValue({
+      response: "private result ANNOUNCE_SKIP",
+      tokensUsed: { total: 50 },
+      cost: { total: 0.005 },
+    });
+    const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const suppressAnnouncementProducer = vi.fn(async () => ok(false));
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer,
+      releaseAnnouncementProducer,
+      cancelAnnouncementProducer,
+      suppressAnnouncementProducer,
+    });
+
+    await expect(sender.send({
+      target: QUERY_ONE,
+      text: "do something privately",
+      mode: "wait",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "announce-tool-call-missing-suppression-owner",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    })).rejects.toThrow("did not find durable ownership");
+
+    expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
+    expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
+  });
+
   it("cancels producer ownership when ping-pong fails before completion", async () => {
     const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
@@ -451,6 +487,45 @@ describe("createCrossSessionSender", () => {
     })).rejects.toThrow("ping-pong execution failed");
 
     expect(cancelAnnouncementProducer).toHaveBeenCalledWith("failed-ping-pong-tool-call");
+    expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
+  });
+
+  it("surfaces producer cancellation failure before returning execution failure", async () => {
+    const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const cancelAnnouncementProducer = vi.fn(async () =>
+      err(new Error("producer cancellation storage unavailable")));
+    const suppressAnnouncementProducer = vi.fn(async () => ok(true));
+    vi.mocked(deps.executeInSession)
+      .mockResolvedValueOnce({
+        response: "continue",
+        tokensUsed: { total: 10 },
+        cost: { total: 0.001 },
+      })
+      .mockRejectedValueOnce(new Error("ping-pong execution failed"));
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer,
+      releaseAnnouncementProducer,
+      cancelAnnouncementProducer,
+      suppressAnnouncementProducer,
+    });
+
+    await expect(sender.send({
+      target: QUERY_ONE,
+      text: "question",
+      mode: "ping-pong",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "failed-cancellation-tool-call",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    })).rejects.toThrow("producer cancellation storage unavailable");
+
+    expect(cancelAnnouncementProducer).toHaveBeenCalledWith("failed-cancellation-tool-call");
     expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
   });
 

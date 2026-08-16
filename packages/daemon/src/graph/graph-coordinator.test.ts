@@ -492,6 +492,35 @@ describe("createGraphCoordinator", () => {
       await coordinator.shutdown();
     });
 
+    it("surfaces graph producer cancellation failure before node execution", async () => {
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async () => ok(undefined)),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => err(new Error("graph producer cancellation unavailable"))),
+        prepareTerminalDecisionRetirement: vi.fn(async () =>
+          err(new Error("graph retirement preparation unavailable"))),
+      };
+      const { deps, runner } = createTestDeps({ announcementDeadLetterQueue });
+      const coordinator = createGraphCoordinator(deps);
+      const turnScope = makeCallerTurnScope("telegram", "chat-a", "parent-agent");
+
+      await expect(coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerAgentId: "parent-agent",
+        callerSessionKey: "test-tenant:user_a:telegram:chat-a",
+        callerTurnScope: turnScope,
+        announceChannelType: "telegram",
+        announceChannelId: "chat-a",
+      })).resolves.toEqual({
+        ok: false,
+        error: "graph producer cancellation unavailable",
+      });
+
+      expect(announcementDeadLetterQueue.cancelProducer).toHaveBeenCalledOnce();
+      expect(runner.spawn).not.toHaveBeenCalled();
+      await coordinator.shutdown();
+    });
+
     it("cancels capacity-blocked graph admission during shutdown", async () => {
       let admissionSignal: AbortSignal | undefined;
       const announcementDeadLetterQueue = {

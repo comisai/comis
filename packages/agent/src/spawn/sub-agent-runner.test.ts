@@ -1131,6 +1131,7 @@ describe("createSubAgentRunner", () => {
     });
     const suppressProducer = vi.fn()
       .mockResolvedValueOnce(err(new Error("suppression storage unavailable")))
+      .mockResolvedValueOnce(ok(false))
       .mockResolvedValue(ok(true));
     const reserveProducer = vi.fn(async () => ok(undefined));
     deps.deadLetterQueue = {
@@ -1176,6 +1177,11 @@ describe("createSubAgentRunner", () => {
 
     await vi.advanceTimersByTimeAsync(1_000);
     expect(suppressProducer).toHaveBeenCalledTimes(2);
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "running" });
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(suppressProducer).toHaveBeenCalledTimes(3);
     expect(runner.getRunStatus(runId)).toMatchObject({ status: "completed" });
     expect(deps.sendToChannel).not.toHaveBeenCalled();
     expect(deps.deadLetterQueue.releaseProducer).not.toHaveBeenCalled();

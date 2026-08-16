@@ -1105,6 +1105,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const deliverySuppressedRunIds = new Set<string>();
   const deliveryAdmissionRunIds = new Set<string>();
   const producerSuppressionPendingRunIds = new Set<string>();
+  const producerLifecyclePendingRunIds = new Set<string>();
   const producerTransferAttemptedRunIds = new Set<string>();
   const producerAdmissionAbort = new AbortController();
   const forcedTerminalRunIds = new Set<string>();
@@ -1118,6 +1119,52 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   let acceptingSpawns = true;
   let spawnPaused = false;
   let shutdownPromise: Promise<void> | undefined;
+
+  async function settleAnnouncementProducerLifecycle(
+    runId: string,
+    transition: "cancel" | "release" | "suppress",
+    operation: () => Promise<Result<void, Error>>,
+  ): Promise<void> {
+    producerLifecyclePendingRunIds.add(runId);
+    let attemptCount = 0;
+    const startedAt = clock.now();
+    try {
+      while (true) {
+        attemptCount++;
+        const boundary = await fromPromise(operation());
+        if (boundary.ok && boundary.value.ok) {
+          if (attemptCount > 1) {
+            deps.logger?.info({
+              runId,
+              transition,
+              attempts: attemptCount,
+              durationMs: clock.now() - startedAt,
+            }, "Announcement producer lifecycle transition recovered");
+          }
+          return;
+        }
+        const failure = boundary.ok ? boundary.value.error : boundary.error;
+        if (attemptCount === 1) {
+          deps.logger?.warn({
+            runId,
+            transition,
+            err: toSafeErrorLogString(failure),
+            errorKind: "resource" as const,
+            hint: "Restore dead-letter storage; producer ownership remains live and will retry",
+          }, "Announcement producer lifecycle transition could not be persisted");
+        } else {
+          deps.logger?.debug({ runId, transition, attempts: attemptCount },
+            "Announcement producer lifecycle retry remains pending");
+        }
+        await new Promise<void>((resolve) => {
+          const retryHandle = timers.setTimeout(resolve, ANNOUNCEMENT_SUPPRESSION_RETRY_MS);
+          if (acceptingSpawns) retryHandle.unref();
+        });
+      }
+    } finally {
+      producerLifecyclePendingRunIds.delete(runId);
+    }
+  }
 
   function createCompletionDeferred(runId: string): void {
     let resolvePromise!: (completion: SubAgentCompletion) => void;
@@ -1979,6 +2026,7 @@ function classifyCompletionErrorKind(
     resumeDescriptors.delete(runId);
     archivedSessionRunIds.delete(runId);
     producerSuppressionPendingRunIds.delete(runId);
+    producerLifecyclePendingRunIds.delete(runId);
     producerTransferAttemptedRunIds.delete(runId);
   };
 
@@ -2052,6 +2100,7 @@ function classifyCompletionErrorKind(
     for (const [runId, run] of runs) {
       if (
         (run.status === "completed" || run.status === "failed") &&
+        !producerLifecyclePendingRunIds.has(runId) &&
         now - run.completion.completedAtMs > retentionMs
       ) {
         scheduleRunArchive(runId, run, now);
@@ -2061,7 +2110,9 @@ function classifyCompletionErrorKind(
     // Size cap: prune oldest completed runs if over limit
     if (runs.size > MAX_RUNS) {
       const completedRuns = [...runs.entries()]
-        .filter(([, r]) => r.status === "completed" || r.status === "failed")
+        .filter(([runId, r]) =>
+          !producerLifecyclePendingRunIds.has(runId)
+          && (r.status === "completed" || r.status === "failed"))
         .sort((a, b) => {
           const aCompleted = a[1].status === "completed" || a[1].status === "failed"
             ? a[1].completion.completedAtMs
@@ -3868,43 +3919,15 @@ function classifyCompletionErrorKind(
               producerSuppressionAttempted = true;
               producerSuppressionPendingRunIds.add(runId);
               deliveryAdmissionRunIds.add(runId);
-              let attemptCount = 0;
-              const suppressionStartedAt = clock.now();
               try {
-                while (!deliverySuppressedRunIds.has(runId)) {
-                  attemptCount++;
+                await settleAnnouncementProducerLifecycle(runId, "suppress", async () => {
                   const suppressed = await suppressProducer(runId);
-                  if (suppressed.ok) {
-                    producerSuppressionPendingRunIds.delete(runId);
-                    if (attemptCount > 1) {
-                      deps.logger?.info({
-                        runId,
-                        attempts: attemptCount,
-                        durationMs: clock.now() - suppressionStartedAt,
-                      }, "Announcement producer suppression recovered");
-                    }
-                    break;
-                  }
-                  if (attemptCount === 1) {
-                    deps.logger?.warn({
-                      runId,
-                      err: toSafeErrorLogString(suppressed.error),
-                      errorKind: "resource" as const,
-                      hint: "Restore dead-letter storage; explicit announcement suppression remains pending and will retry",
-                    }, "Announcement producer suppression could not be persisted");
-                  } else {
-                    deps.logger?.debug({ runId, attempts: attemptCount },
-                      "Announcement producer suppression retry remains pending");
-                  }
-                  await new Promise<void>((resolve) => {
-                    const retryHandle = timers.setTimeout(
-                      resolve,
-                      ANNOUNCEMENT_SUPPRESSION_RETRY_MS,
-                    );
-                    retryHandle.unref();
-                  });
-                }
-                if (producerSuppressionPendingRunIds.has(runId)) return;
+                  if (!suppressed.ok) return suppressed;
+                  return suppressed.value
+                    ? ok(undefined)
+                    : err(new Error("Announcement producer suppression found no durable owner"));
+                });
+                producerSuppressionPendingRunIds.delete(runId);
               } finally {
                 deliveryAdmissionRunIds.delete(runId);
               }
@@ -4309,10 +4332,15 @@ function classifyCompletionErrorKind(
         // with the dead child's sessionId).
         closeTrajectoryOnce(run);
         if (!producerSuppressionAttempted) {
-          if (producerTransferAttemptedRunIds.has(runId)) {
-            await deps.deadLetterQueue?.releaseProducer?.(runId);
-          } else {
-            await deps.deadLetterQueue?.cancelProducer?.(runId);
+          const transition = producerTransferAttemptedRunIds.has(runId)
+            ? deps.deadLetterQueue?.releaseProducer
+            : deps.deadLetterQueue?.cancelProducer;
+          if (transition) {
+            await settleAnnouncementProducerLifecycle(
+              runId,
+              producerTransferAttemptedRunIds.has(runId) ? "release" : "cancel",
+              () => transition(runId),
+            );
           }
         }
       }
@@ -4952,12 +4980,10 @@ function classifyCompletionErrorKind(
             continue;
           }
           if (producerSuppressionPendingRunIds.has(runId)) {
-            deliverySuppressedRunIds.add(runId);
-            stoppedRunCount++;
             deps.logger?.error({
               runId,
               errorKind: "resource" as const,
-              hint: "Restore dead-letter storage and resume the retained producer before accepting new work",
+              hint: "Restore dead-letter storage; shutdown will keep retrying the explicit suppression authority",
             }, "Explicit announcement suppression remains pending at shutdown");
             continue;
           }
