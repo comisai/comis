@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DeadLetterEntry } from "./announcement-dead-letter.js";
 import {
+  isAnnouncementChannelType,
   readDeadLetterEntries,
   writeDeadLetterEntries,
   type DeadLetterWriteOperations,
@@ -72,6 +73,12 @@ describe("announcement dead-letter file", () => {
 
   afterEach(async () => {
     if (directory) await rm(directory, { recursive: true, force: true });
+  });
+
+  it("accepts contributed channel identifiers and rejects control characters", () => {
+    expect(isAnnouncementChannelType("plugin.acme-chat")).toBe(true);
+    expect(isAnnouncementChannelType("plugin/acme\nchat")).toBe(false);
+    expect(isAnnouncementChannelType("")).toBe(false);
   });
 
   it("atomically round-trips a durable queue snapshot", async () => {
@@ -234,6 +241,47 @@ describe("announcement dead-letter file", () => {
       error: { state: "snapshot_unchanged" },
     });
     expect(await readFile(filePath, "utf8")).toBe(original);
+  });
+
+  it("rejects an oversized in-memory row before replacing a durable snapshot", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    const entry = makeEntry();
+    await writeDeadLetterEntries(filePath, [entry]);
+    const original = await readFile(filePath, "utf8");
+
+    const result = await writeDeadLetterEntries(filePath, [{
+      ...entry,
+      announcementText: "x".repeat(1_048_577),
+    }]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { state: "snapshot_unchanged" },
+    });
+    expect(await readFile(filePath, "utf8")).toBe(original);
+  });
+
+  it("bounds oversized persisted evidence and never exposes it in the operator record", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    const oversized = "private-marker-" + "x".repeat(1_048_577);
+    await writeFile(filePath, `${oversized}\n`, { encoding: "utf8", mode: 0o600 });
+
+    const result = await readDeadLetterEntries(filePath);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: [{
+        recordType: "invalid_record",
+        reason: "oversized_row",
+        rawTruncated: true,
+      }],
+    });
+    if (!result.ok) throw result.error;
+    const record = result.value[0] as Record<string, unknown>;
+    expect(String(record.rawLine).length).toBeLessThanOrEqual(4_096);
+    expect(String(record.rawDigest)).toMatch(/^[a-f0-9]{64}$/u);
   });
 
   it("isolates a malformed row while preserving valid persisted rows", async () => {
