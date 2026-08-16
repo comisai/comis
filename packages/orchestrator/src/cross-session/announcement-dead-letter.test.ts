@@ -1496,6 +1496,66 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(restarted.size()).toBe(0);
   });
 
+  it("consumes persisted producer ownership on terminal admission replay", async () => {
+    const operation = decisionInput({
+      idempotencyKey: "terminal-producer-operation",
+      runId: "terminal-producer-run",
+      completionKeys: ["terminal-producer-operation"],
+      retirementKeys: ["terminal-producer-operation"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    await expect(queue.reserveProducer(operation)).resolves.toEqual(ok(undefined));
+    await expect(createAnnouncementTerminalDecisionStore(filePath).record(operation, "delivered"))
+      .resolves.toEqual(ok(undefined));
+
+    await expect(queue.reserveDecision(operation)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "delivered",
+    }));
+
+    expect(queue.size()).toBe(0);
+    await expect(queue.reserveProducer(decisionInput({
+      idempotencyKey: "next-producer-operation",
+      runId: "next-producer-run",
+      completionKeys: ["next-producer-operation"],
+      retirementKeys: ["next-producer-operation"],
+    }))).resolves.toEqual(ok(undefined));
+  });
+
+  it("consumes producer ownership when every replacement is terminal", async () => {
+    const completionKey = "terminal-replacement-completion";
+    const first = decisionInput({
+      idempotencyKey: "terminal-replacement-first",
+      runId: "terminal-replacement-run",
+      completionKeys: [completionKey],
+      retirementKeys: [completionKey],
+    });
+    const second = decisionInput({
+      idempotencyKey: "terminal-replacement-second",
+      runId: "terminal-replacement-run",
+      completionKeys: [completionKey],
+      retirementKeys: [completionKey],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    const terminalStore = createAnnouncementTerminalDecisionStore(filePath);
+    await expect(queue.reserveProducer(first)).resolves.toEqual(ok(undefined));
+    await expect(terminalStore.record(first, "delivered")).resolves.toEqual(ok(undefined));
+    await expect(terminalStore.record(second, "delivered")).resolves.toEqual(ok(undefined));
+
+    await expect(queue.replaceDecisions([], [first, second]))
+      .resolves.toEqual(ok({ created: false }));
+
+    expect(queue.size()).toBe(0);
+  });
+
   it("hands off a cancelled attachment replacement atomically within its bound", async () => {
     const queue = createAnnouncementDeadLetterQueue({
       filePath,

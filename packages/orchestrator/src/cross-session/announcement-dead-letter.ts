@@ -378,12 +378,14 @@ export function createAnnouncementDeadLetterQueue(
     nextInvalidRecords: readonly InvalidDeadLetterRecord[] = invalidRecords,
     nextProducerHandoffs: readonly AnnouncementProducerHandoffRecord[] = producerHandoffs,
     nextProducerReservations: readonly ProducerReservationRecord[] = producerReservations,
+    consumedProducerKeys: readonly string[] = [],
   ): Promise<Result<void, Error>> {
     const transferredProducerKeys = new Set([
       ...nextEntries.map((entry) => entry.runId),
       ...nextReservations.map((reservation) => reservation.runId),
       ...nextProducerHandoffs.flatMap((handoff) => handoff.operations.map((operation) =>
         operation.runId)),
+      ...consumedProducerKeys,
     ]);
     const retainedProducerReservations = nextProducerReservations.filter(
       (reservation) => !transferredProducerKeys.has(reservation.runId),
@@ -536,6 +538,32 @@ export function createAnnouncementDeadLetterQueue(
     return ok(undefined);
   }
 
+  async function consumeProducerReservationsDurably(
+    producerKeys: readonly string[],
+  ): Promise<Result<void, Error>> {
+    const uniqueKeys = new Set(producerKeys);
+    const removed = producerReservations.filter((candidate) => uniqueKeys.has(candidate.runId));
+    if (removed.length === 0) {
+      consumeProducerSlots(uniqueKeys);
+      return ok(undefined);
+    }
+    const persisted = await persist(
+      entries,
+      decisionReservations,
+      invalidRecords,
+      producerHandoffs,
+      producerReservations,
+      [...uniqueKeys],
+    );
+    if (!persisted.ok) return persisted;
+    consumeProducerSlots(uniqueKeys);
+    await cleanupUnreferencedSnapshots(removed.flatMap((reservation) =>
+      reservation.attachment?.kind === "snapshot"
+        ? [{ attachment: reservation.attachment }]
+        : []));
+    return ok(undefined);
+  }
+
   function consumeProducerSlots(producerKeys: Iterable<string>): void {
     let consumed = false;
     for (const producerKey of producerKeys) {
@@ -641,7 +669,14 @@ export function createAnnouncementDeadLetterQueue(
         entry.idempotencyKey === idempotencyKey
         || entry.completionKeys?.includes(idempotencyKey) === true),
     getReservations: () => decisionReservations,
-    persist: (nextReservations) => persist(entries, nextReservations),
+    persist: (nextReservations, consumedProducerKeys) => persist(
+      entries,
+      nextReservations,
+      invalidRecords,
+      producerHandoffs,
+      producerReservations,
+      consumedProducerKeys,
+    ),
     canPersistReservationCount: (count) => canPersistCounts(entries.length, count),
     replaceReservations: (nextReservations) => {
       decisionReservations = [...nextReservations];
@@ -2327,7 +2362,8 @@ export function createAnnouncementDeadLetterQueue(
         decisionReservations,
       );
       if (!reconciled.ok) return reconciled;
-      consumeProducerSlots([entry.runId]);
+      const consumed = await consumeProducerReservationsDurably([entry.runId]);
+      if (!consumed.ok) return consumed;
       return ok({ created: false, terminalDecision: terminalDecision.value });
     }
     const existing = await decisionStore.lookup(entry.idempotencyKey);
@@ -2685,13 +2721,15 @@ export function createAnnouncementDeadLetterQueue(
             return reconciled;
           }
         }
+        const producerKeys = [...new Set(operations.map((operation) => operation.runId))];
         const replaced = await decisionStore.replace(
           expectedKeys,
           pendingOperations,
           [...settledCompletionKeys],
+          producerKeys,
         );
         if (replaced.ok) {
-          consumeProducerSlots(pendingOperations.map((operation) => operation.runId));
+          consumeProducerSlots(producerKeys);
         }
         if (!replaced.ok || !replaced.value.created) {
           await cleanupUnreferencedSnapshots(transientSnapshots);

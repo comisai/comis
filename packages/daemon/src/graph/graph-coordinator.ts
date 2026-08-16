@@ -106,9 +106,14 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   const graphCompletions = createGraphCompletionTracker(
     (gs) => handleGraphCompletionFn(state, deps, gs), deps.logger,
   );
-  async function reserveGraphAnnouncementProducer(
+  const announcementLifecycle = new AbortController();
+  const pendingAnnouncementAdmissions = new Set<Promise<Result<boolean, Error>>>();
+  async function reserveGraphAnnouncementProducerInternal(
     gs: GraphRunState,
   ): Promise<Result<boolean, Error>> {
+    if (announcementLifecycle.signal.aborted) {
+      return err(new Error("Graph coordinator is shutting down"));
+    }
     const hasAnnouncementRoute = gs.announceChannelType !== undefined
       || gs.announceChannelId !== undefined;
     if (!hasAnnouncementRoute || !deps.announcementDeadLetterQueue) return ok(false);
@@ -146,20 +151,41 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       completionKeys: [operationId, gs.graphId],
       retirementKeys: [gs.graphId],
       ...(gs.callerEndpoint.threadId ? { threadId: gs.callerEndpoint.threadId } : {}),
-    });
-    if (!reserved.ok) return reserved;
+    }, announcementLifecycle.signal);
+    if (!reserved.ok) {
+      return announcementLifecycle.signal.aborted
+        ? err(new Error("Graph coordinator is shutting down"))
+        : reserved;
+    }
+    if (announcementLifecycle.signal.aborted) {
+      await deps.announcementDeadLetterQueue.cancelProducer(gs.graphId);
+      return err(new Error("Graph coordinator is shutting down"));
+    }
     const retirement = await deps.announcementDeadLetterQueue
       .prepareTerminalDecisionRetirement([gs.graphId], {
         kind: "graph",
         tenantId: deps.tenantId,
         graphId: gs.graphId,
       });
-    if (!retirement.ok) {
+    if (!retirement.ok || announcementLifecycle.signal.aborted) {
       await deps.announcementDeadLetterQueue.cancelProducer(gs.graphId);
-      return retirement;
+      return announcementLifecycle.signal.aborted
+        ? err(new Error("Graph coordinator is shutting down"))
+        : retirement;
     }
     gs.announcementProducerReserved = true;
     return ok(true);
+  }
+  async function reserveGraphAnnouncementProducer(
+    gs: GraphRunState,
+  ): Promise<Result<boolean, Error>> {
+    const admission = reserveGraphAnnouncementProducerInternal(gs);
+    pendingAnnouncementAdmissions.add(admission);
+    try {
+      return await admission;
+    } finally {
+      pendingAnnouncementAdmissions.delete(admission);
+    }
   }
   /** Persist node state before releasing work; terminal writes await notification delivery. */
   async function checkpointGraph(gs: GraphRunState): Promise<boolean> {
@@ -424,6 +450,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   sweepInterval.unref();
 
   async function run(params: GraphRunParams): Promise<Result<string, string>> {
+    if (announcementLifecycle.signal.aborted) {
+      return err("Graph coordinator is shutting down");
+    }
     const callerContext = tryGetContext();
     if (
       callerContext !== undefined
@@ -595,6 +624,12 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
     const announcementProducer = await reserveGraphAnnouncementProducer(gs);
     if (!announcementProducer.ok) return err(announcementProducer.error.message);
+    if (announcementLifecycle.signal.aborted) {
+      if (gs.announcementProducerReserved) {
+        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+      }
+      return err("Graph coordinator is shutting down");
+    }
 
     const createdSharedDir = tryCatch(() => mkdirSync(sharedDir, { recursive: true, mode: 0o700 }));
     if (!createdSharedDir.ok) {
@@ -799,6 +834,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   }
 
   async function shutdown(): Promise<void> {
+    announcementLifecycle.abort();
+    await Promise.all(pendingAnnouncementAdmissions);
     deps.eventBus.off("session:sub_agent_completed", onSubAgentCompleted);
 
     // Stop every queued/in-flight durable transition from releasing a new
@@ -888,6 +925,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     record: DurableRunRecord,
     authority?: { leaseId: string; bearer: string },
   ): Promise<Result<void, Error>> {
+    if (announcementLifecycle.signal.aborted) {
+      return err(new Error("Graph coordinator is shutting down"));
+    }
     // Cap/shape guard: a tampered or column-drifted record must not rehydrate.
     const parsed = parseDurableRunRecord(record);
     if (!parsed.ok) {
@@ -963,12 +1003,10 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       callerPrincipalId: resumedTurnScope.value.principal.principalId,
       callerEndpoint: resumedTurnScope.value.endpoint,
       rootRunId, // tree-stable durable key shared by recovered node attempts
-      ...(validRecord.deliveryOrigin !== null
-        ? {
-            announceChannelType: validRecord.deliveryOrigin.channelType,
-            announceChannelId: validRecord.deliveryOrigin.channelId,
-          }
-        : {}),
+      announceChannelType: validRecord.deliveryOrigin?.channelType
+        ?? resumedTurnScope.value.endpoint.channelType,
+      announceChannelId: validRecord.deliveryOrigin?.channelId
+        ?? resumedTurnScope.value.endpoint.conversationId,
       graph: validated,
       stateMachine,
       runIdToNode: new Map(),
@@ -997,6 +1035,12 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
     const announcementProducer = await reserveGraphAnnouncementProducer(gs);
     if (!announcementProducer.ok) return announcementProducer;
+    if (announcementLifecycle.signal.aborted) {
+      if (gs.announcementProducerReserved) {
+        await deps.announcementDeadLetterQueue?.cancelProducer(graphId);
+      }
+      return err(new Error("Graph coordinator is shutting down"));
+    }
     const createdSharedDir = tryCatch(() => mkdirSync(sharedDir, { recursive: true, mode: 0o700 }));
     if (!createdSharedDir.ok) {
       if (gs.announcementProducerReserved) {

@@ -168,6 +168,7 @@ interface ParentDecisionReservationStoreDeps {
   getReservations(): readonly ParentDecisionReservationRecord[];
   persist(
     reservations: readonly ParentDecisionReservationRecord[],
+    consumedProducerKeys?: readonly string[],
   ): Promise<Result<void, Error>>;
   canPersistReservationCount(count: number): boolean;
   replaceReservations(reservations: readonly ParentDecisionReservationRecord[]): void;
@@ -334,6 +335,7 @@ export function createParentDecisionReservationStore(
     expectedKeys: readonly string[],
     operations: readonly ParentDecisionReservation[],
     settledCompletionKeys?: readonly string[],
+    consumedProducerKeys?: readonly string[],
   ): Promise<Result<{ created: boolean }, Error>>;
 } {
   async function reserve(
@@ -437,6 +439,7 @@ export function createParentDecisionReservationStore(
     expectedKeys: readonly string[],
     operations: readonly ParentDecisionReservation[],
     settledCompletionKeys: readonly string[] = [],
+    consumedProducerKeys: readonly string[] = [],
   ): Promise<Result<{ created: boolean }, Error>> {
     const load = await deps.load();
     if (!load.ok) return load;
@@ -473,9 +476,13 @@ export function createParentDecisionReservationStore(
       && !expected.has(reservation.idempotencyKey));
     const deliveryTransitioned = [...completionKeys].some(deps.hasDeliveryKey);
     const retained = current.filter((reservation) => !expected.has(reservation.idempotencyKey));
+    const persistReplacement = (reservations: readonly ParentDecisionReservationRecord[]) =>
+      consumedProducerKeys.length > 0
+        ? deps.persist(reservations, consumedProducerKeys)
+        : deps.persist(reservations);
     const finishTransitionedReplacement = async (): Promise<Result<{ created: boolean }, Error>> => {
-      if (retained.length !== current.length) {
-        const persisted = await deps.persist(retained);
+      if (retained.length !== current.length || consumedProducerKeys.length > 0) {
+        const persisted = await persistReplacement(retained);
         if (!persisted.ok) return persisted;
         deps.replaceReservations(retained);
       }
@@ -518,7 +525,7 @@ export function createParentDecisionReservationStore(
       });
     }
     const next = [...retained, ...records];
-    const persisted = await deps.persist(next);
+    const persisted = await persistReplacement(next);
     if (!persisted.ok) return persisted;
     deps.replaceReservations(next);
     return ok({ created: operations.length > 0 });

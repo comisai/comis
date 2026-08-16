@@ -476,6 +476,7 @@ describe("createGraphCoordinator", () => {
           retirementKeys: result.ok ? [result.value] : [],
           destinationEndpoint: turnScope.endpoint,
         }),
+        expect.any(AbortSignal),
       );
       expect(announcementDeadLetterQueue.prepareTerminalDecisionRetirement)
         .toHaveBeenCalledWith(
@@ -489,6 +490,49 @@ describe("createGraphCoordinator", () => {
         .toBeLessThan(vi.mocked(runner.spawn).mock.invocationCallOrder[0]!);
 
       await coordinator.shutdown();
+    });
+
+    it("cancels capacity-blocked graph admission during shutdown", async () => {
+      let admissionSignal: AbortSignal | undefined;
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async (_reservation: unknown, signal?: AbortSignal) => {
+          admissionSignal = signal;
+          return new Promise<Result<void, Error>>((resolve) => {
+            signal?.addEventListener("abort", () => {
+              resolve(err(new Error("Dead-letter admission cancelled")));
+            }, { once: true });
+          });
+        }),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => ok(undefined)),
+        prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
+      };
+      const { deps, runner } = createTestDeps({ announcementDeadLetterQueue });
+      const coordinator = createGraphCoordinator(deps);
+      const turnScope = makeCallerTurnScope("telegram", "chat-a", "parent-agent");
+
+      const pendingRun = coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerAgentId: "parent-agent",
+        callerSessionKey: "test-tenant:user_a:telegram:chat-a",
+        callerTurnScope: turnScope,
+        announceChannelType: "telegram",
+        announceChannelId: "chat-a",
+      });
+      expect(announcementDeadLetterQueue.reserveProducer).toHaveBeenCalledOnce();
+
+      await coordinator.shutdown();
+
+      expect(admissionSignal?.aborted).toBe(true);
+      await expect(pendingRun).resolves.toEqual({
+        ok: false,
+        error: "Graph coordinator is shutting down",
+      });
+      expect(runner.spawn).not.toHaveBeenCalled();
+      await expect(coordinator.run({ graph: buildGraph([{ nodeId: "B" }]) })).resolves.toEqual({
+        ok: false,
+        error: "Graph coordinator is shutting down",
+      });
     });
 
     it("snapshots caller trust for every graph node spawn", async () => {
@@ -5282,6 +5326,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
           rootRunId: "root-original-workspace",
           retirementKeys: ["original-graph-run"],
         }),
+        expect.any(AbortSignal),
       );
       expect(announcementDeadLetterQueue.reserveProducer.mock.invocationCallOrder[0])
         .toBeLessThan(vi.mocked(runner.spawn).mock.invocationCallOrder[0]!);
@@ -5302,6 +5347,44 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
           "completed",
         );
       });
+
+      await coordinator.shutdown();
+    });
+
+    it("reclaims a resumed announcement route from its authenticated endpoint", async () => {
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async () => ok(undefined)),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => ok(undefined)),
+        prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
+      };
+      const { deps, runner } = createTestDeps({ announcementDeadLetterQueue });
+      const coordinator = createGraphCoordinator(deps);
+      const exactGraph = buildGraph([{ nodeId: "A" }]);
+      const record = makeDurableGraphRecord({
+        checkpointId: "resume-endpoint-route",
+        rootRunId: "root-endpoint-route",
+        spawnTree: [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        checkpointRef: seedGraphCheckpoint(
+          "resume-endpoint-route",
+          exactGraph,
+          [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        ),
+        deliveryOrigin: null,
+      });
+
+      await expect(coordinator.resumeGraph(record)).resolves.toEqual(ok(undefined));
+
+      expect(announcementDeadLetterQueue.reserveProducer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channelType: "telegram",
+          channelId: "chat_a",
+          destinationEndpoint: makeCallerTurnScope("telegram", "chat_a").endpoint,
+        }),
+        expect.any(AbortSignal),
+      );
+      expect(announcementDeadLetterQueue.reserveProducer.mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(runner.spawn).mock.invocationCallOrder[0]!);
 
       await coordinator.shutdown();
     });
