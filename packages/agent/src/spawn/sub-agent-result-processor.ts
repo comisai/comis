@@ -502,6 +502,14 @@ export async function deliverAnnouncement(params: {
       }
       // Stamp the ledger tree root; a reservation without it can never be adjudicated.
       const reservationRoot = resolveReservationRoot(deps.resolveRootRunId, callerAgentId, params.callerConversation?.conversationScope);
+      if (!reservationRoot) {
+        deps.logger?.warn({
+          runId,
+          hint: "Resolve a non-empty outward ledger root for the caller conversation before governed parent rewriting",
+          errorKind: "precondition" as const,
+        }, "Sub-agent parent decision has no adjudicable ledger root");
+        return;
+      }
       const reservationBoundary = await fromPromise(deps.deadLetterQueue.reserveDecision({
         idempotencyKey: announceKey,
         agentId: callerAgentId,
@@ -511,7 +519,7 @@ export async function deliverAnnouncement(params: {
         channelType: announceChannelType,
         channelId: announceChannelId,
         failedAt: systemNowMs(),
-        ...(reservationRoot ? { rootRunId: reservationRoot } : {}),
+        rootRunId: reservationRoot,
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!reservationBoundary.ok || !reservationBoundary.value.ok) {

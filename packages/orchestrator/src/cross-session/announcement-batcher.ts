@@ -792,6 +792,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     params: QueuedAnnouncement,
   ): Promise<Result<"queued" | "retained", Error>> {
     const idempotencyKey = params.idempotencyKey;
+    const reservationRootRunId = params.reservationRootRunId;
     if (idempotencyKey && (deliveredKeys.has(idempotencyKey) || retainedKeys.has(idempotencyKey))) {
       return ok("retained");
     }
@@ -808,7 +809,23 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       );
       return err(new Error("Governed announcement decision reservation unavailable"));
     }
-    if (deps.sendGovernedAnnouncement && idempotencyKey && reserveDecision) {
+    if (deps.sendGovernedAnnouncement && !reservationRootRunId) {
+      deps.logger?.warn(
+        {
+          runId: params.runId,
+          errorKind: "precondition" as const,
+          hint: "Resolve a non-empty outward ledger root for the caller conversation before governed parent rewriting",
+        },
+        "Governed announcement has no adjudicable ledger root",
+      );
+      return err(new Error("Governed announcement ledger root unavailable"));
+    }
+    if (
+      deps.sendGovernedAnnouncement
+      && idempotencyKey
+      && reserveDecision
+      && reservationRootRunId
+    ) {
       const safeFallback = sanitizeForUser(params.announcementText);
       const fallbackDisclosure = enforceAnnouncementTerminalOutcome(
         safeFallback,
@@ -823,9 +840,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         channelType: params.announceChannelType,
         channelId: params.announceChannelId,
         failedAt: systemNowMs(),
-        // Without this the reservation is undrainable — adjudication has no
-        // ledger tree to ask, so a parked completion is never recovered.
-        ...(params.reservationRootRunId ? { rootRunId: params.reservationRootRunId } : {}),
+        rootRunId: reservationRootRunId,
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!boundary.ok) {

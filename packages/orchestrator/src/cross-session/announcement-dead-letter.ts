@@ -710,29 +710,7 @@ export function createAnnouncementDeadLetterQueue(
         );
         continue;
       }
-      if (reservation.rootRunId === undefined || reservation.rootRunId.length === 0) {
-        // Standing condition, re-reached on every sweep — report the transition
-        // into it once, exactly as logLedgerFailure does, or one unadjudicable
-        // reservation emits a WARN per sweep for the daemon's lifetime.
-        if (reportedLedgerFailures.has(`${reservation.id}\u0000unadjudicable`)) continue;
-        reportedLedgerFailures.add(`${reservation.id}\u0000unadjudicable`);
-        // PERMANENT, unlike the ledger-error skip below: with no tree root there
-        // is nothing to ask the ledger, so this reservation can never settle and
-        // the completion behind it is never delivered. Silence here made a
-        // permanently-lost result indistinguishable from a transient one.
-        logger?.warn(
-          {
-            runId: reservation.runId,
-            agentId: reservation.agentId,
-            channelType: reservation.channelType,
-            hint: "This parked completion can never be adjudicated: the reservation carries no rootRunId, so the outward ledger cannot be asked whether the announcement was sent. Deliver or discard it by hand, and ensure the reserving path stamps rootRunId.",
-            errorKind: "internal" as const,
-          },
-          "Parent decision reservation can never be adjudicated (no ledger root)",
-        );
-        continue;
-      }
-      const step = await fromPromise(
+       const step = await fromPromise(
         ledger.allocateStep(reservation.rootRunId, reservation.idempotencyKey),
       );
       if (!step.ok || !step.value.ok) {

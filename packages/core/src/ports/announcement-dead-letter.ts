@@ -46,7 +46,7 @@ export interface AnnouncementParentDecisionReservation {
   channelId: string;
   failedAt: number;
   threadId?: string;
-  rootRunId?: string;
+  rootRunId: string;
 }
 
 export interface AnnouncementParentDecisionReservationRecord

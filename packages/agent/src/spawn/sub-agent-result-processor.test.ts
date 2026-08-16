@@ -751,6 +751,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       announceToParent,
       sendGovernedAnnouncement,
       deadLetterQueue,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
     });
     await Promise.resolve();
     expect(announceToParent).not.toHaveBeenCalled();
@@ -789,6 +790,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       announceToParent,
       sendGovernedAnnouncement,
       deadLetterQueue,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
     });
 
     expect(announceToParent).not.toHaveBeenCalled();
@@ -909,6 +911,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       sendGovernedAnnouncement,
       deadLetterQueue,
       deliveryDedup,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
     });
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({

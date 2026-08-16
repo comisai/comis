@@ -67,7 +67,7 @@ function publicDecision(
     channelId: record.channelId,
     failedAt: record.failedAt,
     ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
-    ...(record.rootRunId !== undefined ? { rootRunId: record.rootRunId } : {}),
+    rootRunId: record.rootRunId,
   };
 }
 
@@ -102,7 +102,9 @@ function validDecision(entry: ParentDecisionReservation): boolean {
     && entry.channelId.length > 0
     && typeof entry.failedAt === "number"
     && Number.isFinite(entry.failedAt)
-    && (entry.threadId === undefined || typeof entry.threadId === "string");
+    && (entry.threadId === undefined || typeof entry.threadId === "string")
+    && typeof entry.rootRunId === "string"
+    && entry.rootRunId.length > 0;
 }
 
 export function createParentDecisionReservationStore(
@@ -264,7 +266,8 @@ function isParentDecisionReservationRecord(
     && typeof record.failedAt === "number"
     && Number.isFinite(record.failedAt)
     && isOptionalString(record.threadId)
-    && isOptionalString(record.rootRunId);
+    && typeof record.rootRunId === "string"
+    && record.rootRunId.length > 0;
 }
 
 function isDeadLetterEntry(
