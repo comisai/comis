@@ -2,7 +2,7 @@
 /** Type-only port for durable completion-announcement recovery. */
 
 import type { Result } from "@comis/shared";
-import type { ChannelEndpoint } from "../domain/conversation-scope.js";
+import type { ChannelEndpoint, ConversationRef } from "../domain/conversation-scope.js";
 import type { DeliveryAuthority } from "./delivery-queue.js";
 import type { OutwardTerminalDecision } from "./outward-send-ledger.js";
 
@@ -154,11 +154,24 @@ export interface AnnouncementDecisionReservationOutcome {
   readonly terminalDecision?: OutwardTerminalDecision;
 }
 
+export interface AnnouncementRetirementProducer {
+  readonly tenantId: string;
+  readonly agentId: string;
+  readonly conversationRef: ConversationRef;
+}
+
 /**
  * Durable completion-delivery recovery boundary shared by producers and the
  * orchestrator adapter.
  */
 export interface AnnouncementDeadLetterQueuePort {
+  reserveProducer(
+    producerKey: string,
+    signal?: AbortSignal,
+  ): Promise<Result<void, Error>>;
+  releaseProducer(
+    producerKey: string,
+  ): Promise<Result<void, Error>>;
   enqueue(
     entry: AnnouncementDeadLetterEntryInput,
     signal?: AbortSignal,
@@ -195,9 +208,11 @@ export interface AnnouncementDeadLetterQueuePort {
     operations: readonly AnnouncementParentDecisionReservation[],
     signal?: AbortSignal,
   ): Promise<Result<{ created: boolean; deferred?: boolean }, Error>>;
-  retireTerminalDecisions(
+  prepareTerminalDecisionRetirement(
     completionKeys: readonly string[],
+    producer: AnnouncementRetirementProducer,
   ): Promise<Result<void, Error>>;
+  collectTerminalDecisionRetirements(): Promise<Result<number, Error>>;
   drain(
     sendToChannel: (
       type: AnnouncementChannelType,

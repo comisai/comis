@@ -9,9 +9,10 @@ import {
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import type {
   AnnouncementDeliveryOptions,
+  CompletionAnnouncementSendRequest,
   GovernedAnnouncementFailure,
   GovernedAnnouncementSendOutcome,
-  SendGovernedCompletionAnnouncement,
+  RecoverableAnnouncementSendOutcome,
 } from "@comis/orchestrator";
 
 export type GraphAnnouncementSettlement = "committed" | "retained" | "suppressed";
@@ -29,7 +30,12 @@ interface GraphAnnouncementDeliveryParams {
 }
 
 interface GraphAnnouncementDeliveryDeps {
-  send?: SendGovernedCompletionAnnouncement;
+  send?: (
+    request: CompletionAnnouncementSendRequest,
+  ) => Promise<Result<
+    GovernedAnnouncementSendOutcome | RecoverableAnnouncementSendOutcome,
+    Error
+  >>;
   logger?: {
     warn(fields: Record<string, unknown>, message: string): void;
     error(fields: Record<string, unknown>, message: string): void;
@@ -103,6 +109,7 @@ export async function deliverGovernedGraphAnnouncement(
   if ("terminalDecision" in outcome) {
     return ok(outcome.terminalDecision === "delivered" ? "committed" : "suppressed");
   }
+  if ("status" in outcome) return ok("retained");
 
   const retained = hasRetainedOperationEvidence(outcome);
   deps.logger?.error({

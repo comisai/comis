@@ -964,9 +964,11 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   it("auto-archive removes old completed runs after retention period", async () => {
     deps.config.subAgentRetentionMs = 60_000; // 1 minute for test
-    const retireTerminalDecisions = vi.fn(async () => ok(undefined));
+    const prepareTerminalDecisionRetirement = vi.fn(async () => ok(undefined));
+    const collectTerminalDecisionRetirements = vi.fn(async () => ok(1));
     deps.deadLetterQueue = {
-      retireTerminalDecisions,
+      prepareTerminalDecisionRetirement,
+      collectTerminalDecisionRetirements,
       drain: vi.fn(async () => undefined),
     } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
 
@@ -997,9 +999,11 @@ describe("createSubAgentRunner", () => {
 
     // sessionStore.delete should have been called
     expect(deps.sessionStore.delete).toHaveBeenCalledTimes(1);
-    expect(retireTerminalDecisions).toHaveBeenCalledWith([
-      `default:user_a:telegram:chat-1::${runId}`,
-    ]);
+    expect(prepareTerminalDecisionRetirement).toHaveBeenCalledWith(
+      [`default:user_a:telegram:chat-1::${runId}`],
+      expect.objectContaining({ agentId: "default" }),
+    );
+    expect(collectTerminalDecisionRetirements).toHaveBeenCalledOnce();
 
     // Archive event should have been emitted
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
@@ -1010,14 +1014,15 @@ describe("createSubAgentRunner", () => {
     );
   });
 
-  it("auto-archive retains run state until replay guards retire", async () => {
+  it("auto-archive retains run state until replay-guard retirement is prepared", async () => {
     deps.config.subAgentRetentionMs = 60_000;
     let storageAvailable = false;
-    const retireTerminalDecisions = vi.fn(async () => storageAvailable
+    const prepareTerminalDecisionRetirement = vi.fn(async () => storageAvailable
       ? ok(undefined)
       : err(new Error("storage unavailable")));
     deps.deadLetterQueue = {
-      retireTerminalDecisions,
+      prepareTerminalDecisionRetirement,
+      collectTerminalDecisionRetirements: vi.fn(async () => ok(1)),
       drain: vi.fn(async () => undefined),
     } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
     const runner = createSubAgentRunner(deps);
@@ -1031,7 +1036,7 @@ describe("createSubAgentRunner", () => {
     await vi.advanceTimersByTimeAsync(60_000 + 300_001);
 
     expect(runner.getRunStatus(runId)).toBeDefined();
-    expect(deps.sessionStore.delete).toHaveBeenCalledTimes(1);
+    expect(deps.sessionStore.delete).not.toHaveBeenCalled();
     storageAvailable = true;
     await vi.advanceTimersByTimeAsync(300_001);
     expect(runner.getRunStatus(runId)).toBeUndefined();

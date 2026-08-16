@@ -446,6 +446,7 @@ function buildGraphCoordinatorDeps(deps: {
     subAgentRunner: ReturnType<typeof setupCrossSession>["subAgentRunner"];
     sendToChannel: ReturnType<typeof setupCrossSession>["sendToChannel"];
     sendGovernedAnnouncement: ReturnType<typeof setupCrossSession>["sendGovernedAnnouncement"];
+    sendRecoverableAnnouncement: ReturnType<typeof setupCrossSession>["sendRecoverableAnnouncement"];
     announceToParent: ReturnType<typeof setupCrossSession>["announceToParent"];
     announcementBatcher: ReturnType<typeof setupCrossSession>["announcementBatcher"];
     commandQueue: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
@@ -502,6 +503,9 @@ function buildGraphCoordinatorDeps(deps: {
     sendToChannel: channels.sendToChannel,
     ...(channels.sendGovernedAnnouncement
       ? { sendGovernedAnnouncement: channels.sendGovernedAnnouncement }
+      : {}),
+    ...(channels.sendRecoverableAnnouncement
+      ? { sendRecoverableAnnouncement: channels.sendRecoverableAnnouncement }
       : {}),
     announceToParent: channels.announceToParent,
     batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
@@ -2274,7 +2278,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     sessionAdapters: handle.piSessionAdapters,
     trajectoryRegistry: handle.trajectoryRegistry,
   });
-  const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, closeAnnouncementAdmission, proxyTypingCleanup } = setupCrossSession({
+  const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, sendRecoverableAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, closeAnnouncementAdmission, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
     sessionResolver, deliveryQueue, deliveryService,
@@ -2345,7 +2349,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const nodeTypeRegistry = createNodeTypeRegistry();
   const graphCoordinator = createGraphCoordinator(buildGraphCoordinatorDeps({
     agents: handle,
-    channels: { subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
+    channels: { subAgentRunner, sendToChannel, sendGovernedAnnouncement, sendRecoverableAnnouncement, announceToParent, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
     // Thread the live durable store so the coordinator checkpoints node state (DAG durability).
     ...(durableResume.durableRunStore ? { durableRunStore: durableResume.durableRunStore } : {}),
     ...(capEndpointHandle

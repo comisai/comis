@@ -1384,6 +1384,29 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(queue.size()).toBe(1);
   });
 
+  it("backpressures producer work before handoff ownership can overflow", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 2,
+    });
+    await expect(queue.reserveProducer("producer-a")).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveProducer("producer-b")).resolves.toEqual(ok(undefined));
+
+    let thirdAdmitted = false;
+    const third = queue.reserveProducer("producer-c").then((result) => {
+      thirdAdmitted = true;
+      return result;
+    });
+    await delay(10);
+    expect(thirdAdmitted).toBe(false);
+    expect(queue.size()).toBe(2);
+
+    await expect(queue.releaseProducer("producer-a")).resolves.toEqual(ok(undefined));
+    await expect(third).resolves.toEqual(ok(undefined));
+    expect(queue.size()).toBe(2);
+  });
+
   it("hands off a cancelled attachment replacement atomically within its bound", async () => {
     const queue = createAnnouncementDeadLetterQueue({
       filePath,

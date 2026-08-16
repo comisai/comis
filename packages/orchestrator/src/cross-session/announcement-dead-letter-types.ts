@@ -3,6 +3,7 @@
 import type {
   AnnouncementDeadLetterAttachmentSnapshot,
   AnnouncementDeadLetterAttachmentSource,
+  AnnouncementRetirementProducer,
   ChannelEndpoint,
   DeliveryAuthority,
   OutwardSendLedgerPort,
@@ -89,6 +90,9 @@ export interface AnnouncementDeadLetterQueueOptions {
   reconcileAttachments?: (
     referencedPaths: readonly string[],
   ) => Promise<import("@comis/shared").Result<void, Error>>;
+  retirementProducerExists?: (
+    producer: AnnouncementRetirementProducer,
+  ) => Promise<import("@comis/shared").Result<boolean, Error>>;
   /** Materialize the owning session observer before off-turn recovery events fire. */
   ensureSessionObservation?: (input: {
     agentId: string;

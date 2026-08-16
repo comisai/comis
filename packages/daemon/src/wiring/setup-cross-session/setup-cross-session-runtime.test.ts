@@ -3995,7 +3995,11 @@ describe("setupCrossSession durable-store injection", () => {
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
       expect(senderArgs.sendGovernedAnnouncement).toBeUndefined();
       expect(senderArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
+      expect(senderArgs.reserveAnnouncementProducer).toEqual(expect.any(Function));
+      expect(senderArgs.releaseAnnouncementProducer).toEqual(expect.any(Function));
+      expect(senderArgs.prepareAnnouncementRetirement).toEqual(expect.any(Function));
       expect(runnerArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
+      expect(result.sendRecoverableAnnouncement).toEqual(expect.any(Function));
 
       const admitted = await result.announcementBatcher.enqueue({
         announcementText: "[System Message]\nResult: completed",

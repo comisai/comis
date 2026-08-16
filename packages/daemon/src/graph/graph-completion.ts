@@ -89,7 +89,7 @@ export function computeSubtreeCost(gs: GraphRunState, nodeId: string): number {
  */
 export async function handleGraphCompletion(
   state: CoordinatorSharedState,
-  deps: Pick<GraphCoordinatorDeps, "eventBus" | "logger" | "sendGovernedAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback">,
+  deps: Pick<GraphCoordinatorDeps, "eventBus" | "logger" | "sendGovernedAnnouncement" | "sendRecoverableAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback">,
   gs: GraphRunState,
 ): Promise<Result<void, Error>> {
   // Prevent double-completion
@@ -268,7 +268,7 @@ export async function handleGraphCompletion(
     finalText: string,
     options?: { threadId?: string; extra?: Record<string, unknown> },
   ) => deliverGovernedGraphAnnouncement(
-    { send: deps.sendGovernedAnnouncement, logger: deps.logger },
+    { send: deps.sendGovernedAnnouncement ?? deps.sendRecoverableAnnouncement, logger: deps.logger },
     {
       graphId: gs.graphId,
       agentId: callerAgentId,
@@ -286,14 +286,20 @@ export async function handleGraphCompletion(
   // outward operation. Parent execution is intentionally outside this terminal
   // boundary because replaying it could repeat arbitrary tool effects.
   let announcementDelivery: "not-requested" | "unavailable" | "committed" | "retained" | "suppressed" | "failed" =
-    hasAnyAnnouncementRoute && deps.sendGovernedAnnouncement === undefined
+    hasAnyAnnouncementRoute
+      && deps.sendGovernedAnnouncement === undefined
+      && deps.sendRecoverableAnnouncement === undefined
       ? "unavailable"
       : "not-requested";
   if (hasAnyAnnouncementRoute && !announcementIdentityValid) {
     writeRunMetadata(deps, gs, graphStatus, "failed");
     return err(new Error("Graph announcement identity or route is invalid"));
   }
-  if (hasAnyAnnouncementRoute && deps.sendGovernedAnnouncement !== undefined) {
+  if (
+    hasAnyAnnouncementRoute
+    && (deps.sendGovernedAnnouncement !== undefined
+      || deps.sendRecoverableAnnouncement !== undefined)
+  ) {
     const delivery = await sendGoverned(announcement, deliveryOptions);
     if (!delivery.ok) {
       writeRunMetadata(deps, gs, graphStatus, "failed");
@@ -526,7 +532,7 @@ export function buildGraphAnnouncement(
  */
 export function handleBudgetExceeded(
   state: CoordinatorSharedState,
-  deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendGovernedAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback">,
+  deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendGovernedAnnouncement" | "sendRecoverableAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback">,
   gs: GraphRunState,
   reason: string,
   complete: () => void = () => handleGraphCompletion(state, deps, gs),
@@ -593,7 +599,7 @@ export function handleBudgetExceeded(
  */
 export function handleGraphTimeout(
   state: CoordinatorSharedState,
-  deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendGovernedAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback">,
+  deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendGovernedAnnouncement" | "sendRecoverableAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback">,
   gs: GraphRunState,
   complete: () => void = () => handleGraphCompletion(state, deps, gs),
 ): void {

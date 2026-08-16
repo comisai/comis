@@ -632,6 +632,38 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
     }
   });
 
+  it("delivers graph completion through the ledgerless recovery boundary", async () => {
+    const gs = createMinimalGraphRunState([{ nodeId: "final", output: "Short result" }]);
+    gs.completedAt = undefined;
+    gs.callerSessionKey = "tenant-a:user-a:chat-1";
+    gs.callerAgentId = "agent-1";
+    gs.announceChannelType = "telegram";
+    gs.announceChannelId = "chat-1";
+    authorizeGraphState(gs, "telegram", "chat-1");
+    const { deps, logger } = completionDeps();
+    delete (deps as { sendGovernedAnnouncement?: unknown }).sendGovernedAnnouncement;
+    const sendRecoverableAnnouncement = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-1",
+    }));
+    (deps as { sendRecoverableAnnouncement?: unknown }).sendRecoverableAnnouncement =
+      sendRecoverableAnnouncement;
+
+    await expect(handleGraphCompletion({} as never, deps, gs)).resolves.toEqual(ok(undefined));
+
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "test-graph-id",
+      completionKeys: ["test-graph-id"],
+      channelType: "telegram",
+      channelId: "chat-1",
+    }));
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ announcementDelivery: "committed" }),
+      "Graph execution complete",
+    );
+  });
+
   it("keeps plugin channel announcements on the governed extensible path", async () => {
     const gs = createMinimalGraphRunState([
       { nodeId: "final", output: "Short result" },

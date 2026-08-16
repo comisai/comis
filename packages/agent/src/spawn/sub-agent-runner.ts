@@ -1102,6 +1102,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const providerSettledRunIds = new Set<string>();
   const deliverySuppressedRunIds = new Set<string>();
   const deliveryAdmissionRunIds = new Set<string>();
+  const producerAdmissionAbort = new AbortController();
   const forcedTerminalRunIds = new Set<string>();
   const durableAdmittedRunIds = new Set<string>();
   const durableTerminalReasons = new Map<string, DurableRunTerminalReason>();
@@ -1939,14 +1940,21 @@ function classifyCompletionErrorKind(
     deps.batcher?.markDelivered(idempotencyKey);
   };
 
-  const retireAnnouncementReplayGuards = async (
+  const prepareAnnouncementReplayGuardRetirement = async (
     run: SubAgentRun,
   ): Promise<Result<void, Error>> => {
     const completionKey = buildAnnounceKey(run.callerSessionKey, run.runId);
-    if (!completionKey || !deps.deadLetterQueue?.retireTerminalDecisions) {
+    if (!completionKey || !deps.deadLetterQueue?.prepareTerminalDecisionRetirement) {
       return ok(undefined);
     }
-    return deps.deadLetterQueue.retireTerminalDecisions([completionKey]);
+    return deps.deadLetterQueue.prepareTerminalDecisionRetirement(
+      [completionKey],
+      {
+        tenantId: run.conversationScope.tenantId,
+        agentId: run.agentId,
+        conversationRef: run.conversationRef,
+      },
+    );
   };
 
   const archivalRunIds = new Set<string>();
@@ -1974,6 +1982,15 @@ function classifyCompletionErrorKind(
     if (archivalRunIds.has(runId)) return;
     archivalRunIds.add(runId);
     const archive = (async () => {
+      const preparedRetirement = await prepareAnnouncementReplayGuardRetirement(run);
+      if (!preparedRetirement.ok) {
+        deps.logger?.warn({
+          runId,
+          errorKind: "resource" as const,
+          hint: "Restore dead-letter storage; the retention sweep will retry before deleting the producer session",
+        }, "Sub-agent announcement replay-guard retirement was not prepared");
+        return;
+      }
       if (!archivedSessionRunIds.has(runId)) {
         const deleted = deps.sessionStore.delete(run.conversationScope);
         if (!deleted.ok) {
@@ -1987,14 +2004,13 @@ function classifyCompletionErrorKind(
         }
         archivedSessionRunIds.add(runId);
       }
-      const retired = await retireAnnouncementReplayGuards(run);
-      if (!retired.ok) {
+      const collected = await deps.deadLetterQueue?.collectTerminalDecisionRetirements?.();
+      if (collected && !collected.ok) {
         deps.logger?.warn({
           runId,
           errorKind: "resource" as const,
-          hint: "Restore dead-letter storage; the archived run remains retained until replay guards retire",
-        }, "Sub-agent announcement replay guards were not retired");
-        return;
+          hint: "Restore dead-letter storage; the durable retirement intent will retry during recovery",
+        }, "Sub-agent announcement replay guards remain queued for retirement");
       }
       deps.eventBus.emit("session:sub_agent_archived", {
         runId,
@@ -3151,6 +3167,26 @@ function classifyCompletionErrorKind(
             "Sub-agent terminalized during checkpoint admission",
           );
         }
+        if (
+          params.announceChannelType
+          && params.announceChannelId
+          && params.callerAgentId
+          && params.callerSessionKey
+          && params.callerConversation
+          && run.callerEndpoint
+          && deps.deadLetterQueue?.reserveProducer
+        ) {
+          const reservedProducer = await deps.deadLetterQueue.reserveProducer(
+            runId,
+            producerAdmissionAbort.signal,
+          );
+          if (!reservedProducer.ok) {
+            throw new DurableSubAgentAdmissionError(
+              "Sub-agent announcement producer admission failed",
+              reservedProducer.error,
+            );
+          }
+        }
 
         if (deps.lifecycleHooks) {
           try {
@@ -4160,6 +4196,9 @@ function classifyCompletionErrorKind(
         // ingesting other sessions' events into its trajectory file (stamped
         // with the dead child's sessionId).
         closeTrajectoryOnce(run);
+        if (!deliverySuppressedRunIds.has(runId)) {
+          await deps.deadLetterQueue?.releaseProducer?.(runId);
+        }
       }
     })();
 
@@ -4749,6 +4788,7 @@ function classifyCompletionErrorKind(
 
   async function performShutdown(): Promise<void> {
     sweepInterval.cancel();
+    producerAdmissionAbort.abort();
     deps.eventBus.off("tool:executed", observeChildToolOutcome);
 
     let activeSettled = await waitForTrackedPromises(

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err } from "@comis/shared";
+import { ConversationRefSchema } from "@comis/core";
 import {
   createAnnouncementTerminalDecisionStore,
   createTerminalDecisionRecord,
@@ -91,6 +92,34 @@ describe("announcement terminal decisions", () => {
       "utf8",
     )).trim().split("\n");
     expect(rows).toHaveLength(2);
+  });
+
+  it("recovers a prepared retirement after producer deletion", async () => {
+    const producer = {
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      conversationRef: ConversationRefSchema.parse(`cv_${"a".repeat(43)}`),
+    };
+    const first = createAnnouncementTerminalDecisionStore(filePath);
+    await first.record({ ...owner, completionKeys: ["completion-crash"] }, "delivered");
+    await expect(first.prepareRetirement(["completion-crash"], producer))
+      .resolves.toEqual({ ok: true, value: undefined });
+    await expect(first.collectRetirements(async () => ({ ok: true, value: true })))
+      .resolves.toEqual({ ok: true, value: 0 });
+
+    const restarted = createAnnouncementTerminalDecisionStore(filePath);
+    await expect(restarted.lookup(owner)).resolves.toEqual({ ok: true, value: "delivered" });
+    await expect(restarted.collectRetirements(
+      async () => ({ ok: true, value: false }),
+      () => ({ ok: true, value: true }),
+    )).resolves.toEqual({ ok: true, value: 0 });
+    await expect(restarted.lookup(owner)).resolves.toEqual({ ok: true, value: "delivered" });
+    await expect(restarted.collectRetirements(
+      async () => ({ ok: true, value: false }),
+      () => ({ ok: true, value: false }),
+    ))
+      .resolves.toEqual({ ok: true, value: 1 });
+    await expect(restarted.lookup(owner)).resolves.toEqual({ ok: true, value: undefined });
   });
 
   it("keeps a terminal guard authoritative after its renamed index is visible", async () => {

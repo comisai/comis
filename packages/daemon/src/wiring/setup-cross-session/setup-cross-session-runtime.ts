@@ -32,6 +32,7 @@ import {
   createAnnouncementBatcher,
   createAnnouncementDeadLetterQueue,
   type SendGovernedCompletionAnnouncement,
+  type SendRecoverableCompletionAnnouncement,
 } from "@comis/orchestrator";
 import { randomUUID } from "node:crypto";
 import { err, ok } from "@comis/shared";
@@ -73,6 +74,7 @@ export interface CrossSessionResult {
   sendToChannel: (channelType: string, channelId: string, text: string, options?: Omit<DeliverToChannelOptions, "completionMode">) => Promise<boolean>;
   /** Receipt-aware retained-operation boundary for completion announcements. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
   /** Parent session announcement for graph results */
   announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, callerConversation: ConversationLocator, text: string, channelType: string, channelId: string, options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence }) => Promise<string | undefined>;
   /** Dead-letter queue for failed announcement persistence. */
@@ -415,6 +417,10 @@ export function setupCrossSession(deps: {
     // is the authoritative no-double-notify signal). Absent ⇒ at-least-once delivery.
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     receiptAwareSendToChannel: sendSingleTextToChannelWithReceipt,
+    retirementProducerExists: async (producer) => {
+      const loaded = sessionStore.loadByRef(producer, producer.conversationRef);
+      return loaded.ok ? ok(loaded.value !== undefined) : err(loaded.error);
+    },
     reconcileAttachments: (referencedPaths) => reconcileCompletionAttachmentSnapshots(
       container.config.dataDir,
       referencedPaths,
@@ -533,6 +539,13 @@ export function setupCrossSession(deps: {
     eventBus: container.eventBus,
     config: container.config.security.agentToAgent,
     logger: deps.logger,
+    reserveAnnouncementProducer: (producerKey) => deadLetterQueue.reserveProducer(
+      producerKey,
+      announcementAdmissionAbort.signal,
+    ),
+    releaseAnnouncementProducer: (producerKey) => deadLetterQueue.releaseProducer(producerKey),
+    prepareAnnouncementRetirement: (completionKeys, producer) =>
+      deadLetterQueue.prepareTerminalDecisionRetirement(completionKeys, producer),
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
     ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
   });
@@ -721,6 +734,7 @@ export function setupCrossSession(deps: {
     subAgentRunner,
     sendToChannel,
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
+    ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
     announceToParent,
     deadLetterQueue,
     announcementBatcher,

@@ -30,7 +30,6 @@ export interface GovernedCompletionAnnouncementRequest {
   partId?: string;
   attachment?: CompletionAttachmentShape;
   completionKeys?: readonly string[];
-  retireOnSettlement?: boolean;
   signal?: AbortSignal;
 }
 
@@ -144,4 +143,10 @@ export interface AnnouncementBatcher {
 export type AnnouncementDeadLetterQueue = Pick<
   AnnouncementDeadLetterQueuePort,
   "enqueue" | "reserveDecision" | "lookupDecision" | "resolveDecision" | "replaceDecisions" | "drain" | "size"
-> & Partial<Pick<AnnouncementDeadLetterQueuePort, "retireTerminalDecisions">>;
+> & Partial<Pick<
+  AnnouncementDeadLetterQueuePort,
+  | "reserveProducer"
+  | "releaseProducer"
+  | "prepareTerminalDecisionRetirement"
+  | "collectTerminalDecisionRetirements"
+>>;

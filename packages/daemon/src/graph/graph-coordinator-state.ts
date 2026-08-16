@@ -28,6 +28,7 @@ import type {
   GraphReportCallbackRegistration,
   GraphReportRegistrationError,
   SendGovernedCompletionAnnouncement,
+  SendRecoverableCompletionAnnouncement,
 } from "@comis/orchestrator";
 import type { Result } from "@comis/shared";
 
@@ -272,6 +273,7 @@ export interface GraphCoordinatorDeps {
   ) => Promise<boolean>;
   /** Receipt-aware retained-operation boundary for terminal graph notifications. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
   announceToParent?: (
     callerAgentId: string,
     callerSessionKey: SessionKey,

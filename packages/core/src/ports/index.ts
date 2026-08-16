@@ -225,6 +225,7 @@ export type {
   AnnouncementParentDecisionReservation,
   AnnouncementParentDecisionReservationRecord,
   AnnouncementDeadLetterStatus,
+  AnnouncementRetirementProducer,
   QuarantinedAnnouncement,
   QuarantineReleaseOutcome,
   AnnouncementDeadLetterQueuePort,

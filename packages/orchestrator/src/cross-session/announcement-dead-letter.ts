@@ -39,6 +39,7 @@ import {
   type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
 import {
+  announcementTerminalRetirementDigest,
   createAnnouncementTerminalDecisionStore,
   terminalDecisionIdentity,
   type AnnouncementTerminalDecision,
@@ -96,12 +97,14 @@ export function createAnnouncementDeadLetterQueue(
     prepareAttachment,
     cleanupAttachment,
     reconcileAttachments,
+    retirementProducerExists,
     fileOperations,
   } = opts;
   let entries: DeadLetterEntry[] = [];
   let decisionReservations: ParentDecisionReservationRecord[] = [];
   let producerHandoffs: AnnouncementProducerHandoffRecord[] = [];
   let invalidRecords: InvalidDeadLetterRecord[] = [];
+  const producerSlots = new Set<string>();
   const emittedAdmissionKeys = new Set<string>();
   const terminalDecisionStore = createAnnouncementTerminalDecisionStore(filePath);
   let loaded = false;
@@ -114,8 +117,12 @@ export function createAnnouncementDeadLetterQueue(
     return result;
   }
 
-  function retainedCount(): number {
-    return entries.length + decisionReservations.length + invalidRecords.length;
+  function capacityCount(): number {
+    return entries.length
+      + decisionReservations.length
+      + producerHandoffs.length
+      + producerSlots.size
+      + invalidRecords.length;
   }
 
   function signalCapacityChange(): void {
@@ -126,9 +133,21 @@ export function createAnnouncementDeadLetterQueue(
 
   async function serializeStateChange<T>(operation: () => Promise<T>): Promise<T> {
     return serialize(async () => {
-      const before = retainedCount();
+      const before = capacityCount();
       const result = await operation();
-      if (retainedCount() < before) signalCapacityChange();
+      if (capacityCount() < before) {
+        signalCapacityChange();
+        const collected = await collectTerminalRetirementsDurably();
+        if (!collected.ok) {
+          logger?.warn(
+            {
+              errorKind: "resource" as const,
+              hint: "restore terminal-decision storage; durable retirement intents remain queued",
+            },
+            "Announcement terminal retirement intents could not be collected",
+          );
+        }
+      }
       return result;
     });
   }
@@ -165,7 +184,13 @@ export function createAnnouncementDeadLetterQueue(
     while (true) {
       const version = capacityVersion;
       const result = await serializeStateChange(operation);
-      if (result.ok || result.error.message !== "Dead-letter quarantine capacity exhausted") {
+      if (
+        result.ok
+        || (
+          result.error.message !== "Dead-letter quarantine capacity exhausted"
+          && result.error.message !== "Announcement producer capacity exhausted"
+        )
+      ) {
         return result;
       }
       if (!await waitForCapacity(version, signal)) {
@@ -192,6 +217,35 @@ export function createAnnouncementDeadLetterQueue(
       },
     );
   }
+
+  async function collectTerminalRetirementsDurably(): Promise<Result<number, Error>> {
+    if (!retirementProducerExists) return ok(0);
+    const retainedDigests = new Set<string>();
+    const retainedOwners = [
+      ...entries,
+      ...decisionReservations,
+      ...producerHandoffs.flatMap((handoff) => handoff.operations),
+    ];
+    for (const owner of retainedOwners) {
+      const keys = owner.completionKeys && owner.completionKeys.length > 0
+        ? owner.completionKeys
+        : owner.idempotencyKey
+          ? [owner.idempotencyKey]
+          : [];
+      for (const key of keys) {
+        const digest = announcementTerminalRetirementDigest(key);
+        if (!digest.ok) return digest;
+        retainedDigests.add(digest.value);
+      }
+    }
+    return terminalDecisionStore.collectRetirements(
+      retirementProducerExists,
+      (completionKeyDigests) => ok(
+        completionKeyDigests.some((digest) => retainedDigests.has(digest)),
+      ),
+    );
+  }
+
   async function loadFromDisk(): Promise<Result<void, Error>> {
     if (loaded) return ok(undefined);
     const read = await readDeadLetterSnapshot(filePath, logger);
@@ -269,6 +323,16 @@ export function createAnnouncementDeadLetterQueue(
         }
       }
       loaded = true;
+      const collectedRetirements = await collectTerminalRetirementsDurably();
+      if (!collectedRetirements.ok) {
+        logger?.warn(
+          {
+            errorKind: "resource" as const,
+            hint: "restore terminal-decision storage; durable retirement intents will retry on the next recovery pass",
+          },
+          "Announcement terminal retirement intents could not be collected",
+        );
+      }
       logger?.debug(
         {
           entryCount: entries.length + decisionReservations.length + invalidRecords.length,
@@ -325,11 +389,20 @@ export function createAnnouncementDeadLetterQueue(
     return false;
   }
 
-  function canPersistProducerHandoffs(nextCount: number): boolean {
-    if (nextCount <= maxEntries || nextCount <= producerHandoffs.length) return true;
+  function canPersistProducerOwnership(
+    nextHandoffCount: number,
+    consumedProducerKeys: ReadonlySet<string> = new Set(),
+  ): boolean {
+    const remainingSlotCount = [...producerSlots].filter(
+      (producerKey) => !consumedProducerKeys.has(producerKey),
+    ).length;
+    const nextCount = nextHandoffCount + remainingSlotCount;
+    const currentCount = producerHandoffs.length + producerSlots.size;
+    if (nextCount <= maxEntries || nextCount <= currentCount) return true;
     logger?.warn(
       {
         producerHandoffCount: producerHandoffs.length,
+        producerSlotCount: producerSlots.size,
         maxEntries,
         errorKind: "resource" as const,
         hint: "allow retained announcements to drain before stopping additional completion producers",
@@ -337,6 +410,37 @@ export function createAnnouncementDeadLetterQueue(
       "Announcement producer handoff capacity exhausted",
     );
     return false;
+  }
+
+  async function reserveProducerDurably(producerKey: string): Promise<Result<void, Error>> {
+    const loadedFromDisk = await loadFromDisk();
+    if (!loadedFromDisk.ok) return loadedFromDisk;
+    if (producerKey.length === 0 || producerKey.length > 256) {
+      return err(new Error("Announcement producer identity is invalid"));
+    }
+    if (
+      producerSlots.has(producerKey)
+      || producerHandoffs.some((handoff) => handoff.operations.some((operation) =>
+        operation.runId === producerKey))
+    ) return ok(undefined);
+    if (!canPersistProducerOwnership(producerHandoffs.length + 1)) {
+      return err(new Error("Announcement producer capacity exhausted"));
+    }
+    producerSlots.add(producerKey);
+    return ok(undefined);
+  }
+
+  async function releaseProducerDurably(producerKey: string): Promise<Result<void, Error>> {
+    producerSlots.delete(producerKey);
+    return ok(undefined);
+  }
+
+  function consumeProducerSlots(producerKeys: Iterable<string>): void {
+    let consumed = false;
+    for (const producerKey of producerKeys) {
+      if (producerSlots.delete(producerKey)) consumed = true;
+    }
+    if (consumed) signalCapacityChange();
   }
 
   function isSourceAttachment(
@@ -2096,13 +2200,17 @@ export function createAnnouncementDeadLetterQueue(
         decisionReservations,
       );
       if (!reconciled.ok) return reconciled;
+      consumeProducerSlots([entry.runId]);
       return ok({ created: false, terminalDecision: terminalDecision.value });
     }
     const existing = await decisionStore.lookup(entry.idempotencyKey);
     if (!existing.ok) return existing;
     const deferred = producerHandoffs.find((handoff) => handoff.operations.some((operation) =>
       operation.idempotencyKey === entry.idempotencyKey));
-    if (deferred) return ok({ created: false, deferred: true });
+    if (deferred) {
+      consumeProducerSlots([entry.runId]);
+      return ok({ created: false, deferred: true });
+    }
     const prepared = await prepareReservedAttachment(
       entry,
       existing.value ? [existing.value] : [],
@@ -2134,6 +2242,7 @@ export function createAnnouncementDeadLetterQueue(
         },
       );
     }
+    if (reserved.ok) consumeProducerSlots([entry.runId]);
     return reserved;
   }
 
@@ -2147,6 +2256,7 @@ export function createAnnouncementDeadLetterQueue(
       return err(new Error("Announcement producer handoff set is invalid"));
     }
     const operationKeys = new Set(operations.map((operation) => operation.idempotencyKey));
+    const producerKeys = new Set(operations.map((operation) => operation.runId));
     if (operationKeys.size !== operations.length) {
       return err(new Error("Announcement producer handoff identities are invalid"));
     }
@@ -2187,11 +2297,12 @@ export function createAnnouncementDeadLetterQueue(
         })
         && existingKeys.size === operationKeys.size;
       await cleanupUnreferencedSnapshots(transientSnapshots);
+      consumeProducerSlots(producerKeys);
       return exact
         ? ok({ created: false, deferred: true })
         : err(new Error("Announcement producer handoff identity mismatch"));
     }
-    if (!canPersistProducerHandoffs(producerHandoffs.length + 1)) {
+    if (!canPersistProducerOwnership(producerHandoffs.length + 1, producerKeys)) {
       await cleanupUnreferencedSnapshots(transientSnapshots);
       return err(new Error("Announcement producer handoff capacity exhausted"));
     }
@@ -2225,6 +2336,7 @@ export function createAnnouncementDeadLetterQueue(
       return persisted;
     }
     producerHandoffs = [...producerHandoffs, record];
+    consumeProducerSlots(producerKeys);
     return ok({ created: false, deferred: true });
   }
 
@@ -2310,6 +2422,13 @@ export function createAnnouncementDeadLetterQueue(
   }
 
   return {
+    reserveProducer: (producerKey, signal) => admitWithBackpressure(
+      () => reserveProducerDurably(producerKey),
+      signal,
+    ),
+    releaseProducer: (producerKey) => serializeStateChange(
+      () => releaseProducerDurably(producerKey),
+    ),
     enqueue: (entry, signal) => admitWithBackpressure(() => enqueueDurably(entry), signal),
     beginDeliveryAttempt: (entry, signal) =>
       admitWithBackpressure(() => beginDeliveryAttemptDurably(entry), signal),
@@ -2407,6 +2526,9 @@ export function createAnnouncementDeadLetterQueue(
           pendingOperations,
           [...settledCompletionKeys],
         );
+        if (replaced.ok) {
+          consumeProducerSlots(pendingOperations.map((operation) => operation.runId));
+        }
         if (!replaced.ok || !replaced.value.created) {
           await cleanupUnreferencedSnapshots(transientSnapshots);
         }
@@ -2416,10 +2538,13 @@ export function createAnnouncementDeadLetterQueue(
             : []));
         return replaced;
       }, signal, () => handoffDecisionsDurably(expectedKeys, operations)),
-    retireTerminalDecisions: (completionKeys) => serialize(async () => {
+    prepareTerminalDecisionRetirement: (completionKeys, producer) => serialize(async () => {
       if (outwardLedger) return ok(undefined);
-      return terminalDecisionStore.retire(completionKeys);
+      return terminalDecisionStore.prepareRetirement(completionKeys, producer);
     }),
+    collectTerminalDecisionRetirements: () => serialize(
+      () => collectTerminalRetirementsDurably(),
+    ),
     drain: (sendToChannel, onDelivered) =>
       serializeStateChange(() => drainSerialized(sendToChannel, onDelivered)),
     durableStatus: () => serialize(async () => {
@@ -2428,12 +2553,15 @@ export function createAnnouncementDeadLetterQueue(
       const status = quarantineClassification().status;
       return ok({
         ...status,
-        activeRecoveryCount: status.activeRecoveryCount + producerHandoffs.length,
+        activeRecoveryCount: status.activeRecoveryCount
+          + producerHandoffs.length
+          + producerSlots.size,
       });
     }),
     size: () => entries.length
       + decisionReservations.length
       + producerHandoffs.length
+      + producerSlots.size
       + invalidRecords.length,
     listQuarantined: () => serialize(async () => {
       // Load before projecting: the in-memory lists are empty until some

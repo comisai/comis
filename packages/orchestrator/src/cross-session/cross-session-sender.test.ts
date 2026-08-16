@@ -317,7 +317,16 @@ describe("createCrossSessionSender", () => {
       delivered: true as const,
       status: "accepted" as const,
     }));
-    const sender = createCrossSessionSender({ ...deps, sendRecoverableAnnouncement });
+    const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const prepareAnnouncementRetirement = vi.fn(async () => ok(undefined));
+    const sender = createCrossSessionSender({
+      ...deps,
+      sendRecoverableAnnouncement,
+      reserveAnnouncementProducer,
+      releaseAnnouncementProducer,
+      prepareAnnouncementRetirement,
+    });
     const params: CrossSessionSendParams = {
       target: QUERY_ONE,
       text: "question",
@@ -340,8 +349,19 @@ describe("createCrossSessionSender", () => {
       channelType: "discord",
       channelId: "guild-channel-42",
       text: "test response",
-      retireOnSettlement: true,
     }));
+    expect(prepareAnnouncementRetirement).toHaveBeenCalledWith(
+      ["announce-tool-call-direct"],
+      {
+        tenantId: PARENT_TWO.conversationScope.tenantId,
+        agentId: PARENT_TWO.conversationScope.agentId,
+        conversationRef: PARENT_TWO.conversationRef,
+      },
+    );
+    expect(prepareAnnouncementRetirement.mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(deps.executeInSession).mock.invocationCallOrder[0]!);
+    expect(reserveAnnouncementProducer).toHaveBeenCalledWith("announce-tool-call-direct");
+    expect(releaseAnnouncementProducer).toHaveBeenCalledWith("announce-tool-call-direct");
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
@@ -481,7 +501,6 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
       channelId: "guild-channel-42",
       text: "test response",
       completionKeys: ["announce-tool-call-1"],
-      retireOnSettlement: true,
     });
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
