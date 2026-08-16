@@ -216,7 +216,6 @@ export type {
 } from "./delivery-mirror.js";
 export type {
   AnnouncementChannelType,
-  AnnouncementDeadLetterDeliveryOptions,
   AnnouncementDeadLetterEntryInput,
   AnnouncementDeadLetterEntry,
   AnnouncementParentDecisionReservation,

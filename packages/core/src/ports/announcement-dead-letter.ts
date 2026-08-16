@@ -6,7 +6,7 @@ import type { Result } from "@comis/shared";
 /** Channel contribution identifier. Open because deployments can register channels. */
 export type AnnouncementChannelType = string;
 
-export interface AnnouncementDeadLetterDeliveryOptions {
+interface AnnouncementDeadLetterDeliveryOptions {
   readonly threadId?: string;
   readonly extra?: Record<string, unknown>;
 }
@@ -55,8 +55,8 @@ export interface AnnouncementParentDecisionReservationRecord
   id: string;
 }
 
-/** Content-free operator projection of a retained announcement. */
-export interface QuarantinedAnnouncement {
+/** Content-free operator projection of a retained delivery. */
+export interface QuarantinedDeliveryAnnouncement {
   readonly id: string;
   readonly kind: "entry" | "parent_decision";
   readonly runId: string;
@@ -71,6 +71,21 @@ export interface QuarantinedAnnouncement {
   readonly idempotencyKey?: string;
   readonly announcementChars: number;
 }
+
+/** Content-free operator projection of a persisted row that cannot be replayed. */
+export interface QuarantinedInvalidAnnouncementRecord {
+  readonly id: string;
+  readonly kind: "invalid_record";
+  readonly reason: "invalid_json" | "schema_mismatch" | "oversized_row";
+  readonly sourceLine: number;
+  readonly detectedAt: number;
+  readonly rawDigest: string;
+  readonly rawBytes: number;
+}
+
+export type QuarantinedAnnouncement =
+  | QuarantinedDeliveryAnnouncement
+  | QuarantinedInvalidAnnouncementRecord;
 
 export type QuarantineReleaseOutcome = "delivered" | "discarded";
 

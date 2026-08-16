@@ -12,14 +12,15 @@ import {
   type AnnouncementParentDecisionReservationRecord,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import {
+  createInvalidDeadLetterRecord,
+  isInvalidDeadLetterRecord,
+  type InvalidDeadLetterRecord,
+} from "./announcement-dead-letter-invalid.js";
 
 interface StorageLogger {
   warn(obj: Record<string, unknown>, message: string): void;
   error?(obj: Record<string, unknown>, message: string): void;
-}
-
-export class MalformedDeadLetterFileError extends Error {
-  override readonly name = "MalformedDeadLetterFileError";
 }
 
 export type ChannelType = AnnouncementChannelType;
@@ -32,7 +33,15 @@ export type DeadLetterEntry = AnnouncementDeadLetterEntry;
 export type ParentDecisionReservation = AnnouncementParentDecisionReservation;
 export type ParentDecisionReservationRecord = AnnouncementParentDecisionReservationRecord;
 
-export type StoredDeadLetterEntry = DeadLetterEntry | ParentDecisionReservationRecord;
+export type StoredDeadLetterEntry =
+  | DeadLetterEntry
+  | ParentDecisionReservationRecord
+  | InvalidDeadLetterRecord;
+
+export interface DeadLetterReadSnapshot {
+  readonly entries: StoredDeadLetterEntry[];
+  readonly invalidRowCount: number;
+}
 
 interface ParentDecisionReservationStoreDeps {
   load(): Promise<Result<void, Error>>;
@@ -304,9 +313,12 @@ export function isParentDecisionReservation(
 function parseEntries(
   content: string,
   logger?: StorageLogger,
-): Result<StoredDeadLetterEntry[], Error> {
+): Result<DeadLetterReadSnapshot, Error> {
   const entries: StoredDeadLetterEntry[] = [];
-  for (const line of content.split("\n")) {
+  let invalidRowCount = 0;
+  const lines = content.split("\n");
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!;
     const trimmed = line.trim();
     if (trimmed === "") continue;
     const parsed = tryCatch(() => JSON.parse(trimmed) as unknown);
@@ -319,16 +331,26 @@ function parseEntries(
       entries.push(value);
       continue;
     }
+    if (parsed.ok && isInvalidDeadLetterRecord(value)) {
+      entries.push(value);
+      continue;
+    }
+    const invalid = createInvalidDeadLetterRecord(trimmed, index + 1, parsed.ok);
+    if (!invalid.ok) return invalid;
+    entries.push(invalid.value);
+    invalidRowCount++;
+  }
+  if (invalidRowCount > 0) {
     logger?.warn(
       {
+        invalidRowCount,
         errorKind: "precondition" as const,
-        hint: "repair or quarantine the malformed dead-letter file before accepting or draining announcements",
+        hint: "review and explicitly release invalid dead-letter records; valid announcements remain available",
       },
-      "Malformed dead-letter file blocked",
+      "Invalid dead-letter rows quarantined",
     );
-    return err(new MalformedDeadLetterFileError("Malformed dead-letter JSONL row"));
   }
-  return ok(entries);
+  return ok({ entries, invalidRowCount });
 }
 
 function writeFailure(
@@ -406,10 +428,18 @@ export async function readDeadLetterEntries(
   filePath: string,
   logger?: StorageLogger,
 ): Promise<Result<StoredDeadLetterEntry[], Error>> {
+  const snapshot = await readDeadLetterSnapshot(filePath, logger);
+  return snapshot.ok ? ok(snapshot.value.entries) : snapshot;
+}
+
+export async function readDeadLetterSnapshot(
+  filePath: string,
+  logger?: StorageLogger,
+): Promise<Result<DeadLetterReadSnapshot, Error>> {
   const read = await fromPromise(readFile(filePath, "utf-8"));
   if (read.ok) return parseEntries(read.value, logger);
   if ("code" in read.error && (read.error as NodeJS.ErrnoException).code === "ENOENT") {
-    return ok([]);
+    return ok({ entries: [], invalidRowCount: 0 });
   }
   return err(read.error);
 }

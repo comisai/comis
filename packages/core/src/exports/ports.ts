@@ -155,7 +155,6 @@ export type {
   DeliveryMirrorEntry,
   DeliveryMirrorRecordInput,
   AnnouncementChannelType,
-  AnnouncementDeadLetterDeliveryOptions,
   AnnouncementDeadLetterEntryInput,
   AnnouncementDeadLetterEntry,
   AnnouncementParentDecisionReservation,

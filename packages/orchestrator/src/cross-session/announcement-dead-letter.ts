@@ -19,14 +19,17 @@ import {
 import {
   createParentDecisionReservationStore,
   isParentDecisionReservation,
-  MalformedDeadLetterFileError,
-  readDeadLetterEntries,
+  readDeadLetterSnapshot,
   writeDeadLetterEntries,
   type ChannelType,
   type DeadLetterEntry,
   type DeadLetterWriteOperations,
   type ParentDecisionReservationRecord,
 } from "./announcement-dead-letter-file.js";
+import {
+  isInvalidDeadLetterRecord,
+  type InvalidDeadLetterRecord,
+} from "./announcement-dead-letter-invalid.js";
 export { isAnnouncementChannelType } from "./announcement-dead-letter-file.js";
 export type {
   ChannelType,
@@ -103,6 +106,7 @@ export function createAnnouncementDeadLetterQueue(
   } = opts;
   let entries: DeadLetterEntry[] = [];
   let decisionReservations: ParentDecisionReservationRecord[] = [];
+  let invalidRecords: InvalidDeadLetterRecord[] = [];
   let loaded = false;
   let operationTail: Promise<void> = Promise.resolve();
   function serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -112,43 +116,62 @@ export function createAnnouncementDeadLetterQueue(
   }
   async function loadFromDisk(): Promise<Result<void, Error>> {
     if (loaded) return ok(undefined);
-    const read = await readDeadLetterEntries(filePath, logger);
+    const read = await readDeadLetterSnapshot(filePath, logger);
     if (read.ok) {
-      entries = read.value.filter((entry): entry is DeadLetterEntry =>
-        !isParentDecisionReservation(entry));
-      decisionReservations = read.value.filter(isParentDecisionReservation);
+      if (read.value.invalidRowCount > 0) {
+        const normalized = await writeDeadLetterEntries(
+          filePath,
+          read.value.entries,
+          fileOperations,
+        );
+        if (!normalized.ok) {
+          logger?.error(
+            {
+              invalidRowCount: read.value.invalidRowCount,
+              errorKind: "resource" as const,
+              hint: "restore dead-letter storage so invalid rows can be isolated before delivery continues",
+            },
+            "Invalid dead-letter evidence was not durably isolated",
+          );
+          return err(normalized.error.error);
+        }
+      }
+      entries = read.value.entries.filter((entry): entry is DeadLetterEntry =>
+        !isParentDecisionReservation(entry) && !isInvalidDeadLetterRecord(entry));
+      decisionReservations = read.value.entries.filter(isParentDecisionReservation);
+      invalidRecords = read.value.entries.filter(isInvalidDeadLetterRecord);
       loaded = true;
       logger?.debug(
-        { entryCount: entries.length + decisionReservations.length },
+        { entryCount: entries.length + decisionReservations.length + invalidRecords.length },
         "Loaded dead-letter entries from disk",
       );
       return ok(undefined);
     }
-    if (!(read.error instanceof MalformedDeadLetterFileError)) {
-      logger?.warn(
-        {
-          errorKind: "resource" as const,
-          hint: "restore dead-letter storage access before accepting or draining announcements",
-        },
-        "Failed to read dead-letter file",
-      );
-    }
+    logger?.warn(
+      {
+        errorKind: "resource" as const,
+        hint: "restore dead-letter storage access before accepting or draining announcements",
+      },
+      "Failed to read dead-letter file",
+    );
     return err(read.error);
   }
 
   async function persist(
     nextEntries: readonly DeadLetterEntry[],
     nextReservations: readonly ParentDecisionReservationRecord[] = decisionReservations,
+    nextInvalidRecords: readonly InvalidDeadLetterRecord[] = invalidRecords,
   ): Promise<Result<void, Error>> {
     const written = await writeDeadLetterEntries(
       filePath,
-      [...nextEntries, ...nextReservations],
+      [...nextEntries, ...nextReservations, ...nextInvalidRecords],
       fileOperations,
     );
     if (written.ok) return written;
     if (written.error.state === "snapshot_visible") {
       entries = [...nextEntries];
       decisionReservations = [...nextReservations];
+      invalidRecords = [...nextInvalidRecords];
     }
     return err(written.error.error);
   }
@@ -900,7 +923,7 @@ export function createAnnouncementDeadLetterQueue(
       serialize(() => decisionStore.resolve(idempotencyKey, outcome)),
     drain: (sendToChannel, onDelivered) =>
       serialize(() => drainSerialized(sendToChannel, onDelivered)),
-    size: () => entries.length + decisionReservations.length,
+    size: () => entries.length + decisionReservations.length + invalidRecords.length,
     listQuarantined: () => serialize(async () => {
       // Load before projecting: the in-memory lists are empty until some
       // operation has faulted the file in, and `list` is usually the FIRST
@@ -915,18 +938,24 @@ export function createAnnouncementDeadLetterQueue(
           "Quarantined announcement listing could not read the dead-letter file",
         );
       }
-      return projectQuarantined(entries, decisionReservations);
+      return projectQuarantined(entries, decisionReservations, invalidRecords);
     }),
     release: (id, outcome) => serialize(async () => {
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
       return releaseQuarantined({
-        id, outcome, entries, reservations: decisionReservations, logger,
-        persist: async (nextEntries, nextReservations) => {
-          const written = await persist(nextEntries, nextReservations);
+        id,
+        outcome,
+        entries,
+        reservations: decisionReservations,
+        invalidRecords,
+        logger,
+        persist: async (nextEntries, nextReservations, nextInvalidRecords) => {
+          const written = await persist(nextEntries, nextReservations, nextInvalidRecords);
           if (written.ok) {
             entries = [...nextEntries];
             decisionReservations = [...nextReservations];
+            invalidRecords = [...nextInvalidRecords];
           }
           return written;
         },
