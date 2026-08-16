@@ -649,6 +649,8 @@ export async function deliverAnnouncement(params: {
     && params.callerConversation
     && params.destinationEndpoint
   ) {
+    const callerConversation = params.callerConversation;
+    const destinationEndpoint = params.destinationEndpoint;
     const operations: Array<{
       text: string;
       partId?: string;
@@ -664,7 +666,7 @@ export async function deliverAnnouncement(params: {
     const reservationRoot = resolveReservationRoot(
       deps.resolveRootRunId,
       callerAgentId,
-      params.callerConversation.conversationScope,
+      callerConversation.conversationScope,
     );
     if (!announceKey || !deps.deadLetterQueue || !reservationRoot) {
       deps.logger?.warn({
@@ -693,11 +695,11 @@ export async function deliverAnnouncement(params: {
         failedAt: systemNowMs(),
         rootRunId: reservationRoot,
         deliveryAuthority: {
-          tenantId: params.callerConversation.conversationScope.tenantId,
+          tenantId: callerConversation.conversationScope.tenantId,
           agentId: callerAgentId,
-          conversationRef: params.callerConversation.conversationRef,
+          conversationRef: callerConversation.conversationRef,
         },
-        destinationEndpoint: params.destinationEndpoint,
+        destinationEndpoint,
         completionKeys: [announceKey],
         ...(threadId ? { threadId } : {}),
         ...(operation.partId ? { partId: operation.partId } : {}),
@@ -725,8 +727,8 @@ export async function deliverAnnouncement(params: {
       const boundary = await fromPromise(deps.sendGovernedAnnouncement({
         agentId: callerAgentId,
         callerSessionKey,
-        callerConversation: params.callerConversation,
-        destinationEndpoint: params.destinationEndpoint,
+        callerConversation,
+        destinationEndpoint,
         runId,
         channelType: announceChannelType,
         channelId: announceChannelId,

@@ -9,6 +9,11 @@
  * @module
  */
 import { statSync } from "node:fs";
+import type {
+  AnnouncementDeadLetterQueuePort,
+  ComisLogger,
+  TypedEventBus,
+} from "@comis/core";
 import type { BootContext } from "./daemon-types.js";
 import {
   createSubagentActivityTracker,
@@ -27,6 +32,53 @@ export const ANNOUNCEMENT_QUARANTINE_HINT =
   + "them automatically because retrying risks a duplicate delivery. Run "
   + "`node packages/cli/dist/cli.js quarantine list` and explicitly release each item after "
   + "deciding whether the user was already informed.";
+
+export function createAnnouncementQuarantineHealthReporter(deps: {
+  deadLetterQueue: Pick<AnnouncementDeadLetterQueuePort, "durableSize"> | undefined;
+  eventBus: Pick<TypedEventBus, "emitSafely">;
+  logger: Pick<ComisLogger, "warn">;
+  now(): number;
+}): { sample(): Promise<number | undefined> } {
+  let lastSize = 0;
+  let readFailed = false;
+  return {
+    async sample(): Promise<number | undefined> {
+      const durableSize = deps.deadLetterQueue
+        ? await deps.deadLetterQueue.durableSize()
+        : undefined;
+      if (durableSize === undefined) return 0;
+      if (!durableSize.ok) {
+        if (!readFailed) {
+          deps.logger.warn({
+            hint: "Restore dead-letter storage access; the quarantine count is unknown until the durable read succeeds",
+            errorKind: "resource" as const,
+          }, "Dead-letter health count could not read durable storage");
+        }
+        readFailed = true;
+        deps.eventBus.emitSafely("announcement:quarantine_read_failed", {
+          timestamp: deps.now(),
+        });
+        return undefined;
+      }
+      readFailed = false;
+      if (durableSize.value > 0) {
+        if (durableSize.value !== lastSize) {
+          deps.logger.warn({
+            deadLetterQueueSize: durableSize.value,
+            hint: ANNOUNCEMENT_QUARANTINE_HINT,
+            errorKind: "internal" as const,
+          }, "Announcements quarantined awaiting an operator decision");
+        }
+        deps.eventBus.emitSafely("announcement:quarantine_pending", {
+          pendingCount: durableSize.value,
+          timestamp: deps.now(),
+        });
+      }
+      lastSize = durableSize.value;
+      return durableSize.value;
+    },
+  };
+}
 
 export function wireHealthLogging(deps: {
   container: BootContext["container"];
@@ -51,10 +103,12 @@ export function wireHealthLogging(deps: {
     container.eventBus,
     () => clock.now(),
   );
-  // Last observed quarantine depth — the WARN fires on CHANGE only, so a standing quarantine is
-  // announced once rather than every health tick.
-  let lastDeadLetterQueueSize = 0;
-  let deadLetterReadFailed = false;
+  const quarantineHealth = createAnnouncementQuarantineHealthReporter({
+    deadLetterQueue,
+    eventBus: container.eventBus,
+    logger: daemonLogger,
+    now: () => clock.now(),
+  });
 
   container.eventBus.on("observability:metrics", async (metrics) => {
     const fiveMinAgo = clock.now() - 5 * 60_000;
@@ -112,49 +166,7 @@ export function wireHealthLogging(deps: {
         errorKind: "timeout" as const,
       }, "Stuck sub-agent killed by health handler");
     }
-    // A quarantined announcement is a STANDING condition, not a transient tick value: it means a
-    // background task's outcome is held back because the runtime could not prove whether the user
-    // was already told, and nothing drains it automatically (by design — auto-retry risks a duplicate
-    // delivery). Live, one sat unnoticed for hours because the only trace was this DEBUG line, so an
-    // operator at the default level had no way to know a user's task outcome was in limbo. Promoted
-    // to WARN on the non-zero transition only — steady-state re-warning every tick would be noise.
-    const durableSize = deadLetterQueue
-      ? await deadLetterQueue.durableSize()
-      : undefined;
-    const deadLetterQueueSize = durableSize === undefined
-      ? 0
-      : durableSize.ok
-        ? durableSize.value
-        : undefined;
-    if (durableSize && !durableSize.ok && !deadLetterReadFailed) {
-      daemonLogger.warn({
-        hint: "Restore dead-letter storage access; the quarantine count is unknown until the durable read succeeds",
-        errorKind: "resource" as const,
-      }, "Dead-letter health count could not read durable storage");
-      container.eventBus.emitSafely("announcement:quarantine_read_failed", {
-        timestamp: clock.now(),
-      });
-    }
-    deadLetterReadFailed = durableSize !== undefined && !durableSize.ok;
-    if (
-      deadLetterQueueSize !== undefined
-      && deadLetterQueueSize > 0
-      && deadLetterQueueSize !== lastDeadLetterQueueSize
-    ) {
-      daemonLogger.warn({
-        deadLetterQueueSize,
-        hint: ANNOUNCEMENT_QUARANTINE_HINT,
-        errorKind: "internal" as const,
-      }, "Announcements quarantined awaiting an operator decision");
-      // Also emit it, so the count reaches the system-health view. The WARN
-      // alone left this diagnosable only by a daemon.log grep — the exact
-      // failure the two-tier triage flow exists to remove.
-      container.eventBus.emitSafely("announcement:quarantine_pending", {
-        pendingCount: deadLetterQueueSize,
-        timestamp: clock.now(),
-      });
-    }
-    if (deadLetterQueueSize !== undefined) lastDeadLetterQueueSize = deadLetterQueueSize;
+    const deadLetterQueueSize = await quarantineHealth.sample();
 
     daemonLogger.debug({
       rssBytes: metrics.rssBytes, heapUsedBytes: metrics.heapUsedBytes,

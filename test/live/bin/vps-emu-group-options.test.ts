@@ -18,6 +18,7 @@ import {
   EMULATOR_BOT_ID,
   EMULATOR_BOT_USERNAME,
   reserveStandaloneMessageIdBase,
+  resolveStandaloneMessageIdReservationDirectory,
   toCreateGroupChatOptions,
 } from "./vps-emu-group-options.js";
 
@@ -38,6 +39,15 @@ function reservationDirectory(): string {
 }
 
 describe("reserveStandaloneMessageIdBase", () => {
+  it("keeps reservation state outside the disposable wiring location", () => {
+    expect(resolveStandaloneMessageIdReservationDirectory("/srv/comis-emu"))
+      .toBe("/srv/comis-emu/.comis-vps-emu-state/message-id-reservations");
+    expect(resolveStandaloneMessageIdReservationDirectory(
+      "/srv/comis-emu",
+      "/var/lib/comis-emu",
+    )).toBe("/var/lib/comis-emu/message-id-reservations");
+  });
+
   it("does not rewind message identity when ephemeral launcher state is absent", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_786_863_916_000);
 

@@ -303,6 +303,27 @@ describe("announcement dead-letter file", () => {
     expect(String(record.rawDigest)).toMatch(/^[a-f0-9]{64}$/u);
   });
 
+  it("isolates an oversized persisted row that otherwise matches the schema", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    const oversized = {
+      ...makeEntry(),
+      announcementText: "x".repeat(1_048_577),
+    };
+    await writeFile(filePath, `${JSON.stringify(oversized)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+
+    await expect(readDeadLetterEntries(filePath)).resolves.toMatchObject({
+      ok: true,
+      value: [{
+        recordType: "invalid_record",
+        reason: "oversized_row",
+      }],
+    });
+  });
+
   it("isolates a malformed row while preserving valid persisted rows", async () => {
     directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
     const filePath = join(directory, "dead-letters.jsonl");

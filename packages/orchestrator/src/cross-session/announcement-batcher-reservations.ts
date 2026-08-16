@@ -20,15 +20,26 @@ export interface AnnouncementBatchOperation {
 
 export function createAnnouncementReservationPlan(
   operations: readonly AnnouncementBatchOperation[],
+  admittedReservationKeys?: readonly string[],
 ): Result<{
   expectedKeys: string[];
   reservations: AnnouncementParentDecisionReservation[];
 }, Error> {
   const items = new Set(operations.flatMap((operation) => operation.completionItems));
-  const expectedKeys = [...items].flatMap((item) =>
+  const completionKeys = [...items].flatMap((item) =>
     item.idempotencyKey ? [item.idempotencyKey] : []);
-  if (expectedKeys.length !== items.size) {
+  if (completionKeys.length !== items.size) {
     return err(new Error("Announcement completion operation has no durable owner"));
+  }
+  const expectedKeys = admittedReservationKeys === undefined
+    ? completionKeys
+    : [...admittedReservationKeys];
+  if (
+    expectedKeys.length === 0
+    || new Set(expectedKeys).size !== expectedKeys.length
+    || expectedKeys.some((key) => key.length === 0)
+  ) {
+    return err(new Error("Announcement completion operation has invalid reservations"));
   }
 
   const reservations: AnnouncementParentDecisionReservation[] = [];

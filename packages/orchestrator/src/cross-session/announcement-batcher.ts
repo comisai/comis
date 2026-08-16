@@ -210,7 +210,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   // alongside the materialized queues so the failure sweep never fires inside
   // the admission await window.
   const admissionKeys = new Set<string>();
-  const admittedDecisionKeys = new Set<string>();
+  const admittedDecisionKeys = new Map<string, readonly string[]>();
   let accepting = true;
   let shutdownPromise: Promise<void> | undefined;
   // Idempotency keys whose delivery has SUCCEEDED. In-memory floor
@@ -333,8 +333,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   async function resolveDecisions(
     items: readonly QueuedAnnouncement[],
     outcome: "receipt_committed" | "no_reply",
-  ): Promise<void> {
-    await resolveDecisionKeys(
+  ): Promise<boolean> {
+    return resolveDecisionKeys(
       items.flatMap((item) => item.idempotencyKey ? [item.idempotencyKey] : []),
       outcome,
       items[0]?.runId,
@@ -345,12 +345,14 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     keys: readonly string[],
     outcome: "receipt_committed" | "no_reply",
     runId?: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const resolveDecision = deps.deadLetterQueue?.resolveDecision;
-    if (!resolveDecision) return;
+    if (!resolveDecision) return true;
+    let resolved = true;
     for (const decisionKey of keys) {
       const boundary = await fromPromise(resolveDecision(decisionKey, outcome));
       if (boundary.ok && boundary.value.ok) continue;
+      resolved = false;
       deps.logger?.warn(
         {
           ...(runId ? { runId } : {}),
@@ -360,6 +362,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         "Announcement decision reservation could not be resolved",
       );
     }
+    return resolved;
   }
 
   async function sendFinal(
@@ -395,24 +398,23 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             partId: `attachment:${entry.index}`,
             completionItems: [entry.item],
           }))
-        : [
-            {
-              item: first,
-              text: sanitizedCaption.text,
-              partId: "summary",
-              completionItems: items,
-            },
-            ...attachments.map((entry) => ({
-              ...entry,
-              text: "",
-              partId: `attachment:${entry.index}`,
-              completionItems: items,
-            })),
-          ];
+        : attachments.map((entry, index) => ({
+            ...entry,
+            text: index === 0 ? sanitizedCaption.text : "",
+            partId: `attachment:${entry.index}`,
+            completionItems: items,
+          }));
 
     if (deps.sendGovernedAnnouncement) {
       const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
-      const reservationPlan = createAnnouncementReservationPlan(operations);
+      const admittedReservationKeys = items.flatMap((item) =>
+        item.idempotencyKey
+          ? (admittedDecisionKeys.get(item.idempotencyKey) ?? [])
+          : []);
+      const reservationPlan = createAnnouncementReservationPlan(
+        operations,
+        admittedReservationKeys,
+      );
       if (!replaceDecisions || !reservationPlan.ok) {
         retainItems(items);
         deps.logger?.warn(
@@ -486,13 +488,19 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     }
 
     if (failure.failure === "operation_validation_blocked") {
-      await resolveDecisionKeys(
+      const operationsResolved = await resolveDecisionKeys(
         operations.slice(failedOperationIndex).flatMap((operation) =>
           operation.reservationKey ? [operation.reservationKey] : []),
         "no_reply",
         first.runId,
       );
-      if (!deps.sendGovernedAnnouncement) await resolveDecisions(items, "no_reply");
+      const decisionsResolved = deps.sendGovernedAnnouncement
+        ? true
+        : await resolveDecisions(items, "no_reply");
+      if (!operationsResolved || !decisionsResolved) {
+        retainItems(items);
+        return false;
+      }
       markItemsDelivered(items);
       deps.eventBus.emit("subagent:delivery_skipped", {
         runId: first.runId,
@@ -621,8 +629,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         if (items.some((item) => (item.attachments?.length ?? 0) > 0)) {
           await sendFinal(key, items, "");
         } else {
-          await resolveDecisions(items, "no_reply");
-          markItemsDelivered(items);
+          const resolved = await resolveDecisions(items, "no_reply");
+          if (resolved) markItemsDelivered(items);
+          else retainItems(items);
         }
         return;
       }
@@ -679,8 +688,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             await sendFinal(key, items, "");
             return;
           }
-          await resolveDecisions(items, "no_reply");
-          markItemsDelivered(items);
+          const resolved = await resolveDecisions(items, "no_reply");
+          if (resolved) markItemsDelivered(items);
+          else retainItems(items);
           return;
         }
         const scrubbedCandidate = scrubSecretsFromText(candidate ?? "");
@@ -801,7 +811,16 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     }
 
     const reserveDecision = deps.deadLetterQueue?.reserveDecision;
-    if (deps.sendGovernedAnnouncement && (!idempotencyKey || !reserveDecision)) {
+    const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
+    const hasAttachments = (params.attachments?.length ?? 0) > 0;
+    if (
+      deps.sendGovernedAnnouncement
+      && (
+        !idempotencyKey
+        || (!hasAttachments && !reserveDecision)
+        || (hasAttachments && !replaceDecisions)
+      )
+    ) {
       deps.logger?.warn(
         {
           runId: params.runId,
@@ -826,7 +845,6 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     if (
       deps.sendGovernedAnnouncement
       && idempotencyKey
-      && reserveDecision
       && reservationRootRunId
     ) {
       const safeFallback = sanitizeForUser(params.announcementText);
@@ -834,25 +852,43 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         safeFallback,
         params.terminalOutcome,
       );
-      const boundary = await fromPromise(reserveDecision({
-        idempotencyKey,
-        agentId: params.callerAgentId,
-        runId: params.runId,
-        sessionKey: params.callerSessionKey,
-        announcementText: fallbackDisclosure.text ?? safeFallback,
-        channelType: params.announceChannelType,
-        channelId: params.announceChannelId,
-        failedAt: systemNowMs(),
-        rootRunId: reservationRootRunId,
-        deliveryAuthority: {
-          tenantId: params.callerConversation.conversationScope.tenantId,
-          agentId: params.callerAgentId,
-          conversationRef: params.callerConversation.conversationRef,
-        },
-        destinationEndpoint: params.destinationEndpoint,
-        completionKeys: [idempotencyKey],
-        ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
-      }));
+      const fallbackText = fallbackDisclosure.text ?? safeFallback;
+      const attachmentOperations: AnnouncementBatchOperation[] = (params.attachments ?? []).map(
+        (attachment, index) => ({
+          item: params,
+          text: index === 0 ? fallbackText : "",
+          attachment,
+          partId: `attachment:${index}`,
+          completionItems: [params],
+        }),
+      );
+      const attachmentPlan = attachmentOperations.length > 0
+        ? createAnnouncementReservationPlan(attachmentOperations)
+        : undefined;
+      if (attachmentPlan && !attachmentPlan.ok) return attachmentPlan;
+      const boundary = await fromPromise(
+        attachmentPlan?.ok && replaceDecisions
+          ? replaceDecisions([], attachmentPlan.value.reservations)
+          : reserveDecision!({
+              idempotencyKey,
+              agentId: params.callerAgentId,
+              runId: params.runId,
+              sessionKey: params.callerSessionKey,
+              announcementText: fallbackText,
+              channelType: params.announceChannelType,
+              channelId: params.announceChannelId,
+              failedAt: systemNowMs(),
+              rootRunId: reservationRootRunId,
+              deliveryAuthority: {
+                tenantId: params.callerConversation.conversationScope.tenantId,
+                agentId: params.callerAgentId,
+                conversationRef: params.callerConversation.conversationRef,
+              },
+              destinationEndpoint: params.destinationEndpoint,
+              completionKeys: [idempotencyKey],
+              ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
+            }),
+      );
       if (!boundary.ok) {
         deps.logger?.warn(
           {
@@ -885,7 +921,12 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         );
         return ok("retained");
       }
-      admittedDecisionKeys.add(idempotencyKey);
+      admittedDecisionKeys.set(
+        idempotencyKey,
+        attachmentPlan?.ok
+          ? attachmentPlan.value.reservations.map((reservation) => reservation.idempotencyKey)
+          : [idempotencyKey],
+      );
     }
 
     const batchKey = JSON.stringify([

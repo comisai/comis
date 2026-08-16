@@ -334,24 +334,27 @@ export function createParentDecisionReservationStore(
     const current = deps.getReservations();
     const expected = new Set(expectedKeys);
     const completionKeys = new Set(operations.flatMap((operation) => operation.completionKeys));
-    if (
-      expectedKeys.length > 0
-      && (
-        completionKeys.size !== expected.size
-        || [...expected].some((key) => !completionKeys.has(key))
-      )
-    ) {
-      return err(new Error("Announcement operation reservations do not preserve their owners"));
-    }
+    const expectedReservations = current.filter((reservation) =>
+      expected.has(reservation.idempotencyKey));
     const alreadyTransitioned = current.some((reservation) =>
       reservation.completionKeys.some((key) => completionKeys.has(key))
       && !expected.has(reservation.idempotencyKey));
     if (alreadyTransitioned || [...completionKeys].some(deps.hasDeliveryKey)) {
       return ok({ created: false });
     }
-    if (expectedKeys.some((key) =>
-      !current.some((reservation) => reservation.idempotencyKey === key))) {
+    if (expectedReservations.length !== expectedKeys.length) {
       return err(new Error("Announcement decision reservation transition lost its expected owner"));
+    }
+    if (expectedKeys.length > 0) {
+      const expectedCompletionKeys = new Set(
+        expectedReservations.flatMap((reservation) => reservation.completionKeys),
+      );
+      if (
+        completionKeys.size !== expectedCompletionKeys.size
+        || [...expectedCompletionKeys].some((key) => !completionKeys.has(key))
+      ) {
+        return err(new Error("Announcement operation reservations do not preserve their owners"));
+      }
     }
 
     const retained = current.filter((reservation) => !expected.has(reservation.idempotencyKey));
@@ -500,6 +503,13 @@ function parseEntries(
     const line = lines[index]!;
     const trimmed = line.trim();
     if (trimmed === "") continue;
+    if (Buffer.byteLength(trimmed, "utf8") > MAX_DEAD_LETTER_ROW_BYTES) {
+      const invalid = createInvalidDeadLetterRecord(trimmed, index + 1, false);
+      if (!invalid.ok) return invalid;
+      entries.push(invalid.value);
+      invalidRowCount++;
+      continue;
+    }
     const parsed = tryCatch(() => JSON.parse(trimmed) as unknown);
     const value = parsed.ok ? parsed.value : undefined;
     if (parsed.ok && isDeadLetterEntry(value)) {

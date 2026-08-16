@@ -17,11 +17,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createAnnouncementDeadLetterQueue } from "@comis/orchestrator";
 import { createProviderHealthMonitor, type ProviderHealthMonitor } from "@comis/agent";
 import type { TypedEventBus } from "@comis/core";
+import { err, ok } from "@comis/shared";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createMockEventBus } from "../../../test/support/mock-event-bus.js";
-import { ANNOUNCEMENT_QUARANTINE_HINT } from "./health-metrics.js";
+import {
+  ANNOUNCEMENT_QUARANTINE_HINT,
+  createAnnouncementQuarantineHealthReporter,
+} from "./health-metrics.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -121,6 +125,49 @@ describe("ANNOUNCEMENT_QUARANTINE_HINT", () => {
       "node packages/cli/dist/cli.js quarantine list",
     );
     expect(ANNOUNCEMENT_QUARANTINE_HINT).not.toContain("dead-letters.jsonl");
+  });
+
+  it("refreshes standing quarantine signals without repeating warning logs", async () => {
+    const eventBus = createMockEventBus();
+    const logger = { warn: vi.fn() };
+    const pending = createAnnouncementQuarantineHealthReporter({
+      deadLetterQueue: { durableSize: vi.fn(async () => ok(2)) },
+      eventBus,
+      logger,
+      now: () => 100,
+    });
+
+    await pending.sample();
+    await pending.sample();
+
+    expect(eventBus.emit).toHaveBeenCalledTimes(2);
+    expect(eventBus.emit).toHaveBeenNthCalledWith(2, "announcement:quarantine_pending", {
+      pendingCount: 2,
+      timestamp: 100,
+    });
+    expect(logger.warn).toHaveBeenCalledOnce();
+
+    const unreadableBus = createMockEventBus();
+    const unreadableLogger = { warn: vi.fn() };
+    const unreadable = createAnnouncementQuarantineHealthReporter({
+      deadLetterQueue: {
+        durableSize: vi.fn(async () => err(new Error("storage unavailable"))),
+      },
+      eventBus: unreadableBus,
+      logger: unreadableLogger,
+      now: () => 200,
+    });
+
+    await unreadable.sample();
+    await unreadable.sample();
+
+    expect(unreadableBus.emit).toHaveBeenCalledTimes(2);
+    expect(unreadableBus.emit).toHaveBeenNthCalledWith(
+      2,
+      "announcement:quarantine_read_failed",
+      { timestamp: 200 },
+    );
+    expect(unreadableLogger.warn).toHaveBeenCalledOnce();
   });
 });
 

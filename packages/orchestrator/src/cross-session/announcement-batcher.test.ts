@@ -672,6 +672,55 @@ describe("AnnouncementBatcher", () => {
     );
   });
 
+  it("retains a no-reply completion when its durable resolution fails", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    deadLetterQueue.resolveDecision.mockResolvedValue(err(new Error("snapshot unavailable")));
+    const batcher = createAnnouncementBatcher(makeDeps({
+      deadLetterQueue,
+      sendGovernedAnnouncement: vi.fn(),
+    }));
+
+    await batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-no-reply-failed" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(batcher.hasDelivered("decision-no-reply-failed")).toBe(false);
+    expect(batcher.hasPending?.("decision-no-reply-failed")).toBe(true);
+  });
+
+  it("reserves every attachment operation before parent rewriting", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const batcher = createAnnouncementBatcher(makeDeps({
+      deadLetterQueue,
+      sendGovernedAnnouncement: vi.fn(),
+    }));
+    const item = makeAnnouncement({
+      idempotencyKey: "attachment-admission",
+      attachments: [
+        { sourceAgentId: "report-agent", path: "/workspace/a.csv" },
+        { sourceAgentId: "report-agent", path: "/workspace/b.csv" },
+      ],
+    });
+
+    await batcher.enqueue(item);
+
+    expect(deadLetterQueue.reserveDecision).not.toHaveBeenCalled();
+    expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith(
+      [],
+      [
+        expect.objectContaining({
+          partId: "attachment:0",
+          attachment: item.attachments?.[0],
+          completionKeys: ["attachment-admission"],
+        }),
+        expect.objectContaining({
+          partId: "attachment:1",
+          attachment: item.attachments?.[1],
+          completionKeys: ["attachment-admission"],
+        }),
+      ],
+    );
+  });
+
   it("delivers a generated file even when the parent suppresses its caption", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
@@ -857,7 +906,7 @@ describe("AnnouncementBatcher", () => {
     );
   });
 
-  it("settles batched summary and attachment reservations incrementally", async () => {
+  it("settles batched attachment reservations incrementally", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const sendGovernedAnnouncement = vi.fn()
       .mockResolvedValueOnce(ok({
@@ -865,12 +914,8 @@ describe("AnnouncementBatcher", () => {
         identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 10 },
       }))
       .mockResolvedValueOnce(ok({
-        delivered: true,
-        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 11 },
-      }))
-      .mockResolvedValueOnce(ok({
         delivered: false,
-        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 12 },
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 11 },
         failure: "operation_retained" as const,
       }));
     const batcher = createAnnouncementBatcher(makeDeps({
@@ -893,12 +938,6 @@ describe("AnnouncementBatcher", () => {
     await batcher.enqueue(second);
     await vi.advanceTimersByTimeAsync(2_000);
 
-    const summaryKey = createStableAnnouncementOperationId(
-      "agent-main",
-      first.callerSessionKey,
-      first.runId,
-      "summary",
-    );
     const firstAttachmentKey = createStableAnnouncementOperationId(
       "agent-main",
       first.callerSessionKey,
@@ -912,16 +951,11 @@ describe("AnnouncementBatcher", () => {
       "attachment:0",
     );
     expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith(
-      ["completion-a", "completion-b"],
+      [firstAttachmentKey, secondAttachmentKey],
       expect.arrayContaining([
         expect.objectContaining({
-          idempotencyKey: summaryKey,
-          announcementText: "Combined summary",
-          completionKeys: ["completion-a", "completion-b"],
-          partId: "summary",
-        }),
-        expect.objectContaining({
           idempotencyKey: firstAttachmentKey,
+          announcementText: "Combined summary",
           attachment: first.attachments?.[0],
           completionKeys: ["completion-a", "completion-b"],
         }),
@@ -931,10 +965,6 @@ describe("AnnouncementBatcher", () => {
           completionKeys: ["completion-a", "completion-b"],
         }),
       ]),
-    );
-    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      summaryKey,
-      "receipt_committed",
     );
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
       firstAttachmentKey,

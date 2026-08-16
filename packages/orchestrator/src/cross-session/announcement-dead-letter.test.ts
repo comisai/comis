@@ -1129,6 +1129,39 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(queue.size()).toBe(1);
   });
 
+  it("rewrites concrete attachment reservations without increasing capacity", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 2,
+    });
+    const firstOperation = decisionInput({
+      idempotencyKey: "attachment-operation-a",
+      runId: "run-parent-a",
+      partId: "attachment:0",
+      attachment: { sourceAgentId: "worker-a", path: "a.csv" },
+      completionKeys: ["completion-a"],
+    });
+    const secondOperation = decisionInput({
+      idempotencyKey: "attachment-operation-b",
+      runId: "run-parent-b",
+      partId: "attachment:0",
+      attachment: { sourceAgentId: "worker-b", path: "b.csv" },
+      completionKeys: ["completion-b"],
+    });
+
+    await expect(queue.replaceDecisions([], [firstOperation, secondOperation]))
+      .resolves.toEqual(ok({ created: true }));
+    await expect(queue.replaceDecisions(
+      [firstOperation.idempotencyKey, secondOperation.idempotencyKey],
+      [
+        { ...firstOperation, announcementText: "combined", completionKeys: ["completion-a", "completion-b"] },
+        { ...secondOperation, completionKeys: ["completion-a", "completion-b"] },
+      ],
+    )).resolves.toEqual(ok({ created: true }));
+    expect(queue.size()).toBe(2);
+  });
+
   it("atomically replaces parent decisions with exact outward operations", async () => {
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
@@ -1285,6 +1318,76 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       queue.lookupDecision(decisionInput().idempotencyKey),
     ).resolves.toEqual(ok(undefined));
     await expect(readFile(filePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("uses a ledger tombstone when no-reply snapshot removal fails", async () => {
+    const seeded = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    const decision = decisionInput({ failedAt: 100 });
+    await seeded.reserveDecision(decision);
+
+    let retainedRecord: OutwardSendRecord | undefined;
+    const ledger: OutwardSendLedgerPort = {
+      allocateStep: vi.fn(async () => ok(7)),
+      lookup: vi.fn(async () => ok(retainedRecord)),
+      begin: vi.fn(async (input) => {
+        retainedRecord = {
+          ...input,
+          id: "no-reply-tombstone",
+          state: "send_attempt_started",
+          attemptCount: 0,
+          attemptedAtMs: 100,
+        };
+        return ok(undefined);
+      }),
+      markUnknown: vi.fn(async () => {
+        retainedRecord = { ...retainedRecord!, state: "unknown_after_send" };
+        return ok(undefined);
+      }),
+      reclaimPreSend: vi.fn(async () => ok(false)),
+      commit: vi.fn(async () => ok(undefined)),
+      markFailed: vi.fn(async (_rootRunId, _stepIndex, errorKind) => {
+        retainedRecord = { ...retainedRecord!, state: "failed", lastError: errorKind };
+        return ok(undefined);
+      }),
+      parkUncertain: vi.fn(async () => ok(false)),
+      hasUncertainty: vi.fn(async () => ok(false)),
+      listUnreconciled: vi.fn(async () => ok([])),
+    };
+    const unavailable = new Error("snapshot removal unavailable");
+    const blocked = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      fileOperations: {
+        open: vi.fn(),
+        rename: vi.fn(),
+        unlink: vi.fn().mockRejectedValue(unavailable),
+        chmod: vi.fn(),
+      } as unknown as DeadLetterWriteOperations,
+    });
+
+    await expect(blocked.resolveDecision(decision.idempotencyKey, "no_reply"))
+      .resolves.toEqual(ok(true));
+    expect(retainedRecord).toMatchObject({
+      state: "failed",
+      lastError: "announcement_no_reply",
+    });
+
+    const governedSendToChannel = vi.fn();
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel,
+      retryIntervalMs: 0,
+    });
+    await restarted.drain(vi.fn(async () => true));
+
+    expect(governedSendToChannel).not.toHaveBeenCalled();
+    expect(restarted.size()).toBe(0);
   });
 
   it("retains one pending decision when delivery failure lacks governed identity", async () => {
@@ -1850,6 +1953,40 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     );
     expect(cleanup).toHaveBeenCalledOnce();
     expect(onDelivered).toHaveBeenCalledWith(completionKey);
+    expect(dlq.size()).toBe(0);
+  });
+
+  it("settles a committed attachment without reopening its source file", async () => {
+    const entry = makeFullEntry({
+      runId: "run-attachment-committed",
+      idempotencyKey: "operation-attachment-committed",
+      rootRunId: "root-attachment-committed",
+      stepIndex: 14,
+      agentId: "parent-agent",
+      partId: "attachment:0",
+      attachment: { sourceAgentId: "worker-a", path: "missing-report.txt" },
+      completionKeys: ["completion-attachment-committed"],
+    }) as GovernedDeadLetterEntry;
+    await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+    const prepareAttachment = vi.fn(async () => err(new Error("source file missing")));
+    const { ledger } = makeStubLedger({
+      lookupResult: ok(ledgerRow(entry, "committed")),
+    });
+    vi.mocked(ledger.allocateStep).mockResolvedValue(ok(14));
+    const governedSendToChannel = vi.fn();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+      governedSendToChannel,
+      prepareAttachment,
+    });
+
+    await dlq.drain(vi.fn(async () => true));
+
+    expect(prepareAttachment).not.toHaveBeenCalled();
+    expect(governedSendToChannel).not.toHaveBeenCalled();
     expect(dlq.size()).toBe(0);
   });
 

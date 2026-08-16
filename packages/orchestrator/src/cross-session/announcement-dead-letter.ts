@@ -5,11 +5,16 @@ import { randomUUID } from "node:crypto";
 import type {
   AnnouncementDeadLetterEntryInput,
   AnnouncementDeadLetterQueuePort,
+  AnnouncementParentDecisionReservation,
   OutwardSendLedgerPort,
+  OutwardSendRecord,
 } from "@comis/core";
 import { emitObservationalEventSafely, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
-import type { GovernedAnnouncementAttachment } from "./announcement-outward-operation.js";
+import {
+  createAnnouncementOperationDigests,
+  type GovernedAnnouncementAttachment,
+} from "./announcement-outward-operation.js";
 import { drainWithPreparedRecoveryAttachment } from "./announcement-dead-letter-attachment.js";
 import {
   createParentDecisionReservationStore,
@@ -49,6 +54,12 @@ export type {
 } from "./announcement-dead-letter-quarantine.js";
 
 export type AnnouncementDeadLetterQueue = AnnouncementDeadLetterQueuePort;
+type GovernedDrainOutcome =
+  | "receipt_already_committed"
+  | "receipt_committed_now"
+  | "suppressed_no_reply"
+  | "retained";
+const NO_REPLY_LEDGER_FAILURE = "announcement_no_reply";
 /** Create a JSONL-backed announcement dead-letter queue. */
 export function createAnnouncementDeadLetterQueue(
   opts: AnnouncementDeadLetterQueueOptions,
@@ -72,6 +83,7 @@ export function createAnnouncementDeadLetterQueue(
   let decisionReservations: ParentDecisionReservationRecord[] = [];
   let invalidRecords: InvalidDeadLetterRecord[] = [];
   const emittedAdmissionKeys = new Set<string>();
+  const suppressedDecisionKeys = new Set<string>();
   let loaded = false;
   let operationTail: Promise<void> = Promise.resolve();
   function serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -189,6 +201,103 @@ export function createAnnouncementDeadLetterQueue(
     logger,
   });
 
+  function sameRetainedOwner(
+    reservation: {
+      readonly rootRunId?: string;
+      readonly agentId?: string;
+      readonly channelType: string;
+      readonly channelId: string;
+    },
+    record: OutwardSendRecord,
+    stepIndex: number,
+  ): boolean {
+    return record.rootRunId === reservation.rootRunId
+      && record.stepIndex === stepIndex
+      && record.agentId === reservation.agentId
+      && record.channelType === reservation.channelType
+      && record.channelId === reservation.channelId
+      && record.operationKind === "cross_session_announcement";
+  }
+
+  async function terminalizeNoReply(
+    reservation: AnnouncementParentDecisionReservation,
+  ): Promise<Result<void, Error>> {
+    if (!outwardLedger) return err(new Error("Outward ledger is unavailable"));
+    const allocated = await outwardLedger.allocateStep(
+      reservation.rootRunId,
+      reservation.idempotencyKey,
+    );
+    if (!allocated.ok) return allocated;
+    const existing = await outwardLedger.lookup(reservation.rootRunId, allocated.value);
+    if (!existing.ok) return existing;
+    if (existing.value !== undefined) {
+      return sameRetainedOwner(reservation, existing.value, allocated.value)
+        && existing.value.state === "failed"
+        && existing.value.lastError === NO_REPLY_LEDGER_FAILURE
+        ? ok(undefined)
+        : err(new Error("No-reply resolution conflicts with an outward operation"));
+    }
+    const digests = createAnnouncementOperationDigests({
+      channelId: reservation.channelId,
+      channelType: reservation.channelType,
+      text: reservation.announcementText,
+      ...(reservation.threadId
+        ? { options: { threadId: reservation.threadId } }
+        : {}),
+    });
+    if (!digests.ok) return digests;
+    const begun = await outwardLedger.begin({
+      rootRunId: reservation.rootRunId,
+      stepIndex: allocated.value,
+      agentId: reservation.agentId,
+      channelType: reservation.channelType,
+      channelId: reservation.channelId,
+      operationKind: "cross_session_announcement",
+      ...digests.value,
+    });
+    if (!begun.ok) return begun;
+    const markedUnknown = await outwardLedger.markUnknown(
+      reservation.rootRunId,
+      allocated.value,
+    );
+    if (!markedUnknown.ok) return markedUnknown;
+    return outwardLedger.markFailed(
+      reservation.rootRunId,
+      allocated.value,
+      NO_REPLY_LEDGER_FAILURE,
+    );
+  }
+
+  async function resolveDecisionDurably(
+    idempotencyKey: string,
+    outcome: "receipt_committed" | "no_reply",
+  ): Promise<Result<boolean, Error>> {
+    const reservation = outcome === "no_reply"
+      ? await decisionStore.lookup(idempotencyKey)
+      : undefined;
+    if (reservation && !reservation.ok) return reservation;
+    const resolved = await decisionStore.resolve(idempotencyKey, outcome);
+    if (resolved.ok) {
+      suppressedDecisionKeys.delete(idempotencyKey);
+      return resolved;
+    }
+    if (outcome !== "no_reply" || !reservation?.value) return resolved;
+    suppressedDecisionKeys.add(idempotencyKey);
+    const terminalized = await terminalizeNoReply(reservation.value);
+    if (!terminalized.ok) {
+      logger?.error(
+        {
+          errorKind: "dependency" as const,
+          hint: "restore decision-quarantine storage or the outward ledger before retrying the no-reply resolution",
+        },
+        "Announcement no-reply resolution could not be durably terminalized",
+      );
+      return resolved;
+    }
+    suppressedDecisionKeys.delete(idempotencyKey);
+    return ok(true);
+  }
+
   type LedgerTransition = "lookup" | "begin" | "mark_unknown" | "commit" | "park";
   type LedgerOutcome = "blocked" | "in_flight" | "committed" | "failed" | "parked";
   function emitLedgerTransition(
@@ -305,7 +414,7 @@ export function createAnnouncementDeadLetterQueue(
     ledger: OutwardSendLedgerPort,
     entry: DeadLetterEntry,
     preparedAttachment?: GovernedAnnouncementAttachment,
-  ): Promise<"receipt_already_committed" | "receipt_committed_now" | "retained"> {
+  ): Promise<GovernedDrainOutcome> {
     const identityResult = resolveGovernedDeadLetterIdentity(entry, preparedAttachment);
     if (!identityResult.ok) {
       const invalidOperation = identityResult.error === "operation_validation_blocked";
@@ -425,6 +534,10 @@ export function createAnnouncementDeadLetterQueue(
           retainBlockedEntry(entry, "outward_operation_unresolved");
           return "retained";
         case "failed":
+          if (existing.value.lastError === NO_REPLY_LEDGER_FAILURE) {
+            emitLedgerTransition(identity, "lookup", "failed");
+            return "suppressed_no_reply";
+          }
           logLedgerFailure(
             entry,
             "lookup",
@@ -496,18 +609,30 @@ export function createAnnouncementDeadLetterQueue(
     emitLedgerTransition(identity, "mark_unknown", "in_flight");
 
     const boundary = await fromPromise(
-      governedSendToChannel(
-        entry.channelType,
-        entry.channelId,
-        entry.announcementText,
-        {
-          ...(entry.threadId ? { threadId: entry.threadId } : {}),
-          ...(entry.extra ? { extra: entry.extra } : {}),
-          authority: identity.deliveryAuthority,
-          destinationEndpoint: identity.destinationEndpoint,
-        },
-        preparedAttachment,
-      ),
+      preparedAttachment
+        ? governedSendToChannel(
+            entry.channelType,
+            entry.channelId,
+            entry.announcementText,
+            {
+              ...(entry.threadId ? { threadId: entry.threadId } : {}),
+              ...(entry.extra ? { extra: entry.extra } : {}),
+              authority: identity.deliveryAuthority,
+              destinationEndpoint: identity.destinationEndpoint,
+            },
+            preparedAttachment,
+          )
+        : governedSendToChannel(
+            entry.channelType,
+            entry.channelId,
+            entry.announcementText,
+            {
+              ...(entry.threadId ? { threadId: entry.threadId } : {}),
+              ...(entry.extra ? { extra: entry.extra } : {}),
+              authority: identity.deliveryAuthority,
+              destinationEndpoint: identity.destinationEndpoint,
+            },
+          ),
     );
     entry.attemptCount++;
     entry.lastAttemptAt = systemNowMs();
@@ -554,7 +679,87 @@ export function createAnnouncementDeadLetterQueue(
   async function drainGovernedEntry(
     ledger: OutwardSendLedgerPort,
     entry: DeadLetterEntry,
-  ): Promise<"receipt_already_committed" | "receipt_committed_now" | "retained"> {
+  ): Promise<GovernedDrainOutcome> {
+    if (
+      entry.attachment
+      && entry.rootRunId
+      && entry.stepIndex !== undefined
+      && entry.agentId
+      && entry.idempotencyKey
+    ) {
+      const existing = await ledger.lookup(entry.rootRunId, entry.stepIndex);
+      if (!existing.ok) {
+        logLedgerFailure(
+          entry,
+          "lookup",
+          "dependency",
+          "restore outward-ledger reads and verify the retained operation before retrying",
+          "Dead-letter outward-ledger lookup failed",
+        );
+        retainBlockedEntry(entry, "outward_ledger_lookup_blocked");
+        return "retained";
+      }
+      if (
+        existing.value
+        && (
+          existing.value.state === "committed"
+          || (
+            existing.value.state === "failed"
+            && existing.value.lastError === NO_REPLY_LEDGER_FAILURE
+          )
+        )
+      ) {
+        const allocated = await ledger.allocateStep(entry.rootRunId, entry.idempotencyKey);
+        if (!allocated.ok || allocated.value !== entry.stepIndex) {
+          logLedgerFailure(
+            entry,
+            "allocate",
+            "validation",
+            "restore the retained operation mapping before settling its terminal ledger row",
+            "Dead-letter announcement operation mapping is inconsistent",
+          );
+          retainBlockedEntry(entry, "outward_operation_mapping_mismatch");
+          return "retained";
+        }
+        if (!sameRetainedOwner(entry, existing.value, entry.stepIndex)) {
+          logLedgerFailure(
+            entry,
+            "lookup",
+            "validation",
+            "reuse a retained operation identity only with its exact original agent and destination",
+            "Dead-letter announcement operation identity mismatch",
+          );
+          retainBlockedEntry(entry, "outward_operation_identity_mismatch");
+          return "retained";
+        }
+        if (existing.value.state === "failed") {
+          emitLedgerTransition(
+            { ...entry, rootRunId: entry.rootRunId, stepIndex: entry.stepIndex },
+            "lookup",
+            "failed",
+          );
+          return "suppressed_no_reply";
+        }
+        if (!existing.value.platformMessageId) {
+          logLedgerFailure(
+            entry,
+            "lookup",
+            "precondition",
+            "repair the committed ledger receipt before treating this announcement as delivered",
+            "Committed dead-letter announcement lacks a platform receipt",
+          );
+          retainBlockedEntry(entry, "outward_committed_receipt_missing");
+          return "retained";
+        }
+        emitLedgerTransition(
+          { ...entry, rootRunId: entry.rootRunId, stepIndex: entry.stepIndex },
+          "lookup",
+          "committed",
+          { platformMessageId: existing.value.platformMessageId },
+        );
+        return "receipt_already_committed";
+      }
+    }
     return drainWithPreparedRecoveryAttachment({
       attachment: entry.attachment,
       runId: entry.runId,
@@ -699,6 +904,7 @@ export function createAnnouncementDeadLetterQueue(
     if (decisionReservations.length === 0) return;
     const settled: string[] = [];
     for (const reservation of [...decisionReservations]) {
+      if (suppressedDecisionKeys.has(reservation.idempotencyKey)) continue;
       const remainingGraceMs = parentDecisionGraceMs
         - (systemNowMs() - reservation.failedAt);
       if (remainingGraceMs > 0) {
@@ -780,7 +986,11 @@ export function createAnnouncementDeadLetterQueue(
     const deliveredIds = new Set<string>();
     const deliveredEntries: Array<{
       entry: DeadLetterEntry;
-      outcome: "untracked_delivery" | "receipt_already_committed" | "receipt_committed_now";
+      outcome:
+        | "untracked_delivery"
+        | "receipt_already_committed"
+        | "receipt_committed_now"
+        | "suppressed_no_reply";
       durationMs: number;
     }> = [];
     for (const entry of workingEntries) {
@@ -884,7 +1094,7 @@ export function createAnnouncementDeadLetterQueue(
           tryCatch(() => onDelivered(completionKey));
         }
       }
-      emitDelivered(entry, entry.attemptCount);
+      if (outcome !== "suppressed_no_reply") emitDelivered(entry, entry.attemptCount);
       // INFO closes the opening WARN after the queue file is unlinked. It is
       // emitted once per resolved entry, so volume is naturally bounded.
       logger?.info(
@@ -900,12 +1110,16 @@ export function createAnnouncementDeadLetterQueue(
             ? "dlq-ledger-committed-skip"
             : outcome === "receipt_committed_now"
               ? "dlq-ledger-receipt-committed"
+              : outcome === "suppressed_no_reply"
+                ? "dlq-no-reply-suppressed"
               : "dead-letter-delivery",
         },
         outcome === "receipt_already_committed"
           ? "Committed dead-letter operation removed without replay"
           : outcome === "receipt_committed_now"
             ? "Dead-letter entry delivered and platform receipt committed"
+            : outcome === "suppressed_no_reply"
+              ? "Dead-letter no-reply resolution removed without delivery"
             : "Dead-letter entry delivered successfully",
       );
     }
@@ -933,7 +1147,7 @@ export function createAnnouncementDeadLetterQueue(
     lookupDecision: (idempotencyKey) =>
       serialize(() => decisionStore.lookup(idempotencyKey)),
     resolveDecision: (idempotencyKey, outcome) =>
-      serialize(() => decisionStore.resolve(idempotencyKey, outcome)),
+      serialize(() => resolveDecisionDurably(idempotencyKey, outcome)),
     replaceDecisions: (expectedKeys, operations) =>
       serialize(() => decisionStore.replace(expectedKeys, operations)),
     drain: (sendToChannel, onDelivered) =>
@@ -966,6 +1180,7 @@ export function createAnnouncementDeadLetterQueue(
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
       const releasedEntry = entries.find((candidate) => candidate.id === id);
+      const releasedReservation = decisionReservations.find((candidate) => candidate.id === id);
       const released = await releaseQuarantined({
         id,
         outcome,
@@ -985,6 +1200,9 @@ export function createAnnouncementDeadLetterQueue(
       });
       if (released.ok && released.value && releasedEntry) {
         emittedAdmissionKeys.delete(announcementRecoveryKey(releasedEntry));
+      }
+      if (released.ok && released.value && releasedReservation) {
+        suppressedDecisionKeys.delete(releasedReservation.idempotencyKey);
       }
       return released;
     }),

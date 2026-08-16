@@ -23,6 +23,16 @@ interface StandaloneEmulatorState {
   readonly messageIdBase?: unknown;
 }
 
+export function resolveStandaloneMessageIdReservationDirectory(
+  workingDirectory: string,
+  stateDirectory?: string,
+): string {
+  return resolve(
+    stateDirectory ?? resolve(workingDirectory, ".comis-vps-emu-state"),
+    "message-id-reservations",
+  );
+}
+
 /**
  * Reserve a fresh message-id block for each standalone emulator process.
  *
