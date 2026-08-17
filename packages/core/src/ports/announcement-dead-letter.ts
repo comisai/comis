@@ -131,6 +131,11 @@ export interface AnnouncementProducerReservationRecord
   recoveryOutcome?: AnnouncementProducerRecoveryOutcome;
 }
 
+export interface AnnouncementToolResultResponseRef {
+  readonly kind: "session_metadata";
+  readonly operationId: string;
+}
+
 export type AnnouncementProducerRecoveryOutcome =
   | {
       readonly kind: "session";
@@ -152,6 +157,7 @@ export type AnnouncementProducerRecoveryOutcome =
       readonly terminalReason: "completed";
       readonly completedAtMs: number;
       readonly response: string;
+      readonly responseRef?: AnnouncementToolResultResponseRef;
       readonly turnsCompleted?: number;
       readonly announced?: boolean;
       readonly stats: {
@@ -166,6 +172,13 @@ export type AnnouncementProducerRecoveryOutcome =
       readonly completedAtMs: number;
       readonly errorKind: ErrorKind;
       readonly summary: string;
+    }
+  | {
+      readonly kind: "graph";
+      readonly terminalReason: "completed";
+      readonly completedAtMs: number;
+      readonly announcementText: string;
+      readonly extra?: Record<string, unknown>;
     };
 
 export type AnnouncementProducerReservationOutcome =
@@ -181,7 +194,7 @@ export type AnnouncementRetirementProducerState =
   | {
       readonly status: "terminal";
       readonly terminalReason?: DurableRunTerminalReason;
-      readonly recoveryOutcome?: Extract<AnnouncementProducerRecoveryOutcome, { kind: "session" }>;
+      readonly recoveryOutcome?: AnnouncementProducerRecoveryOutcome;
     }
   | { readonly status: "absent" };
 
@@ -249,6 +262,7 @@ export type AnnouncementRetirementProducer =
       readonly agentId: string;
       readonly conversationRef: ConversationRef;
       readonly toolCallId: string;
+      readonly operationId: string;
     }
   | {
       readonly kind: "graph";

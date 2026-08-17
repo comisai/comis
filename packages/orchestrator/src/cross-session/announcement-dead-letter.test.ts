@@ -1845,6 +1845,54 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     }));
   });
 
+  it("preserves a session-backed tool result instead of deleting its active owner", async () => {
+    const operationId = "tool-result-recovery-operation";
+    const producer = {
+      ...producerInput({
+        idempotencyKey: operationId,
+        runId: operationId,
+        completionKeys: [operationId],
+        retirementKeys: [operationId],
+      }),
+      producer: {
+        kind: "tool_result" as const,
+        tenantId: "default",
+        agentId: "parent-agent",
+        conversationRef: makeDeliveryAuthority("parent-agent").conversationRef,
+        toolCallId: "tool-call-1",
+        operationId,
+      },
+    };
+    const recoveryOutcome: AnnouncementProducerRecoveryOutcome = {
+      kind: "tool_result",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      response: "session-backed tool result",
+      stats: { runtimeMs: 10, totalTokens: 3, totalCost: 0.001 },
+    };
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retirementProducerState: vi.fn(async () => ok({
+        status: "terminal" as const,
+        terminalReason: "completed" as const,
+        recoveryOutcome,
+      })),
+    });
+    await restarted.drain(vi.fn(async () => true));
+    await expect(restarted.reserveProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "promotion_ready",
+      recoveryOutcome,
+    }));
+  });
+
   it("promotes a persisted producer reservation after restart", async () => {
     const producer = producerInput({
       idempotencyKey: "producer-fallback-operation",
@@ -1926,6 +1974,54 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       producer.channelId,
       producer.announcementText,
       expect.anything(),
+    );
+  });
+
+  it("promotes the exact persisted graph result and delivery options", async () => {
+    const producer = {
+      ...producerInput({
+        idempotencyKey: "graph-result-promotion-operation",
+        runId: "graph-result-promotion-run",
+        failedAt: Date.now() - 500_000,
+        completionKeys: ["graph-result-promotion-operation"],
+        retirementKeys: ["graph-result-promotion-run"],
+      }),
+      producer: {
+        kind: "graph" as const,
+        tenantId: "default",
+        graphId: "graph-result-promotion-run",
+      },
+    };
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.recordProducerOutcome(producer.runId, {
+      kind: "graph",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      announcementText: "exact persisted graph completion",
+      extra: { buttons: [[{ text: "Open", callback_data: "graph:open" }]] },
+    })).resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+    await restarted.drain(send);
+
+    expect(send).toHaveBeenCalledWith(
+      producer.channelType,
+      producer.channelId,
+      "exact persisted graph completion",
+      expect.objectContaining({
+        extra: { buttons: [[{ text: "Open", callback_data: "graph:open" }]] },
+      }),
     );
   });
 

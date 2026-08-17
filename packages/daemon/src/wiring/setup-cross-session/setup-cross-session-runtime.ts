@@ -68,7 +68,8 @@ const NOOP_LOGGER: ComisLogger = {
 };
 
 export function createRetirementProducerStateResolver(deps: {
-  sessionStore: Pick<SessionStorePort, "loadByRef">;
+  sessionStore: Pick<SessionStorePort, "loadByRef">
+    & Partial<Pick<SessionStorePort, "save">>;
   durableRuns?: Pick<DurableRunPort, "getByCheckpoint">;
   graphProducerExists?: (graphId: string) => boolean;
 }): (
@@ -86,9 +87,17 @@ export function createRetirementProducerStateResolver(deps: {
         agentId: producer.agentId,
       }, producer.conversationRef);
       if (!session.ok) return err(session.error);
-      const recoveryOutcome = session.value === undefined
+      const recoveryHandoff = session.value === undefined
         ? undefined
         : session.value.metadata.announcementProducerRecoveryOutcome;
+      const handoffRecord = typeof recoveryHandoff === "object"
+        && recoveryHandoff !== null
+        && !Array.isArray(recoveryHandoff)
+        ? recoveryHandoff as Record<string, unknown>
+        : undefined;
+      const recoveryOutcome = handoffRecord?.checkpointId === producer.checkpointId
+        ? handoffRecord.outcome
+        : undefined;
       if (
         isAnnouncementProducerRecoveryOutcome(recoveryOutcome)
         && recoveryOutcome.kind === "session"
@@ -124,9 +133,52 @@ export function createRetirementProducerStateResolver(deps: {
       const record = message as Record<string, unknown>;
       return record.role === "toolResult" && record.toolCallId === producer.toolCallId;
     });
-    return ok(committed
-      ? { status: "terminal" as const }
-      : { status: "active" as const });
+    const recoveryHandoffs = loaded.value.metadata.announcementToolResultRecoveryHandoffs;
+    const handoffsRecord = typeof recoveryHandoffs === "object"
+      && recoveryHandoffs !== null
+      && !Array.isArray(recoveryHandoffs)
+      ? recoveryHandoffs as Record<string, unknown>
+      : undefined;
+    if (committed) {
+      if (handoffsRecord !== undefined && deps.sessionStore.save !== undefined) {
+        const remaining = Object.fromEntries(
+          Object.entries(handoffsRecord).filter(([key]) => key !== producer.operationId),
+        );
+        const saved = deps.sessionStore.save(
+          loaded.value.conversationScope,
+          loaded.value.messages,
+          {
+            ...loaded.value.metadata,
+            announcementToolResultRecoveryHandoffs: remaining,
+          },
+        );
+        if (!saved.ok) return err(saved.error);
+      }
+      return ok({ status: "terminal" as const });
+    }
+    const recoveryHandoff = handoffsRecord === undefined
+      ? undefined
+      : Object.entries(handoffsRecord).find(([key]) => key === producer.operationId)?.[1];
+    const handoffRecord = typeof recoveryHandoff === "object"
+      && recoveryHandoff !== null
+      && !Array.isArray(recoveryHandoff)
+      ? recoveryHandoff as Record<string, unknown>
+      : undefined;
+    const recoveryOutcome = handoffRecord?.operationId === producer.operationId
+      && handoffRecord.toolCallId === producer.toolCallId
+      ? handoffRecord.outcome
+      : undefined;
+    if (
+      isAnnouncementProducerRecoveryOutcome(recoveryOutcome)
+      && recoveryOutcome.kind === "tool_result"
+    ) {
+      return ok({
+        status: "terminal" as const,
+        terminalReason: recoveryOutcome.terminalReason,
+        recoveryOutcome,
+      });
+    }
+    return ok({ status: "active" as const });
   };
 }
 /** All services produced by the cross-session messaging setup. */
@@ -617,6 +669,7 @@ export function setupCrossSession(deps: {
         outcome,
         announcementAdmissionAbort.signal,
       ),
+    lifecycleSignal: announcementAdmissionAbort.signal,
     cancelAnnouncementProducer: (producerKey) => deadLetterQueue.cancelProducer(producerKey),
     suppressAnnouncementProducer: (producerKey) => deadLetterQueue.suppressProducer(producerKey),
     prepareAnnouncementRetirement: (completionKeys, producer) =>

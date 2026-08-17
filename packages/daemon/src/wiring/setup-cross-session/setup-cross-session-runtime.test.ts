@@ -112,7 +112,9 @@ vi.mock("@comis/orchestrator", async () => {
     isAnnouncementProducerRecoveryOutcome: (value: unknown) => {
       if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
       const record = value as Record<string, unknown>;
-      return record.kind === "session"
+      return (record.kind === "session"
+        || record.kind === "tool_result"
+        || record.kind === "graph")
         && (record.terminalReason === "completed" || record.terminalReason === "failed")
         && typeof record.completedAtMs === "number";
     },
@@ -547,7 +549,12 @@ describe("setupCrossSession", () => {
         loadByRef: vi.fn(() => ok({
           ...conversation,
           messages: [],
-          metadata: { announcementProducerRecoveryOutcome: recoveryOutcome },
+          metadata: {
+            announcementProducerRecoveryOutcome: {
+              checkpointId: "completed-run",
+              outcome: recoveryOutcome,
+            },
+          },
           createdAt: 1,
           updatedAt: 2,
         })),
@@ -560,6 +567,86 @@ describe("setupCrossSession", () => {
       agentId: "agent-1",
       conversationRef: conversation.conversationRef,
       checkpointId: "completed-run",
+    })).resolves.toEqual({
+      ok: true,
+      value: {
+        status: "terminal",
+        terminalReason: "completed",
+        recoveryOutcome,
+      },
+    });
+  });
+
+  it("ignores a terminal session handoff owned by a different checkpoint", async () => {
+    const conversation = makeConversation("test-tenant", "agent-1");
+    const producerState = createRetirementProducerStateResolver({
+      sessionStore: {
+        loadByRef: vi.fn(() => ok({
+          ...conversation,
+          messages: [],
+          metadata: {
+            announcementProducerRecoveryOutcome: {
+              checkpointId: "previous-run",
+              outcome: {
+                kind: "session",
+                terminalReason: "completed",
+                completedAtMs: 1_234,
+                summary: "previous result",
+              },
+            },
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      },
+    });
+
+    await expect(producerState({
+      kind: "session",
+      tenantId: "test-tenant",
+      agentId: "agent-1",
+      conversationRef: conversation.conversationRef,
+      checkpointId: "current-run",
+    })).resolves.toEqual({ ok: true, value: { status: "absent" } });
+  });
+
+  it("recovers an uncommitted tool result from its scoped session handoff", async () => {
+    const conversation = makeConversation("test-tenant", "agent-1");
+    const recoveryOutcome = {
+      kind: "tool_result" as const,
+      terminalReason: "completed" as const,
+      completedAtMs: 1_234,
+      response: "persisted response",
+      stats: { runtimeMs: 4, totalTokens: 2, totalCost: 0.001 },
+    };
+    const producerState = createRetirementProducerStateResolver({
+      sessionStore: {
+        loadByRef: vi.fn(() => ok({
+          ...conversation,
+          messages: [],
+          metadata: {
+            announcementToolResultRecoveryHandoffs: {
+              "scoped-operation": {
+                operationId: "scoped-operation",
+                toolCallId: "tool-call-1",
+                outcome: recoveryOutcome,
+                response: "persisted response",
+              },
+            },
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      },
+    });
+
+    await expect(producerState({
+      kind: "tool_result",
+      tenantId: "test-tenant",
+      agentId: "agent-1",
+      conversationRef: conversation.conversationRef,
+      toolCallId: "tool-call-1",
+      operationId: "scoped-operation",
     })).resolves.toEqual({
       ok: true,
       value: {
@@ -4097,6 +4184,7 @@ describe("setupCrossSession durable-store injection", () => {
       expect(senderArgs.reserveAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.releaseAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.recordAnnouncementProducerOutcome).toEqual(expect.any(Function));
+      expect(senderArgs.lifecycleSignal).toBeInstanceOf(AbortSignal);
       expect(senderArgs.cancelAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.suppressAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.prepareAnnouncementRetirement).toEqual(expect.any(Function));

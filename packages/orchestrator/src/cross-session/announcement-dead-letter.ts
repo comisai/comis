@@ -757,6 +757,7 @@ export function createAnnouncementDeadLetterQueue(
       next,
     );
     if (!persisted.ok) return persisted;
+    producerReservations = next;
     return ok(undefined);
   }
 
@@ -2964,6 +2965,13 @@ export function createAnnouncementDeadLetterQueue(
         announcementText: announcementText.trim() || reservation.announcementText,
       };
     }
+    if (outcome.kind === "graph") {
+      return {
+        ...reservation,
+        announcementText: outcome.announcementText,
+        ...(outcome.extra ? { extra: outcome.extra } : {}),
+      };
+    }
     const summary = outcome.summary?.trim() || reservation.announcementText;
     const resultLine = outcome.resultRef === undefined
       ? ""
@@ -2990,10 +2998,7 @@ export function createAnnouncementDeadLetterQueue(
           continue;
         }
         if (producerState.value.status === "active") continue;
-        if (
-          producerState.value.status === "terminal"
-          && record.producer.kind === "session"
-        ) {
+        if (producerState.value.status === "terminal") {
           if (producerState.value.recoveryOutcome !== undefined) {
             await recordProducerOutcomeDurably(
               record.runId,
@@ -3001,8 +3006,10 @@ export function createAnnouncementDeadLetterQueue(
             );
             continue;
           }
-          await releaseProducerDurably(record.runId);
-          continue;
+          if (record.producer.kind === "session") {
+            await releaseProducerDurably(record.runId);
+            continue;
+          }
         }
         await removeProducerReservationDurably(record.runId);
         continue;
@@ -3024,7 +3031,11 @@ export function createAnnouncementDeadLetterQueue(
           );
           continue;
         }
-        if (producerState.value.status !== "active") {
+        if (
+          producerState.value.status !== "active"
+          && !(record.producer.kind === "tool_result"
+            && producerState.value.recoveryOutcome !== undefined)
+        ) {
           await removeProducerReservationDurably(record.runId);
         }
         continue;

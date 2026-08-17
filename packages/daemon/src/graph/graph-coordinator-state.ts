@@ -311,7 +311,7 @@ export interface GraphCoordinatorDeps {
     | "releaseProducer"
     | "cancelProducer"
     | "prepareTerminalDecisionRetirement"
-  >;
+  > & Partial<Pick<AnnouncementDeadLetterQueuePort, "recordProducerOutcome">>;
   /** Delay (ms) between concurrent sub-agent spawns in the same wave. */
   spawnStaggerMs?: number;
   /** Timeout (ms) waiting for cache write signal before fallback spawn. Default: 30000.

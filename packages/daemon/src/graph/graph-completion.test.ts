@@ -414,6 +414,8 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
       ok: true as const,
       value: SIGNED_REPORT_CALLBACK,
     }));
+    const recordProducerOutcome = vi.fn(async () => ok(undefined));
+    const releaseProducer = vi.fn(async () => ok(undefined));
     const logger = {
       info: vi.fn(),
       warn: vi.fn(),
@@ -427,6 +429,10 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
         sendToChannel,
         sendGovernedAnnouncement,
         registerGraphReportCallback,
+        announcementDeadLetterQueue: {
+          recordProducerOutcome,
+          releaseProducer,
+        },
         tenantId: "tenant-a",
         graphRetentionMs: 60_000,
         activeRunRegistry: { has: vi.fn(() => true) },
@@ -437,6 +443,8 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
       sendToChannel,
       sendGovernedAnnouncement,
       registerGraphReportCallback,
+      recordProducerOutcome,
+      releaseProducer,
       logger,
     };
   }
@@ -591,6 +599,68 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
       options: { threadId: "topic-1" },
     }));
     expect(sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("persists the exact graph result before transferring announcement delivery", async () => {
+    const gs = createMinimalGraphRunState([
+      { nodeId: "final", output: "Durable graph result" },
+    ]);
+    gs.completedAt = undefined;
+    gs.callerSessionKey = "tenant-a:user-a:chat-1:thread:topic-1";
+    gs.callerAgentId = "agent-1";
+    gs.announceChannelType = "telegram";
+    gs.announceChannelId = "chat-1";
+    gs.announcementProducerReserved = true;
+    authorizeGraphState(gs, "telegram", "chat-1", "topic-1");
+    const {
+      deps,
+      recordProducerOutcome,
+      releaseProducer,
+      sendGovernedAnnouncement,
+    } = completionDeps();
+
+    await expect(handleGraphCompletion({} as never, deps, gs)).resolves.toEqual(ok(undefined));
+
+    expect(recordProducerOutcome).toHaveBeenCalledWith(
+      "test-graph-id",
+      expect.objectContaining({
+        kind: "graph",
+        terminalReason: "completed",
+        announcementText: expect.stringContaining("Durable graph result"),
+      }),
+    );
+    expect(recordProducerOutcome.mock.invocationCallOrder[0])
+      .toBeLessThan(sendGovernedAnnouncement.mock.invocationCallOrder[0]!);
+    expect(releaseProducer).toHaveBeenCalledWith("test-graph-id");
+  });
+
+  it("retries graph result ownership before any delivery after storage recovers", async () => {
+    const gs = createMinimalGraphRunState([
+      { nodeId: "final", output: "Recovered graph result" },
+    ]);
+    gs.completedAt = undefined;
+    gs.callerSessionKey = "tenant-a:user-a:chat-1";
+    gs.callerAgentId = "agent-1";
+    gs.announceChannelType = "telegram";
+    gs.announceChannelId = "chat-1";
+    gs.announcementProducerReserved = true;
+    authorizeGraphState(gs, "telegram", "chat-1");
+    const { deps, recordProducerOutcome, sendGovernedAnnouncement } = completionDeps();
+    recordProducerOutcome
+      .mockResolvedValueOnce(err(new Error("outcome storage unavailable")))
+      .mockResolvedValue(ok(undefined));
+
+    await expect(handleGraphCompletion({} as never, deps, gs)).resolves.toMatchObject({
+      ok: false,
+      error: { message: "outcome storage unavailable" },
+    });
+    const completedAt = gs.completedAt;
+    expect(sendGovernedAnnouncement).not.toHaveBeenCalled();
+
+    await expect(handleGraphCompletion({} as never, deps, gs)).resolves.toEqual(ok(undefined));
+    expect(gs.completedAt).toBe(completedAt);
+    expect(recordProducerOutcome).toHaveBeenCalledTimes(2);
+    expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
   });
 
   it("records unavailable automatic delivery without failing a completed graph", async () => {

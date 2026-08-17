@@ -193,6 +193,25 @@ export function isAnnouncementProducerRecoveryOutcome(
         ? record.errorKind === undefined
         : typeof record.errorKind === "string" && ERROR_KIND_SET.has(record.errorKind));
   }
+  if (record.kind === "graph") {
+    return Object.keys(record).every((key) =>
+      key === "kind"
+      || key === "terminalReason"
+      || key === "completedAtMs"
+      || key === "announcementText"
+      || key === "extra")
+      && record.terminalReason === "completed"
+      && typeof record.completedAtMs === "number"
+      && Number.isSafeInteger(record.completedAtMs)
+      && record.completedAtMs >= 0
+      && typeof record.announcementText === "string"
+      && record.announcementText.length > 0
+      && record.announcementText.length <= ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS
+      && (record.extra === undefined
+        || (typeof record.extra === "object"
+          && record.extra !== null
+          && !Array.isArray(record.extra)));
+  }
   if (record.kind !== "tool_result") return false;
   if (record.terminalReason === "failed") {
     return Object.keys(record).every((key) =>
@@ -216,6 +235,17 @@ export function isAnnouncementProducerRecoveryOutcome(
     || record.completedAtMs < 0) return false;
   if (typeof record.response !== "string"
     || record.response.length > ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS) return false;
+  if (record.responseRef !== undefined) {
+    if (typeof record.responseRef !== "object"
+      || record.responseRef === null
+      || Array.isArray(record.responseRef)) return false;
+    const responseRef = record.responseRef as Record<string, unknown>;
+    if (Object.keys(responseRef).some((key) => key !== "kind" && key !== "operationId")
+      || responseRef.kind !== "session_metadata"
+      || typeof responseRef.operationId !== "string"
+      || responseRef.operationId.length === 0
+      || responseRef.operationId.length > 256) return false;
+  }
   if (record.turnsCompleted !== undefined
     && (typeof record.turnsCompleted !== "number"
       || !Number.isSafeInteger(record.turnsCompleted)
@@ -230,6 +260,7 @@ export function isAnnouncementProducerRecoveryOutcome(
     || key === "terminalReason"
     || key === "completedAtMs"
     || key === "response"
+    || key === "responseRef"
     || key === "turnsCompleted"
     || key === "announced"
     || key === "stats")
@@ -481,7 +512,9 @@ function sameRetirementProducer(
     || left.conversationRef !== right.conversationRef
   ) return false;
   if (left.kind === "tool_result") {
-    return right.kind === "tool_result" && left.toolCallId === right.toolCallId;
+    return right.kind === "tool_result"
+      && left.toolCallId === right.toolCallId
+      && left.operationId === right.operationId;
   }
   if (right.kind === "tool_result") return false;
   return left.checkpointId === right.checkpointId;
@@ -505,7 +538,9 @@ export function isAnnouncementRetirementProducer(
         && producer.agentId.length > 0
         && ConversationRefSchema.safeParse(producer.conversationRef).success
         && typeof producer.toolCallId === "string"
-        && producer.toolCallId.length > 0;
+        && producer.toolCallId.length > 0
+        && typeof producer.operationId === "string"
+        && producer.operationId.length > 0;
     case "graph":
       return typeof producer.graphId === "string" && producer.graphId.length > 0;
     default:

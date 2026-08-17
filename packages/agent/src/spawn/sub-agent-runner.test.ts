@@ -1445,11 +1445,14 @@ describe("createSubAgentRunner", () => {
       childConversation.conversationScope,
       [],
       expect.objectContaining({
-        announcementProducerRecoveryOutcome: expect.objectContaining({
-          kind: "session",
-          terminalReason: "completed",
-          summary: expect.any(String),
-        }),
+        announcementProducerRecoveryOutcome: {
+          checkpointId: runId,
+          outcome: expect.objectContaining({
+            kind: "session",
+            terminalReason: "completed",
+            summary: expect.any(String),
+          }),
+        },
       }),
     );
 

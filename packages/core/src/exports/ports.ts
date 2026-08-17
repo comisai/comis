@@ -167,6 +167,7 @@ export type {
   AnnouncementProducerReservationRecord,
   AnnouncementProducerReservationOutcome,
   AnnouncementProducerRecoveryOutcome,
+  AnnouncementToolResultResponseRef,
   AnnouncementRetirementProducerState,
   AnnouncementDeadLetterStatus,
   AnnouncementRetirementProducer,

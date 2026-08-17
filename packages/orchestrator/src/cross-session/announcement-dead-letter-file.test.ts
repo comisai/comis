@@ -297,6 +297,30 @@ describe("announcement dead-letter file", () => {
     })).toBe(false);
   });
 
+  it("accepts a bounded tool recovery response with a scoped materialized reference", () => {
+    expect(isAnnouncementProducerRecoveryOutcome({
+      kind: "tool_result",
+      terminalReason: "completed",
+      completedAtMs: 1,
+      response: "bounded response",
+      responseRef: {
+        kind: "session_metadata",
+        operationId: "scoped-operation",
+      },
+      stats: { runtimeMs: 1, totalTokens: 1, totalCost: 0 },
+    })).toBe(true);
+  });
+
+  it("accepts an exact graph recovery announcement payload", () => {
+    expect(isAnnouncementProducerRecoveryOutcome({
+      kind: "graph",
+      terminalReason: "completed",
+      completedAtMs: 1,
+      announcementText: "durable graph result",
+      extra: { buttons: [[{ text: "Open", callback_data: "graph:open" }]] },
+    })).toBe(true);
+  });
+
   it("rejects an oversized in-memory row before replacing a durable snapshot", async () => {
     directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
     const filePath = join(directory, "dead-letters.jsonl");

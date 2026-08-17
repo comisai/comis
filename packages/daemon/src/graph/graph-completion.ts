@@ -93,13 +93,7 @@ export async function handleGraphCompletion(
   gs: GraphRunState,
 ): Promise<Result<void, Error>> {
   // Prevent double-completion
-  if (gs.completedAt !== undefined) {
-    if (gs.announcementProducerReserved) {
-      const released = await deps.announcementDeadLetterQueue?.releaseProducer(gs.graphId);
-      if (released?.ok) gs.announcementProducerReserved = false;
-    }
-    return ok(undefined);
-  }
+  if (gs.completedAt !== undefined && !gs.announcementProducerReserved) return ok(undefined);
 
   // Touch parent lane one final time before announcement delivery
   if (gs.callerSessionKey) {
@@ -107,7 +101,7 @@ export async function handleGraphCompletion(
   }
 
   // 1. Mark completion time
-  gs.completedAt = systemNowMs();
+  gs.completedAt ??= systemNowMs();
 
   // 1b. Clean up event-driven spawn gate on completion
   gs.cacheWarmCleanup?.();
@@ -310,6 +304,32 @@ export async function handleGraphCompletion(
     && (deps.sendGovernedAnnouncement !== undefined
       || deps.sendRecoverableAnnouncement !== undefined)
   ) {
+    if (gs.announcementProducerReserved) {
+      const recordProducerOutcome = deps.announcementDeadLetterQueue?.recordProducerOutcome;
+      if (recordProducerOutcome === undefined) {
+        deps.logger?.error({
+          graphId: gs.graphId,
+          errorKind: "internal" as const,
+          hint: "restore graph announcement producer outcome wiring before retrying completion",
+        }, "Graph announcement producer outcome persistence is unavailable");
+        return err(new Error("Graph announcement producer outcome persistence is unavailable"));
+      }
+      const recorded = await recordProducerOutcome(gs.graphId, {
+        kind: "graph",
+        terminalReason: "completed",
+        completedAtMs: gs.completedAt,
+        announcementText: announcement,
+        ...(deliveryOptions?.extra ? { extra: deliveryOptions.extra } : {}),
+      });
+      if (!recorded.ok) {
+        deps.logger?.error({
+          graphId: gs.graphId,
+          errorKind: "resource" as const,
+          hint: "restore dead-letter storage; the graph result remains owned and delivery can retry",
+        }, "Graph announcement producer outcome persistence failed");
+        return recorded;
+      }
+    }
     const delivery = await sendGoverned(announcement, deliveryOptions);
     if (gs.announcementProducerReserved) {
       const released = await deps.announcementDeadLetterQueue?.releaseProducer(gs.graphId);

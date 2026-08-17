@@ -76,6 +76,7 @@ export interface CrossSessionSenderDeps {
     producerKey: string,
     outcome: AnnouncementProducerRecoveryOutcome,
   ) => Promise<Result<void, Error>>;
+  lifecycleSignal?: AbortSignal;
   cancelAnnouncementProducer?: (
     producerKey: string,
   ) => Promise<Result<void, Error>>;
@@ -148,6 +149,9 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
     if (record === undefined) throw new Error("Announcement producer lifecycle is incomplete");
     let failureCount = 0;
     while (true) {
+      if (deps.lifecycleSignal?.aborted) {
+        throw new Error("Cross-session outcome persistence was interrupted after durable handoff");
+      }
       const boundary = await fromPromise(record(producerKey, outcome));
       if (boundary.ok && boundary.value.ok) return;
       const failure = !boundary.ok
@@ -176,6 +180,84 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       }
       if (failureCount > 1) await systemSleep(1_000);
     }
+  }
+
+  function resolveRecoveryResponse(
+    conversation: ConversationLocator,
+    operationId: string,
+    toolCallId: string,
+    outcome: Extract<AnnouncementProducerRecoveryOutcome, {
+      kind: "tool_result";
+      terminalReason: "completed";
+    }>,
+  ): string {
+    if (outcome.responseRef === undefined) return outcome.response;
+    const loaded = deps.sessionStore.loadByRef(
+      conversation.conversationScope,
+      conversation.conversationRef,
+    );
+    if (!loaded.ok) throw loaded.error;
+    if (!loaded.value) throw new Error("Cross-session recovery session was not found");
+    const value = loaded.value.metadata.announcementToolResultRecoveryHandoffs;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error("Cross-session recovery response handoff is unavailable");
+    }
+    const handoff = Object.entries(value).find(([key]) => key === operationId)?.[1];
+    if (
+      typeof handoff !== "object"
+      || handoff === null
+      || Array.isArray(handoff)
+    ) {
+      throw new Error("Cross-session recovery response handoff identity mismatch");
+    }
+    const record = handoff as Record<string, unknown>;
+    if (
+      record.operationId !== operationId
+      || record.toolCallId !== toolCallId
+      || typeof record.response !== "string"
+    ) {
+      throw new Error("Cross-session recovery response handoff identity mismatch");
+    }
+    return record.response;
+  }
+
+  function persistToolResultHandoff(
+    conversation: ConversationLocator,
+    operationId: string,
+    toolCallId: string,
+    outcome: Extract<AnnouncementProducerRecoveryOutcome, { kind: "tool_result" }>,
+    response?: string,
+  ): void {
+    const loaded = deps.sessionStore.loadByRef(
+      conversation.conversationScope,
+      conversation.conversationRef,
+    );
+    if (!loaded.ok) throw loaded.error;
+    if (!loaded.value) throw new Error("Cross-session recovery session was not found");
+    const existingValue = loaded.value.metadata.announcementToolResultRecoveryHandoffs;
+    const existing = typeof existingValue === "object"
+      && existingValue !== null
+      && !Array.isArray(existingValue)
+      ? existingValue as Record<string, unknown>
+      : {};
+    const handoffs = Object.fromEntries([
+      ...Object.entries(existing).filter(([key]) => key !== operationId),
+      [operationId, {
+        operationId,
+        toolCallId,
+        outcome,
+        ...(response !== undefined ? { response } : {}),
+      }],
+    ]);
+    const saved = deps.sessionStore.save(
+      loaded.value.conversationScope,
+      loaded.value.messages,
+      {
+        ...loaded.value.metadata,
+        announcementToolResultRecoveryHandoffs: handoffs,
+      },
+    );
+    if (!saved.ok) throw saved.error;
   }
 
   async function announce(
@@ -376,6 +458,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
             agentId: params.callerConversation.conversationScope.agentId,
             conversationRef: params.callerConversation.conversationRef,
             toolCallId: params.announceOperationId,
+            operationId,
           },
           ...(params.callerEndpoint.threadId
             ? { threadId: params.callerEndpoint.threadId }
@@ -394,6 +477,12 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           if (recovery.terminalReason === "failed") {
             throw new Error(recovery.summary);
           }
+          const publicResponse = resolveRecoveryResponse(
+            params.callerConversation,
+            operationId,
+            params.announceOperationId,
+            recovery,
+          );
           if (
             reserved.value.lifecycleState !== "no_reply"
             && recovery.announced === undefined
@@ -408,6 +497,13 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
               params.callerEndpoint,
               params.announceOperationId,
             );
+            persistToolResultHandoff(
+              params.callerConversation,
+              operationId,
+              params.announceOperationId,
+              { ...recovery, announced },
+              publicResponse,
+            );
             await persistProducerOutcome(
               operationId,
               { ...recovery, announced },
@@ -416,7 +512,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
             if (!released.ok) throw released.error;
             return {
               sent: true,
-              response: recovery.response,
+              response: publicResponse,
               ...(recovery.turnsCompleted !== undefined
                 ? { turnsCompleted: recovery.turnsCompleted }
                 : {}),
@@ -426,7 +522,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           }
           return {
             sent: true,
-            response: recovery.response,
+            response: publicResponse,
             ...(recovery.turnsCompleted !== undefined
               ? { turnsCompleted: recovery.turnsCompleted }
               : {}),
@@ -455,16 +551,37 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         producerSettled = true;
       };
 
+      let targetSideEffectsStarted = false;
+      let terminalOutcomeRecorded = false;
+
+      const persistCurrentToolResultHandoff = (
+        outcome: Extract<AnnouncementProducerRecoveryOutcome, { kind: "tool_result" }>,
+        response?: string,
+      ): void => {
+        if (
+          reservedProducerKey === undefined
+          || reservedProducerToolCallId === undefined
+          || params.callerConversation === undefined
+        ) return;
+        persistToolResultHandoff(
+          params.callerConversation,
+          reservedProducerKey,
+          reservedProducerToolCallId,
+          outcome,
+          response,
+        );
+      };
+
       const recordProducerOutcome = async (
         outcome: Extract<AnnouncementProducerRecoveryOutcome, { kind: "tool_result" }>,
+        response?: string,
       ): Promise<void> => {
         if (reservedProducerKey === undefined) return;
         producerDisposition = "retain";
+        terminalOutcomeRecorded = true;
+        persistCurrentToolResultHandoff(outcome, response);
         await persistProducerOutcome(reservedProducerKey, outcome);
       };
-
-      let targetSideEffectsStarted = false;
-      let terminalOutcomeRecorded = false;
 
       try {
         if (
@@ -481,6 +598,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
               agentId: params.callerConversation.conversationScope.agentId,
               conversationRef: params.callerConversation.conversationRef,
               toolCallId: reservedProducerToolCallId,
+              operationId: reservedProducerKey,
             },
           );
           if (!prepared.ok) throw prepared.error;
@@ -537,7 +655,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         // 8. Wait mode: announce and return
         if (params.mode === "wait") {
           const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
-          const response = boundRecoveryResponse(stripped);
+          const recoveryResponse = boundRecoveryResponse(stripped);
           const stats = {
             runtimeMs: systemNowMs() - startMs,
             totalTokens,
@@ -547,22 +665,24 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
             kind: "tool_result" as const,
             terminalReason: "completed" as const,
             completedAtMs: systemNowMs(),
-            response,
+            response: recoveryResponse,
+            ...(recoveryResponse === stripped || reservedProducerKey === undefined
+              ? {}
+              : { responseRef: { kind: "session_metadata" as const, operationId: reservedProducerKey } }),
             stats,
           };
-          await recordProducerOutcome(recoveryOutcome);
-          terminalOutcomeRecorded = true;
+          await recordProducerOutcome(recoveryOutcome, stripped);
           if (hadSkip) await suppressAnnouncementProducer();
           const announced = hadSkip
             ? false
-            : await announce(params.announceChannelType, params.announceChannelId, response, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
+            : await announce(params.announceChannelType, params.announceChannelId, recoveryResponse, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
           if (!hadSkip) {
-            await recordProducerOutcome({ ...recoveryOutcome, announced });
+            await recordProducerOutcome({ ...recoveryOutcome, announced }, stripped);
             producerDisposition = "release";
           }
           return {
             sent: true,
-            response,
+            response: stripped,
             announced,
             stats,
           };
@@ -615,7 +735,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
 
         // 10. Announce final result
         const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
-        const response = boundRecoveryResponse(stripped);
+        const recoveryResponse = boundRecoveryResponse(stripped);
         const stats = {
           runtimeMs: systemNowMs() - startMs,
           totalTokens,
@@ -625,24 +745,26 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           kind: "tool_result" as const,
           terminalReason: "completed" as const,
           completedAtMs: systemNowMs(),
-          response,
+          response: recoveryResponse,
+          ...(recoveryResponse === stripped || reservedProducerKey === undefined
+            ? {}
+            : { responseRef: { kind: "session_metadata" as const, operationId: reservedProducerKey } }),
           turnsCompleted,
           stats,
         };
-        await recordProducerOutcome(recoveryOutcome);
-        terminalOutcomeRecorded = true;
+        await recordProducerOutcome(recoveryOutcome, stripped);
         if (hadSkip) await suppressAnnouncementProducer();
         const announced = hadSkip
           ? false
-          : await announce(params.announceChannelType, params.announceChannelId, response, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
+          : await announce(params.announceChannelType, params.announceChannelId, recoveryResponse, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
         if (!hadSkip) {
-          await recordProducerOutcome({ ...recoveryOutcome, announced });
+          await recordProducerOutcome({ ...recoveryOutcome, announced }, stripped);
           producerDisposition = "release";
         }
 
         return {
           sent: true,
-          response,
+          response: stripped,
           turnsCompleted,
           announced,
           stats,

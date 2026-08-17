@@ -1280,7 +1280,10 @@ function classifyCompletionErrorKind(
       loaded.value.messages,
       {
         ...loaded.value.metadata,
-        announcementProducerRecoveryOutcome: outcome,
+        announcementProducerRecoveryOutcome: {
+          checkpointId: run.runId,
+          outcome,
+        },
       },
     );
     return saved.ok ? ok(undefined) : err(saved.error);
