@@ -395,7 +395,11 @@ export function setupCrossSession(deps: {
     agents: container.config.agents,
   });
   const announcementAdmissionAbort = new AbortController();
-  let textChunkQueue: ReturnType<typeof createAnnouncementDeadLetterQueue> | undefined;
+  // The delivery surface captures the chunk store before the dead-letter queue
+  // that backs it exists, so the binding is a holder assigned once below.
+  const textChunkQueue: {
+    current: ReturnType<typeof createAnnouncementDeadLetterQueue> | undefined;
+  } = { current: undefined };
   const {
     sendToChannelWithReceipt,
     sendSingleTextToChannelWithReceipt,
@@ -411,8 +415,8 @@ export function setupCrossSession(deps: {
     ...(deps.logger ? { logger: deps.logger } : {}),
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
-    recordTextChunks: (operationId, chunks) => textChunkQueue
-      ? textChunkQueue.recordDecisionTextChunks(operationId, chunks)
+    recordTextChunks: (operationId, chunks) => textChunkQueue.current
+      ? textChunkQueue.current.recordDecisionTextChunks(operationId, chunks)
       : Promise.resolve(err(new Error("Announcement text chunk storage is unavailable"))),
     prepareCompletionAttachment,
     verifyCompletionAttachment: (attachment) => verifyCompletionAttachmentSnapshot(
@@ -630,7 +634,7 @@ export function setupCrossSession(deps: {
       ? { ensureSessionObservation: deps.ensureDeadLetterRecoveryObservation }
       : {}),
   });
-  textChunkQueue = deadLetterQueue;
+  textChunkQueue.current = deadLetterQueue;
 
   const sendGovernedAnnouncement = sendLedgerAnnouncement
     ? createRecoverableAnnouncementDelivery({

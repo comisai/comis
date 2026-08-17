@@ -583,7 +583,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         await persistProducerOutcome(reservedProducerKey, outcome);
       };
 
-      try {
+      const runSend = async (): Promise<CrossSessionSendResult> => {
         if (
           reservedProducerKey !== undefined
           && reservedProducerToolCallId !== undefined
@@ -769,6 +769,29 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           announced,
           stats,
         };
+      };
+
+      // Settling the reservation is the last step on every exit path. Its
+      // failure outranks whatever the send itself produced, because an
+      // unsettled reservation strands durable ownership that no retry can
+      // reconcile. Raising it from ordinary control flow rather than from a
+      // `finally` keeps that precedence explicit instead of letting a cleanup
+      // throw silently discard the outcome it replaces.
+      const settleAnnouncementProducer = async (): Promise<void> => {
+        if (
+          reservedProducerKey === undefined
+          || producerSettled
+          || producerDisposition === "retain"
+        ) return;
+        const transition = producerDisposition === "cancel"
+          ? await deps.cancelAnnouncementProducer!(reservedProducerKey)
+          : await deps.releaseAnnouncementProducer!(reservedProducerKey);
+        if (!transition.ok) throw transition.error;
+      };
+
+      let sendResult: CrossSessionSendResult;
+      try {
+        sendResult = await runSend();
       } catch (error: unknown) {
         if (
           reservedProducerKey !== undefined
@@ -785,16 +808,11 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
             summary: boundFailureSummary(error),
           });
         }
+        await settleAnnouncementProducer();
         throw error;
-      } finally {
-        if (reservedProducerKey !== undefined && !producerSettled
-          && producerDisposition !== "retain") {
-          const transition = producerDisposition === "cancel"
-            ? await deps.cancelAnnouncementProducer!(reservedProducerKey)
-            : await deps.releaseAnnouncementProducer!(reservedProducerKey);
-          if (!transition.ok) throw transition.error;
-        }
       }
+      await settleAnnouncementProducer();
+      return sendResult;
     },
   };
 }

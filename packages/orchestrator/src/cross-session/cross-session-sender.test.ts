@@ -1011,6 +1011,52 @@ describe("createCrossSessionSender", () => {
     expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
   });
 
+  it("surfaces producer release failure over an otherwise completed send", async () => {
+    const sendRecoverableAnnouncement = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+    }));
+    const recordAnnouncementProducerOutcome = vi.fn(async () => ok(undefined));
+    const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const releaseAnnouncementProducer = vi.fn(async () =>
+      err(new Error("producer release storage unavailable")));
+    const sender = createCrossSessionSender({
+      ...deps,
+      sendRecoverableAnnouncement,
+      reserveAnnouncementProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordAnnouncementProducerOutcome,
+      releaseAnnouncementProducer,
+      cancelAnnouncementProducer,
+      suppressAnnouncementProducer: vi.fn(async () => ok(true)),
+    });
+
+    // The send itself completes and announces; an unsettled reservation still
+    // takes precedence, because no retry can reconcile the durable ownership.
+    await expect(sender.send({
+      target: QUERY_ONE,
+      text: "question",
+      mode: "wait",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "failed-release-tool-call",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    })).rejects.toThrow("producer release storage unavailable");
+
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledOnce();
+    expect(recordAnnouncementProducerOutcome).toHaveBeenCalledWith(
+      scopedProducerKey("failed-release-tool-call"),
+      expect.objectContaining({ announced: true }),
+    );
+    expect(releaseAnnouncementProducer).toHaveBeenCalledWith(
+      scopedProducerKey("failed-release-tool-call"),
+    );
+    expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
+  });
+
   // -----------------------------------------------------------------------
   // Event emitted for each mode
   // -----------------------------------------------------------------------

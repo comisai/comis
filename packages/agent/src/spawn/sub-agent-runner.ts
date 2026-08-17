@@ -2123,8 +2123,7 @@ function classifyCompletionErrorKind(
       );
       removeArchivedRun(runId, run);
     })();
-    let tracked: Promise<void>;
-    tracked = archive.finally(() => {
+    const tracked: Promise<void> = archive.finally(() => {
       archivalRunIds.delete(runId);
       activePromises.delete(tracked);
     });
