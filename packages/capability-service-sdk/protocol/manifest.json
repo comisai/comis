@@ -69,6 +69,14 @@
       "sha256": "3cd00c4f53ef90872e2f457463304294b47aa8dfe29f3db3eda603e5cedac420"
     },
     {
+      "path": "schemas/heartbeat.request.schema.json",
+      "sha256": "28f205692cf1fa46c5725584616e06985a73918fd9b4d3653824f78ce365dc4a"
+    },
+    {
+      "path": "schemas/heartbeat.response.schema.json",
+      "sha256": "2d75b63503abc048c0d1320e061a527a7b315807a5f7bef5749897cb30da214c"
+    },
+    {
       "path": "schemas/mcp-call-context.schema.json",
       "sha256": "8a50e1da6cf1ddbfd77c3f23e9517390aa2f6e081438a2e4d11d583b8dc2351c"
     },
@@ -121,7 +129,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "fff96cf5105d9cda9da5dfd2fbc7e9f15242754f63d7f8155cde4ef874d5c52b",
+  "bundleDigest": "7ddc17b11d81444257e292af969e4f94c63ff78d3e441299ad5532f3e9da2b1d",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -296,6 +304,25 @@
       "direction": "service-to-comis",
       "maxRequestBytes": 1441792,
       "maxResponseBytes": 65536,
+      "method": "managedRuns.heartbeat",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/heartbeat.request.schema.json",
+      "requiredServiceScope": "health",
+      "responseSchema": "schemas/heartbeat.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "owning-service-instance-only",
+        "observation-time-advances-strictly-forward",
+        "terminal-run-refuses-further-liveness",
+        "liveness-carries-no-run-state"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
       "method": "managedRuns.putEvidence",
       "operationIdRequired": true,
       "requestSchema": "schemas/putEvidence.request.schema.json",
@@ -394,6 +421,7 @@
     "capabilityServices.health",
     "managedRuns.abandon",
     "managedRuns.activate",
+    "managedRuns.heartbeat",
     "managedRuns.putEvidence",
     "managedRuns.receiveAttentionResponse",
     "managedRuns.release",

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { z } from "zod";
 import {
+  CapabilityHeartbeatRequestSchema,
   CapabilityPutEvidenceRequestSchema,
   CapabilityReceiveAttentionResponseRequestSchema,
   CapabilityReleaseRequestSchema,
@@ -12,12 +13,14 @@ import { err, fromPromise, tryCatch, type Result } from "@comis/shared";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
 import type { ManagedAttentionResponseBridge } from "./managed-attention-response-bridge.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
+import type { ManagedRunLivenessBridge } from "./managed-run-liveness-bridge.js";
 import type { ManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 
 export interface CapabilityServiceIngressRouteDeps {
   readonly reportBridge: ManagedRunReportBridge;
   readonly evidenceBridge: ManagedRunEvidenceBridge;
   readonly attentionResponseBridge: ManagedAttentionResponseBridge;
+  readonly livenessBridge: ManagedRunLivenessBridge;
   readonly releaseCoordinator: ManagedRunReleaseCoordinator;
   readonly requestDeadlineMs: number;
   readonly clock: ClockPort;
@@ -129,6 +132,58 @@ export async function routeManagedRunReleaseIngress(
     managedRunId: request.params.managedRunId,
     durationMs: Math.max(0, deps.clock.now() - startedAtMs),
   }, "Capability-service release request completed");
+  return result;
+}
+
+/** Record that the owning service still holds one run, without carrying run state. */
+export async function routeManagedRunHeartbeatIngress(
+  serviceInstanceId: string,
+  request: z.infer<typeof CapabilityHeartbeatRequestSchema>,
+  deps: CapabilityServiceIngressRouteDeps,
+): Promise<CapabilityServiceIngressRouteResult> {
+  const startedAtMs = deps.clock.now();
+  deps.logger.debug({
+    serviceInstanceId,
+    managedRunId: request.params.managedRunId,
+    step: "capability-service-heartbeat-ingress",
+  }, "Routing capability-service run heartbeat");
+  const invoked = tryCatch(() => deps.livenessBridge.recordHeartbeat({
+    serviceInstanceId,
+    managedRunId: request.params.managedRunId,
+    observedAtMs: request.params.observedAtMs,
+  }));
+  const deadline = invoked.ok
+    ? await awaitResultDeadline(invoked.value, deps.timers, deps.requestDeadlineMs)
+    : { result: err(invoked.error), settlement: Promise.resolve() };
+  const settled = deadline.result;
+  let result: CapabilityServiceIngressRouteResult;
+  if (settled === undefined) result = responseError("deadline_exceeded", deadline.settlement);
+  else if (!settled.ok) result = responseError("internal_error", deadline.settlement);
+  else if (settled.value.kind === "rejected") {
+    // A refused beat is never an error the service should retry into: the run is
+    // gone, terminal, not its own, or the observation is older than one already
+    // recorded. Each is a precondition the service must resolve, not a transient.
+    result = responseError(
+      settled.value.reasonCode === "observed_time_out_of_bounds"
+        ? "invalid_params"
+        : "precondition_failed",
+      deadline.settlement,
+    );
+  } else {
+    result = {
+      response: {
+        managedRunId: settled.value.managedRunId,
+        acceptedAtMs: settled.value.acceptedAtMs,
+        lastHeartbeatAtMs: settled.value.lastHeartbeatAtMs,
+      },
+      settlement: deadline.settlement,
+    };
+  }
+  deps.logger.info({
+    serviceInstanceId,
+    managedRunId: request.params.managedRunId,
+    durationMs: Math.max(0, deps.clock.now() - startedAtMs),
+  }, "Capability-service run heartbeat completed");
   return result;
 }
 

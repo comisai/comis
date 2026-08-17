@@ -1,0 +1,50 @@
+{
+  "$id": "https://schemas.comis.ai/capability-service/heartbeat.response.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+      "type": "string"
+    },
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "result": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptedAtMs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lastHeartbeatAtMs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "managedRunId": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "managedRunId",
+        "acceptedAtMs",
+        "lastHeartbeatAtMs"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "type": "object"
+}

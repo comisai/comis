@@ -57,6 +57,7 @@ import {
 } from "./execution-attachment-authority.js";
 import type { ManagedTerminalRevoker } from "./managed-terminal-revoker.js";
 import { createManagedRunResourceRevoker } from "./managed-run-resource-revoker.js";
+import { createManagedRunLivenessBridge } from "./managed-run-liveness-bridge.js";
 import { createManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 
 const SECRET_REFERENCE_PREFIX = "secret://";
@@ -347,6 +348,7 @@ export async function setupCapabilityServices(
     workspaceLeases,
     revokeBoundResources,
   });
+  const livenessBridge = createManagedRunLivenessBridge({ store, clock: deps.clock });
 
   const credentials = new Map<string, () => string | undefined>();
   for (const instance of plan.value.orderedInstances) {
@@ -368,6 +370,7 @@ export async function setupCapabilityServices(
     reportBridge,
     evidenceBridge,
     attentionResponseBridge,
+    livenessBridge,
     releaseCoordinator,
     requestDeadlineMs: deps.config.requestDeadlineMs,
     clock: deps.clock,

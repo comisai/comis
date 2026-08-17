@@ -12,6 +12,7 @@ import {
   CapabilityActivateResponseSchema,
   CapabilityHandshakeRequestSchema,
   CapabilityHealthRequestSchema,
+  CapabilityHeartbeatRequestSchema,
   CapabilityPutEvidenceRequestSchema,
   CapabilityReceiveAttentionResponseRequestSchema,
   CapabilityReleaseRequestSchema,
@@ -45,10 +46,12 @@ import {
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
 import type { ManagedAttentionResponseBridge } from "./managed-attention-response-bridge.js";
+import type { ManagedRunLivenessBridge } from "./managed-run-liveness-bridge.js";
 import type { ManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 import {
   routeManagedAttentionResponseIngress,
   routeManagedRunEvidenceIngress,
+  routeManagedRunHeartbeatIngress,
   routeManagedRunReleaseIngress,
   routeManagedRunReportIngress,
 } from "./capability-service-ingress-routes.js";
@@ -108,6 +111,7 @@ export interface UnixCapabilityServiceHostRuntimeDeps {
   readonly reportBridge: ManagedRunReportBridge;
   readonly evidenceBridge: ManagedRunEvidenceBridge;
   readonly attentionResponseBridge: ManagedAttentionResponseBridge;
+  readonly livenessBridge: ManagedRunLivenessBridge;
   readonly releaseCoordinator: ManagedRunReleaseCoordinator;
   readonly requestDeadlineMs: number;
   readonly clock: ClockPort;
@@ -578,6 +582,23 @@ function createEndpoint(
           return;
         }
         trackInbound(routeIngress(socket, parsed.data, () => routeManagedAttentionResponseIngress(
+          configured.instance.serviceInstanceId,
+          parsed.data,
+          deps,
+        )));
+        return;
+      }
+      if (frame["method"] === "managedRuns.heartbeat") {
+        if (boundSocket !== socket || !configured.definition.requestedScopes.includes("health")) {
+          rejectRequest(socket, "precondition_failed", id);
+          return;
+        }
+        const parsed = CapabilityHeartbeatRequestSchema.safeParse(request);
+        if (!parsed.success || parsed.data.id !== parsed.data.params.operationId) {
+          rejectRequest(socket, "invalid_params", id);
+          return;
+        }
+        trackInbound(routeIngress(socket, parsed.data, () => routeManagedRunHeartbeatIngress(
           configured.instance.serviceInstanceId,
           parsed.data,
           deps,

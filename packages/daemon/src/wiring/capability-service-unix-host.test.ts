@@ -17,6 +17,7 @@ import { err, ok } from "@comis/shared";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
 import type { ManagedAttentionResponseBridge } from "./managed-attention-response-bridge.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
+import type { ManagedRunLivenessBridge } from "./managed-run-liveness-bridge.js";
 import type { ManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 import { createUnixCapabilityServiceHostRuntime } from "./capability-service-unix-host.js";
 
@@ -161,14 +162,26 @@ describe("daemon-owned capability-service Unix host", () => {
     return { directory, socketPath: join(directory, "service.sock") };
   }
 
-  function makeHost(
-    socketPath: string,
-    reportBridge?: ManagedRunReportBridge,
-    evidenceBridge?: ManagedRunEvidenceBridge,
-    releaseCoordinator?: ManagedRunReleaseCoordinator,
-    attentionResponseBridge?: ManagedAttentionResponseBridge,
-    onAuthenticatedSession = vi.fn(async () => ok(undefined)),
-  ) {
+  interface HostOverrides {
+    readonly reportBridge?: ManagedRunReportBridge;
+    readonly evidenceBridge?: ManagedRunEvidenceBridge;
+    readonly releaseCoordinator?: ManagedRunReleaseCoordinator;
+    readonly attentionResponseBridge?: ManagedAttentionResponseBridge;
+    readonly livenessBridge?: ManagedRunLivenessBridge;
+    readonly onAuthenticatedSession?: () => Promise<Result<void, Error>>;
+  }
+
+  // Named overrides, not positional: a caller that passed `undefined` past the
+  // defaulted session callback silently disabled the handshake it depended on.
+  function makeHost(socketPath: string, overrides: HostOverrides = {}) {
+    const {
+      reportBridge,
+      evidenceBridge,
+      releaseCoordinator,
+      attentionResponseBridge,
+      livenessBridge,
+      onAuthenticatedSession = vi.fn(async () => ok(undefined)),
+    } = overrides;
     const clock = createFakeClock(NOW_MS);
     const timers = createFakeTimers(NOW_MS);
     const hostDeps = {
@@ -225,6 +238,14 @@ describe("daemon-owned capability-service Unix host", () => {
           },
         })),
       },
+      livenessBridge: livenessBridge ?? {
+        recordHeartbeat: vi.fn(async () => ok({
+          kind: "accepted" as const,
+          managedRunId: "managed-run_a",
+          acceptedAtMs: NOW_MS,
+          lastHeartbeatAtMs: NOW_MS - 5,
+        })),
+      },
       releaseCoordinator: releaseCoordinator ?? {
         release: vi.fn(async () => ok({ kind: "rejected" as const, reasonCode: "state_mismatch" as const })),
       },
@@ -249,13 +270,9 @@ describe("daemon-owned capability-service Unix host", () => {
       externalKey: "backend-id-format",
       response: "Use monotonic issue-N values.",
     }));
-    const host = makeHost(
-      root.socketPath,
-      undefined,
-      undefined,
-      undefined,
-      { receiveAttentionResponse },
-    );
+    const host = makeHost(root.socketPath, {
+      attentionResponseBridge: { receiveAttentionResponse },
+    });
     if (!host.created.ok) throw host.created.error;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
     if (!constructed.ok) throw constructed.error;
@@ -297,6 +314,93 @@ describe("daemon-owned capability-service Unix host", () => {
     expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
   });
 
+  it("records liveness for the bound session and answers with the host clock", async () => {
+    const root = makeRoot();
+    const recordHeartbeat: ManagedRunLivenessBridge["recordHeartbeat"] = vi.fn(async () => ok({
+      kind: "accepted" as const,
+      managedRunId: "managed-run_a",
+      acceptedAtMs: NOW_MS,
+      lastHeartbeatAtMs: NOW_MS - 5,
+    }));
+    const host = makeHost(root.socketPath, { livenessBridge: { recordHeartbeat } });
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const peer = await connectPeer(root.socketPath);
+    peers.push(peer);
+    peer.send(handshake(BEARER));
+    await peer.next();
+    if (!(await started).ok) return;
+
+    peer.send({
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "operation_heartbeat_a",
+      method: "managedRuns.heartbeat",
+      params: {
+        operationId: "operation_heartbeat_a",
+        managedRunId: "managed-run_a",
+        observedAtMs: NOW_MS - 5,
+      },
+    });
+
+    expect(await peer.next()).toEqual({
+      jsonrpc: "2.0",
+      id: "operation_heartbeat_a",
+      result: {
+        managedRunId: "managed-run_a",
+        acceptedAtMs: NOW_MS,
+        lastHeartbeatAtMs: NOW_MS - 5,
+      },
+    });
+    expect(recordHeartbeat).toHaveBeenCalledWith({
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-run_a",
+      observedAtMs: NOW_MS - 5,
+    });
+  });
+
+  it("refuses liveness that names a different run's authority than the envelope", async () => {
+    // The envelope id and the operation id are one identity. Accepting a beat
+    // whose params disagree would let a service address a run it did not name.
+    const root = makeRoot();
+    const recordHeartbeat: ManagedRunLivenessBridge["recordHeartbeat"] = vi.fn(async () => ok({
+      kind: "accepted" as const,
+      managedRunId: "managed-run_a",
+      acceptedAtMs: NOW_MS,
+      lastHeartbeatAtMs: NOW_MS - 5,
+    }));
+    const host = makeHost(root.socketPath, { livenessBridge: { recordHeartbeat } });
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const peer = await connectPeer(root.socketPath);
+    peers.push(peer);
+    peer.send(handshake(BEARER));
+    await peer.next();
+    if (!(await started).ok) return;
+
+    peer.send({
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "operation_heartbeat_a",
+      method: "managedRuns.heartbeat",
+      params: {
+        operationId: "operation_heartbeat_b",
+        managedRunId: "managed-run_a",
+        observedAtMs: NOW_MS - 5,
+      },
+    });
+
+    expect(await peer.next()).toMatchObject({
+      id: "operation_heartbeat_a",
+      error: { kind: "invalid_params" },
+    });
+    expect(recordHeartbeat).not.toHaveBeenCalled();
+  });
+
   it("routes authenticated release requests through host authority", async () => {
     const root = makeRoot();
     const release: ManagedRunReleaseCoordinator["release"] = vi.fn(async () => ok({
@@ -306,7 +410,7 @@ describe("daemon-owned capability-service Unix host", () => {
       disposition: "reap_safe" as const,
       releasedAtMs: NOW_MS,
     }));
-    const host = makeHost(root.socketPath, undefined, undefined, { release });
+    const host = makeHost(root.socketPath, { releaseCoordinator: { release } });
     if (!host.created.ok) throw host.created.error;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
     if (!constructed.ok) throw constructed.error;
@@ -363,7 +467,7 @@ describe("daemon-owned capability-service Unix host", () => {
         disposition: "reap_safe" as const,
         releasedAtMs: NOW_MS,
       }));
-    const host = makeHost(root.socketPath, undefined, undefined, { release });
+    const host = makeHost(root.socketPath, { releaseCoordinator: { release } });
     if (!host.created.ok) throw host.created.error;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
     if (!constructed.ok) throw constructed.error;
@@ -519,7 +623,7 @@ describe("daemon-owned capability-service Unix host", () => {
         },
       })),
     };
-    const host = makeHost(root.socketPath, reportBridge, evidenceBridge);
+    const host = makeHost(root.socketPath, { reportBridge, evidenceBridge });
     expect(host.created.ok).toBe(true);
     if (!host.created.ok) return;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
@@ -744,7 +848,7 @@ describe("daemon-owned capability-service Unix host", () => {
         },
       })),
     };
-    const host = makeHost(root.socketPath, reportBridge);
+    const host = makeHost(root.socketPath, { reportBridge });
     if (!host.created.ok) throw host.created.error;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
     if (!constructed.ok) throw constructed.error;
@@ -789,14 +893,7 @@ describe("daemon-owned capability-service Unix host", () => {
       await new Promise<void>((resolve) => releases.push(resolve));
       return ok(undefined);
     });
-    const host = makeHost(
-      root.socketPath,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      onAuthenticatedSession,
-    );
+    const host = makeHost(root.socketPath, { onAuthenticatedSession });
     if (!host.created.ok) throw host.created.error;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
     if (!constructed.ok) throw constructed.error;
@@ -838,14 +935,7 @@ describe("daemon-owned capability-service Unix host", () => {
     const onAuthenticatedSession = vi.fn()
       .mockResolvedValueOnce(err(new Error("attachment store unavailable")))
       .mockResolvedValueOnce(ok(undefined));
-    const host = makeHost(
-      root.socketPath,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      onAuthenticatedSession,
-    );
+    const host = makeHost(root.socketPath, { onAuthenticatedSession });
     if (!host.created.ok) throw host.created.error;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
     if (!constructed.ok) throw constructed.error;
@@ -887,7 +977,7 @@ describe("daemon-owned capability-service Unix host", () => {
     const ingestReport = vi.fn()
       .mockResolvedValueOnce(err(new Error("synthetic store interruption")))
       .mockResolvedValueOnce(ok(accepted));
-    const host = makeHost(root.socketPath, { ingestReport });
+    const host = makeHost(root.socketPath, { reportBridge: { ingestReport } });
     if (!host.created.ok) throw host.created.error;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
     if (!constructed.ok) throw constructed.error;
@@ -938,7 +1028,7 @@ describe("daemon-owned capability-service Unix host", () => {
           retainedUntilMs: NOW_MS + 60_000,
         },
       }));
-    const host = makeHost(root.socketPath, { ingestReport });
+    const host = makeHost(root.socketPath, { reportBridge: { ingestReport } });
     if (!host.created.ok) throw host.created.error;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
     if (!constructed.ok) throw constructed.error;
@@ -1011,7 +1101,7 @@ describe("daemon-owned capability-service Unix host", () => {
     const reportBridge: ManagedRunReportBridge = {
       ingestReport: vi.fn(() => pendingReport),
     };
-    const host = makeHost(root.socketPath, reportBridge);
+    const host = makeHost(root.socketPath, { reportBridge });
     if (!host.created.ok) throw host.created.error;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
     if (!constructed.ok) throw constructed.error;

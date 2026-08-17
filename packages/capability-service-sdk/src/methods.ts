@@ -310,6 +310,32 @@ export const CapabilityTerminalEventResponseSchema = z.strictObject({
   }),
 });
 
+/**
+ * Liveness proves the service still owns the run between reports. It is
+ * deliberately incapable of carrying status, a summary, or a reason: run state
+ * has exactly one path in, and that path is sequenced report ingestion.
+ */
+export const CapabilityHeartbeatRequestSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  method: z.literal("managedRuns.heartbeat"),
+  params: z.strictObject({
+    operationId: OperationIdSchema,
+    managedRunId: ManagedRunIdSchema,
+    observedAtMs: TimestampMsSchema,
+  }),
+});
+
+export const CapabilityHeartbeatResponseSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  result: z.strictObject({
+    managedRunId: ManagedRunIdSchema,
+    acceptedAtMs: TimestampMsSchema,
+    lastHeartbeatAtMs: TimestampMsSchema,
+  }),
+});
+
 export const CapabilityHealthRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
@@ -339,6 +365,7 @@ export const CapabilityServiceRequestSchema = z.discriminatedUnion("method", [
   CapabilityAbandonRequestSchema,
   CapabilityActivateRequestSchema,
   CapabilityHandshakeRequestSchema,
+  CapabilityHeartbeatRequestSchema,
   CapabilityHealthRequestSchema,
   CapabilityPutEvidenceRequestSchema,
   CapabilityReceiveAttentionResponseRequestSchema,
@@ -354,6 +381,7 @@ export type CapabilityAbandonRequest = z.infer<typeof CapabilityAbandonRequestSc
 export type CapabilityReportRequest = z.infer<typeof CapabilityReportRequestSchema>;
 export type CapabilityTerminalEventRequest = z.infer<typeof CapabilityTerminalEventRequestSchema>;
 export type CapabilityHealthRequest = z.infer<typeof CapabilityHealthRequestSchema>;
+export type CapabilityHeartbeatRequest = z.infer<typeof CapabilityHeartbeatRequestSchema>;
 export type CapabilityPutEvidenceRequest = z.infer<typeof CapabilityPutEvidenceRequestSchema>;
 export type CapabilityReceiveAttentionResponseRequest = z.infer<typeof CapabilityReceiveAttentionResponseRequestSchema>;
 export type CapabilityReleaseRequest = z.infer<typeof CapabilityReleaseRequestSchema>;
