@@ -18,6 +18,7 @@ import type {
   FileLockPort, NormalizedMessage, OutwardSendLedgerPort,
   SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef,
   MemoryWriteEntry, MemoryWriteScope, CitationEvidence, AnnouncementRetirementProducer,
+  AnnouncementRetirementProducerState,
 } from "@comis/core";
 import {
   createConversationRef, createResolvedRequestContext,
@@ -65,27 +66,38 @@ const NOOP_LOGGER: ComisLogger = {
   child: () => NOOP_LOGGER,
 };
 
-export function createRetirementProducerExistenceResolver(deps: {
+export function createRetirementProducerStateResolver(deps: {
   sessionStore: Pick<SessionStorePort, "loadByRef">;
   durableRuns?: Pick<DurableRunPort, "getByCheckpoint">;
   graphProducerExists?: (graphId: string) => boolean;
-}): (producer: AnnouncementRetirementProducer) => Promise<Result<boolean, Error>> {
+}): (
+  producer: AnnouncementRetirementProducer,
+) => Promise<Result<AnnouncementRetirementProducerState, Error>> {
   return async (producer) => {
     if (producer.kind === "graph") {
-      return ok(deps.graphProducerExists?.(producer.graphId) ?? true);
+      return ok((deps.graphProducerExists?.(producer.graphId) ?? true)
+        ? { status: "active" as const }
+        : { status: "absent" as const });
     }
     if (producer.kind === "session") {
-      if (!deps.durableRuns) return ok(false);
+      if (!deps.durableRuns) return ok({ status: "absent" as const });
       const checkpoint = await deps.durableRuns.getByCheckpoint(producer.checkpointId);
       if (!checkpoint.ok) return checkpoint;
-      return ok(checkpoint.value?.status === "running");
+      if (!checkpoint.value) return ok({ status: "absent" as const });
+      if (checkpoint.value.status === "running") return ok({ status: "active" as const });
+      return ok({
+        status: "terminal" as const,
+        ...(checkpoint.value.terminalReason
+          ? { terminalReason: checkpoint.value.terminalReason }
+          : {}),
+      });
     }
     const loaded = deps.sessionStore.loadByRef({
       tenantId: producer.tenantId,
       agentId: producer.agentId,
     }, producer.conversationRef);
     if (!loaded.ok) return err(loaded.error);
-    if (!loaded.value) return ok(false);
+    if (!loaded.value) return ok({ status: "absent" as const });
     const committed = loaded.value.messages.some((message) => {
       if (typeof message !== "object" || message === null || Array.isArray(message)) {
         return false;
@@ -93,7 +105,9 @@ export function createRetirementProducerExistenceResolver(deps: {
       const record = message as Record<string, unknown>;
       return record.role === "toolResult" && record.toolCallId === producer.toolCallId;
     });
-    return ok(!committed);
+    return ok(committed
+      ? { status: "terminal" as const }
+      : { status: "active" as const });
   };
 }
 /** All services produced by the cross-session messaging setup. */
@@ -450,7 +464,7 @@ export function setupCrossSession(deps: {
     // is the authoritative no-double-notify signal). Absent ⇒ at-least-once delivery.
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     receiptAwareSendToChannel: sendSingleTextToChannelWithReceipt,
-    retirementProducerExists: createRetirementProducerExistenceResolver({
+    retirementProducerState: createRetirementProducerStateResolver({
       sessionStore,
       ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
       ...(deps.graphProducerExists ? { graphProducerExists: deps.graphProducerExists } : {}),
@@ -578,6 +592,8 @@ export function setupCrossSession(deps: {
       announcementAdmissionAbort.signal,
     ),
     releaseAnnouncementProducer: (producerKey) => deadLetterQueue.releaseProducer(producerKey),
+    recordAnnouncementProducerOutcome: (producerKey, outcome) =>
+      deadLetterQueue.recordProducerOutcome(producerKey, outcome),
     cancelAnnouncementProducer: (producerKey) => deadLetterQueue.cancelProducer(producerKey),
     suppressAnnouncementProducer: (producerKey) => deadLetterQueue.suppressProducer(producerKey),
     prepareAnnouncementRetirement: (completionKeys, producer) =>

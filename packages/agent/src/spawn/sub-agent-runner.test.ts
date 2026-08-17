@@ -1081,6 +1081,7 @@ describe("createSubAgentRunner", () => {
     const reserveProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     deps.deadLetterQueue = {
       reserveProducer,
+      recordProducerOutcome: vi.fn(async () => ok(undefined)),
       releaseProducer: vi.fn(async () => ok(undefined)),
       cancelProducer: vi.fn(async () => ok(undefined)),
       suppressProducer,
@@ -1126,6 +1127,11 @@ describe("createSubAgentRunner", () => {
     const reserveProducer = vi.fn(async () => ok({
       status: "recovery_owned" as const,
       lifecycleState: "delivery_owned" as const,
+      recoveryOutcome: {
+        kind: "session" as const,
+        terminalReason: "failed" as const,
+        errorKind: "dependency" as const,
+      },
     }));
     deps.deadLetterQueue = {
       reserveProducer,
@@ -1161,7 +1167,7 @@ describe("createSubAgentRunner", () => {
     });
 
     await vi.waitFor(() => expect(runner.getRunStatus(runId)).toMatchObject({
-      status: "completed",
+      status: "failed",
     }));
     expect(reserveProducer).toHaveBeenCalledOnce();
     expect(deps.executeAgent).not.toHaveBeenCalled();
@@ -1185,6 +1191,7 @@ describe("createSubAgentRunner", () => {
     const reserveProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     deps.deadLetterQueue = {
       reserveProducer,
+      recordProducerOutcome: vi.fn(async () => ok(undefined)),
       releaseProducer: vi.fn(async () => ok(undefined)),
       cancelProducer: vi.fn(async () => ok(undefined)),
       suppressProducer,

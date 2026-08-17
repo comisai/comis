@@ -3,6 +3,8 @@
 
 import type { Result } from "@comis/shared";
 import type { ChannelEndpoint, ConversationRef } from "../domain/conversation-scope.js";
+import type { DurableRunTerminalReason } from "../domain/durable-run.js";
+import type { ErrorKind } from "../logging/log-fields.js";
 import type { DeliveryAuthority } from "./delivery-queue.js";
 import type { OutwardTerminalDecision } from "./outward-send-ledger.js";
 
@@ -118,15 +120,46 @@ export interface AnnouncementProducerReservationRecord
   extends AnnouncementProducerReservation {
   recordType: "producer_reservation";
   id: string;
-  lifecycleState: "active" | "promotion_ready" | "no_reply_pending" | "cancel_pending";
+  lifecycleState:
+    | "active"
+    | "delivery_owned"
+    | "promotion_ready"
+    | "no_reply_pending"
+    | "no_reply"
+    | "cancel_pending";
+  recoveryOutcome?: AnnouncementProducerRecoveryOutcome;
 }
+
+export type AnnouncementProducerRecoveryOutcome =
+  | {
+      readonly kind: "session";
+      readonly terminalReason: "completed" | "failed";
+      readonly errorKind?: ErrorKind;
+    }
+  | {
+      readonly kind: "tool_result";
+      readonly response: string;
+      readonly turnsCompleted?: number;
+      readonly announced?: boolean;
+      readonly stats: {
+        readonly runtimeMs: number;
+        readonly totalTokens: number;
+        readonly totalCost: number;
+      };
+    };
 
 export type AnnouncementProducerReservationOutcome =
   | { readonly status: "claimed" }
   | {
       readonly status: "recovery_owned";
       readonly lifecycleState: "active" | "delivery_owned" | "promotion_ready" | "no_reply";
+      readonly recoveryOutcome?: AnnouncementProducerRecoveryOutcome;
     };
+
+export type AnnouncementRetirementProducerState =
+  | { readonly status: "active" }
+  | { readonly status: "terminal"; readonly terminalReason?: DurableRunTerminalReason }
+  | { readonly status: "absent" };
 
 /** Content-free operator projection of a retained delivery. */
 export interface QuarantinedDeliveryAnnouncement {
@@ -212,6 +245,10 @@ export interface AnnouncementDeadLetterQueuePort {
     reservation: AnnouncementProducerReservation,
     signal?: AbortSignal,
   ): Promise<Result<AnnouncementProducerReservationOutcome, Error>>;
+  recordProducerOutcome(
+    producerKey: string,
+    outcome: AnnouncementProducerRecoveryOutcome,
+  ): Promise<Result<void, Error>>;
   releaseProducer(
     producerKey: string,
   ): Promise<Result<void, Error>>;

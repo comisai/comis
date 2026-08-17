@@ -19,7 +19,7 @@
 
 export type { CrossSessionResult } from "./setup-cross-session-runtime.js";
 export {
-  createRetirementProducerExistenceResolver,
+  createRetirementProducerStateResolver,
   setupCrossSession,
 } from "./setup-cross-session-runtime.js";
 export { resolveGraphCacheRetention } from "./setup-cross-session-graph.js";

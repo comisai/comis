@@ -58,6 +58,7 @@ import {
   verifyWorkspacePolicySnapshot,
   SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
   type AnnouncementProducerReservation,
+  type AnnouncementProducerRecoveryOutcome,
 } from "@comis/core";
 import { err, fromPromise, isSilentResponse, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
@@ -3193,6 +3194,7 @@ function classifyCompletionErrorKind(
       let rollbackHandle: { rollback: () => Promise<void> } | undefined;
       let producerSuppressionAttempted = false;
       let producerRecoveryOwned = false;
+      let producerClaimed = false;
       const traceId = params.graphTraceId ?? randomUUID();
 
       try {
@@ -3316,16 +3318,26 @@ function classifyCompletionErrorKind(
           }
           if (reservedProducer.value.status === "recovery_owned") {
             producerRecoveryOwned = true;
+            const recovery = reservedProducer.value.recoveryOutcome;
+            if (!recovery || recovery.kind !== "session") {
+              throw new DurableSubAgentAdmissionError(
+                "Sub-agent recovery outcome is unavailable",
+              );
+            }
             startDeferreds.get(runId)?.resolve(ok(undefined));
             if (!durableResumeHandshakeRunIds.has(runId)) {
               startDeferreds.delete(runId);
             }
             terminalizeRun(runId, {
-              endReason: "completed",
+              endReason: recovery.terminalReason,
               completedAtMs: clock.now(),
+              ...(recovery.terminalReason === "failed"
+                ? { errorKind: recovery.errorKind ?? ("internal" as const) }
+                : {}),
             });
             return;
           }
+          producerClaimed = true;
         }
 
         if (deps.lifecycleHooks) {
@@ -3906,6 +3918,55 @@ function classifyCompletionErrorKind(
         // enqueue a late terminal result behind the final batch drain.
         if (deliverySuppressedRunIds.has(runId)) return;
 
+        const completedAt = clock.now();
+        // Ordered by specificity. An abandoned background process is a
+        // precondition the child broke; a clean stop that skipped its
+        // contracted outputs is a validation failure. Only when neither
+        // applies does the finish-reason classifier decide — it would label a
+        // "stop" as `internal` and send an operator hunting a crash that
+        // never happened.
+        const completionErrorKind = backgroundProcessFailure !== undefined
+          ? ("precondition" as const)
+          : subAgentOutcome.reason === "contract_unsatisfied"
+            ? ("validation" as const)
+            : classifyCompletionErrorKind(
+                result.finishReason,
+                result.terminalErrorKind,
+              );
+        const completion: SubAgentCompletion = isSuccess
+          ? {
+              endReason: "completed",
+              completedAtMs: completedAt,
+              summary: completionSummary,
+              ...(materializedRef ? { resultRef: materializedRef } : {}),
+            }
+          : {
+              endReason: "failed",
+              completedAtMs: completedAt,
+              errorKind: completionErrorKind,
+              summary: completionSummary || result.errorContext?.originalError,
+              ...(materializedRef ? { resultRef: materializedRef } : {}),
+            };
+        if (producerClaimed) {
+          const recordProducerOutcome = deps.deadLetterQueue?.recordProducerOutcome;
+          if (!recordProducerOutcome) {
+            producerRecoveryOwned = true;
+            throw new Error("Announcement producer lifecycle is incomplete");
+          }
+          const outcome: AnnouncementProducerRecoveryOutcome = completion.endReason === "completed"
+            ? { kind: "session", terminalReason: "completed" }
+            : {
+                kind: "session",
+                terminalReason: "failed",
+                errorKind: completion.errorKind,
+              };
+          const recorded = await recordProducerOutcome(runId, outcome);
+          if (!recorded.ok) {
+            producerRecoveryOwned = true;
+            throw recorded.error;
+          }
+        }
+
         // Route provider_degraded to failure notification path
         // When isDegraded() skips the LLM call, executor returns empty response with
         // finishReason "provider_degraded". Route to deliverFailureNotification instead
@@ -4108,36 +4169,7 @@ function classifyCompletionErrorKind(
         }
 
         if (deliverySuppressedRunIds.has(runId)) return;
-        const completedAt = clock.now();
-        if (isSuccess) {
-          terminalizeRun(runId, {
-            endReason: "completed",
-            completedAtMs: completedAt,
-            summary: completionSummary,
-            ...(materializedRef ? { resultRef: materializedRef } : {}),
-          }, telemetry);
-        } else {
-          terminalizeRun(runId, {
-            endReason: "failed",
-            completedAtMs: completedAt,
-            // Ordered by specificity. An abandoned background process is a
-            // precondition the child broke; a clean stop that skipped its
-            // contracted outputs is a validation failure. Only when neither
-            // applies does the finish-reason classifier decide — it would label a
-            // "stop" as `internal` and send an operator hunting a crash that
-            // never happened.
-            errorKind: backgroundProcessFailure !== undefined
-              ? ("precondition" as const)
-              : subAgentOutcome.reason === "contract_unsatisfied"
-                ? ("validation" as const)
-                : classifyCompletionErrorKind(
-                    result.finishReason,
-                    result.terminalErrorKind,
-                  ),
-            summary: completionSummary || result.errorContext?.originalError,
-            ...(materializedRef ? { resultRef: materializedRef } : {}),
-          }, telemetry);
-        }
+        terminalizeRun(runId, completion, telemetry);
         deps.eventBus.emit("session:sub_agent_completed", {
           runId,
           parentSessionKey: params.callerSessionKey ?? "unknown",
@@ -4210,12 +4242,31 @@ function classifyCompletionErrorKind(
           params.callerSessionKey,
           runtimeMs,
         );
-        terminalizeRun(runId, {
+        const failureCompletion: SubAgentCompletion = {
           endReason: "failed",
           completedAtMs: completedAt,
           errorKind: "internal",
           summary: errorMessage,
-        });
+        };
+        let producerOutcomeDurable = true;
+        if (producerClaimed) {
+          const recordProducerOutcome = deps.deadLetterQueue?.recordProducerOutcome;
+          if (!recordProducerOutcome) {
+            producerRecoveryOwned = true;
+            producerOutcomeDurable = false;
+          } else {
+            const recorded = await recordProducerOutcome(runId, {
+              kind: "session",
+              terminalReason: "failed",
+              errorKind: failureCompletion.errorKind,
+            });
+            if (!recorded.ok) {
+              producerRecoveryOwned = true;
+              producerOutcomeDurable = false;
+            }
+          }
+        }
+        terminalizeRun(runId, failureCompletion);
 
         deps.logger?.error({
           runId,
@@ -4289,6 +4340,7 @@ function classifyCompletionErrorKind(
         if (
           !completionClaimedByWait
           && !admissionRejected
+          && producerOutcomeDurable
           && params.announceChannelType
           && params.announceChannelId
         ) {
@@ -4309,7 +4361,7 @@ function classifyCompletionErrorKind(
             callerConversation: params.callerConversation,
             destinationEndpoint: run.callerEndpoint,
           }, deps);
-        } else if (!completionClaimedByWait && !admissionRejected) {
+        } else if (!completionClaimedByWait && !admissionRejected && producerOutcomeDurable) {
           // Log explicit reason when failure announcement cannot be routed
           const suppressAnnounceReason = params.requesterOrigin
             ? "no_channel_params" as const

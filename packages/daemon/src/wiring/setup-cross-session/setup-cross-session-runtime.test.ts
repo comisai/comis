@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ok } from "@comis/shared";
 import os from "node:os";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import {
-  createRetirementProducerExistenceResolver,
+  createRetirementProducerStateResolver,
   resolveGraphCacheRetention,
 } from "./index.js";
 import {
@@ -512,18 +513,41 @@ describe("setupCrossSession", () => {
         updatedAt: 1,
       },
     }));
-    const producerExists = createRetirementProducerExistenceResolver({
+    const producerState = createRetirementProducerStateResolver({
       sessionStore: { loadByRef },
     });
 
-    await expect(producerExists({
+    await expect(producerState({
       kind: "session",
       tenantId: "test-tenant",
       agentId: "agent-1",
       conversationRef: conversation.conversationRef,
       checkpointId: "non-durable-run",
-    })).resolves.toEqual({ ok: true, value: false });
+    })).resolves.toEqual({ ok: true, value: { status: "absent" } });
     expect(loadByRef).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes terminal durable runs from absent producer authority", async () => {
+    const conversation = makeConversation("test-tenant", "agent-1");
+    const getByCheckpoint = vi.fn(async () => ok({
+      status: "completed",
+      terminalReason: "failed",
+    } as never));
+    const producerState = createRetirementProducerStateResolver({
+      sessionStore: { loadByRef: vi.fn() },
+      durableRuns: { getByCheckpoint },
+    });
+
+    await expect(producerState({
+      kind: "session",
+      tenantId: "test-tenant",
+      agentId: "agent-1",
+      conversationRef: conversation.conversationRef,
+      checkpointId: "terminal-durable-run",
+    })).resolves.toEqual({
+      ok: true,
+      value: { status: "terminal", terminalReason: "failed" },
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -4029,6 +4053,7 @@ describe("setupCrossSession durable-store injection", () => {
       expect(senderArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
       expect(senderArgs.reserveAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.releaseAnnouncementProducer).toEqual(expect.any(Function));
+      expect(senderArgs.recordAnnouncementProducerOutcome).toEqual(expect.any(Function));
       expect(senderArgs.cancelAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.suppressAnnouncementProducer).toEqual(expect.any(Function));
       expect(senderArgs.prepareAnnouncementRetirement).toEqual(expect.any(Function));

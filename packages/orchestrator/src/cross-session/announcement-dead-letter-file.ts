@@ -7,6 +7,7 @@ import { dirname } from "node:path";
 import {
   ChannelEndpointSchema,
   ConversationRefSchema,
+  ERROR_KINDS,
   toSafeErrorLogString,
   type AnnouncementChannelType,
   type AnnouncementDeadLetterAttachmentSnapshot,
@@ -14,6 +15,7 @@ import {
   type AnnouncementParentDecisionReservation,
   type AnnouncementParentDecisionReservationRecord,
   type AnnouncementProducerReservation,
+  type AnnouncementProducerRecoveryOutcome,
   type AnnouncementProducerReservationRecord,
   type AnnouncementRetirementProducer,
   type ChannelEndpoint,
@@ -38,6 +40,7 @@ const MAX_DEAD_LETTER_SNAPSHOT_ROWS = 200;
 const MAX_DEAD_LETTER_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const DEAD_LETTER_READ_BUFFER_BYTES = 64 * 1024;
 const INVALID_ROW_EVIDENCE_BYTES = 16 * 1024;
+const ERROR_KIND_SET = new Set<string>(ERROR_KINDS);
 
 export interface DeadLetterReadLimits { readonly maxRows?: number; readonly maxBytes?: number }
 
@@ -157,6 +160,47 @@ export function isAnnouncementTextChunks(value: unknown): value is readonly stri
   return Array.isArray(value)
     && value.length > 0
     && value.every((chunk) => typeof chunk === "string" && chunk.length > 0);
+}
+
+export function isAnnouncementProducerRecoveryOutcome(
+  value: unknown,
+): value is AnnouncementProducerRecoveryOutcome {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (record.kind === "session") {
+    return Object.keys(record).every((key) =>
+      key === "kind" || key === "terminalReason" || key === "errorKind")
+      && (record.terminalReason === "completed" || record.terminalReason === "failed")
+      && (record.errorKind === undefined
+        || (typeof record.errorKind === "string" && ERROR_KIND_SET.has(record.errorKind)));
+  }
+  if (record.kind !== "tool_result") return false;
+  if (typeof record.response !== "string") return false;
+  if (record.turnsCompleted !== undefined
+    && (typeof record.turnsCompleted !== "number"
+      || !Number.isSafeInteger(record.turnsCompleted)
+      || record.turnsCompleted < 0)) return false;
+  if (record.announced !== undefined && typeof record.announced !== "boolean") return false;
+  if (typeof record.stats !== "object" || record.stats === null || Array.isArray(record.stats)) {
+    return false;
+  }
+  const stats = record.stats as Record<string, unknown>;
+  return Object.keys(record).every((key) =>
+    key === "kind"
+    || key === "response"
+    || key === "turnsCompleted"
+    || key === "announced"
+    || key === "stats")
+    && Object.keys(stats).length === 3
+    && typeof stats.runtimeMs === "number"
+    && Number.isFinite(stats.runtimeMs)
+    && stats.runtimeMs >= 0
+    && typeof stats.totalTokens === "number"
+    && Number.isFinite(stats.totalTokens)
+    && stats.totalTokens >= 0
+    && typeof stats.totalCost === "number"
+    && Number.isFinite(stats.totalCost)
+    && stats.totalCost >= 0;
 }
 
 export type StoredDeadLetterEntry =
@@ -675,10 +719,14 @@ function isAnnouncementProducerReservationRecord(
     && isAnnouncementRetirementProducer(record.producer)
     && (
       record.lifecycleState === "active"
+      || record.lifecycleState === "delivery_owned"
       || record.lifecycleState === "promotion_ready"
       || record.lifecycleState === "no_reply_pending"
+      || record.lifecycleState === "no_reply"
       || record.lifecycleState === "cancel_pending"
-    );
+    )
+    && (record.recoveryOutcome === undefined
+      || isAnnouncementProducerRecoveryOutcome(record.recoveryOutcome));
 }
 
 function isDeadLetterEntry(

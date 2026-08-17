@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { err, ok } from "@comis/shared";
-import { createConversationLocator, conversationScopeToSessionKey, formatSessionKey } from "@comis/core";
+import {
+  createConversationLocator,
+  conversationScopeToSessionKey,
+  createStableAnnouncementOperationId,
+  formatSessionKey,
+} from "@comis/core";
 import {
   createCrossSessionSender,
   type CrossSessionSenderDeps,
@@ -48,6 +53,14 @@ const QUERY_THREE = { tenantId: "default", agentId: "default", conversationRef: 
 const projectedTargetOne = conversationScopeToSessionKey(TARGET_ONE.conversationScope);
 if (!projectedTargetOne.ok) throw projectedTargetOne.error;
 const TARGET_ONE_DISPLAY = formatSessionKey(projectedTargetOne.value);
+
+function scopedProducerKey(toolCallId: string): string {
+  return createStableAnnouncementOperationId(
+    "parent-agent",
+    "default:user2:channel2",
+    toolCallId,
+  );
+}
 
 function createMockDeps(): CrossSessionSenderDeps {
   const sessionData = new Map<string, ReturnType<typeof makeSessionData>>();
@@ -319,6 +332,7 @@ describe("createCrossSessionSender", () => {
     }));
     const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const recordAnnouncementProducerOutcome = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
     const suppressAnnouncementProducer = vi.fn(async () => ok(true));
     const prepareAnnouncementRetirement = vi.fn(async () => ok(undefined));
@@ -327,6 +341,7 @@ describe("createCrossSessionSender", () => {
       sendRecoverableAnnouncement,
       reserveAnnouncementProducer,
       releaseAnnouncementProducer,
+      recordAnnouncementProducerOutcome,
       cancelAnnouncementProducer,
       suppressAnnouncementProducer,
       prepareAnnouncementRetirement,
@@ -349,13 +364,13 @@ describe("createCrossSessionSender", () => {
 
     expect(result.announced).toBe(true);
     expect(sendRecoverableAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
-      runId: "announce-tool-call-direct",
+      runId: scopedProducerKey("announce-tool-call-direct"),
       channelType: "discord",
       channelId: "guild-channel-42",
       text: "test response",
     }));
     expect(prepareAnnouncementRetirement).toHaveBeenCalledWith(
-      ["announce-tool-call-direct"],
+      [scopedProducerKey("announce-tool-call-direct")],
       {
         kind: "tool_result",
         tenantId: PARENT_TWO.conversationScope.tenantId,
@@ -367,8 +382,8 @@ describe("createCrossSessionSender", () => {
     expect(prepareAnnouncementRetirement.mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(deps.executeInSession).mock.invocationCallOrder[0]!);
     expect(reserveAnnouncementProducer).toHaveBeenCalledWith(expect.objectContaining({
-      runId: "announce-tool-call-direct",
-      retirementKeys: ["announce-tool-call-direct"],
+      runId: scopedProducerKey("announce-tool-call-direct"),
+      retirementKeys: [scopedProducerKey("announce-tool-call-direct")],
       destinationEndpoint: PARENT_TWO_ENDPOINT,
       producer: {
         kind: "tool_result",
@@ -378,7 +393,17 @@ describe("createCrossSessionSender", () => {
         toolCallId: "announce-tool-call-direct",
       },
     }));
-    expect(releaseAnnouncementProducer).toHaveBeenCalledWith("announce-tool-call-direct");
+    expect(recordAnnouncementProducerOutcome).toHaveBeenCalledWith(
+      scopedProducerKey("announce-tool-call-direct"),
+      expect.objectContaining({
+        kind: "tool_result",
+        response: "test response",
+        announced: true,
+      }),
+    );
+    expect(releaseAnnouncementProducer).toHaveBeenCalledWith(
+      scopedProducerKey("announce-tool-call-direct"),
+    );
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
@@ -386,14 +411,23 @@ describe("createCrossSessionSender", () => {
     const reserveAnnouncementProducer = vi.fn(async () => ok({
       status: "recovery_owned" as const,
       lifecycleState: "promotion_ready" as const,
+      recoveryOutcome: {
+        kind: "tool_result" as const,
+        response: "persisted response",
+        turnsCompleted: 2,
+        announced: true,
+        stats: { runtimeMs: 41, totalTokens: 12, totalCost: 0.003 },
+      },
     }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const recordAnnouncementProducerOutcome = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
     const suppressAnnouncementProducer = vi.fn(async () => ok(true));
     const sender = createCrossSessionSender({
       ...deps,
       reserveAnnouncementProducer,
       releaseAnnouncementProducer,
+      recordAnnouncementProducerOutcome,
       cancelAnnouncementProducer,
       suppressAnnouncementProducer,
     });
@@ -412,7 +446,13 @@ describe("createCrossSessionSender", () => {
       announceChannelId: "guild-channel-42",
     });
 
-    expect(result).toEqual({ sent: true });
+    expect(result).toEqual({
+      sent: true,
+      response: "persisted response",
+      turnsCompleted: 2,
+      announced: true,
+      stats: { runtimeMs: 41, totalTokens: 12, totalCost: 0.003 },
+    });
     expect(deps.sessionStore.save).not.toHaveBeenCalled();
     expect(deps.executeInSession).not.toHaveBeenCalled();
     expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
@@ -427,6 +467,7 @@ describe("createCrossSessionSender", () => {
         lifecycleState: "active" as const,
       })),
       releaseAnnouncementProducer: vi.fn(async () => ok(undefined)),
+      recordAnnouncementProducerOutcome: vi.fn(async () => ok(undefined)),
       cancelAnnouncementProducer: vi.fn(async () => ok(undefined)),
       suppressAnnouncementProducer: vi.fn(async () => ok(true)),
     });
@@ -457,6 +498,7 @@ describe("createCrossSessionSender", () => {
     });
     const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const recordAnnouncementProducerOutcome = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
     const suppressAnnouncementProducer = vi.fn(async () => ok(true));
     const sendRecoverableAnnouncement = vi.fn();
@@ -464,6 +506,7 @@ describe("createCrossSessionSender", () => {
       ...deps,
       reserveAnnouncementProducer,
       releaseAnnouncementProducer,
+      recordAnnouncementProducerOutcome,
       cancelAnnouncementProducer,
       suppressAnnouncementProducer,
       sendRecoverableAnnouncement,
@@ -484,7 +527,9 @@ describe("createCrossSessionSender", () => {
     });
 
     expect(result).toMatchObject({ response: "private result", announced: false });
-    expect(suppressAnnouncementProducer).toHaveBeenCalledWith("announce-tool-call-skip");
+    expect(suppressAnnouncementProducer).toHaveBeenCalledWith(
+      scopedProducerKey("announce-tool-call-skip"),
+    );
     expect(sendRecoverableAnnouncement).not.toHaveBeenCalled();
     expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
     expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
@@ -498,12 +543,14 @@ describe("createCrossSessionSender", () => {
     });
     const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const recordAnnouncementProducerOutcome = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
     const suppressAnnouncementProducer = vi.fn(async () => ok(false));
     const sender = createCrossSessionSender({
       ...deps,
       reserveAnnouncementProducer,
       releaseAnnouncementProducer,
+      recordAnnouncementProducerOutcome,
       cancelAnnouncementProducer,
       suppressAnnouncementProducer,
     });
@@ -529,6 +576,7 @@ describe("createCrossSessionSender", () => {
   it("cancels producer ownership when ping-pong fails before completion", async () => {
     const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const recordAnnouncementProducerOutcome = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
     const suppressAnnouncementProducer = vi.fn(async () => ok(true));
     vi.mocked(deps.executeInSession)
@@ -542,6 +590,7 @@ describe("createCrossSessionSender", () => {
       ...deps,
       reserveAnnouncementProducer,
       releaseAnnouncementProducer,
+      recordAnnouncementProducerOutcome,
       cancelAnnouncementProducer,
       suppressAnnouncementProducer,
     });
@@ -560,13 +609,16 @@ describe("createCrossSessionSender", () => {
       announceChannelId: "guild-channel-42",
     })).rejects.toThrow("ping-pong execution failed");
 
-    expect(cancelAnnouncementProducer).toHaveBeenCalledWith("failed-ping-pong-tool-call");
+    expect(cancelAnnouncementProducer).toHaveBeenCalledWith(
+      scopedProducerKey("failed-ping-pong-tool-call"),
+    );
     expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
   });
 
   it("surfaces producer cancellation failure before returning execution failure", async () => {
     const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const recordAnnouncementProducerOutcome = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () =>
       err(new Error("producer cancellation storage unavailable")));
     const suppressAnnouncementProducer = vi.fn(async () => ok(true));
@@ -581,6 +633,7 @@ describe("createCrossSessionSender", () => {
       ...deps,
       reserveAnnouncementProducer,
       releaseAnnouncementProducer,
+      recordAnnouncementProducerOutcome,
       cancelAnnouncementProducer,
       suppressAnnouncementProducer,
     });
@@ -599,7 +652,9 @@ describe("createCrossSessionSender", () => {
       announceChannelId: "guild-channel-42",
     })).rejects.toThrow("producer cancellation storage unavailable");
 
-    expect(cancelAnnouncementProducer).toHaveBeenCalledWith("failed-cancellation-tool-call");
+    expect(cancelAnnouncementProducer).toHaveBeenCalledWith(
+      scopedProducerKey("failed-cancellation-tool-call"),
+    );
     expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
   });
 
@@ -734,11 +789,11 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
       callerSessionKey: "default:user2:channel2",
       callerConversation: PARENT_TWO,
       destinationEndpoint: PARENT_TWO_ENDPOINT,
-      runId: "announce-tool-call-1",
+      runId: scopedProducerKey("announce-tool-call-1"),
       channelType: "discord",
       channelId: "guild-channel-42",
       text: "test response",
-      completionKeys: ["announce-tool-call-1"],
+      completionKeys: [scopedProducerKey("announce-tool-call-1")],
     });
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
@@ -867,7 +922,9 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
 
     expect(first.announced).toBe(true);
     expect(second.announced).toBe(true);
-    expect(platformCalls).toEqual(["parent-agent:default:user2:channel2:announce-tool-call-1"]);
+    expect(platformCalls).toEqual([
+      `parent-agent:default:user2:channel2:${scopedProducerKey("announce-tool-call-1")}`,
+    ]);
     expect(sendGovernedAnnouncement).toHaveBeenCalledTimes(2);
     expect(vi.mocked(sendGovernedAnnouncement).mock.calls[0]).toEqual(
       vi.mocked(sendGovernedAnnouncement).mock.calls[1],

@@ -227,6 +227,8 @@ export type {
   AnnouncementProducerReservation,
   AnnouncementProducerReservationRecord,
   AnnouncementProducerReservationOutcome,
+  AnnouncementProducerRecoveryOutcome,
+  AnnouncementRetirementProducerState,
   AnnouncementDeadLetterStatus,
   AnnouncementRetirementProducer,
   QuarantinedAnnouncement,
