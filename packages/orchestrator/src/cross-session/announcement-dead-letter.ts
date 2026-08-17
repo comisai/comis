@@ -600,6 +600,28 @@ export function createAnnouncementDeadLetterQueue(
       if (!reclaimActive || activeProducerKeys.has(producerKey)) {
         return ok({ status: "recovery_owned", lifecycleState: "active" });
       }
+      if (retirementProducerState) {
+        const producerState = await retirementProducerState(existing.producer);
+        if (!producerState.ok) return producerState;
+        if (producerState.value.status === "terminal") {
+          if (producerState.value.recoveryOutcome !== undefined) {
+            const recorded = await recordProducerOutcomeDurably(
+              producerKey,
+              producerState.value.recoveryOutcome,
+            );
+            if (!recorded.ok) return recorded;
+            activeProducerKeys.delete(producerKey);
+            return ok({
+              status: "recovery_owned",
+              lifecycleState: "promotion_ready",
+              recoveryOutcome: producerState.value.recoveryOutcome,
+            });
+          }
+          const released = await releaseProducerDurably(producerKey);
+          if (!released.ok) return released;
+          return ok({ status: "recovery_owned", lifecycleState: "promotion_ready" });
+        }
+      }
       activeProducerKeys.add(producerKey);
       return ok({ status: "claimed" });
     }
@@ -2927,10 +2949,32 @@ export function createAnnouncementDeadLetterQueue(
     return reservation;
   }
 
+  function producerRecoveryAnnouncement(
+    record: ProducerReservationRecord,
+  ): AnnouncementProducerReservation {
+    const reservation = publicProducerReservation(record);
+    const outcome = record.recoveryOutcome;
+    if (outcome === undefined) return reservation;
+    if (outcome.kind === "tool_result") {
+      const announcementText = outcome.terminalReason === "completed"
+        ? outcome.response
+        : outcome.summary;
+      return {
+        ...reservation,
+        announcementText: announcementText.trim() || reservation.announcementText,
+      };
+    }
+    const summary = outcome.summary?.trim() || reservation.announcementText;
+    const resultLine = outcome.resultRef === undefined
+      ? ""
+      : `\n\nFull result (drill in with read/grep/jq): ${outcome.resultRef.ref} (${outcome.resultRef.bytes}B, ${outcome.resultRef.kind})`;
+    return { ...reservation, announcementText: `${summary}${resultLine}` };
+  }
+
   async function promoteProducerReservations(): Promise<void> {
     for (const record of [...producerReservations]) {
       if (activeProducerKeys.has(record.runId)) continue;
-      const reservation = publicProducerReservation(record);
+      const reservation = producerRecoveryAnnouncement(record);
       if (record.lifecycleState === "active") {
         if (!retirementProducerState) continue;
         const producerState = await retirementProducerState(record.producer);
@@ -2950,6 +2994,13 @@ export function createAnnouncementDeadLetterQueue(
           producerState.value.status === "terminal"
           && record.producer.kind === "session"
         ) {
+          if (producerState.value.recoveryOutcome !== undefined) {
+            await recordProducerOutcomeDurably(
+              record.runId,
+              producerState.value.recoveryOutcome,
+            );
+            continue;
+          }
           await releaseProducerDurably(record.runId);
           continue;
         }

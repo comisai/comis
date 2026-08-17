@@ -17,7 +17,7 @@ import { SandboxDowngradeError } from "./sandbox-posture.js";
 import { mkdtemp, writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { err, ok, type Result } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
@@ -1382,7 +1382,7 @@ describe("createSubAgentRunner", () => {
     await runner.shutdown();
   });
 
-  it("unrefs outcome persistence retries that begin during shutdown", async () => {
+  it("persists the completed outcome before bounded shutdown abandons retries", async () => {
     const retryHandles: Array<{ delayMs: number; unref: ReturnType<typeof vi.fn> }> = [];
     deps.timers = {
       setTimeout: (callback, delayMs) => {
@@ -1400,12 +1400,8 @@ describe("createSubAgentRunner", () => {
       finishReason: "stop",
       stepsExecuted: 2,
     });
-    let rejectFirstOutcome!: (result: Result<void, Error>) => void;
-    const recordProducerOutcome = vi.fn()
-      .mockImplementationOnce(() => new Promise((resolve) => {
-        rejectFirstOutcome = resolve;
-      }))
-      .mockResolvedValue(ok(undefined));
+    const recordProducerOutcome = vi.fn(async () =>
+      err(new Error("outcome storage unavailable")));
     deps.deadLetterQueue = {
       reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
       recordProducerOutcome,
@@ -1420,10 +1416,15 @@ describe("createSubAgentRunner", () => {
       channelType: "telegram",
       conversationId: "chat123",
     });
+    const childConversation = createTestConversation({ agentId: "default" });
+    vi.mocked(deps.sessionStore.loadByRef).mockReturnValue(
+      ok(persistedConversation(childConversation)),
+    );
     const runner = createSubAgentRunner(deps);
-    runner.spawn({
+    const runId = runner.spawn({
       task: "persist during shutdown",
       agentId: "default",
+      reuseConversation: childConversation,
       callerType: "control-plane",
       callerAgentId: "parent",
       callerSessionKey: formattedConversation(callerConversation),
@@ -1440,15 +1441,32 @@ describe("createSubAgentRunner", () => {
     });
     await vi.advanceTimersByTimeAsync(0);
     expect(recordProducerOutcome).toHaveBeenCalledOnce();
+    expect(deps.sessionStore.save).toHaveBeenCalledWith(
+      childConversation.conversationScope,
+      [],
+      expect.objectContaining({
+        announcementProducerRecoveryOutcome: expect.objectContaining({
+          kind: "session",
+          terminalReason: "completed",
+          summary: expect.any(String),
+        }),
+      }),
+    );
 
     const shutdown = runner.shutdown();
-    rejectFirstOutcome(err(new Error("outcome storage unavailable")));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1_000);
     const retry = retryHandles.findLast((record) => record.delayMs === 1_000);
     expect(retry?.unref).toHaveBeenCalledOnce();
 
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(29_000);
     await shutdown;
+    expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "completed",
+      completion: expect.objectContaining({
+        endReason: "completed",
+        summary: expect.any(String),
+      }),
+    });
   });
 
   it("retries announce skip persistence without sending a failure notice", async () => {

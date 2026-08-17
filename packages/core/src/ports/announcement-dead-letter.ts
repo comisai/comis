@@ -149,6 +149,8 @@ export type AnnouncementProducerRecoveryOutcome =
     }
   | {
       readonly kind: "tool_result";
+      readonly terminalReason: "completed";
+      readonly completedAtMs: number;
       readonly response: string;
       readonly turnsCompleted?: number;
       readonly announced?: boolean;
@@ -157,6 +159,13 @@ export type AnnouncementProducerRecoveryOutcome =
         readonly totalTokens: number;
         readonly totalCost: number;
       };
+    }
+  | {
+      readonly kind: "tool_result";
+      readonly terminalReason: "failed";
+      readonly completedAtMs: number;
+      readonly errorKind: ErrorKind;
+      readonly summary: string;
     };
 
 export type AnnouncementProducerReservationOutcome =
@@ -169,7 +178,11 @@ export type AnnouncementProducerReservationOutcome =
 
 export type AnnouncementRetirementProducerState =
   | { readonly status: "active" }
-  | { readonly status: "terminal"; readonly terminalReason?: DurableRunTerminalReason }
+  | {
+      readonly status: "terminal";
+      readonly terminalReason?: DurableRunTerminalReason;
+      readonly recoveryOutcome?: Extract<AnnouncementProducerRecoveryOutcome, { kind: "session" }>;
+    }
   | { readonly status: "absent" };
 
 /** Content-free operator projection of a retained delivery. */

@@ -109,6 +109,13 @@ vi.mock("@comis/orchestrator", async () => {
   return {
     ...actual,
     createCrossSessionSender: mockCreateCrossSessionSender,
+    isAnnouncementProducerRecoveryOutcome: (value: unknown) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+      const record = value as Record<string, unknown>;
+      return record.kind === "session"
+        && (record.terminalReason === "completed" || record.terminalReason === "failed")
+        && typeof record.completedAtMs === "number";
+    },
   };
 });
 
@@ -524,7 +531,43 @@ describe("setupCrossSession", () => {
       conversationRef: conversation.conversationRef,
       checkpointId: "non-durable-run",
     })).resolves.toEqual({ ok: true, value: { status: "absent" } });
-    expect(loadByRef).not.toHaveBeenCalled();
+    expect(loadByRef).toHaveBeenCalledOnce();
+  });
+
+  it("recovers an exact terminal producer outcome from session authority", async () => {
+    const conversation = makeConversation("test-tenant", "agent-1");
+    const recoveryOutcome = {
+      kind: "session" as const,
+      terminalReason: "completed" as const,
+      completedAtMs: 1_234,
+      summary: "persisted completion",
+    };
+    const producerState = createRetirementProducerStateResolver({
+      sessionStore: {
+        loadByRef: vi.fn(() => ok({
+          ...conversation,
+          messages: [],
+          metadata: { announcementProducerRecoveryOutcome: recoveryOutcome },
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      },
+    });
+
+    await expect(producerState({
+      kind: "session",
+      tenantId: "test-tenant",
+      agentId: "agent-1",
+      conversationRef: conversation.conversationRef,
+      checkpointId: "completed-run",
+    })).resolves.toEqual({
+      ok: true,
+      value: {
+        status: "terminal",
+        terminalReason: "completed",
+        recoveryOutcome,
+      },
+    });
   });
 
   it("distinguishes terminal durable runs from absent producer authority", async () => {
@@ -534,7 +577,7 @@ describe("setupCrossSession", () => {
       terminalReason: "failed",
     } as never));
     const producerState = createRetirementProducerStateResolver({
-      sessionStore: { loadByRef: vi.fn() },
+      sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       durableRuns: { getByCheckpoint },
     });
 

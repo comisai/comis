@@ -32,6 +32,7 @@ import {
   createCrossSessionSender,
   createAnnouncementBatcher,
   createAnnouncementDeadLetterQueue,
+  isAnnouncementProducerRecoveryOutcome,
   type SendGovernedCompletionAnnouncement,
   type SendRecoverableCompletionAnnouncement,
 } from "@comis/orchestrator";
@@ -80,6 +81,24 @@ export function createRetirementProducerStateResolver(deps: {
         : { status: "absent" as const });
     }
     if (producer.kind === "session") {
+      const session = deps.sessionStore.loadByRef({
+        tenantId: producer.tenantId,
+        agentId: producer.agentId,
+      }, producer.conversationRef);
+      if (!session.ok) return err(session.error);
+      const recoveryOutcome = session.value === undefined
+        ? undefined
+        : session.value.metadata.announcementProducerRecoveryOutcome;
+      if (
+        isAnnouncementProducerRecoveryOutcome(recoveryOutcome)
+        && recoveryOutcome.kind === "session"
+      ) {
+        return ok({
+          status: "terminal" as const,
+          terminalReason: recoveryOutcome.terminalReason,
+          recoveryOutcome,
+        });
+      }
       if (!deps.durableRuns) return ok({ status: "absent" as const });
       const checkpoint = await deps.durableRuns.getByCheckpoint(producer.checkpointId);
       if (!checkpoint.ok) return checkpoint;

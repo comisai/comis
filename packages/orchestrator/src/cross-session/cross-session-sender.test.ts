@@ -14,6 +14,8 @@ import {
   type CrossSessionSendParams,
 } from "./cross-session-sender.js";
 
+const ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS = 100_000;
+
 // ---------------------------------------------------------------------------
 // Mock helpers
 // ---------------------------------------------------------------------------
@@ -414,6 +416,8 @@ describe("createCrossSessionSender", () => {
       lifecycleState: "promotion_ready" as const,
       recoveryOutcome: {
         kind: "tool_result" as const,
+        terminalReason: "completed" as const,
+        completedAtMs: 1_234,
         response: "persisted response",
         turnsCompleted: 2,
         announced: true,
@@ -466,6 +470,8 @@ describe("createCrossSessionSender", () => {
       lifecycleState: "promotion_ready" as const,
       recoveryOutcome: {
         kind: "tool_result" as const,
+        terminalReason: "completed" as const,
+        completedAtMs: 1_234,
         response: "persisted response",
         stats: { runtimeMs: 41, totalTokens: 12, totalCost: 0.003 },
       },
@@ -754,6 +760,98 @@ describe("createCrossSessionSender", () => {
 
     expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
     expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
+    expect(recordAnnouncementProducerOutcome).toHaveBeenCalledWith(
+      scopedProducerKey("failed-ping-pong-tool-call"),
+      expect.objectContaining({
+        kind: "tool_result",
+        terminalReason: "failed",
+        errorKind: "internal",
+        summary: "ping-pong execution failed",
+      }),
+    );
+  });
+
+  it("returns a persisted cross-session failure without repeating target work", async () => {
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer: vi.fn(async () => ok({
+        status: "recovery_owned" as const,
+        lifecycleState: "promotion_ready" as const,
+        recoveryOutcome: {
+          kind: "tool_result" as const,
+          terminalReason: "failed" as const,
+          completedAtMs: 1_234,
+          errorKind: "timeout" as const,
+          summary: "Cross-session wait timed out",
+        },
+      })),
+      releaseAnnouncementProducer: vi.fn(async () => ok(undefined)),
+      recordAnnouncementProducerOutcome: vi.fn(async () => ok(undefined)),
+      cancelAnnouncementProducer: vi.fn(async () => ok(undefined)),
+      suppressAnnouncementProducer: vi.fn(async () => ok(true)),
+    });
+
+    await expect(sender.send({
+      target: QUERY_ONE,
+      text: "question",
+      mode: "wait",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "failed-recovery-tool-call",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    })).rejects.toThrow("Cross-session wait timed out");
+
+    expect(deps.sessionStore.save).not.toHaveBeenCalled();
+    expect(deps.executeInSession).not.toHaveBeenCalled();
+  });
+
+  it("bounds the returned and persisted cross-session response", async () => {
+    const rawResponse = "x".repeat(ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS + 2_000);
+    vi.mocked(deps.executeInSession).mockResolvedValue({
+      response: rawResponse,
+      tokensUsed: { total: 50 },
+      cost: { total: 0.005 },
+    });
+    const recordAnnouncementProducerOutcome = vi.fn(async () => ok(undefined));
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      releaseAnnouncementProducer: vi.fn(async () => ok(undefined)),
+      recordAnnouncementProducerOutcome,
+      cancelAnnouncementProducer: vi.fn(async () => ok(undefined)),
+      suppressAnnouncementProducer: vi.fn(async () => ok(true)),
+      sendRecoverableAnnouncement: vi.fn(async () => ok({
+        delivered: true as const,
+        status: "accepted" as const,
+      })),
+    });
+
+    const result = await sender.send({
+      target: QUERY_ONE,
+      text: "question",
+      mode: "wait",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "bounded-response-tool-call",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    });
+
+    expect(result.response).toHaveLength(ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS);
+    expect(recordAnnouncementProducerOutcome).toHaveBeenCalledWith(
+      scopedProducerKey("bounded-response-tool-call"),
+      expect.objectContaining({
+        terminalReason: "completed",
+        response: result.response,
+      }),
+    );
   });
 
   it("surfaces producer cancellation failure before returning execution failure", async () => {

@@ -1095,6 +1095,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     inFlight: boolean;
     retryHandle?: TimerHandle;
   }
+  interface PendingProducerOutcome {
+    readonly completion: SubAgentCompletion;
+    readonly telemetry?: SubAgentRunTelemetry;
+  }
   const completionDeferreds = new Map<string, CompletionDeferred>();
   const completionAnnouncementWaitClaims = new Map<string, number>();
   const abortedCompletionWaitClaimsByParentRunId = new Map<string, Set<string>>();
@@ -1109,6 +1113,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const producerLifecyclePendingRunIds = new Set<string>();
   const producerOutcomePendingRunIds = new Set<string>();
   const producerTransferAttemptedRunIds = new Set<string>();
+  const producerOutcomeHandoffRunIds = new Set<string>();
+  const producerShutdownHandoffRunIds = new Set<string>();
+  const pendingProducerOutcomes = new Map<string, PendingProducerOutcome>();
   const producerAdmissionAbort = new AbortController();
   const forcedTerminalRunIds = new Set<string>();
   const durableAdmittedRunIds = new Set<string>();
@@ -1256,6 +1263,27 @@ function classifyCompletionErrorKind(
       ...(summary ? { summary } : {}),
       ...(resultRef ? { resultRef } : {}),
     });
+  }
+
+  function persistProducerOutcomeHandoff(
+    run: SubAgentRun,
+    outcome: AnnouncementProducerRecoveryOutcome,
+  ): Result<void, Error> {
+    const loaded = deps.sessionStore.loadByRef(
+      run.conversationScope,
+      run.conversationRef,
+    );
+    if (!loaded.ok) return err(loaded.error);
+    if (!loaded.value) return err(new Error("Sub-agent producer session was not found"));
+    const saved = deps.sessionStore.save(
+      loaded.value.conversationScope,
+      loaded.value.messages,
+      {
+        ...loaded.value.metadata,
+        announcementProducerRecoveryOutcome: outcome,
+      },
+    );
+    return saved.ok ? ok(undefined) : err(saved.error);
   }
 
   function terminalizeRun(
@@ -2037,6 +2065,9 @@ function classifyCompletionErrorKind(
     producerSuppressionPendingRunIds.delete(runId);
     producerLifecyclePendingRunIds.delete(runId);
     producerTransferAttemptedRunIds.delete(runId);
+    producerOutcomeHandoffRunIds.delete(runId);
+    producerShutdownHandoffRunIds.delete(runId);
+    pendingProducerOutcomes.delete(runId);
   };
 
   const scheduleRunArchive = (
@@ -3987,11 +4018,24 @@ function classifyCompletionErrorKind(
                 ...(completion.summary !== undefined ? { summary: completion.summary } : {}),
                 ...(completion.resultRef !== undefined ? { resultRef: completion.resultRef } : {}),
               };
+          pendingProducerOutcomes.set(runId, { completion, telemetry });
+          const handoff = persistProducerOutcomeHandoff(run, outcome);
+          if (handoff.ok) {
+            producerOutcomeHandoffRunIds.add(runId);
+          } else {
+            deps.logger?.warn({
+              runId,
+              err: toSafeErrorLogString(handoff.error),
+              errorKind: "resource" as const,
+              hint: "Restore session or dead-letter storage before stopping the completed producer",
+            }, "Sub-agent producer outcome handoff could not be persisted");
+          }
           await settleAnnouncementProducerLifecycle(
             runId,
             "record_outcome",
             () => recordProducerOutcome(runId, outcome, producerAdmissionAbort.signal),
           );
+          pendingProducerOutcomes.delete(runId);
         }
 
         // Route provider_degraded to failure notification path
@@ -4282,19 +4326,37 @@ function classifyCompletionErrorKind(
             producerRecoveryOwned = true;
             producerOutcomeDurable = false;
           } else {
+            const failureOutcome: AnnouncementProducerRecoveryOutcome = {
+              kind: "session",
+              terminalReason: "failed",
+              completedAtMs: failureCompletion.completedAtMs,
+              errorKind: failureCompletion.errorKind,
+              ...(failureCompletion.summary !== undefined
+                ? { summary: failureCompletion.summary }
+                : {}),
+            };
+            pendingProducerOutcomes.set(runId, { completion: failureCompletion });
+            const handoff = persistProducerOutcomeHandoff(run, failureOutcome);
+            if (handoff.ok) {
+              producerOutcomeHandoffRunIds.add(runId);
+            } else {
+              deps.logger?.warn({
+                runId,
+                err: toSafeErrorLogString(handoff.error),
+                errorKind: "resource" as const,
+                hint: "Restore session or dead-letter storage before stopping the failed producer",
+              }, "Sub-agent failure outcome handoff could not be persisted");
+            }
             await settleAnnouncementProducerLifecycle(
               runId,
               "record_outcome",
-              () => recordProducerOutcome(runId, {
-                kind: "session",
-                terminalReason: "failed",
-                completedAtMs: failureCompletion.completedAtMs,
-                errorKind: failureCompletion.errorKind,
-                ...(failureCompletion.summary !== undefined
-                  ? { summary: failureCompletion.summary }
-                  : {}),
-              }, producerAdmissionAbort.signal),
+              () => recordProducerOutcome(
+                runId,
+                failureOutcome,
+                producerAdmissionAbort.signal,
+              ),
             );
+            pendingProducerOutcomes.delete(runId);
           }
         }
         terminalizeRun(runId, failureCompletion);
@@ -4443,7 +4505,11 @@ function classifyCompletionErrorKind(
         // ingesting other sessions' events into its trajectory file (stamped
         // with the dead child's sessionId).
         closeTrajectoryOnce(run);
-        if (!producerSuppressionAttempted && !producerRecoveryOwned) {
+        if (
+          !producerSuppressionAttempted
+          && !producerRecoveryOwned
+          && !producerShutdownHandoffRunIds.has(runId)
+        ) {
           const transition = producerTransferAttemptedRunIds.has(runId)
             ? deps.deadLetterQueue?.releaseProducer
             : deps.deadLetterQueue?.cancelProducer;
@@ -5100,6 +5166,32 @@ function classifyCompletionErrorKind(
             continue;
           }
           if (producerOutcomePendingRunIds.has(runId)) {
+            const pendingOutcome = pendingProducerOutcomes.get(runId);
+            if (
+              pendingOutcome !== undefined
+              && producerOutcomeHandoffRunIds.has(runId)
+              && run.status === "running"
+            ) {
+              producerShutdownHandoffRunIds.add(runId);
+              deliverySuppressedRunIds.add(runId);
+              terminalizeRun(
+                runId,
+                pendingOutcome.completion,
+                pendingOutcome.telemetry,
+              );
+              forceTerminalCleanup(run);
+              deps.eventBus.emit("session:sub_agent_completed", {
+                runId,
+                parentSessionKey: run.callerSessionKey ?? "unknown",
+                agentId: run.agentId,
+                success: pendingOutcome.completion.endReason === "completed",
+                runtimeMs: Math.max(0, pendingOutcome.completion.completedAtMs - run.startedAt),
+                tokensUsed: pendingOutcome.telemetry?.tokensUsedTotal ?? 0,
+                cost: pendingOutcome.telemetry?.costTotal ?? 0,
+                timestamp: pendingOutcome.completion.completedAtMs,
+              });
+              continue;
+            }
             deps.logger?.error({
               runId,
               errorKind: "resource" as const,

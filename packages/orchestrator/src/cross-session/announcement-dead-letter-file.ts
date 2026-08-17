@@ -43,6 +43,7 @@ const MAX_DEAD_LETTER_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const DEAD_LETTER_READ_BUFFER_BYTES = 64 * 1024;
 const INVALID_ROW_EVIDENCE_BYTES = 16 * 1024;
 const ERROR_KIND_SET = new Set<string>(ERROR_KINDS);
+const ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS = 100_000;
 const RESULT_REF_KIND_SET = new Set(["jsonl", "json", "csv", "html", "text", "binary"]);
 
 export interface DeadLetterReadLimits { readonly maxRows?: number; readonly maxBytes?: number }
@@ -193,7 +194,28 @@ export function isAnnouncementProducerRecoveryOutcome(
         : typeof record.errorKind === "string" && ERROR_KIND_SET.has(record.errorKind));
   }
   if (record.kind !== "tool_result") return false;
-  if (typeof record.response !== "string") return false;
+  if (record.terminalReason === "failed") {
+    return Object.keys(record).every((key) =>
+      key === "kind"
+      || key === "terminalReason"
+      || key === "completedAtMs"
+      || key === "errorKind"
+      || key === "summary")
+      && typeof record.completedAtMs === "number"
+      && Number.isSafeInteger(record.completedAtMs)
+      && record.completedAtMs >= 0
+      && typeof record.errorKind === "string"
+      && ERROR_KIND_SET.has(record.errorKind)
+      && typeof record.summary === "string"
+      && record.summary.length > 0
+      && record.summary.length <= SUBAGENT_RESULT_SUMMARY_MAX_CHARS;
+  }
+  if (record.terminalReason !== "completed") return false;
+  if (typeof record.completedAtMs !== "number"
+    || !Number.isSafeInteger(record.completedAtMs)
+    || record.completedAtMs < 0) return false;
+  if (typeof record.response !== "string"
+    || record.response.length > ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS) return false;
   if (record.turnsCompleted !== undefined
     && (typeof record.turnsCompleted !== "number"
       || !Number.isSafeInteger(record.turnsCompleted)
@@ -205,6 +227,8 @@ export function isAnnouncementProducerRecoveryOutcome(
   const stats = record.stats as Record<string, unknown>;
   return Object.keys(record).every((key) =>
     key === "kind"
+    || key === "terminalReason"
+    || key === "completedAtMs"
     || key === "response"
     || key === "turnsCompleted"
     || key === "announced"

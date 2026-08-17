@@ -7,11 +7,14 @@ import { createConversationLocator } from "@comis/core";
 import type { DeadLetterEntry } from "./announcement-dead-letter.js";
 import {
   isAnnouncementChannelType,
+  isAnnouncementProducerRecoveryOutcome,
   readDeadLetterEntries,
   readDeadLetterSnapshot,
   writeDeadLetterEntries,
   type DeadLetterWriteOperations,
 } from "./announcement-dead-letter-file.js";
+
+const ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS = 100_000;
 
 const randomBytes = vi.hoisted(() => vi.fn(() => Buffer.from("01020304", "hex")));
 
@@ -282,6 +285,16 @@ describe("announcement dead-letter file", () => {
       error: { state: "snapshot_unchanged" },
     });
     expect(await readFile(filePath, "utf8")).toBe(original);
+  });
+
+  it("rejects a tool recovery response above its durable contract", () => {
+    expect(isAnnouncementProducerRecoveryOutcome({
+      kind: "tool_result",
+      terminalReason: "completed",
+      completedAtMs: 1,
+      response: "x".repeat(ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS + 1),
+      stats: { runtimeMs: 1, totalTokens: 1, totalCost: 0 },
+    })).toBe(false);
   });
 
   it("rejects an oversized in-memory row before replacing a durable snapshot", async () => {

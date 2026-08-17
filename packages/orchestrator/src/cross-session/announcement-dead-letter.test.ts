@@ -1810,6 +1810,41 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(restarted.reclaimProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
   });
 
+  it("reclaims a session-backed outcome without repeating producer execution", async () => {
+    const producer = producerInput({
+      idempotencyKey: "session-backed-reclaim-operation",
+      runId: "session-backed-reclaim-run",
+      completionKeys: ["session-backed-reclaim-operation"],
+      retirementKeys: ["session-backed-reclaim-operation"],
+    });
+    const recoveryOutcome: AnnouncementProducerRecoveryOutcome = {
+      kind: "session",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      summary: "session-backed completion",
+    };
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retirementProducerState: vi.fn(async () => ok({
+        status: "terminal" as const,
+        terminalReason: "completed" as const,
+        recoveryOutcome,
+      })),
+    });
+    await expect(restarted.reclaimProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "promotion_ready",
+      recoveryOutcome,
+    }));
+  });
+
   it("promotes a persisted producer reservation after restart", async () => {
     const producer = producerInput({
       idempotencyKey: "producer-fallback-operation",
@@ -1841,6 +1876,57 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       expect.objectContaining({ threadId: producer.threadId }),
     );
     expect(restarted.size()).toBe(0);
+  });
+
+  it("promotes the persisted result instead of the generic producer fallback", async () => {
+    const producer = producerInput({
+      idempotencyKey: "result-bearing-promotion-operation",
+      runId: "result-bearing-promotion-run",
+      failedAt: Date.now() - 500_000,
+      completionKeys: ["result-bearing-promotion-operation"],
+      retirementKeys: ["result-bearing-promotion-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.recordProducerOutcome(producer.runId, {
+      kind: "session",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      summary: "exact persisted completion",
+      resultRef: {
+        ref: "results/exact.txt",
+        kind: "text",
+        bytes: 42,
+        preview: "exact",
+        expiresAt: "2026-08-18T00:00:00.000Z",
+      },
+    })).resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+    await restarted.drain(send);
+
+    expect(send).toHaveBeenCalledWith(
+      producer.channelType,
+      producer.channelId,
+      "exact persisted completion\n\nFull result (drill in with read/grep/jq): results/exact.txt (42B, text)",
+      expect.objectContaining({ threadId: producer.threadId }),
+    );
+    expect(send).not.toHaveBeenCalledWith(
+      producer.channelType,
+      producer.channelId,
+      producer.announcementText,
+      expect.anything(),
+    );
   });
 
   it("promotes a terminal durable run into retained notification delivery", async () => {
