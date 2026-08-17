@@ -89,7 +89,9 @@ import {
   setupBroker,
   acquireDataDirLock,
   releaseDataDirLock,
+  buildManagedRunOperatorContext,
   definitionForInstance,
+  MANAGED_RUN_HEARTBEAT_MAX_AGE_MS,
   setupCapabilityServices,
 } from "./wiring/index.js";
 import { resolveEffectiveTrajectoryConfig } from "./wiring/trajectory-runtime-config.js";
@@ -698,6 +700,8 @@ function buildRpcDispatchDeps(deps: {
   // video.status read-handler deps (undefined when disabled) —
   // reads the SAME agent-scoped store the poller writes. Spread below (guard pins it).
   const videoStatusHandlerDeps = buildVideoStatusHandlerDeps(c);
+  // Operator-only read model over installed capability services; undefined when none is configured (the handlers then say so rather than showing an empty result).
+  const managedRuns = buildManagedRunOperatorContext({ platform: c.capabilityServices, clock: c.clock, heartbeatMaxAgeMs: MANAGED_RUN_HEARTBEAT_MAX_AGE_MS });
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
   const removeFromTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["removeFromTokenStore"] = (id) => {
@@ -723,6 +727,7 @@ function buildRpcDispatchDeps(deps: {
   // L3 destroy for session.reset_conversation — without it, runtime session state resurrects the conversation the reset was meant to forget.
   const conversationReset = createConversationReset({ lcdStore: c.lcdStore, sessionStore: g.sessionStoreBridge, piSessionAdapters: c.piSessionAdapters, logger: c.logger });
   return {
+    managedRuns,
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     getAgentCronAuthoringConfig: c.getAgentCronAuthoringConfig,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers,
@@ -2264,7 +2269,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     ),
     nowMs: () => handle.clock.now(),
     timers: handle.timers,
-    heartbeatMaxAgeMs: 300_000,
+    heartbeatMaxAgeMs: MANAGED_RUN_HEARTBEAT_MAX_AGE_MS,
     claimTtlMs: 900_000,
     recoveryBatchSize: container.config.capabilityServices.recoveryBatchSize,
     logger: daemonLogger,

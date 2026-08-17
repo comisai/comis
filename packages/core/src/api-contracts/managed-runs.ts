@@ -9,7 +9,7 @@
  * a model capability, and a service cannot grant itself these methods by
  * describing a tool differently.
  *
- * Two content rules hold throughout. Fleet rows carry identifiers, closed
+ * Two content rules hold throughout. Summary rows carry identifiers, closed
  * enums, counts, hashes, and timing — never a report body, a question, an
  * objective, a path, or a repository label. Run detail may name the host
  * records a run is bound to, because an operator cannot repair a lease or a
@@ -37,7 +37,7 @@ export const ManagedRunFreshnessSchema = z.object({
   livenessStale: z.boolean(),
 });
 
-/** One fleet row. Identifiers, enums, counts, and timing only. */
+/** One summary row. Identifiers, enums, counts, and timing only. */
 export const ManagedRunSummarySchema = z.object({
   schemaVersion: z.literal(1),
   managedRunId: z.string().min(1),
@@ -68,7 +68,7 @@ export const ManagedRunUnavailableCapabilitySchema = z.object({
   reasonCode: z.enum(["stage_not_enabled", "scope_not_requested", "backend_unsupported"]),
 });
 
-/** Run detail: the fleet row plus the host records the run is bound to. */
+/** Run detail: the summary row plus the host records the run is bound to. */
 export const ManagedRunDetailSchema = ManagedRunSummarySchema.extend({
   principalId: z.string().min(1),
   conversationRef: z.string().min(1),
@@ -91,7 +91,7 @@ export const ManagedRunDetailSchema = ManagedRunSummarySchema.extend({
   processSummary: ManagedRunUnavailableCapabilitySchema,
 });
 
-/** Scoped fleet view. Absent filters mean every run the caller may see. */
+/** Cross-run operator view. Absent filters mean every run this daemon holds. */
 export const ManagedRunsListContract = defineContract({
   method: "managedRuns.list",
   request: z.object({
@@ -103,7 +103,7 @@ export const ManagedRunsListContract = defineContract({
   response: z.object({
     rows: z.array(ManagedRunSummarySchema),
     total: z.number().int().nonnegative(),
-    /** True when `limit` cut the result. A caller must not report a partial fleet as the whole fleet. */
+    /** True when `limit` cut the result. A caller must not report a capped page as the complete set. */
     truncated: z.boolean(),
   }),
   scopes: ["admin"] as const,

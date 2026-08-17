@@ -58,6 +58,7 @@ import {
 } from "./execution-attachment-authority.js";
 import type { ManagedTerminalRevoker } from "./managed-terminal-revoker.js";
 import { createManagedRunResourceRevoker } from "./managed-run-resource-revoker.js";
+import { createManagedRunCancellationCoordinator, type ManagedRunCancellationCoordinator } from "./managed-run-cancellation-coordinator.js";
 import { createManagedRunLivenessBridge } from "./managed-run-liveness-bridge.js";
 import { createManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 
@@ -151,6 +152,7 @@ export interface CapabilityServicePlatform {
   readonly attachmentAuthority: ExecutionAttachmentAuthority;
   readonly control: CapabilityServiceControlPort;
   readonly activationCoordinator: ManagedRunActivationCoordinator;
+  readonly cancellationCoordinator: ManagedRunCancellationCoordinator;
   readonly reportBridge: ManagedRunReportBridge;
   readonly evidenceBridge: ManagedRunEvidenceBridge;
   readonly recoverySummary: ManagedRunActivationRecoverySummary;
@@ -500,6 +502,12 @@ export async function setupCapabilityServices(
     durationMs: Math.max(0, deps.clock.now() - startedAtMs),
   }, "Capability-service platform setup completed");
 
+  const cancellationCoordinator = createManagedRunCancellationCoordinator({
+    store,
+    control: host.value.control,
+    nowMs: () => deps.clock.now(),
+  });
+
   let stopped = false;
   return ok(Object.freeze({
     plan: plan.value,
@@ -511,6 +519,7 @@ export async function setupCapabilityServices(
     attachmentAuthority,
     control: host.value.control,
     activationCoordinator,
+    cancellationCoordinator,
     reportBridge,
     evidenceBridge,
     recoverySummary: recovered.value,

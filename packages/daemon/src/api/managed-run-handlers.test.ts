@@ -2,7 +2,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { ok } from "@comis/shared";
 import type { ManagedRunRecord } from "@comis/core";
-import { createManagedRunHandlers, type ManagedRunOperatorContext } from "./managed-run-handlers.js";
+import { createManagedRunHandlers } from "./managed-run-handlers.js";
+import type { ManagedRunOperatorContext } from "./managed-run-context.js";
 
 const NOW_MS = 1_800_000_600_000;
 
@@ -39,7 +40,7 @@ function record(overrides: Partial<ManagedRunRecord> = {}): ManagedRunRecord {
 function context(overrides: Partial<ManagedRunOperatorContext> = {}): ManagedRunOperatorContext {
   return {
     store: {
-      get: vi.fn(async () => ok(record())),
+      getForAdministration: vi.fn(async () => ok(record())),
       listForAdministration: vi.fn(async () => ok([record()])),
       listAttentionForAdministration: vi.fn(async () => ok([])),
     },
@@ -73,7 +74,7 @@ function handlers(overrides: Partial<ManagedRunOperatorContext> = {}) {
 }
 
 describe("managed-run operator handlers", () => {
-  it("renders a fleet row without any service-authored content", async () => {
+  it("renders a summary row without any service-authored content", async () => {
     const result = await handlers()["managedRuns.list"]!({}, {} as never);
 
     const row = (result as { rows: Record<string, unknown>[] }).rows[0]!;
@@ -85,15 +86,15 @@ describe("managed-run operator handlers", () => {
     }
   });
 
-  it("reports a truncated fleet as truncated", async () => {
-    // A caller that renders a capped page as the whole fleet tells an operator
+  it("reports a truncated page as truncated", async () => {
+    // A caller that renders a capped page as the complete set tells an operator
     // there is nothing else to look at.
     const rows = Array.from({ length: 3 }, (_unused, index) => record({
       managedRunId: `managed-run-${index}`,
     }));
     const setup = handlers({
       store: {
-        get: vi.fn(async () => ok(record())),
+        getForAdministration: vi.fn(async () => ok(record())),
         listForAdministration: vi.fn(async () => ok(rows)),
         listAttentionForAdministration: vi.fn(async () => ok([])),
       },
@@ -119,7 +120,7 @@ describe("managed-run operator handlers", () => {
     const stale = record({ lastHeartbeatAtMs: NOW_MS - 400_000 });
     const setup = handlers({
       store: {
-        get: vi.fn(async () => ok(stale)),
+        getForAdministration: vi.fn(async () => ok(stale)),
         listForAdministration: vi.fn(async () => ok([stale])),
         listAttentionForAdministration: vi.fn(async () => ok([])),
       },
@@ -139,7 +140,7 @@ describe("managed-run operator handlers", () => {
     const waiting = record({ status: "waiting", statusReason: "attention_pending", openAttentionCount: 1 });
     const setup = handlers({
       store: {
-        get: vi.fn(async () => ok(waiting)),
+        getForAdministration: vi.fn(async () => ok(waiting)),
         listForAdministration: vi.fn(async () => ok([waiting])),
         listAttentionForAdministration: vi.fn(async () => ok([])),
       },
@@ -157,7 +158,7 @@ describe("managed-run operator handlers", () => {
   it("reports a missing run as not found rather than an empty successful row", async () => {
     const setup = handlers({
       store: {
-        get: vi.fn(async () => ok(undefined)),
+        getForAdministration: vi.fn(async () => ok(undefined)),
         listForAdministration: vi.fn(async () => ok([])),
         listAttentionForAdministration: vi.fn(async () => ok([])),
       },

@@ -1780,7 +1780,7 @@ describe("managed-run administration reads", () => {
 
   it("lists runs across owner scopes only through the named administration read", async () => {
     // The scoped list is the path a service or a conversation uses and it can
-    // never see another principal's work. An operator fleet view is a different
+    // never see another principal's work. An operator cross-run view is a different
     // caller class, so it gets its own named method with its own discriminator
     // rather than an optional scope on the scoped one.
     const store = createSqliteManagedRunStore(db);

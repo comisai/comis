@@ -1825,6 +1825,26 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // (composed into `API_CONTRACTS_ORDERED` intra-package — the walker
       // skips self-imports).
       "OBSERVABILITY_CONTRACTS",
+      // Operator surface over installed capability services and their managed
+      // runs. The four managed-run contracts and four capability-service
+      // contracts have in-repo consumers via
+      // packages/daemon/src/api/{managed-run,capability-service}-handlers.ts
+      // (each used as a computed property key). The two aggregator arrays are
+      // composed into API_CONTRACTS_ORDERED intra-package, which the walker
+      // skips as a self-import — the OBSERVABILITY_CONTRACTS rationale above.
+      "MANAGED_RUNS_CONTRACTS",
+      "CAPABILITY_SERVICES_CONTRACTS",
+      // The response schemas are the documented wire shape of that surface, the
+      // same rationale as IncidentReportSchema: an external operator client
+      // validates what the daemon returned before rendering it, and the daemon
+      // side reaches these through the contract objects rather than by name.
+      "ManagedRunFreshnessSchema",
+      "ManagedRunSummarySchema",
+      "ManagedRunDetailSchema",
+      "ManagedRunUnavailableCapabilitySchema",
+      "CapabilityServiceInstanceStateSchema",
+      "CapabilityServiceInstanceSummarySchema",
+      "ManagedAttentionSummarySchema",
       // Workspace-umbrella contracts (36 methods spanning 5 handler-factory
       // files that share the WorkspaceApiDeps cluster slice):
       //   - workspace-handlers.ts  (12 methods)

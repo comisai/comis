@@ -14,6 +14,10 @@ export { setupObservability, rehydrateSpendFromStore, type ObservabilityResult }
 export { setupHealth, type HealthResult, setupMonitoring, type MonitoringResult } from "./setup-health.js";
 export { setupMemory, type MemoryResult } from "./setup-memory.js";
 export {
+  buildManagedRunOperatorContext,
+  MANAGED_RUN_HEARTBEAT_MAX_AGE_MS,
+} from "./managed-run-operator-context.js";
+export {
   definitionForInstance,
   setupCapabilityServices,
   type CapabilityServicePlatform,

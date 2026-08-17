@@ -328,6 +328,11 @@ export interface ManagedRunAdministrationListInput {
   readonly limit: number;
 }
 
+export interface ManagedRunAdministrationGetInput {
+  readonly kind: "administration";
+  readonly managedRunId: string;
+}
+
 export interface ManagedRunAttentionAdministrationListInput {
   readonly kind: "administration";
   readonly managedRunId?: string;
@@ -394,6 +399,7 @@ export interface ManagedRunStorePort {
   markContinuationOutcome(scope: ManagedRunOwnerScope, input: ManagedRunContinuationOutcomeInput): Promise<Result<ManagedRunMutationOutcome, Error>>;
   listScoped(input: ManagedRunScopedListInput): Promise<Result<ManagedRunRecord[], Error>>;
   listForAdministration(input: ManagedRunAdministrationListInput): Promise<Result<ManagedRunRecord[], Error>>;
+  getForAdministration(input: ManagedRunAdministrationGetInput): Promise<Result<ManagedRunRecord | undefined, Error>>;
   listAttentionForAdministration(input: ManagedRunAttentionAdministrationListInput): Promise<Result<ManagedRunAttentionRecord[], Error>>;
   listRecoverable(input: ManagedRunRecoveryScanInput): Promise<Result<ManagedRunRecoveryScan, Error>>;
   revoke(scope: ManagedRunOwnerScope, input: ManagedRunRevokeInput): Promise<Result<ManagedRunTransitionClaimOutcome, Error>>;

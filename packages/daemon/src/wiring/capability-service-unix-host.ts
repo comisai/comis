@@ -60,6 +60,11 @@ import {
   routeManagedRunReportIngress,
 } from "./capability-service-ingress-routes.js";
 import { parseStrictJson } from "./capability-service-strict-json.js";
+import {
+  sendEndpointAbandon,
+  sendEndpointActivate,
+  sendEndpointCancel,
+} from "./capability-service-run-commands.js";
 import { forwardTerminalEvent, sendEndpointTerminalEvent } from "./capability-service-terminal-event.js";
 import {
   capabilityServiceErrorResponse,
@@ -841,51 +846,9 @@ function createEndpoint(
 
     return ok(Object.freeze({
       handle,
-      activate: async (command: CapabilityServiceActivateCommand) => {
-        const result = await sendControl<CapabilityServiceActivateAcknowledgement>({
-          jsonrpc: "2.0",
-          id: command.operationId,
-          method: "managedRuns.activate",
-          params: {
-            operationId: command.operationId,
-            managedRunId: command.managedRunId,
-            externalRunRef: command.externalRunRef,
-            registrationNonce: command.registrationNonce,
-            ...(command.workspaceLeaseId === undefined ? {} : { workspaceLeaseId: command.workspaceLeaseId }),
-            ...(command.executionAttachmentId === undefined ? {} : { executionAttachmentId: command.executionAttachmentId }),
-            ...(command.attachmentTargetName === undefined ? {} : { attachmentTargetName: command.attachmentTargetName }),
-          },
-        }, CapabilityActivateRequestSchema, CapabilityActivateResponseSchema);
-        return result.ok ? result : err({ kind: result.error.kind, reasonCode: result.error.reasonCode });
-      },
-      abandon: async (command: CapabilityServiceAbandonCommand) => {
-        const result = await sendControl<CapabilityServiceAbandonAcknowledgement>({
-          jsonrpc: "2.0",
-          id: command.operationId,
-          method: "managedRuns.abandon",
-          params: {
-            operationId: command.operationId,
-            externalRunRef: command.externalRunRef,
-            registrationNonce: command.registrationNonce,
-            reason: command.reason,
-            disposition: command.disposition,
-          },
-        }, CapabilityAbandonRequestSchema, CapabilityAbandonResponseSchema);
-        return result.ok ? result : err({ kind: result.error.kind, reasonCode: result.error.reasonCode });
-      },
-      cancel: async (command: CapabilityServiceCancelCommand) => {
-        const result = await sendControl<CapabilityServiceCancelAcknowledgement>({
-          jsonrpc: "2.0",
-          id: command.operationId,
-          method: "managedRuns.cancel",
-          params: {
-            operationId: command.operationId,
-            managedRunId: command.managedRunId,
-            reason: command.reason,
-          },
-        }, CapabilityCancelRequestSchema, CapabilityCancelResponseSchema);
-        return result.ok ? result : err({ kind: result.error.kind, reasonCode: result.error.reasonCode });
-      },
+      activate: (command: CapabilityServiceActivateCommand) => sendEndpointActivate(command, sendControl),
+      abandon: (command: CapabilityServiceAbandonCommand) => sendEndpointAbandon(command, sendControl),
+      cancel: (command: CapabilityServiceCancelCommand) => sendEndpointCancel(command, sendControl),
       terminalEvent: async (command: CapabilityServiceTerminalEventCommand) => {
         return sendEndpointTerminalEvent(command, sendControl);
       },

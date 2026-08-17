@@ -32,13 +32,15 @@ import { gzipSync } from "node:zlib";
  * budget still has ample headroom.
  *
  * The reviewed schema includes content-free per-root completion delivery and
- * durable restart recovery evidence in incident reports. The generated bundle
- * occupies 200,754B; its gzipped size remains far below the independent wire-size
- * budget.
+ * durable restart recovery evidence in incident reports, plus the operator
+ * surface over installed capability services and their managed runs (eight
+ * admin-only methods whose response shapes carry the run authority record).
+ * The generated bundle occupies 217,524B; gzipped it is 22,805B against the
+ * independent 38,912B wire budget, so that gate keeps ample headroom.
  * The cap stays close to the measured total so the ratchet continues to reject
  * unreviewed growth.
  */
-export const BUDGET_MINIFIED_BYTES = 200_850;
+export const BUDGET_MINIFIED_BYTES = 217_600;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

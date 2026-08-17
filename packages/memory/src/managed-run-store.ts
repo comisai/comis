@@ -58,7 +58,9 @@ import {
   transitionAllowed,
   validateManagedRunRecord,
 } from "./managed-run-store-record.js";
+import { createManagedRunAdministrationReads } from "./managed-run-administration.js";
 import { createManagedRunAttentionStoreStatements } from "./managed-run-attention-store.js";
+import { decideManagedRunHeartbeat } from "./managed-run-liveness.js";
 import { mapManagedRunRecoveryRows } from "./managed-run-recovery-scan.js";
 import { createRowMapper } from "./row-mapper.js";
 
@@ -87,6 +89,7 @@ function resultRecord<K extends "bound" | "claimed" | "identical_replay" | "rele
 /** Create the SQLite implementation of the content-free managed-run state port. */
 export function createSqliteManagedRunStore(db: Database.Database): ManagedRunStorePort {
   const attention = createManagedRunAttentionStoreStatements(db);
+  const administration = createManagedRunAdministrationReads(db);
   const selectRun = db.prepare("SELECT * FROM managed_runs WHERE managed_run_id = ?");
   const selectRunByExternalRef = db.prepare(`
     SELECT runs.* FROM managed_runs AS runs
@@ -214,16 +217,6 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     WHERE tenant_id = ? AND agent_id = ? AND principal_id = ? AND conversation_ref = ?
       AND (json_array_length(?) = 0 OR status IN (SELECT value FROM json_each(?)))
     ORDER BY created_at_ms ASC, managed_run_id ASC
-    LIMIT ?
-  `);
-  // Cross-scope by design and reachable only through the named administration
-  // read. Filters are optional so an operator can start from the whole fleet.
-  const listForAdministrationRows = db.prepare(`
-    SELECT * FROM managed_runs
-    WHERE (? IS NULL OR service_instance_id = ?)
-      AND (? IS NULL OR agent_id = ?)
-      AND (json_array_length(?) = 0 OR status IN (SELECT value FROM json_each(?)))
-    ORDER BY updated_at_ms DESC, managed_run_id ASC
     LIMIT ?
   `);
   const listRecoverableRows = db.prepare(`
@@ -597,42 +590,16 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     return persisted.ok ? ok(resultRecord("bound", next)) : persisted;
   });
 
-  /**
-   * Liveness carries no operation ID because a heartbeat is an observation, not
-   * a mutation to replay: a duplicate is simply a beat that no longer advances
-   * the record. Refusing a backward beat keeps a late-arriving older observation
-   * from making a stalled service look current, and refusing a terminal run
-   * keeps a service that outlived its own work from holding it open.
-   */
   const heartbeatTransaction = db.transaction((
     scope: ManagedRunServiceScope,
     input: ManagedRunHeartbeatInput,
   ): Result<ManagedRunHeartbeatOutcome, Error> => {
-    if (!Number.isInteger(input.observedAtMs) || input.observedAtMs < 0) {
-      return err(new Error("managed-run heartbeat observation time is invalid"));
-    }
     const current = readRecord(input.managedRunId);
     if (!current.ok) return current;
-    if (current.value === undefined) return ok({ kind: "rejected", reasonCode: "not_found" });
-    if (!scopeMatches(current.value, scope)) {
-      return ok({ kind: "rejected", reasonCode: "ownership_mismatch" });
-    }
-    if (
-      current.value.status === "succeeded"
-      || current.value.status === "failed"
-      || current.value.status === "cancelled"
-    ) return ok({ kind: "rejected", reasonCode: "terminal_run" });
-    if (
-      current.value.lastHeartbeatAtMs !== undefined
-      && input.observedAtMs <= current.value.lastHeartbeatAtMs
-    ) return ok({ kind: "rejected", reasonCode: "stale_observation" });
-    const next: ManagedRunRecord = {
-      ...current.value,
-      lastHeartbeatAtMs: input.observedAtMs,
-      updatedAtMs: Math.max(current.value.updatedAtMs, input.observedAtMs),
-    };
-    const persisted = persistMutable(next);
-    return persisted.ok ? ok({ kind: "committed", record: next }) : persisted;
+    const decided = decideManagedRunHeartbeat(current.value, scope, input);
+    if (!decided.ok || decided.value.kind === "rejected") return decided;
+    const persisted = persistMutable(decided.value.record);
+    return persisted.ok ? ok(decided.value) : persisted;
   });
 
   const terminalReleaseTransaction = db.transaction((
@@ -999,29 +966,8 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       }
       return ok(records);
     }),
-    listForAdministration: (input) => boundary(() => {
-      if (!validLimit(input.limit)) {
-        return err(new Error("managed-run administration list limit is invalid"));
-      }
-      const statuses = JSON.stringify(input.statuses ?? []);
-      const rows = runMapper.parseRows(listForAdministrationRows.all(
-        input.serviceInstanceId ?? null,
-        input.serviceInstanceId ?? null,
-        input.agentId ?? null,
-        input.agentId ?? null,
-        statuses,
-        statuses,
-        input.limit,
-      ));
-      if (!rows.ok) return err(new Error(rows.error.message));
-      const records: ManagedRunRecord[] = [];
-      for (const row of rows.value) {
-        const record = rowToManagedRunRecord(row);
-        if (!record.ok) return record;
-        records.push(record.value);
-      }
-      return ok(records);
-    }),
+    listForAdministration: (input) => boundary(() => administration.listRuns(input)),
+    getForAdministration: (input) => boundary(() => readRecord(input.managedRunId)),
     listAttentionForAdministration: (input) => boundary(() => attention.listForAdministration(input)),
     listRecoverable: (input) => boundary((): Result<ManagedRunRecoveryScan, Error> => {
       if (!validLimit(input.limit) || input.statuses.length === 0) {

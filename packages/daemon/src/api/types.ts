@@ -844,6 +844,15 @@ export interface DaemonApiDeps {
  * from ApiDispatchDeps via structural subtyping at every dispatcher call
  * site (createSessionHandlers(deps), createMemoryHandlers(deps), ...).
  */
+/**
+ * The operator-only view over installed capability services. Absent when the
+ * deployment configures none; the handlers report that rather than omitting
+ * their methods, so an operator's question gets an answer either way.
+ */
+export interface CapabilityServiceApiSlice {
+  readonly managedRuns?: import("./managed-run-context.js").ManagedRunOperatorContext;
+}
+
 export interface ApiDispatchDeps
   extends SessionsApiDeps,
     MemoryApiDeps,
@@ -855,4 +864,5 @@ export interface ApiDispatchDeps
     AuthApiDeps,
     MediaApiDeps,
     ObservabilityApiDeps,
+    CapabilityServiceApiSlice,
     DaemonApiDeps {}
