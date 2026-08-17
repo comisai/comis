@@ -7,7 +7,6 @@ import type {
   AnnouncementDeadLetterAttachmentSource,
   AnnouncementDeadLetterQueuePort,
   AnnouncementParentDecisionReservation,
-  QuarantinedInvalidAnnouncementRecord,
 } from "@comis/core";
 import {
   emitObservationalEventSafely,
@@ -19,13 +18,9 @@ import {
   isDeadLetterSnapshotCapacityError,
   reservedDeadLetterSnapshotBytes,
   type DeadLetterEntry,
-  type AnnouncementProducerHandoffRecord,
-  type ParentDecisionReservationRecord,
-  type ProducerReservationRecord,
   type StoredDeadLetterEntry,
 } from "./announcement-dead-letter-file.js";
 import {
-  type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
 import {
   createAnnouncementTerminalDecisionStore,
