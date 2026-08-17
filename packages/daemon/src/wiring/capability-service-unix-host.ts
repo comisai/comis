@@ -11,6 +11,8 @@ import {
   CapabilityActivateRequestSchema,
   CapabilityActivateResponseSchema,
   CapabilityHandshakeRequestSchema,
+  CapabilityCancelRequestSchema,
+  CapabilityCancelResponseSchema,
   CapabilityHealthRequestSchema,
   CapabilityHeartbeatRequestSchema,
   CapabilityPutEvidenceRequestSchema,
@@ -30,6 +32,8 @@ import {
   type CapabilityServiceControlPort,
   type CapabilityServiceScope,
   type CapabilityServiceTerminalEventAcknowledgement,
+  type CapabilityServiceCancelAcknowledgement,
+  type CapabilityServiceCancelCommand,
   type CapabilityServiceTerminalEventCommand,
   type ClockPort,
   type ComisLogger,
@@ -128,6 +132,10 @@ interface Endpoint {
   >>;
   abandon(command: CapabilityServiceAbandonCommand): Promise<Result<
     CapabilityServiceAbandonAcknowledgement,
+    CapabilityServiceControlFailure
+  >>;
+  cancel(command: CapabilityServiceCancelCommand): Promise<Result<
+    CapabilityServiceCancelAcknowledgement,
     CapabilityServiceControlFailure
   >>;
   terminalEvent(command: CapabilityServiceTerminalEventCommand): Promise<Result<
@@ -865,6 +873,19 @@ function createEndpoint(
         }, CapabilityAbandonRequestSchema, CapabilityAbandonResponseSchema);
         return result.ok ? result : err({ kind: result.error.kind, reasonCode: result.error.reasonCode });
       },
+      cancel: async (command: CapabilityServiceCancelCommand) => {
+        const result = await sendControl<CapabilityServiceCancelAcknowledgement>({
+          jsonrpc: "2.0",
+          id: command.operationId,
+          method: "managedRuns.cancel",
+          params: {
+            operationId: command.operationId,
+            managedRunId: command.managedRunId,
+            reason: command.reason,
+          },
+        }, CapabilityCancelRequestSchema, CapabilityCancelResponseSchema);
+        return result.ok ? result : err({ kind: result.error.kind, reasonCode: result.error.reasonCode });
+      },
       terminalEvent: async (command: CapabilityServiceTerminalEventCommand) => {
         return sendEndpointTerminalEvent(command, sendControl);
       },
@@ -923,7 +944,7 @@ export function createUnixCapabilityServiceHostRuntime(
 
   function reportControlFailure(
     serviceInstanceId: string,
-    operation: "abandon" | "activate" | "terminal_event",
+    operation: "abandon" | "activate" | "cancel" | "terminal_event",
     failure: CapabilityServiceControlFailure,
   ): void {
     deps.logger.warn({
@@ -954,6 +975,26 @@ export function createUnixCapabilityServiceHostRuntime(
         managedRunId: command.managedRunId,
         durationMs: Math.max(0, deps.clock.now() - startedAtMs),
       }, "Capability-service activation call completed");
+      return result;
+    },
+    cancel: async (command) => {
+      const endpoint = endpoints.get(command.serviceInstanceId);
+      if (endpoint === undefined) {
+        return err({ kind: "unavailable", reasonCode: "instance_not_connected" });
+      }
+      const startedAtMs = deps.clock.now();
+      deps.logger.debug({
+        serviceInstanceId: command.serviceInstanceId,
+        managedRunId: command.managedRunId,
+        step: "capability-service-cancel",
+      }, "Sending capability-service run cancellation");
+      const result = await endpoint.cancel(command);
+      if (!result.ok) reportControlFailure(command.serviceInstanceId, "cancel", result.error);
+      else deps.logger.info({
+        serviceInstanceId: command.serviceInstanceId,
+        managedRunId: command.managedRunId,
+        durationMs: Math.max(0, deps.clock.now() - startedAtMs),
+      }, "Capability-service run cancellation call completed");
       return result;
     },
     abandon: async (command) => {

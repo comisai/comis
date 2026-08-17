@@ -40,6 +40,19 @@ export interface CapabilityServiceAbandonAcknowledgement {
   readonly terminalTransition: "unbound_preparation_abandoned";
 }
 
+export interface CapabilityServiceCancelCommand {
+  readonly operationId: string;
+  readonly serviceInstanceId: string;
+  readonly managedRunId: string;
+  readonly reason: "owner_cancelled" | "authority_revoked" | "budget_exhausted";
+}
+
+export interface CapabilityServiceCancelAcknowledgement {
+  readonly managedRunId: string;
+  readonly state: "cancelling" | "cancelled" | "already_terminal";
+  readonly acknowledgedAtMs: number;
+}
+
 export type CapabilityServiceTerminalTransition =
   | "created"
   | "running"
@@ -73,6 +86,9 @@ export interface CapabilityServiceControlPort {
   abandon(
     command: CapabilityServiceAbandonCommand,
   ): Promise<Result<CapabilityServiceAbandonAcknowledgement, CapabilityServiceControlFailure>>;
+  cancel(
+    command: CapabilityServiceCancelCommand,
+  ): Promise<Result<CapabilityServiceCancelAcknowledgement, CapabilityServiceControlFailure>>;
   terminalEvent(
     command: CapabilityServiceTerminalEventCommand,
   ): Promise<Result<CapabilityServiceTerminalEventAcknowledgement, CapabilityServiceControlFailure>>;

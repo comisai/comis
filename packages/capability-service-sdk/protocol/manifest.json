@@ -45,6 +45,14 @@
       "sha256": "a7f3a5b4c128ef5bbcab0f7c68d50f040dbbd1f179ed467fc3c144998e6e9428"
     },
     {
+      "path": "schemas/cancel.request.schema.json",
+      "sha256": "7a77756d42759a15aea2838a6249223fe72abd85462c6bf929fe1e21aa67838a"
+    },
+    {
+      "path": "schemas/cancel.response.schema.json",
+      "sha256": "48fb5349a94df39e9774ba1fde1322e674f5a13a5b4690b68e1608dc4644ad6b"
+    },
+    {
       "path": "schemas/error-response.schema.json",
       "sha256": "072e5adc20191294b68bbea18015d2e97279174344385bb0982a5af25b5e3c45"
     },
@@ -129,7 +137,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "7ddc17b11d81444257e292af969e4f94c63ff78d3e441299ad5532f3e9da2b1d",
+  "bundleDigest": "86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -299,6 +307,25 @@
       ]
     },
     {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.cancel",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/cancel.request.schema.json",
+      "requiredServiceScope": null,
+      "responseSchema": "schemas/cancel.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "cancellation-is-idempotent-for-an-already-terminal-run",
+        "host-names-the-reason-and-never-the-service-disposition"
+      ]
+    },
+    {
       "callerClass": "capability-service",
       "classification": "mutation",
       "direction": "service-to-comis",
@@ -421,6 +448,7 @@
     "capabilityServices.health",
     "managedRuns.abandon",
     "managedRuns.activate",
+    "managedRuns.cancel",
     "managedRuns.heartbeat",
     "managedRuns.putEvidence",
     "managedRuns.receiveAttentionResponse",

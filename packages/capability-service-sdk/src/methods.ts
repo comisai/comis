@@ -135,6 +135,33 @@ export const CapabilityAbandonResponseSchema = z.strictObject({
   }),
 });
 
+/**
+ * Asks a running service to stop one bound run. The host names the run and why
+ * it is stopping; it never names a disposition, because whether the service's
+ * own artifacts survive is a domain judgement about work the host cannot see.
+ * Cancellation is idempotent: a run already settled answers already_terminal.
+ */
+export const CapabilityCancelRequestSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  method: z.literal("managedRuns.cancel"),
+  params: z.strictObject({
+    operationId: OperationIdSchema,
+    managedRunId: ManagedRunIdSchema,
+    reason: z.enum(["owner_cancelled", "authority_revoked", "budget_exhausted"]),
+  }),
+});
+
+export const CapabilityCancelResponseSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  result: z.strictObject({
+    managedRunId: ManagedRunIdSchema,
+    state: z.enum(["cancelling", "cancelled", "already_terminal"]),
+    acknowledgedAtMs: TimestampMsSchema,
+  }),
+});
+
 export const CapabilityReportRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
@@ -364,6 +391,7 @@ export const CapabilityHealthResponseSchema = z.strictObject({
 export const CapabilityServiceRequestSchema = z.discriminatedUnion("method", [
   CapabilityAbandonRequestSchema,
   CapabilityActivateRequestSchema,
+  CapabilityCancelRequestSchema,
   CapabilityHandshakeRequestSchema,
   CapabilityHeartbeatRequestSchema,
   CapabilityHealthRequestSchema,
@@ -378,6 +406,7 @@ export type CapabilityServiceRequest = z.infer<typeof CapabilityServiceRequestSc
 export type CapabilityHandshakeRequest = z.infer<typeof CapabilityHandshakeRequestSchema>;
 export type CapabilityActivateRequest = z.infer<typeof CapabilityActivateRequestSchema>;
 export type CapabilityAbandonRequest = z.infer<typeof CapabilityAbandonRequestSchema>;
+export type CapabilityCancelRequest = z.infer<typeof CapabilityCancelRequestSchema>;
 export type CapabilityReportRequest = z.infer<typeof CapabilityReportRequestSchema>;
 export type CapabilityTerminalEventRequest = z.infer<typeof CapabilityTerminalEventRequestSchema>;
 export type CapabilityHealthRequest = z.infer<typeof CapabilityHealthRequestSchema>;

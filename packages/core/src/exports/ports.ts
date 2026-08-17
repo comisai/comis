@@ -187,6 +187,8 @@ export type {
   CapabilityServiceActivateAcknowledgement,
   CapabilityServiceControlFailure,
   CapabilityServiceAbandonCommand,
+  CapabilityServiceCancelAcknowledgement,
+  CapabilityServiceCancelCommand,
   CapabilityServiceAbandonAcknowledgement,
   CapabilityServiceTerminalEventCommand,
   CapabilityServiceTerminalEventAcknowledgement,
