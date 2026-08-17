@@ -49,7 +49,16 @@ export interface AnnouncementLogger {
   debug(obj: Record<string, unknown>, msg: string): void;
 }
 
-/** Configuration options for the dead-letter queue factory. */
+/**
+ * Configuration options for the dead-letter queue factory.
+ *
+ * @optional-field-count: every optional here is an injectable capability, not a
+ * data field. The queue degrades deliberately when one is absent — no ledger
+ * means no replay guard, no attachment preparer means text-only recovery — so
+ * each is optional to keep the queue constructible by callers that genuinely
+ * lack that capability. Making them required would force test and minimal
+ * wiring to pass stubs that claim a capability the deployment does not have.
+ */
 export interface AnnouncementDeadLetterQueueOptions {
   /** JSONL file path (already safePath'd by caller). */
   filePath: string;

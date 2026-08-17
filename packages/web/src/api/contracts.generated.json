@@ -11753,6 +11753,7 @@
                 "unavailable",
                 "committed",
                 "retained",
+                "suppressed",
                 "failed"
               ]
             },

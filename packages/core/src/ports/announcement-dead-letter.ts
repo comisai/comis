@@ -42,7 +42,17 @@ export type AnnouncementDeadLetterAttachment =
 
 export type AnnouncementTextChunkManifest = readonly string[];
 
-/** Failed completion admitted to durable delivery recovery. */
+/**
+ * Failed completion admitted to durable delivery recovery.
+ *
+ * @optional-field-count: this is the persisted shape of a failed delivery, and
+ * which evidence exists depends on how far the send got before it failed. A row
+ * admitted before the platform was reached carries no receipt discriminator or
+ * chunk manifest; one admitted mid-send carries both. Narrowing the optionals
+ * would mean either splitting the record per failure path — which fragments the
+ * single durable row recovery replays from — or promoting fields to required
+ * and writing placeholders that recovery cannot distinguish from real evidence.
+ */
 export interface AnnouncementDeadLetterEntryInput {
   announcementText: string;
   channelType: AnnouncementChannelType;
