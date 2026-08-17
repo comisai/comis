@@ -53,7 +53,8 @@ The scenario tests the product boundary rather than working around it:
   is prepared.
 - Capability exposure: one linked DevCrew capability-service instance, one replaceable
   `devcrew-mcp` process, and the `dev-crew` prompt skill are available only to the liaison. A control
-  agent has none of them.
+  agent has none of them. The skill is not bundled with the daemon; it is copied from the companion
+  release's `skills/dev-crew/` into the liaison workspace only.
 - Workers: exact installed Codex and Claude Code versions, authentication postures, fixed launch
   descriptors, terminal allow entries, and concurrency limits are probed before use. There is no
   provider/profile fallback.

@@ -162,22 +162,31 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(parsed.value.comis?.["min-distinct-web-search-queries"]).toBe(3);
   });
 
-  it("ships the opt-in DevCrew recovery procedure through the strict skill parser", () => {
+  it("seeds only skills the host itself can run", () => {
+    // Every bundled skill lands in every deployment's data directory at boot, so
+    // one that only works against a separately installed out-of-process service
+    // would arrive as a persona for a product the deployment does not have. Those
+    // skills ship from their own product repository and the operator installs
+    // them into the one agent workspace that has the service configured.
     const repositoryRoot = resolve(
       dirname(fileURLToPath(import.meta.url)),
       "../../../..",
     );
-    const manifest = readFileSync(
-      resolve(repositoryRoot, "skills/dev-crew/SKILL.md"),
-      "utf8",
-    );
+    const bundledRoot = resolve(repositoryRoot, "packages/daemon/bundled-skills");
 
-    const parsed = parseSkillManifest(manifest);
+    const seeded = readdirSync(bundledRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({
+        name: entry.name,
+        manifest: readFileSync(resolve(bundledRoot, entry.name, "SKILL.md"), "utf8"),
+      }));
 
-    expect(parsed.ok).toBe(true);
-    if (!parsed.ok) return;
-    expect(parsed.value.name).toBe("dev-crew");
-    expect(parsed.value.comis?.requires).toEqual({ bins: [], env: [] });
+    expect(seeded.length).toBeGreaterThan(0);
+    for (const { name, manifest } of seeded) {
+      const parsed = parseSkillManifest(manifest);
+      expect(parsed.ok, `${name} must parse through the strict manifest schema`).toBe(true);
+      expect(manifest.toLowerCase()).not.toMatch(/capability[- ]service|managed[- ]run/u);
+    }
   });
 
   it("downloads a generated chart into an ESM workspace without host renderers", () => {

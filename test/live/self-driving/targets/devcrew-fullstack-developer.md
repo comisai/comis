@@ -47,7 +47,9 @@ worktree before removing both clean task roots and releasing their leases.
   credential files. Worker credentials are limited to repository contents for that repository;
   branch protection prevents merge. No merge credential is installed.
 - Capability exposure: the DevCrew MCP server and `dev-crew` prompt skill are installed only for
-  the named liaison through explicit allowlists. A control agent receives neither.
+  the named liaison through explicit allowlists. A control agent receives neither. The skill is not
+  bundled with the daemon; it is copied from the companion release's `skills/dev-crew/` into the
+  liaison workspace only.
 - Worker order: Codex launches first; Claude Code launches second. Both exact installed versions,
   authentication postures, launch descriptors, and terminal allow entries are probed before use.
 - Confinement: each worker receives only its leased root, protected reporter attachment, reviewed

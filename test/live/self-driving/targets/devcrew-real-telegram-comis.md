@@ -40,7 +40,9 @@ closed checkpoints; a prose result is not a pass.
   repository files.
 - Install the `dev-crew` prompt skill and eight-tool DevCrew MCP server only for
   the liaison. A control agent must discover neither the skill nor any DevCrew
-  tool.
+  tool. The skill is not bundled with the daemon: copy it from the companion
+  release's `skills/dev-crew/` into the liaison workspace, and confirm no other
+  agent's workspace received it.
 - Give DevCrew separate repository-scoped forge-read and branch-push identities.
   Install no merge credential. Required branch protection remains enabled.
 - Configure exact reviewed Codex and Claude Code profiles, terminal allow entries,
