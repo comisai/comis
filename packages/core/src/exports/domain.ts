@@ -140,6 +140,7 @@ export {
   AgentTurnExecutionOutcomeSchema,
   classifyAgentFinishErrorKind,
   classifyAgentTurnExecutionOutcome,
+  ManagedRunStatusSchema,
   ManagedRunRecordSchema,
   parseManagedRunRecord,
   ManagedRunActivationDescriptorSchema,

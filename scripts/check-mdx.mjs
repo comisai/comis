@@ -259,8 +259,13 @@ const commandFiles = [...cliSource.matchAll(/from "\.\/commands\/([^".]+)\.js"/g
 const sourceGroups = new Set();
 for (const commandFile of commandFiles) {
   const source = await readFile(join(ROOT, `packages/cli/src/commands/${commandFile}.ts`), "utf8");
-  const command = source.match(/\.command\("([a-z][a-z0-9-]*)/)?.[1];
-  if (command) sourceGroups.add(command);
+  // Top-level groups are the ones registered on `program`; a subcommand is
+  // registered on its own group object. Matching the receiver rather than
+  // taking the first `.command(` in the file lets one module own several
+  // sibling groups without the rest silently going undocumented.
+  for (const match of source.matchAll(/\bprogram\s*\n?\s*\.command\("([a-z][a-z0-9-]*)/g)) {
+    sourceGroups.add(match[1]);
+  }
 }
 const cliDoc = routeMap.get("reference/cli")?.value ?? "";
 const documentedGroups = new Set(

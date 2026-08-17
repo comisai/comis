@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis currently ships **33 top-level command groups**. Some commands call the
+Comis currently ships **36 top-level command groups**. Some commands call the
 running daemon over JSON-RPC; others inspect or update local state. The built-in
 `--help` output is authoritative for the installed version.
 
@@ -1832,6 +1832,79 @@ comis system-health --since 24 --offline
 ```
 
 Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`) — unless `--offline`. Unreachable-gateway calls fall back to the offline assembly automatically; a token rejection surfaces the auth error (with the `--offline` tip) instead of masking the misconfiguration.
+
+---
+
+### `comis capability-services`
+
+The operator view over installed capability services and the external work they
+own. A capability service is a separately installed process that contributes
+agent tools and durable external-work lifecycle; these commands show the **host**
+half of that relationship — whether authority bound, which host records a run
+holds, and whether the service is still reporting. The product that owns a run
+explains what its task means; that is its own CLI's job.
+
+```bash
+# Which services are installed, and are they usable?
+comis capability-services list
+comis capability-services get dev-crew-local
+
+# What external work exists, across every conversation this daemon holds?
+comis managed-runs list
+comis managed-runs list --service dev-crew-local --state unknown --limit 50
+
+# Why is this one stuck?
+comis managed-runs explain <managedRunId>
+
+# Stop it on host authority
+comis managed-runs cancel <managedRunId>
+
+# Which runs are waiting on a person rather than on the machine?
+comis managed-attention list --run <managedRunId>
+```
+
+`explain` returns a deterministic verdict over the durable record — no model, so
+the same run always produces the same answer — plus the next actions that are
+actually reachable for its current state. Causes are ordered so the outer fault
+wins: a service instance missing from configuration outranks a stale heartbeat,
+which outranks a run that is merely waiting on a human.
+
+Two rules keep the output safe to paste into a review. No command returns a
+report body, a question, or an artifact: those live in the confined content
+store and reach a human through the owning product. And no instance row carries
+a socket path, a credential reference, or a resolved secret.
+
+Capabilities that have not shipped are labelled rather than omitted — `custody`
+and `processes` read `not available` with a reason code, because a blank field
+would otherwise read as "no operator holds custody" or "no processes are
+running".
+
+`cancel` records the host's decision before it notifies the service, and the
+decision stands when the service is unreachable. In that case the command says
+the service has not confirmed yet and will reconcile on its next handshake; it
+does not report the cancel as failed, because the authority record already says
+cancelled.
+
+All three groups are admin-scoped and carry no agent route, so an agent turn —
+including a prompt-injected one — can never reach them. They need a reachable
+daemon: there is no offline projection of another process's authority record
+that would be safe to present as current.
+
+---
+
+### `comis managed-runs`
+
+Lists, explains, and cancels the external work bound to this daemon. See
+[`comis capability-services`](#comis-capability-services) above for the full
+usage, the content rules, and the cancellation semantics.
+
+---
+
+### `comis managed-attention`
+
+Lists the durable questions managed runs are waiting on — identifiers and
+status only, never the question itself, which belongs to the principal it was
+routed to. See [`comis capability-services`](#comis-capability-services) above.
 
 ---
 

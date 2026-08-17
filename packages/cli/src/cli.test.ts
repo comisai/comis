@@ -63,6 +63,9 @@ describe("CLI entry point", () => {
 
   describe("command registration", () => {
     const expectedCommands = [
+      "capability-services",
+      "managed-runs",
+      "managed-attention",
       "daemon",
       "config",
       "agent",
@@ -109,8 +112,8 @@ describe("CLI entry point", () => {
       "orchestrate",
     ] as const;
 
-    it("registers exactly 32 commands", () => {
-      expect(program.commands).toHaveLength(33);
+    it("registers exactly 35 commands", () => {
+      expect(program.commands).toHaveLength(36);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {
