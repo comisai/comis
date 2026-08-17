@@ -494,6 +494,7 @@ export function createAnnouncementDeadLetterQueue(
 
   async function reserveProducerDurably(
     reservation: AnnouncementProducerReservation,
+    reclaimActive: boolean,
   ): Promise<Result<AnnouncementProducerReservationOutcome, Error>> {
     const loadedFromDisk = await loadFromDisk();
     if (!loadedFromDisk.ok) return loadedFromDisk;
@@ -540,6 +541,9 @@ export function createAnnouncementDeadLetterQueue(
         : err(removed.error);
     }
     if (existing?.lifecycleState === "active") {
+      if (!reclaimActive || activeProducerKeys.has(producerKey)) {
+        return ok({ status: "recovery_owned", lifecycleState: "active" });
+      }
       activeProducerKeys.add(producerKey);
       return ok({ status: "claimed" });
     }
@@ -2930,7 +2934,11 @@ export function createAnnouncementDeadLetterQueue(
 
   return {
     reserveProducer: (reservation, signal) => admitWithBackpressure(
-      () => reserveProducerDurably(reservation),
+      () => reserveProducerDurably(reservation, false),
+      signal,
+    ),
+    reclaimProducer: (reservation, signal) => admitWithBackpressure(
+      () => reserveProducerDurably(reservation, true),
       signal,
     ),
     releaseProducer: (producerKey) => serializeStateChange(

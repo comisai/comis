@@ -314,6 +314,9 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         const reserved = await deps.reserveAnnouncementProducer(reservation);
         if (!reserved.ok) throw reserved.error;
         if (reserved.value.status === "recovery_owned") {
+          if (reserved.value.lifecycleState === "active") {
+            throw new Error("Cross-session operation execution is already owned by an unresolved attempt");
+          }
           return reserved.value.lifecycleState === "no_reply"
             ? { sent: true, announced: false }
             : { sent: true };

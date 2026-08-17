@@ -334,7 +334,9 @@ function isRetirementProducer(
     case "session":
       return typeof producer.agentId === "string"
         && producer.agentId.length > 0
-        && ConversationRefSchema.safeParse(producer.conversationRef).success;
+        && ConversationRefSchema.safeParse(producer.conversationRef).success
+        && typeof producer.checkpointId === "string"
+        && producer.checkpointId.length > 0;
     case "tool_result":
       return typeof producer.agentId === "string"
         && producer.agentId.length > 0

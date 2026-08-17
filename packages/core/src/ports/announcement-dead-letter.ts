@@ -125,7 +125,7 @@ export type AnnouncementProducerReservationOutcome =
   | { readonly status: "claimed" }
   | {
       readonly status: "recovery_owned";
-      readonly lifecycleState: "delivery_owned" | "promotion_ready" | "no_reply";
+      readonly lifecycleState: "active" | "delivery_owned" | "promotion_ready" | "no_reply";
     };
 
 /** Content-free operator projection of a retained delivery. */
@@ -184,6 +184,7 @@ export type AnnouncementRetirementProducer =
       readonly tenantId: string;
       readonly agentId: string;
       readonly conversationRef: ConversationRef;
+      readonly checkpointId: string;
     }
   | {
       readonly kind: "tool_result";
@@ -204,6 +205,10 @@ export type AnnouncementRetirementProducer =
  */
 export interface AnnouncementDeadLetterQueuePort {
   reserveProducer(
+    reservation: AnnouncementProducerReservation,
+    signal?: AbortSignal,
+  ): Promise<Result<AnnouncementProducerReservationOutcome, Error>>;
+  reclaimProducer(
     reservation: AnnouncementProducerReservation,
     signal?: AbortSignal,
   ): Promise<Result<AnnouncementProducerReservationOutcome, Error>>;

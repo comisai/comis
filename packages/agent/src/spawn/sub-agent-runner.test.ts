@@ -1121,6 +1121,55 @@ describe("createSubAgentRunner", () => {
     await runner.shutdown();
   });
 
+  it("settles recovery-owned producer work without starting the provider", async () => {
+    vi.useRealTimers();
+    const reserveProducer = vi.fn(async () => ok({
+      status: "recovery_owned" as const,
+      lifecycleState: "delivery_owned" as const,
+    }));
+    deps.deadLetterQueue = {
+      reserveProducer,
+      reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer: vi.fn(async () => ok(true)),
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "recover completion",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+
+    await vi.waitFor(() => expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "completed",
+    }));
+    expect(reserveProducer).toHaveBeenCalledOnce();
+    expect(deps.executeAgent).not.toHaveBeenCalled();
+    expect(deps.deadLetterQueue.releaseProducer).not.toHaveBeenCalled();
+    expect(deps.deadLetterQueue.cancelProducer).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
   it("retries announce skip persistence without sending a failure notice", async () => {
     vi.mocked(deps.executeAgent).mockResolvedValue({
       response: "private result ANNOUNCE_SKIP",
@@ -7377,7 +7426,7 @@ describe("killRun attribution + notification + trajectory teardown", () => {
       expect.objectContaining({
         runId,
         retirementKeys: [expect.any(String)],
-        producer: expect.objectContaining({ kind: "session" }),
+        producer: expect.objectContaining({ kind: "session", checkpointId: runId }),
       }),
       expect.any(AbortSignal),
     );

@@ -146,6 +146,7 @@ export type AnnouncementDeadLetterQueue = Pick<
 > & Partial<Pick<
   AnnouncementDeadLetterQueuePort,
   | "reserveProducer"
+  | "reclaimProducer"
   | "releaseProducer"
   | "cancelProducer"
   | "suppressProducer"

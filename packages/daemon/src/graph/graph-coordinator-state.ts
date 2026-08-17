@@ -307,6 +307,7 @@ export interface GraphCoordinatorDeps {
   announcementDeadLetterQueue?: Pick<
     AnnouncementDeadLetterQueuePort,
     | "reserveProducer"
+    | "reclaimProducer"
     | "releaseProducer"
     | "cancelProducer"
     | "prepareTerminalDecisionRetirement"

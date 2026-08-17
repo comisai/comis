@@ -2,7 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import os from "node:os";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
-import { resolveGraphCacheRetention } from "./index.js";
+import {
+  createRetirementProducerExistenceResolver,
+  resolveGraphCacheRetention,
+} from "./index.js";
 import {
   createDeliveryOrigin,
   createConversationLocator,
@@ -495,6 +498,32 @@ describe("setupCrossSession", () => {
     } finally {
       rmSync(deps.container.config.dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("reconciles a non-durable producer from run authority instead of session existence", async () => {
+    const conversation = makeConversation("test-tenant", "agent-1");
+    const loadByRef = vi.fn(() => ({
+      ok: true as const,
+      value: {
+        ...conversation,
+        messages: [],
+        metadata: {},
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }));
+    const producerExists = createRetirementProducerExistenceResolver({
+      sessionStore: { loadByRef },
+    });
+
+    await expect(producerExists({
+      kind: "session",
+      tenantId: "test-tenant",
+      agentId: "agent-1",
+      conversationRef: conversation.conversationRef,
+      checkpointId: "non-durable-run",
+    })).resolves.toEqual({ ok: true, value: false });
+    expect(loadByRef).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------

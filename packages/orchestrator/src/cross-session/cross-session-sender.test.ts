@@ -419,6 +419,36 @@ describe("createCrossSessionSender", () => {
     expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
   });
 
+  it("refuses to replay an active cross-session operation", async () => {
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer: vi.fn(async () => ok({
+        status: "recovery_owned" as const,
+        lifecycleState: "active" as const,
+      })),
+      releaseAnnouncementProducer: vi.fn(async () => ok(undefined)),
+      cancelAnnouncementProducer: vi.fn(async () => ok(undefined)),
+      suppressAnnouncementProducer: vi.fn(async () => ok(true)),
+    });
+
+    await expect(sender.send({
+      target: QUERY_ONE,
+      text: "question",
+      mode: "wait",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "active-tool-call",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    })).rejects.toThrow("already owned by an unresolved attempt");
+
+    expect(deps.sessionStore.save).not.toHaveBeenCalled();
+    expect(deps.executeInSession).not.toHaveBeenCalled();
+  });
+
   it("durably records announce skip before consuming producer ownership", async () => {
     vi.mocked(deps.executeInSession).mockResolvedValue({
       response: "private result ANNOUNCE_SKIP",

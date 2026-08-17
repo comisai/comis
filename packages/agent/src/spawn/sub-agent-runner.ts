@@ -2006,6 +2006,7 @@ function classifyCompletionErrorKind(
         tenantId: run.conversationScope.tenantId,
         agentId: run.agentId,
         conversationRef: run.conversationRef,
+        checkpointId: run.runId,
       },
     );
   };
@@ -3191,6 +3192,7 @@ function classifyCompletionErrorKind(
     const execPromise = (async () => {
       let rollbackHandle: { rollback: () => Promise<void> } | undefined;
       let producerSuppressionAttempted = false;
+      let producerRecoveryOwned = false;
       const traceId = params.graphTraceId ?? randomUUID();
 
       try {
@@ -3280,6 +3282,7 @@ function classifyCompletionErrorKind(
               tenantId: run.conversationScope.tenantId,
               agentId: run.agentId,
               conversationRef: run.conversationRef,
+              checkpointId: runId,
             },
             ...(resolveAnnouncementThreadId(
               params.requesterOrigin,
@@ -3293,7 +3296,15 @@ function classifyCompletionErrorKind(
                 ),
               } : {}),
           };
-          const reservedProducer = await deps.deadLetterQueue.reserveProducer(
+          const reserveProducer = params.callerType === "durable-resume"
+            ? deps.deadLetterQueue.reclaimProducer
+            : deps.deadLetterQueue.reserveProducer;
+          if (!reserveProducer) {
+            throw new DurableSubAgentAdmissionError(
+              "Sub-agent announcement producer reclaim is unavailable",
+            );
+          }
+          const reservedProducer = await reserveProducer(
             producerReservation,
             producerAdmissionAbort.signal,
           );
@@ -3302,6 +3313,18 @@ function classifyCompletionErrorKind(
               "Sub-agent announcement producer admission failed",
               reservedProducer.error,
             );
+          }
+          if (reservedProducer.value.status === "recovery_owned") {
+            producerRecoveryOwned = true;
+            startDeferreds.get(runId)?.resolve(ok(undefined));
+            if (!durableResumeHandshakeRunIds.has(runId)) {
+              startDeferreds.delete(runId);
+            }
+            terminalizeRun(runId, {
+              endReason: "completed",
+              completedAtMs: clock.now(),
+            });
+            return;
           }
         }
 
@@ -4337,7 +4360,7 @@ function classifyCompletionErrorKind(
         // ingesting other sessions' events into its trajectory file (stamped
         // with the dead child's sessionId).
         closeTrajectoryOnce(run);
-        if (!producerSuppressionAttempted) {
+        if (!producerSuppressionAttempted && !producerRecoveryOwned) {
           const transition = producerTransferAttemptedRunIds.has(runId)
             ? deps.deadLetterQueue?.releaseProducer
             : deps.deadLetterQueue?.cancelProducer;

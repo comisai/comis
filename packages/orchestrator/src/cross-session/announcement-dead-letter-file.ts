@@ -314,7 +314,7 @@ function sameRetirementProducer(
     return right.kind === "tool_result" && left.toolCallId === right.toolCallId;
   }
   if (right.kind === "tool_result") return false;
-  return true;
+  return left.checkpointId === right.checkpointId;
 }
 
 export function isAnnouncementRetirementProducer(
@@ -327,7 +327,9 @@ export function isAnnouncementRetirementProducer(
     case "session":
       return typeof producer.agentId === "string"
         && producer.agentId.length > 0
-        && ConversationRefSchema.safeParse(producer.conversationRef).success;
+        && ConversationRefSchema.safeParse(producer.conversationRef).success
+        && typeof producer.checkpointId === "string"
+        && producer.checkpointId.length > 0;
     case "tool_result":
       return typeof producer.agentId === "string"
         && producer.agentId.length > 0

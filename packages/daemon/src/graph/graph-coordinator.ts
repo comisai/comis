@@ -22,6 +22,7 @@ import {
   ResolvedTurnScopeSchema,
   toSafeErrorLogString,
   createStableAnnouncementOperationId,
+  type AnnouncementProducerReservationOutcome,
 } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -107,20 +108,26 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     (gs) => handleGraphCompletionFn(state, deps, gs), deps.logger,
   );
   const announcementLifecycle = new AbortController();
-  const pendingAnnouncementAdmissions = new Set<Promise<Result<boolean, Error>>>();
+  const pendingAnnouncementAdmissions = new Set<Promise<Result<
+    AnnouncementProducerReservationOutcome | { status: "not_required" },
+    Error
+  >>>();
   async function cancelGraphAnnouncementProducer(graphId: string): Promise<Result<void, Error>> {
     if (!deps.announcementDeadLetterQueue) return ok(undefined);
     return deps.announcementDeadLetterQueue.cancelProducer(graphId);
   }
   async function reserveGraphAnnouncementProducerInternal(
     gs: GraphRunState,
-  ): Promise<Result<boolean, Error>> {
+    reclaimActive: boolean,
+  ): Promise<Result<AnnouncementProducerReservationOutcome | { status: "not_required" }, Error>> {
     if (announcementLifecycle.signal.aborted) {
       return err(new Error("Graph coordinator is shutting down"));
     }
     const hasAnnouncementRoute = gs.announceChannelType !== undefined
       || gs.announceChannelId !== undefined;
-    if (!hasAnnouncementRoute || !deps.announcementDeadLetterQueue) return ok(false);
+    if (!hasAnnouncementRoute || !deps.announcementDeadLetterQueue) {
+      return ok({ status: "not_required" });
+    }
     if (
       gs.announceChannelType === undefined
       || gs.announceChannelId === undefined
@@ -136,7 +143,10 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       gs.callerSessionKey,
       gs.graphId,
     );
-    const reserved = await deps.announcementDeadLetterQueue.reserveProducer({
+    const reserveProducer = reclaimActive
+      ? deps.announcementDeadLetterQueue.reclaimProducer
+      : deps.announcementDeadLetterQueue.reserveProducer;
+    const reserved = await reserveProducer({
       idempotencyKey: operationId,
       agentId: gs.callerAgentId,
       runId: gs.graphId,
@@ -166,6 +176,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         ? err(new Error("Graph coordinator is shutting down"))
         : reserved;
     }
+    if (reserved.value.status === "recovery_owned") return reserved;
     if (announcementLifecycle.signal.aborted) {
       const cancelled = await cancelGraphAnnouncementProducer(gs.graphId);
       if (!cancelled.ok) return cancelled;
@@ -185,12 +196,13 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         : retirement;
     }
     gs.announcementProducerReserved = true;
-    return ok(true);
+    return reserved;
   }
   async function reserveGraphAnnouncementProducer(
     gs: GraphRunState,
-  ): Promise<Result<boolean, Error>> {
-    const admission = reserveGraphAnnouncementProducerInternal(gs);
+    reclaimActive = false,
+  ): Promise<Result<AnnouncementProducerReservationOutcome | { status: "not_required" }, Error>> {
+    const admission = reserveGraphAnnouncementProducerInternal(gs, reclaimActive);
     pendingAnnouncementAdmissions.add(admission);
     try {
       return await admission;
@@ -635,6 +647,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
     const announcementProducer = await reserveGraphAnnouncementProducer(gs);
     if (!announcementProducer.ok) return err(announcementProducer.error.message);
+    if (announcementProducer.value.status === "recovery_owned") {
+      return err("Graph execution is already owned by announcement recovery");
+    }
     if (announcementLifecycle.signal.aborted) {
       if (gs.announcementProducerReserved) {
         const cancelled = await cancelGraphAnnouncementProducer(graphId);
@@ -1048,8 +1063,18 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       maxAnnouncementChars: config.maxAnnouncementChars,
     };
 
-    const announcementProducer = await reserveGraphAnnouncementProducer(gs);
+    const announcementProducer = await reserveGraphAnnouncementProducer(gs, true);
     if (!announcementProducer.ok) return announcementProducer;
+    if (announcementProducer.value.status === "recovery_owned") {
+      if (!deps.durableRuns) {
+        return err(new Error("Graph recovery-owned completion lacks durable run authority"));
+      }
+      const terminalized = await deps.durableRuns.terminalize(
+        validRecord.checkpointId,
+        "completed",
+      );
+      return terminalized.ok ? ok(undefined) : terminalized;
+    }
     if (announcementLifecycle.signal.aborted) {
       if (gs.announcementProducerReserved) {
         const cancelled = await cancelGraphAnnouncementProducer(graphId);

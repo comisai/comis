@@ -17,7 +17,7 @@ import type {
   DeliveryService, DeliverToChannelOptions, DurableRunPort,
   FileLockPort, NormalizedMessage, OutwardSendLedgerPort,
   SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef,
-  MemoryWriteEntry, MemoryWriteScope, CitationEvidence,
+  MemoryWriteEntry, MemoryWriteScope, CitationEvidence, AnnouncementRetirementProducer,
 } from "@comis/core";
 import {
   createConversationRef, createResolvedRequestContext,
@@ -35,7 +35,7 @@ import {
   type SendRecoverableCompletionAnnouncement,
 } from "@comis/orchestrator";
 import { randomUUID } from "node:crypto";
-import { err, ok } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
@@ -64,6 +64,38 @@ const NOOP_LOGGER: ComisLogger = {
   audit: () => {},
   child: () => NOOP_LOGGER,
 };
+
+export function createRetirementProducerExistenceResolver(deps: {
+  sessionStore: Pick<SessionStorePort, "loadByRef">;
+  durableRuns?: Pick<DurableRunPort, "getByCheckpoint">;
+  graphProducerExists?: (graphId: string) => boolean;
+}): (producer: AnnouncementRetirementProducer) => Promise<Result<boolean, Error>> {
+  return async (producer) => {
+    if (producer.kind === "graph") {
+      return ok(deps.graphProducerExists?.(producer.graphId) ?? true);
+    }
+    if (producer.kind === "session") {
+      if (!deps.durableRuns) return ok(false);
+      const checkpoint = await deps.durableRuns.getByCheckpoint(producer.checkpointId);
+      if (!checkpoint.ok) return checkpoint;
+      return ok(checkpoint.value?.status === "running");
+    }
+    const loaded = deps.sessionStore.loadByRef({
+      tenantId: producer.tenantId,
+      agentId: producer.agentId,
+    }, producer.conversationRef);
+    if (!loaded.ok) return err(loaded.error);
+    if (!loaded.value) return ok(false);
+    const committed = loaded.value.messages.some((message) => {
+      if (typeof message !== "object" || message === null || Array.isArray(message)) {
+        return false;
+      }
+      const record = message as Record<string, unknown>;
+      return record.role === "toolResult" && record.toolCallId === producer.toolCallId;
+    });
+    return ok(!committed);
+  };
+}
 /** All services produced by the cross-session messaging setup. */
 export interface CrossSessionResult {
   /** Cross-session message sender for agent-to-agent communication. */
@@ -418,26 +450,11 @@ export function setupCrossSession(deps: {
     // is the authoritative no-double-notify signal). Absent ⇒ at-least-once delivery.
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     receiptAwareSendToChannel: sendSingleTextToChannelWithReceipt,
-    retirementProducerExists: async (producer) => {
-      if (producer.kind === "graph") {
-        return ok(deps.graphProducerExists?.(producer.graphId) ?? true);
-      }
-      const loaded = sessionStore.loadByRef({
-        tenantId: producer.tenantId,
-        agentId: producer.agentId,
-      }, producer.conversationRef);
-      if (!loaded.ok) return err(loaded.error);
-      if (producer.kind === "session") return ok(loaded.value !== undefined);
-      if (!loaded.value) return ok(false);
-      const committed = loaded.value.messages.some((message) => {
-        if (typeof message !== "object" || message === null || Array.isArray(message)) {
-          return false;
-        }
-        const record = message as Record<string, unknown>;
-        return record.role === "toolResult" && record.toolCallId === producer.toolCallId;
-      });
-      return ok(!committed);
-    },
+    retirementProducerExists: createRetirementProducerExistenceResolver({
+      sessionStore,
+      ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+      ...(deps.graphProducerExists ? { graphProducerExists: deps.graphProducerExists } : {}),
+    }),
     reconcileAttachments: (referencedPaths) => reconcileCompletionAttachmentSnapshots(
       container.config.dataDir,
       referencedPaths,

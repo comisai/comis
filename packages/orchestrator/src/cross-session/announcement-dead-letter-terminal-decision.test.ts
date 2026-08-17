@@ -126,6 +126,7 @@ describe("announcement terminal decisions", () => {
       tenantId: "tenant_a",
       agentId: "agent_a",
       conversationRef: ConversationRefSchema.parse(`cv_${"a".repeat(43)}`),
+      checkpointId: "checkpoint-a",
     };
     const first = createAnnouncementTerminalDecisionStore(filePath);
     await first.record({ ...owner, completionKeys: ["completion-crash"] }, "delivered");

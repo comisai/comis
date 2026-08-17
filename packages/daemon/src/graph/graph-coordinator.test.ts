@@ -441,6 +441,7 @@ describe("createGraphCoordinator", () => {
     it("reserves graph announcement ownership before node execution", async () => {
       const announcementDeadLetterQueue = {
         reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
         releaseProducer: vi.fn(async () => ok(undefined)),
         cancelProducer: vi.fn(async () => ok(undefined)),
         prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
@@ -499,6 +500,7 @@ describe("createGraphCoordinator", () => {
     it("surfaces graph producer cancellation failure before node execution", async () => {
       const announcementDeadLetterQueue = {
         reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
         releaseProducer: vi.fn(async () => ok(undefined)),
         cancelProducer: vi.fn(async () => err(new Error("graph producer cancellation unavailable"))),
         prepareTerminalDecisionRetirement: vi.fn(async () =>
@@ -536,6 +538,7 @@ describe("createGraphCoordinator", () => {
             }, { once: true });
           });
         }),
+        reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
         releaseProducer: vi.fn(async () => ok(undefined)),
         cancelProducer: vi.fn(async () => ok(undefined)),
         prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
@@ -5315,6 +5318,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const durableRuns = createRecordingDurableRuns();
       const announcementDeadLetterQueue = {
         reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
         releaseProducer: vi.fn(async () => ok(undefined)),
         cancelProducer: vi.fn(async () => ok(undefined)),
         prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
@@ -5353,7 +5357,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       });
 
       expect(await coordinator.resumeGraph(record)).toEqual({ ok: true, value: undefined });
-      expect(announcementDeadLetterQueue.reserveProducer).toHaveBeenCalledWith(
+      expect(announcementDeadLetterQueue.reclaimProducer).toHaveBeenCalledWith(
         expect.objectContaining({
           runId: "original-graph-run",
           rootRunId: "root-original-workspace",
@@ -5361,7 +5365,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         }),
         expect.any(AbortSignal),
       );
-      expect(announcementDeadLetterQueue.reserveProducer.mock.invocationCallOrder[0])
+      expect(announcementDeadLetterQueue.reclaimProducer.mock.invocationCallOrder[0])
         .toBeLessThan(vi.mocked(runner.spawn).mock.invocationCallOrder[0]!);
       expect(runner._getSpawnCalls()[0]?.graphSharedDir).toBe(
         "/tmp/test-comis/graph-runs/original-graph-run",
@@ -5387,6 +5391,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
     it("reclaims a resumed announcement route from its authenticated endpoint", async () => {
       const announcementDeadLetterQueue = {
         reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
         releaseProducer: vi.fn(async () => ok(undefined)),
         cancelProducer: vi.fn(async () => ok(undefined)),
         prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
@@ -5408,7 +5413,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
 
       await expect(coordinator.resumeGraph(record)).resolves.toEqual(ok(undefined));
 
-      expect(announcementDeadLetterQueue.reserveProducer).toHaveBeenCalledWith(
+      expect(announcementDeadLetterQueue.reclaimProducer).toHaveBeenCalledWith(
         expect.objectContaining({
           channelType: "telegram",
           channelId: "chat_a",
@@ -5416,9 +5421,46 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         }),
         expect.any(AbortSignal),
       );
-      expect(announcementDeadLetterQueue.reserveProducer.mock.invocationCallOrder[0])
+      expect(announcementDeadLetterQueue.reclaimProducer.mock.invocationCallOrder[0])
         .toBeLessThan(vi.mocked(runner.spawn).mock.invocationCallOrder[0]!);
 
+      await coordinator.shutdown();
+    });
+
+    it("does not resume graph nodes after announcement recovery owns completion", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        reclaimProducer: vi.fn(async () => ok({
+          status: "recovery_owned" as const,
+          lifecycleState: "delivery_owned" as const,
+        })),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => ok(undefined)),
+        prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
+      };
+      const { deps, runner } = createTestDeps({ durableRuns, announcementDeadLetterQueue });
+      const coordinator = createGraphCoordinator(deps);
+      const exactGraph = buildGraph([{ nodeId: "A" }]);
+      const record = makeDurableGraphRecord({
+        checkpointId: "recovery-owned-graph",
+        rootRunId: "recovery-owned-root",
+        spawnTree: [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        checkpointRef: seedGraphCheckpoint(
+          "recovery-owned-graph",
+          exactGraph,
+          [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        ),
+      });
+
+      await expect(coordinator.resumeGraph(record)).resolves.toEqual(ok(undefined));
+      expect(announcementDeadLetterQueue.reclaimProducer).toHaveBeenCalledOnce();
+      expect(announcementDeadLetterQueue.prepareTerminalDecisionRetirement).not.toHaveBeenCalled();
+      expect(runner.spawn).not.toHaveBeenCalled();
+      expect(durableRuns.terminalize).toHaveBeenCalledWith(
+        "recovery-owned-graph",
+        "completed",
+      );
       await coordinator.shutdown();
     });
 

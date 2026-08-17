@@ -1389,6 +1389,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
         tenantId: decision.deliveryAuthority.tenantId,
         agentId: decision.deliveryAuthority.agentId,
         conversationRef: decision.deliveryAuthority.conversationRef,
+        checkpointId: decision.runId,
       },
     };
   }
@@ -1570,6 +1571,35 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(queue.cancelProducer("producer-a")).resolves.toEqual(ok(undefined));
     await expect(third).resolves.toEqual(ok({ status: "claimed" }));
     expect(queue.size()).toBe(2);
+  });
+
+  it("requires an explicit restart reclaim before active producer work resumes", async () => {
+    const producer = producerInput({
+      idempotencyKey: "active-reclaim-operation",
+      runId: "active-reclaim-run",
+      completionKeys: ["active-reclaim-operation"],
+      retirementKeys: ["active-reclaim-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "active",
+    }));
+    await expect(first.reclaimProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "active",
+    }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reclaimProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
   });
 
   it("promotes a persisted producer reservation after restart", async () => {
