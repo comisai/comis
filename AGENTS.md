@@ -397,7 +397,7 @@ If full validation is impractical, document what was run and what was skipped.
 
 **Releasing `vX.Y.Z`** (maintainer operation — never performed without an explicit request):
 
-1. Bump **all 16 `packages/*/package.json` to the same version** — they move together. The umbrella package bundles the others, so drift surfaces at publish time, not in a local build.
+1. Bump **every `packages/*/package.json` to the same version** — they move together. The umbrella package bundles the others, so drift surfaces at publish time, not in a local build. A merge cannot catch this on its own: a release bump on the default branch never touches a package that exists only on a feature branch, so the new package silently keeps its pre-bump version. `test/architecture/package-version-alignment.test.ts` enforces the invariant locally, and the release preflight rejects a tag that disagrees with any package.
 2. Sweep for stray pins: `grep -rn '<old-version>' --include='*.json' --include='*.mdx' --include='*.md' .` (excluding `node_modules`, `dist/`, lockfiles, changelog). Docs are intentionally un-pinned; a version appearing there is usually a regression.
 3. `pnpm validate`, plus `pnpm validate:full` on Linux for the integration and tarball tiers.
 4. Commit, push, tag. The `vX.Y.Z` tag triggers npm publish (with provenance) and the multi-arch image builds.

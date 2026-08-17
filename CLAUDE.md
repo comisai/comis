@@ -217,9 +217,9 @@ git branch -D worktree-<name>
 
 Steps to ship `vX.Y.Z`:
 
-1. **Bump all 16 `packages/*/package.json` to `X.Y.Z`** — they must move together. The umbrella `comisai` package (in `packages/comis/`) bundles the others, so version drift between them surfaces at publish time, not in local builds.
+1. **Bump every `packages/*/package.json` to `X.Y.Z`** — they must move together. The umbrella `comisai` package (in `packages/comis/`) bundles the others, so version drift between them surfaces at publish time, not in local builds. **A clean merge cannot catch this drift**: a release bump on `main` only touches the packages that exist there, so a package added on a feature branch has nothing to conflict on and silently keeps its pre-bump version while every sibling moves — observed when `@comis/capability-service-sdk` was left a release behind by a conflict-free merge of a release commit. `test/architecture/package-version-alignment.test.ts` now fails the drift in `pnpm validate`, and `.github/scripts/verify-release-tag.mjs` rejects a tag that disagrees with **any** workspace package, not just the umbrella.
 
-2. **Sweep for version pins.** The docs no longer pin release versions (de-pinned in the accuracy-first docs rewrite), so as of v1.0.54 this sweep should hit only the 16 `packages/*/package.json` — but run it every bump as the guard against a pin creeping back:
+2. **Sweep for version pins.** The docs no longer pin release versions, so this sweep should hit only the `packages/*/package.json` manifests — but run it every bump as the guard against a pin creeping back:
    ```bash
    grep -rn '<old-version>' --include='*.json' --include='*.mdx' --include='*.md' . \
      | grep -v node_modules | grep -v 'dist/' | grep -v package-lock | grep -v CHANGELOG
