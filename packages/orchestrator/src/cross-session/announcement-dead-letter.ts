@@ -48,6 +48,7 @@ import { createProducerPromotionStage } from "./announcement-dead-letter-promoti
 import { createStorageStage } from "./announcement-dead-letter-storage.js";
 import {
   type DeadLetterQueueContext,
+  type DeadLetterRecordStore,
 } from "./announcement-dead-letter-context.js";
 export { isAnnouncementChannelType } from "./announcement-dead-letter-file.js";
 export type { AnnouncementLogger } from "./announcement-dead-letter-types.js";
@@ -65,23 +66,6 @@ export type {
 export type AnnouncementDeadLetterQueue = AnnouncementDeadLetterQueuePort;
 
 /** Create a JSONL-backed announcement dead-letter queue. */
-/**
- * The queue's in-memory record set.
- *
- * One object rather than six bindings because persistence is all-or-nothing:
- * every record kind is rewritten to the same JSONL file in a single atomic
- * replace, so they are read and swapped together. Grouping them lets the
- * lifecycle stages that own each kind take the whole set explicitly instead of
- * closing over it.
- */
-export interface DeadLetterRecordStore {
-  entries: DeadLetterEntry[];
-  decisionReservations: ParentDecisionReservationRecord[];
-  producerReservations: ProducerReservationRecord[];
-  producerHandoffs: AnnouncementProducerHandoffRecord[];
-  invalidRecords: InvalidDeadLetterRecord[];
-  terminalInvalidRecords: QuarantinedInvalidAnnouncementRecord[];
-}
 
 export function createAnnouncementDeadLetterQueue(
   opts: AnnouncementDeadLetterQueueOptions,

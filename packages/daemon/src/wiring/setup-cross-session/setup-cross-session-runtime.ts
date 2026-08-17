@@ -55,8 +55,8 @@ import { createAnnounceToParent } from "./announce-to-parent.js";
 
 export { createRetirementProducerStateResolver } from "./retirement-producer-state.js";
 
-export type { CrossSessionResult } from "./setup-cross-session-result.js";
-import type { CrossSessionResult } from "./setup-cross-session-result.js";
+export type { CrossSessionResult } from "./cross-session-result.js";
+import type { CrossSessionResult } from "./cross-session-result.js";
 
 /**
  * Create cross-session messaging services: cross-session sender + sub-agent runner.

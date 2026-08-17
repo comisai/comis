@@ -33,8 +33,8 @@ import {
   isValidAnnouncementDecision,
   sameAnnouncementProducerReservation,
 } from "./announcement-dead-letter-guards.js";
-import type { DeadLetterRecordStore } from "./announcement-dead-letter.js";
 import type { AnnouncementLogger } from "./announcement-dead-letter-types.js";
+import type { DeadLetterRecordStore } from "./announcement-dead-letter-context.js";
 import type {
   DeadLetterEntry,
   ParentDecisionReservationRecord,

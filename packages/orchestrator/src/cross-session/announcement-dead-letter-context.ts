@@ -23,6 +23,7 @@ import type {
   AnnouncementProducerRecoveryOutcome,
   AnnouncementProducerReservation,
   OutwardSendLedgerPort,
+  QuarantinedInvalidAnnouncementRecord,
 } from "@comis/core";
 import type { Result } from "@comis/shared";
 import type { GovernedAnnouncementAttachment } from "./announcement-outward-operation.js";
@@ -47,13 +48,30 @@ import type {
   PreparedRecoveryAttachment,
   RecoveryDeliveryOptions,
 } from "./announcement-dead-letter-types.js";
-import type { DeadLetterRecordStore } from "./announcement-dead-letter.js";
 
 /** Outcome of draining one governed entry against the outward ledger. */
 export type GovernedDrainOutcome =
   | "receipt_already_committed"
   | "receipt_committed_now"
   | "retained";
+
+/**
+ * The queue's in-memory record set.
+ *
+ * One object rather than six bindings because persistence is all-or-nothing:
+ * every record kind is rewritten to the same JSONL file in a single atomic
+ * replace, so they are read and swapped together. Grouping them lets the
+ * lifecycle stages that own each kind take the whole set explicitly instead of
+ * closing over it.
+ */
+export interface DeadLetterRecordStore {
+  entries: DeadLetterEntry[];
+  decisionReservations: ParentDecisionReservationRecord[];
+  producerReservations: ProducerReservationRecord[];
+  producerHandoffs: AnnouncementProducerHandoffRecord[];
+  invalidRecords: InvalidDeadLetterRecord[];
+  terminalInvalidRecords: QuarantinedInvalidAnnouncementRecord[];
+}
 
 export type AnnouncementTextChunkOwner = AnnouncementParentDecisionReservation;
 

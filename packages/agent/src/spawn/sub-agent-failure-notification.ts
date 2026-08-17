@@ -24,7 +24,11 @@ import {
   isRecoverableCompletionAnnouncementConfirmedDelivered,
 } from "./announcement-ports.js";
 import { buildAnnounceKey, type DeliveryDedup } from "./announce-key.js";
-import type { SubAgentRunnerDeps } from "./sub-agent-runner.js";
+import type {
+  AnnouncementBatcher,
+  SendGovernedCompletionAnnouncement,
+  SendRecoverableCompletionAnnouncement,
+} from "./announcement-ports.js";
 
 interface FailureNotificationParams {
   channelType: string;
@@ -46,10 +50,24 @@ interface FailureNotificationParams {
   detail?: string;
 }
 
-type FailureNotificationDeps = Pick<
-  SubAgentRunnerDeps,
-  "sendToChannel" | "sendGovernedAnnouncement" | "sendRecoverableAnnouncement" | "logger" | "batcher"
-> & {
+// Declared structurally rather than Pick'd off the runner's deps: importing
+// that type would point this module back at the runner, and the runner already
+// reaches it through the result processor.
+type FailureNotificationDeps = {
+  sendToChannel: (
+    channelType: string,
+    channelId: string,
+    text: string,
+    options?: { threadId?: string },
+  ) => Promise<boolean>;
+  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
+  logger?: {
+    warn(obj: Record<string, unknown>, msg: string): void;
+    debug(obj: Record<string, unknown>, msg: string): void;
+  };
+  batcher?: AnnouncementBatcher;
+} & {
     /**
      * Shared, bounded delivered-key store. Lets the failure-path dedup
      * work WITHOUT a batcher. When both a
