@@ -1702,3 +1702,66 @@ describe("managed-run restart recovery scans", () => {
     reopenedDb.close();
   });
 });
+
+describe("managed-run service liveness", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    ensureManagedRunTables(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("advances run liveness only forward and only for the owning service instance", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+
+    const first = await store.recordHeartbeat(SERVICE_SCOPE, {
+      managedRunId: "managed-run_a",
+      observedAtMs: 1_800_000_000_100,
+    });
+    expect(first.ok && first.value.kind).toBe("committed");
+
+    const stale = await store.recordHeartbeat(SERVICE_SCOPE, {
+      managedRunId: "managed-run_a",
+      observedAtMs: 1_800_000_000_090,
+    });
+    expect(stale.ok && stale.value.kind).toBe("rejected");
+
+    const foreign = await store.recordHeartbeat(OTHER_SERVICE_SCOPE, {
+      managedRunId: "managed-run_a",
+      observedAtMs: 1_800_000_000_200,
+    });
+    expect(foreign.ok && foreign.value.kind).toBe("rejected");
+
+    const stored = await store.get(OWNER_SCOPE, "managed-run_a");
+    expect(stored.ok && stored.value?.lastHeartbeatAtMs).toBe(1_800_000_000_100);
+  });
+
+  it("refuses liveness for a terminal run so a dead service cannot look current", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    const cancelled = await store.claimTransition(SERVICE_SCOPE, {
+      operationId: "operation_cancel",
+      managedRunId: "managed-run_a",
+      expectedStatuses: ["active"],
+      nextStatus: "cancelled",
+      nextStatusReason: "owner_cancelled",
+      transitionedAtMs: 1_800_000_000_150,
+      terminalOutcome: { kind: "cancelled", recordedAtMs: 1_800_000_000_150 },
+    });
+    expect(cancelled.ok && cancelled.value.kind).toBe("claimed");
+
+    const beat = await store.recordHeartbeat(SERVICE_SCOPE, {
+      managedRunId: "managed-run_a",
+      observedAtMs: 1_800_000_000_200,
+    });
+
+    expect(beat.ok && beat.value.kind).toBe("rejected");
+  });
+});
