@@ -1765,3 +1765,84 @@ describe("managed-run service liveness", () => {
     expect(beat.ok && beat.value.kind).toBe("rejected");
   });
 });
+
+describe("managed-run administration reads", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    ensureManagedRunTables(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("lists runs across owner scopes only through the named administration read", async () => {
+    // The scoped list is the path a service or a conversation uses and it can
+    // never see another principal's work. An operator fleet view is a different
+    // caller class, so it gets its own named method with its own discriminator
+    // rather than an optional scope on the scoped one.
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    expect((await store.create(makeRecord({
+      managedRunId: "managed-run_b",
+      externalRunRefDigest: createHash("sha256").update("external-run_b", "utf8").digest("hex"),
+      principalId: "principal_b",
+      serviceInstanceId: "service-instance_b",
+    }))).ok).toBe(true);
+
+    const all = await store.listForAdministration({ kind: "administration", limit: 50 });
+    expect(all.ok && all.value.map((run) => run.managedRunId).sort())
+      .toEqual(["managed-run_a", "managed-run_b"]);
+
+    const byInstance = await store.listForAdministration({
+      kind: "administration",
+      serviceInstanceId: "service-instance_b",
+      limit: 50,
+    });
+    expect(byInstance.ok && byInstance.value.map((run) => run.managedRunId)).toEqual(["managed-run_b"]);
+
+    const byStatus = await store.listForAdministration({
+      kind: "administration",
+      statuses: ["succeeded"],
+      limit: 50,
+    });
+    expect(byStatus.ok && byStatus.value).toEqual([]);
+  });
+
+  it("refuses an administration read with no bound on how much it returns", async () => {
+    const store = createSqliteManagedRunStore(db);
+
+    const unbounded = await store.listForAdministration({ kind: "administration", limit: 0 });
+
+    expect(unbounded.ok).toBe(false);
+  });
+
+  it("lists attention across owner scopes for one run through the same named read", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    const appended = await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, {
+      managedRunId: "managed-run_a",
+      serviceReportId: "service-report_attention",
+      kind: "attention",
+      externalKey: "decision-a",
+      contentRef: "service-report_attention",
+      contentHash: "a".repeat(64),
+      receivedAtMs: 1_800_000_000_100,
+      retainedUntilMs: 1_800_000_060_000,
+      attentionRef: "attention-body_a",
+      attentionId: "attention_a",
+    });
+    expect(appended.ok && appended.value.kind).toBe("accepted");
+
+    const rows = await store.listAttentionForAdministration({
+      kind: "administration",
+      managedRunId: "managed-run_a",
+      limit: 50,
+    });
+
+    expect(rows.ok && rows.value.map((row) => row.attentionId)).toEqual(["attention_a"]);
+  });
+});
