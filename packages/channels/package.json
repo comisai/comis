@@ -1,13 +1,31 @@
 {
   "name": "@comis/channels",
   "private": true,
-  "version": "1.0.62",
+  "version": "1.0.63",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Messaging adapters for Comis, including Microsoft Teams, Email, Discord, Telegram, Slack, and more.",
-  "keywords": ["comis", "ai-agents", "messaging", "discord", "telegram", "slack", "whatsapp", "signal", "imessage", "line", "irc", "email", "microsoft-teams"],
-  "engines": { "node": ">=22.19.0" },
-  "files": ["dist"],
+  "keywords": [
+    "comis",
+    "ai-agents",
+    "messaging",
+    "discord",
+    "telegram",
+    "slack",
+    "whatsapp",
+    "signal",
+    "imessage",
+    "line",
+    "irc",
+    "email",
+    "microsoft-teams"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

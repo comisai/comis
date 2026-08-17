@@ -1,12 +1,20 @@
 {
   "name": "@comis/daemon",
   "private": true,
-  "version": "1.0.62",
+  "version": "1.0.63",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Background daemon and orchestrator for the Comis agent runtime",
-  "keywords": ["comis", "ai", "agent", "daemon", "orchestrator"],
-  "engines": { "node": ">=22.19.0" },
+  "keywords": [
+    "comis",
+    "ai",
+    "agent",
+    "daemon",
+    "orchestrator"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "files": [
     "dist",
     "bundled-skills"
