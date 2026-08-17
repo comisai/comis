@@ -54,159 +54,14 @@ import {
 import { createAnnouncementFailureNoticeRenderer } from "./announcement-failure-locale.js";
 import { resolvePreservedCrossSessionRoute } from "./cross-session-route.js";
 import { createInternalTurnScope } from "./internal-turn-scope.js";
-/** Silent fallback for test wiring that omits the production logger. */
-const NOOP_LOGGER: ComisLogger = {
-  level: "silent",
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  fatal: () => {},
-  audit: () => {},
-  child: () => NOOP_LOGGER,
-};
+import { createSubAgentResultProcessing } from "./sub-agent-result-processing.js";
+import { createRetirementProducerStateResolver } from "./retirement-producer-state.js";
+import { createAnnounceToParent } from "./announce-to-parent.js";
 
-export function createRetirementProducerStateResolver(deps: {
-  sessionStore: Pick<SessionStorePort, "loadByRef">
-    & Partial<Pick<SessionStorePort, "save">>;
-  durableRuns?: Pick<DurableRunPort, "getByCheckpoint">;
-  graphProducerExists?: (graphId: string) => boolean;
-}): (
-  producer: AnnouncementRetirementProducer,
-) => Promise<Result<AnnouncementRetirementProducerState, Error>> {
-  return async (producer) => {
-    if (producer.kind === "graph") {
-      return ok((deps.graphProducerExists?.(producer.graphId) ?? true)
-        ? { status: "active" as const }
-        : { status: "absent" as const });
-    }
-    if (producer.kind === "session") {
-      const session = deps.sessionStore.loadByRef({
-        tenantId: producer.tenantId,
-        agentId: producer.agentId,
-      }, producer.conversationRef);
-      if (!session.ok) return err(session.error);
-      const recoveryHandoff = session.value === undefined
-        ? undefined
-        : session.value.metadata.announcementProducerRecoveryOutcome;
-      const handoffRecord = typeof recoveryHandoff === "object"
-        && recoveryHandoff !== null
-        && !Array.isArray(recoveryHandoff)
-        ? recoveryHandoff as Record<string, unknown>
-        : undefined;
-      const recoveryOutcome = handoffRecord?.checkpointId === producer.checkpointId
-        ? handoffRecord.outcome
-        : undefined;
-      if (
-        isAnnouncementProducerRecoveryOutcome(recoveryOutcome)
-        && recoveryOutcome.kind === "session"
-      ) {
-        return ok({
-          status: "terminal" as const,
-          terminalReason: recoveryOutcome.terminalReason,
-          recoveryOutcome,
-        });
-      }
-      if (!deps.durableRuns) return ok({ status: "absent" as const });
-      const checkpoint = await deps.durableRuns.getByCheckpoint(producer.checkpointId);
-      if (!checkpoint.ok) return checkpoint;
-      if (!checkpoint.value) return ok({ status: "absent" as const });
-      if (checkpoint.value.status === "running") return ok({ status: "active" as const });
-      return ok({
-        status: "terminal" as const,
-        ...(checkpoint.value.terminalReason
-          ? { terminalReason: checkpoint.value.terminalReason }
-          : {}),
-      });
-    }
-    const loaded = deps.sessionStore.loadByRef({
-      tenantId: producer.tenantId,
-      agentId: producer.agentId,
-    }, producer.conversationRef);
-    if (!loaded.ok) return err(loaded.error);
-    if (!loaded.value) return ok({ status: "absent" as const });
-    const committed = loaded.value.messages.some((message) => {
-      if (typeof message !== "object" || message === null || Array.isArray(message)) {
-        return false;
-      }
-      const record = message as Record<string, unknown>;
-      return record.role === "toolResult" && record.toolCallId === producer.toolCallId;
-    });
-    const recoveryHandoffs = loaded.value.metadata.announcementToolResultRecoveryHandoffs;
-    const handoffsRecord = typeof recoveryHandoffs === "object"
-      && recoveryHandoffs !== null
-      && !Array.isArray(recoveryHandoffs)
-      ? recoveryHandoffs as Record<string, unknown>
-      : undefined;
-    if (committed) {
-      if (handoffsRecord !== undefined && deps.sessionStore.save !== undefined) {
-        const remaining = Object.fromEntries(
-          Object.entries(handoffsRecord).filter(([key]) => key !== producer.operationId),
-        );
-        const saved = deps.sessionStore.save(
-          loaded.value.conversationScope,
-          loaded.value.messages,
-          {
-            ...loaded.value.metadata,
-            announcementToolResultRecoveryHandoffs: remaining,
-          },
-        );
-        if (!saved.ok) return err(saved.error);
-      }
-      return ok({ status: "terminal" as const });
-    }
-    const recoveryHandoff = handoffsRecord === undefined
-      ? undefined
-      : Object.entries(handoffsRecord).find(([key]) => key === producer.operationId)?.[1];
-    const handoffRecord = typeof recoveryHandoff === "object"
-      && recoveryHandoff !== null
-      && !Array.isArray(recoveryHandoff)
-      ? recoveryHandoff as Record<string, unknown>
-      : undefined;
-    const recoveryOutcome = handoffRecord?.operationId === producer.operationId
-      && handoffRecord.toolCallId === producer.toolCallId
-      ? handoffRecord.outcome
-      : undefined;
-    if (
-      isAnnouncementProducerRecoveryOutcome(recoveryOutcome)
-      && recoveryOutcome.kind === "tool_result"
-    ) {
-      return ok({
-        status: "terminal" as const,
-        terminalReason: recoveryOutcome.terminalReason,
-        recoveryOutcome,
-      });
-    }
-    return ok({ status: "active" as const });
-  };
-}
-/** All services produced by the cross-session messaging setup. */
-export interface CrossSessionResult {
-  /** Cross-session message sender for agent-to-agent communication. */
-  crossSessionSender: ReturnType<typeof createCrossSessionSender>;
-  /** Sub-agent task runner for delegated execution. */
-  subAgentRunner: ReturnType<typeof createSubAgentRunner>;
-  /** Channel message sender for graph completion announcements */
-  sendToChannel: (channelType: string, channelId: string, text: string, options?: Omit<DeliverToChannelOptions, "completionMode">) => Promise<boolean>;
-  /** Receipt-aware retained-operation boundary for completion announcements. */
-  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
-  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
-  /** Parent session announcement for graph results */
-  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, callerConversation: ConversationLocator, text: string, channelType: string, channelId: string, options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence }) => Promise<string | undefined>;
-  /** Dead-letter queue for failed announcement persistence. */
-  deadLetterQueue?: ReturnType<typeof createAnnouncementDeadLetterQueue>;
-  /** Announcement batcher for coalescing concurrent graph/sub-agent completions. */
-  announcementBatcher: ReturnType<typeof createAnnouncementBatcher>;
-  closeAnnouncementAdmission: () => void;
-  /**
-   * Cleanup function for proxy-typing controllers + TTL sweep timer. Threaded
-   * to the composition root for invocation via
-   * ShutdownDeps.proxyTypingCleanup (replaces eventBus.on(
-   * "system:shutdown", ...) indirection that silently no-op'd in production).
-   */
-  proxyTypingCleanup: () => void;
-}
+export { createRetirementProducerStateResolver } from "./retirement-producer-state.js";
+
+export type { CrossSessionResult } from "./setup-cross-session-result.js";
+import type { CrossSessionResult } from "./setup-cross-session-result.js";
 
 /**
  * Create cross-session messaging services: cross-session sender + sub-agent runner.
@@ -441,86 +296,11 @@ export function setupCrossSession(deps: {
 
   // Ask the parent agent to rewrite an announcement. The irreversible platform
   // send remains at the receipt-aware announcement-delivery boundary.
-  const announceToParent = async (
-    callerAgentId: string,
-    callerSessionKey: SessionKey,
-    callerConversation: ConversationLocator,
-    text: string,
-    channelType: string,
-    channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence },
-  ): Promise<string | undefined> => {
-    deps.logger?.debug({
-      callerAgentId,
-      channelId: callerSessionKey.channelId,
-      textLength: text.length,
-      channelType,
-      targetChannelId: channelId, resolvedLanguage: options?.resolvedLanguage ?? "unset",
-    }, "announceToParent invoked");
-
-    // Emit proxy typing around announcement delivery (not spawn-time).
-    const proxyId = `announce-${systemNowMs()}-${Math.random().toString(36).slice(2, 8)}`;
-    container.eventBus.emit("typing:proxy_start", {
-      runId: proxyId,
-      channelType,
-      channelId,
-      parentSessionKey: typeof callerSessionKey === "string"
-        ? callerSessionKey
-        : `${callerSessionKey.channelId}:${callerSessionKey.userId}:${callerSessionKey.tenantId}`,
-      agentId: callerAgentId,
-      timestamp: systemNowMs(),
-    });
-    try {
-      // Candidate rewriting is a text-only boundary. An explicit empty tool
-      // set prevents the parent execution from producing platform/tool side
-      // effects before the governed delivery decision is durable.
-      if (
-        callerConversation.conversationScope.tenantId !== callerSessionKey.tenantId
-        || callerConversation.conversationScope.agentId !== callerAgentId
-      ) {
-        deps.logger?.warn({
-          callerAgentId,
-          hint: "repair the captured parent conversation authority before retrying the announcement",
-          errorKind: "precondition" as const,
-        }, "Parent announcement conversation authority is inconsistent");
-        return undefined;
-      }
-      const callerRef = createConversationRef(callerConversation.conversationScope);
-      if (!callerRef.ok || callerRef.value !== callerConversation.conversationRef) return undefined;
-      const result = await executeInSession(
-        callerAgentId,
-        callerSessionKey,
-        callerConversation,
-        text,
-        // Capability-free: the candidate REWRITE boundary for a background completion,
-        // not a work turn — it must not act on the evidence grounding it. Expressed
-        // as `noToolCalls`, not an empty tool array: tools are the FIRST element of
-        // the provider cache key, so emptying them re-wrote a ~200k prefix on the
-        // way in AND again on the way out.
-        undefined,
-        options?.resolvedLanguage, { kind: "background_completion" }, options?.citationEvidence,
-        true,
-      );
-      const trimmed = result.response.trim();
-      const isNoReply = !trimmed || trimmed === "NO_REPLY" || trimmed.startsWith("NO_REPLY");
-      deps.logger?.debug({
-        callerAgentId,
-        responseLength: trimmed.length,
-        willDeliver: !isNoReply,
-        isNoReply,
-      }, "announceToParent execution result");
-      return isNoReply ? undefined : trimmed;
-    } finally {
-      container.eventBus.emit("typing:proxy_stop", {
-        runId: proxyId,
-        channelType,
-        channelId,
-        reason: "completed" as const,
-        durationMs: 0,
-        timestamp: systemNowMs(),
-      });
-    }
-  };
+  const announceToParent = createAnnounceToParent({
+    eventBus: container.eventBus,
+    executeInSession,
+    ...(deps.logger ? { logger: deps.logger } : {}),
+  });
 
   // Dead-letter queue (created before batcher so batcher can reference it).
   // safePath requires an absolute base; process.cwd() is the fallback.
@@ -704,76 +484,16 @@ export function setupCrossSession(deps: {
     ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
   });
 
-  // Resolve condensation model via 5-level priority chain
-  const subagentCtxConfigForCondenser = container.config.security?.agentToAgent?.subagentContext;
-  const defaultAgentConfig = container.config.agents?.["default"];
-
-  const condensationResolution = resolveOperationModel({
-    operationType: "condensation",
-    agentProvider: defaultAgentConfig?.provider ?? "anthropic",
-    agentModel: defaultAgentConfig?.model ?? "default",
-    operationModels: defaultAgentConfig?.operationModels ?? {},
-    providerFamily: resolveProviderFamily(defaultAgentConfig?.provider ?? "anthropic"),
-    agentPromptTimeoutMs: defaultAgentConfig?.promptTimeout?.promptTimeoutMs,
+  const {
+    resultCondenser,
+    narrativeCaster,
+    materializeFullOutput,
+    condenserApiKey,
+    condenserModel,
+  } = createSubAgentResultProcessing({
+    container,
+    ...(deps.logger ? { logger: deps.logger } : {}),
   });
-
-  // Resolve API key from resolution.provider (enables cross-provider condensation)
-  const condenserProviderEntry = container.config.providers?.entries?.[condensationResolution.provider];
-  const condenserApiKeyName = condenserProviderEntry?.apiKeyName
-    || `${condensationResolution.provider.toUpperCase()}_API_KEY`;
-  const condenserApiKey = container.secretManager?.get(condenserApiKeyName) ?? "";
-
-  deps.logger?.debug(
-    { model: condensationResolution.model, source: condensationResolution.source, provider: condensationResolution.provider },
-    "Condensation model resolved",
-  );
-
-  const resultCondenser = createResultCondenser({
-    maxResultTokens: subagentCtxConfigForCondenser?.maxResultTokens ?? 4000,
-    condensationStrategy: subagentCtxConfigForCondenser?.condensationStrategy ?? "auto",
-    dataDir: container.config.dataDir || ".",
-    logger: deps.logger
-      ? { info: deps.logger.info.bind(deps.logger), warn: deps.logger.warn.bind(deps.logger), debug: deps.logger.debug.bind(deps.logger) }
-      : { info: () => {}, warn: () => {}, debug: () => {} },
-  });
-
-  // Create NarrativeCaster for tagged result announcements
-  const narrativeCaster = createNarrativeCaster({
-    enabled: subagentCtxConfigForCondenser?.narrativeCasting ?? true,
-    tagPrefix: subagentCtxConfigForCondenser?.resultTagPrefix ?? "Subagent Result",
-  });
-
-  // The full-output ResultRef store. The runner stays
-  // @comis/skills-free (DI) — the daemon owns the store + the child-workspace
-  // target selection. The callback resolves the CHILD's OWN jailed workspace
-  // from ctx.agentId (mirroring setup-cross-session-graph.ts:358-361), NEVER the
-  // lead's; createResultRefStore is additionally safePath-confined to
-  // that root, so a traversal returns a MaterializeError the runner degrades on.
-  // The store's 3-way union (ResultRef | MaterializeError | undefined) is returned
-  // UNCHANGED — the runner's dep contract IS that union, so no mapping is forced.
-  const resultRefStore = createResultRefStore({
-    logger: deps.logger
-      ? deps.logger.child({ submodule: "sub-agent-result-ref" })
-      : NOOP_LOGGER,
-  });
-  const materializeFullOutput = (
-    content: string,
-    ctx: { runId: string; nowMs: number; agentId: string },
-  ) => {
-    const childAgentConfig = container.config.agents[ctx.agentId]
-      ?? container.config.agents["default"]
-      ?? ({} as AgentConfig);
-    const childWorkspaceDir = resolveWorkspaceDir(
-      childAgentConfig,
-      ctx.agentId,
-      container.config.dataDir || undefined,
-    );
-    return resultRefStore.materialize(content, "sessions_spawn", {
-      workspacePath: childWorkspaceDir,
-      runId: ctx.runId,
-      nowMs: ctx.nowMs,
-    });
-  };
 
   const lifecycleHooks = createLifecycleHooks({
     logger: deps.logger
@@ -813,7 +533,7 @@ export function setupCrossSession(deps: {
     batcher: announcementBatcher,
     sessionResolver: deps.sessionResolver,
     resultCondenser,
-    condenserModel: condenserApiKey ? { id: condensationResolution.modelId, provider: condensationResolution.provider } as unknown : undefined,
+    condenserModel,
     condenserApiKey: condenserApiKey || undefined,
     narrativeCaster,
     // The full-output ResultRef materialize, targeting the CHILD's

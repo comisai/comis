@@ -10,17 +10,8 @@ import {
   emitObservationalEventSafely,
   resolvePlatformDeliveryResult,
   systemNowMs,
-  type AttachmentPayload,
-  type AttachmentSendReceipt,
-  type AnnouncementDeadLetterAttachmentSource,
   type ChannelEndpoint,
-  type ComisLogger,
-  type DeliverToChannelOptions,
   type DeliveryAuthority,
-  type DeliveryService,
-  type OutwardSendLedgerPort,
-  type SendMessageOptions,
-  type TypedEventBus,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
@@ -33,81 +24,18 @@ import {
 } from "@comis/orchestrator";
 import type { PreparedCompletionAttachment } from "./completion-attachment.js";
 import { validateCompletionAnnouncementRoute } from "./completion-announcement-route.js";
+import type {
+  AnnouncementDelivery,
+  AnnouncementDeliveryDeps,
+  AnnouncementDeliveryOptions,
+} from "./governed-announcement-delivery-types.js";
 
-interface AnnouncementChannelAdapter {
-  readonly channelId: string;
-  channelType: string;
-  sendMessage(
-    channelId: string,
-    text: string,
-    options?: SendMessageOptions,
-  ): Promise<Result<string, Error>>;
-  sendAttachment?(
-    channelId: string,
-    attachment: AttachmentPayload,
-    options?: SendMessageOptions,
-  ): Promise<Result<AttachmentSendReceipt, Error>>;
-}
-
-interface AnnouncementDeliveryDeps {
-  adaptersByType: Map<string, AnnouncementChannelAdapter>;
-  deliveryService: DeliveryService;
-  eventBus: TypedEventBus;
-  gatewaySend?: { ref?: (channelId: string, text: string) => boolean };
-  logger?: ComisLogger;
-  outwardLedger?: OutwardSendLedgerPort;
-  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
-  recordTextChunks?: (
-    operationId: string,
-    chunks: readonly string[],
-  ) => Promise<Result<void, Error>>;
-  prepareCompletionAttachment?: (
-    attachment: AnnouncementDeadLetterAttachmentSource,
-  ) => Promise<Result<PreparedCompletionAttachment, Error>>;
-  verifyCompletionAttachment?: (
-    attachment: GovernedAnnouncementAttachment,
-  ) => Promise<Result<GovernedAnnouncementAttachment, Error>>;
-}
-
-type AnnouncementDeliveryOptions = Omit<DeliverToChannelOptions, "completionMode">;
-
-export interface AnnouncementDelivery {
-  sendToChannelWithReceipt(
-    channelType: string,
-    channelId: string,
-    text: string,
-    options?: AnnouncementDeliveryOptions,
-  ): Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
-  sendSingleTextToChannelWithReceipt(
-    channelType: string,
-    channelId: string,
-    text: string,
-    options?: AnnouncementDeliveryOptions,
-  ): Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
-  sendToChannel(
-    channelType: string,
-    channelId: string,
-    text: string,
-    options?: AnnouncementDeliveryOptions,
-  ): Promise<boolean>;
-  sendPreparedAttachmentToChannelWithReceipt(
-    channelType: string,
-    channelId: string,
-    text: string,
-    attachment: GovernedAnnouncementAttachment,
-    destinationEndpoint: ChannelEndpoint,
-    options?: AnnouncementDeliveryOptions,
-  ): Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
-  sendLedgerAnnouncement?: SendGovernedCompletionAnnouncement;
-  sendGovernedTextToChannelWithReceipt?: (
-    request: GovernedAnnouncementRequest,
-    destinationEndpoint: ChannelEndpoint,
-    deliveryAuthority: DeliveryAuthority,
-    persistTextChunks?: (
-      chunks: readonly string[],
-    ) => Promise<Result<void, Error>>,
-  ) => Promise<Result<GovernedAnnouncementSendOutcome, Error>>;
-}
+export type {
+  AnnouncementChannelAdapter,
+  AnnouncementDelivery,
+  AnnouncementDeliveryDeps,
+  AnnouncementDeliveryOptions,
+} from "./governed-announcement-delivery-types.js";
 
 export function createAnnouncementDelivery(
   deps: AnnouncementDeliveryDeps,
