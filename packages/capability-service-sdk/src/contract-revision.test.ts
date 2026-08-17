@@ -5,6 +5,8 @@ import {
   CAPABILITY_SERVICE_PROTOCOL_ID,
   CapabilityActivateRequestSchema,
   CapabilityHandshakeRequestSchema,
+  CapabilityHeartbeatRequestSchema,
+  CapabilityHeartbeatResponseSchema,
   CapabilityServiceRequestSchema,
   McpManagedRunResultSchema,
 } from "./index.js";
@@ -124,5 +126,55 @@ describe("capability-service execution-attachment contract", () => {
         ],
       },
     }).success).toBe(true);
+  });
+});
+
+describe("capability-service run liveness contract", () => {
+  it("accepts a bounded liveness observation for one owned run", () => {
+    const parsed = CapabilityHeartbeatRequestSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "operation_heartbeat",
+      method: "managedRuns.heartbeat",
+      params: {
+        operationId: "operation_heartbeat",
+        managedRunId: "managed-run_a",
+        observedAtMs: 1_800_000_000_000,
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("refuses a liveness observation that carries run state", () => {
+    // A heartbeat proves the service is alive. Letting it carry status, a
+    // report, or a reason would make liveness a second, unsequenced path into
+    // run state that bypasses report ingestion entirely.
+    const parsed = CapabilityHeartbeatRequestSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "operation_heartbeat",
+      method: "managedRuns.heartbeat",
+      params: {
+        operationId: "operation_heartbeat",
+        managedRunId: "managed-run_a",
+        observedAtMs: 1_800_000_000_000,
+        status: "active",
+      },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("returns the accepted observation and the host's own clock reading", () => {
+    const parsed = CapabilityHeartbeatResponseSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "operation_heartbeat",
+      result: {
+        managedRunId: "managed-run_a",
+        acceptedAtMs: 1_800_000_000_010,
+        lastHeartbeatAtMs: 1_800_000_000_000,
+      },
+    });
+
+    expect(parsed.success).toBe(true);
   });
 });
