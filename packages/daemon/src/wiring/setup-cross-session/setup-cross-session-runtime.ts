@@ -13,31 +13,26 @@
  * @module
  */
 import type {
-  AgentCapability, AgentConfig, AppContainer, ChannelPort, ClockPort,
-  DeliveryService, DeliverToChannelOptions, DurableRunPort,
+  AgentCapability, AppContainer, ChannelPort, ClockPort,
+  DeliveryService, DurableRunPort,
   FileLockPort, NormalizedMessage, OutwardSendLedgerPort,
   SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef,
-  MemoryWriteEntry, MemoryWriteScope, CitationEvidence, AnnouncementRetirementProducer,
-  AnnouncementRetirementProducerState,
+  MemoryWriteEntry, MemoryWriteScope, CitationEvidence, 
 } from "@comis/core";
 import {
-  createConversationRef, createResolvedRequestContext,
-  resolveWorkspaceDir, runWithContext, safePath, systemNowMs, tryGetContext,
+  createResolvedRequestContext,
+  runWithContext, safePath, systemNowMs, tryGetContext,
 } from "@comis/core";
-import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
 import type { ExecutionResult, SpawnCeilingDecision } from "@comis/agent";
-import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
+import { createLifecycleHooks, createSubAgentRunner, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
 import {
   createCrossSessionSender,
   createAnnouncementBatcher,
   createAnnouncementDeadLetterQueue,
-  isAnnouncementProducerRecoveryOutcome,
-  type SendGovernedCompletionAnnouncement,
-  type SendRecoverableCompletionAnnouncement,
 } from "@comis/orchestrator";
 import { randomUUID } from "node:crypto";
-import { err, ok, type Result } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";

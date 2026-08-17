@@ -5,23 +5,7 @@ import { chmod, open, rename, unlink } from "node:fs/promises";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import {
-  ChannelEndpointSchema,
-  ConversationRefSchema,
-  ERROR_KINDS,
-  SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
   toSafeErrorLogString,
-  type AnnouncementChannelType,
-  type AnnouncementDeadLetterAttachmentSnapshot,
-  type AnnouncementDeadLetterEntry,
-  type AnnouncementParentDecisionReservation,
-  type AnnouncementParentDecisionReservationRecord,
-  type AnnouncementProducerReservation,
-  type AnnouncementProducerRecoveryOutcome,
-  type AnnouncementProducerReservationRecord,
-  type AnnouncementRetirementProducer,
-  type ChannelEndpoint,
-  type DeliveryAuthority,
-  type ResultRef,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
@@ -29,9 +13,7 @@ import {
   createOversizedDeadLetterRecord,
   isInvalidDeadLetterRecord,
   MAX_DEAD_LETTER_ROW_BYTES,
-  type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
-import { createAnnouncementOperationDigests } from "./announcement-outward-operation.js";
 
 export {
   isAnnouncementChannelType,
@@ -63,31 +45,16 @@ import {
   INVALID_ROW_EVIDENCE_BYTES,
   MAX_DEAD_LETTER_SNAPSHOT_BYTES,
   MAX_DEAD_LETTER_SNAPSHOT_ROWS,
-  announcementProducerHandoffDigest,
-  isAnnouncementChannelType,
   isAnnouncementProducerReservationRecord,
   isDeadLetterEntry,
-  isOptionalString,
   isParentDecisionReservationRecord,
   isAnnouncementProducerHandoffRecord,
-  isAnnouncementProducerRecoveryOutcome,
-  isAnnouncementRetirementProducer,
-  isAnnouncementTextChunks,
-  isCompletionKeys,
-  isDeadLetterAttachmentSnapshot,
-  isDeadLetterSnapshotCapacityError,
-  isRecoveryRoute,
   isValidAnnouncementDecision,
   publicDecision,
-  reservedDeadLetterSnapshotBytes,
-  sameAnnouncementProducerReservation,
   sameDecision,
-  validateDeadLetterSnapshotAdmission,
 } from "./announcement-dead-letter-guards.js";
 import type {
   AnnouncementProducerHandoffRecord,
-  ChannelType,
-  DeadLetterEntry,
   DeadLetterReadLimits,
   DeadLetterReadSnapshot,
   ParentDecisionReservation,

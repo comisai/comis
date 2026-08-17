@@ -10,53 +10,23 @@
  *
  * @module
  */
-import { randomUUID } from "node:crypto";
 import type {
-  AnnouncementDeadLetterEntryInput,
-  AnnouncementParentDecisionReservation,
-  AnnouncementProducerReservation,
-  OutwardSendLedgerPort,
 } from "@comis/core";
 import {
-  createStableAnnouncementChunkOperationId,
-  createStableAnnouncementChunkPartId,
-  emitObservationalEventSafely,
-  isStableAnnouncementChunkPartId,
   systemNowMs,
 } from "@comis/core";
-import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
-import type { GovernedAnnouncementAttachment } from "./announcement-outward-operation.js";
-import { drainWithPreparedRecoveryAttachment } from "./announcement-dead-letter-attachment.js";
+import { fromPromise, tryCatch } from "@comis/shared";
 import {
-  announcementProducerHandoffDigest,
-  isAnnouncementProducerHandoff,
-  isAnnouncementProducerRecoveryOutcome,
-  isAnnouncementProducerReservation,
-  isAnnouncementTextChunks,
-  isParentDecisionReservation,
-  isValidAnnouncementDecision,
-  sameAnnouncementProducerReservation,
   type ChannelType,
   type DeadLetterEntry,
-  type AnnouncementProducerHandoffRecord,
-  type ParentDecisionReservationRecord,
-  type ProducerReservationRecord,
 } from "./announcement-dead-letter-file.js";
-import { isInvalidDeadLetterRecord, type InvalidDeadLetterRecord } from "./announcement-dead-letter-invalid.js";
 import {
-  announcementTerminalRetirementDigest,
-  terminalDecisionIdentity,
-  type AnnouncementTerminalDecision,
 } from "./announcement-dead-letter-terminal-decision.js";
 import {
   announcementRecoveryKey,
-  isSameAnnouncementRecovery,
-  isSameGovernedDeadLetterOperation,
-  resolveGovernedDeadLetterIdentity,
-  type GovernedDeadLetterIdentity,
 } from "./announcement-dead-letter-identity.js";
 import type { RecoveryDeliveryOptions } from "./announcement-dead-letter-types.js";
-import type { DeadLetterQueueContext, GovernedDrainOutcome } from "./announcement-dead-letter-context.js";
+import type { DeadLetterQueueContext } from "./announcement-dead-letter-context.js";
 import {
   CHUNK_IN_FLIGHT_PREFIX,
   CHUNK_UNRESOLVED_PREFIX,

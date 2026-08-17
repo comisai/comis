@@ -33,7 +33,6 @@ import { fromPromise, TimeoutError, withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
-  isGovernedCompletionAnnouncementConfirmedDelivered,
   isRecoverableCompletionAnnouncementConfirmedDelivered,
   type AnnouncementBatcher,
   type AnnouncementDeadLetterQueue,

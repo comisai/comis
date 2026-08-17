@@ -59,9 +59,7 @@ const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 export { sanitizeForUser } from "./announcement-sanitize.js";
 import {
   containsInternalAnnouncementEnvelope,
-  extractAnnouncementSection,
   sanitizeForUser,
-  stripSubagentResultMarkers,
   stripSystemPrefix,
 } from "./announcement-sanitize.js";
 // ---------------------------------------------------------------------------

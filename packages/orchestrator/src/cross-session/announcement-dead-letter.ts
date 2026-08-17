@@ -1,73 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Durable retry and uncertainty quarantine for failed announcements. */
 
-import { randomUUID } from "node:crypto";
 import type {
   AnnouncementDeadLetterEntryInput,
   AnnouncementDeadLetterAttachmentSnapshot,
   AnnouncementDeadLetterAttachmentSource,
   AnnouncementDeadLetterQueuePort,
   AnnouncementParentDecisionReservation,
-  AnnouncementProducerRecoveryOutcome,
-  AnnouncementProducerReservation,
-  AnnouncementProducerReservationOutcome,
-  OutwardSendLedgerPort,
   QuarantinedInvalidAnnouncementRecord,
 } from "@comis/core";
 import {
-  createStableAnnouncementChunkOperationId,
-  createStableAnnouncementChunkPartId,
   emitObservationalEventSafely,
-  isStableAnnouncementChunkPartId,
   systemNowMs,
 } from "@comis/core";
-import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
-import type { GovernedAnnouncementAttachment } from "./announcement-outward-operation.js";
-import { drainWithPreparedRecoveryAttachment } from "./announcement-dead-letter-attachment.js";
+import { err, fromPromise, ok, type Result } from "@comis/shared";
 import {
-  announcementProducerHandoffDigest,
   createParentDecisionReservationStore,
-  isAnnouncementProducerHandoff,
-  isAnnouncementProducerRecoveryOutcome,
-  isAnnouncementProducerReservation,
-  isAnnouncementRetirementProducer,
-  isAnnouncementTextChunks,
   isDeadLetterSnapshotCapacityError,
-  isValidAnnouncementDecision,
-  isParentDecisionReservation,
-  readDeadLetterSnapshot,
   reservedDeadLetterSnapshotBytes,
-  validateDeadLetterSnapshotAdmission,
-  writeDeadLetterEntries,
-  type ChannelType,
   type DeadLetterEntry,
   type AnnouncementProducerHandoffRecord,
   type ParentDecisionReservationRecord,
   type ProducerReservationRecord,
   type StoredDeadLetterEntry,
-  sameAnnouncementProducerReservation,
 } from "./announcement-dead-letter-file.js";
 import {
-  isInvalidDeadLetterRecord,
   type InvalidDeadLetterRecord,
 } from "./announcement-dead-letter-invalid.js";
 import {
-  announcementTerminalRetirementDigest,
   createAnnouncementTerminalDecisionStore,
-  terminalDecisionIdentity,
   type AnnouncementTerminalDecision,
 } from "./announcement-dead-letter-terminal-decision.js";
 import {
   announcementRecoveryKey,
-  isSameAnnouncementRecovery,
-  isSameGovernedDeadLetterOperation,
-  resolveGovernedDeadLetterIdentity,
-  type GovernedDeadLetterIdentity,
 } from "./announcement-dead-letter-identity.js";
 import type {
   AnnouncementDeadLetterQueueOptions,
   PreparedRecoveryAttachment,
-  RecoveryDeliveryOptions,
 } from "./announcement-dead-letter-types.js";
 import { createProducerLifecycle } from "./announcement-dead-letter-producer.js";
 import { createGovernedDrainStage } from "./announcement-dead-letter-drain-governed.js";
@@ -78,9 +47,6 @@ import { createDecisionReservationStage } from "./announcement-dead-letter-reser
 import { createProducerPromotionStage } from "./announcement-dead-letter-promotion.js";
 import { createStorageStage } from "./announcement-dead-letter-storage.js";
 import {
-  CHUNK_IN_FLIGHT_PREFIX,
-  CHUNK_UNRESOLVED_PREFIX,
-  type AnnouncementTextChunkOwner,
   type DeadLetterQueueContext,
 } from "./announcement-dead-letter-context.js";
 export { isAnnouncementChannelType } from "./announcement-dead-letter-file.js";
@@ -90,17 +56,13 @@ export type {
   DeadLetterEntry,
   ParentDecisionReservation,
 } from "./announcement-dead-letter-file.js";
-import { classifyQuarantined, releaseQuarantined } from "./announcement-dead-letter-quarantine.js";
+import { releaseQuarantined } from "./announcement-dead-letter-quarantine.js";
 export type {
   QuarantinedAnnouncement,
   QuarantineReleaseOutcome,
 } from "./announcement-dead-letter-quarantine.js";
 
 export type AnnouncementDeadLetterQueue = AnnouncementDeadLetterQueuePort;
-type GovernedDrainOutcome =
-  | "receipt_already_committed"
-  | "receipt_committed_now"
-  | "retained";
 
 /** Create a JSONL-backed announcement dead-letter queue. */
 /**
@@ -527,8 +489,6 @@ export function createAnnouncementDeadLetterQueue(
   } = createDecisionStage(ctx);
 
 
-  type LedgerTransition = "lookup" | "begin" | "mark_unknown" | "commit" | "park";
-  type LedgerOutcome = "blocked" | "in_flight" | "committed" | "failed" | "parked";
   const {
     emitLedgerTransition,
     logLedgerFailure,

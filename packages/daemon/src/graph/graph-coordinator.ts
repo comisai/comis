@@ -2,12 +2,10 @@
 /** Composition layer for durable DAG execution and terminal delivery. */
 import {
   createGraphStateMachine,
-  restoreGraphStateMachine,
   type GraphExecutionSnapshot,
 } from "./graph-state-machine.js";
 import {
   safePath,
-  type ValidatedGraph,
   type DurableRunRecord,
   systemNowMs,
   systemSetInterval,
@@ -16,9 +14,6 @@ import {
   tryGetContext,
   createConversationRef,
   conversationScopeToSessionKey,
-  formatSessionKey,
-  validateAndSortGraph,
-  parseDurableRunRecord,
   ResolvedTurnScopeSchema,
   toSafeErrorLogString,
   createStableAnnouncementOperationId,
@@ -29,11 +24,7 @@ import { mkdirSync } from "node:fs";
 import { ok, err, tryCatch, type Result } from "@comis/shared";
 import {
   createDurableGraphCheckpoint,
-  graphRunIdFromCheckpointRef,
-  readDurableGraphCheckpoint,
-  resolveGraphResumeTurnScope,
   snapshotToSpawnTree,
-  validateGraphCheckpointSummary,
   writeDurableGraphCheckpoint,
 } from "./graph-durable-checkpoint.js";
 import { computeGraphToolSuperset } from "./graph-tool-superset.js";

@@ -14,7 +14,7 @@
  * @module
  */
 import { toSafeErrorLogString } from "@comis/core";
-import { fromPromise, ok } from "@comis/shared";
+import { fromPromise } from "@comis/shared";
 import type {
   AnnouncementOperationIdentity,
   CompletionAttachmentRef,
