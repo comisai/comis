@@ -6,13 +6,7 @@ import type { z } from "zod";
 import {
   CAPABILITY_SERVICE_LIMITS,
   CAPABILITY_SERVICE_PROTOCOL_ID,
-  CapabilityAbandonRequestSchema,
-  CapabilityAbandonResponseSchema,
-  CapabilityActivateRequestSchema,
-  CapabilityActivateResponseSchema,
   CapabilityHandshakeRequestSchema,
-  CapabilityCancelRequestSchema,
-  CapabilityCancelResponseSchema,
   CapabilityHealthRequestSchema,
   CapabilityHeartbeatRequestSchema,
   CapabilityPutEvidenceRequestSchema,

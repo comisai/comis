@@ -1833,6 +1833,26 @@ describe("managed-run administration reads", () => {
     expect(byStatus.ok && byStatus.value).toEqual([]);
   });
 
+  it("fails closed when a stored row cannot be read back as a record", async () => {
+    // A corrupt row must not be skipped and the rest returned: a list that
+    // silently omits a run tells an operator that run does not exist.
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    db.prepare("UPDATE managed_runs SET captured_tool_ids = ? WHERE managed_run_id = ?")
+      .run("not-json", "managed-run_a");
+
+    const listed = await store.listForAdministration({ kind: "administration", limit: 50 });
+    expect(listed.ok).toBe(false);
+
+    // The same must hold one layer earlier, when the row itself no longer has
+    // the shape the mapper expects rather than merely failing record validation.
+    db.prepare("UPDATE managed_runs SET open_attention_count = ? WHERE managed_run_id = ?")
+      .run("many", "managed-run_a");
+
+    const malformed = await store.listForAdministration({ kind: "administration", limit: 50 });
+    expect(malformed.ok).toBe(false);
+  });
+
   it("refuses an administration read with no bound on how much it returns", async () => {
     const store = createSqliteManagedRunStore(db);
 
