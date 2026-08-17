@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { err } from "@comis/shared";
 import { ConversationRefSchema } from "@comis/core";
 import {
@@ -195,5 +195,84 @@ describe("announcement terminal decisions", () => {
 
     await expect(store.lookup(owner)).resolves.toEqual({ ok: true, value: "no_reply" });
     await expect(store.listInvalid()).resolves.toEqual({ ok: true, value: [] });
+  });
+
+  const retirementProducer = {
+    kind: "session" as const,
+    tenantId: "tenant_a",
+    agentId: "agent_a",
+    conversationRef: ConversationRefSchema.parse(`cv_${"b".repeat(43)}`),
+    checkpointId: "checkpoint-b",
+  };
+
+  it("quarantines store entries that are not shard directories", async () => {
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+    await store.record(owner, "delivered");
+    const decisions = join(`${filePath}.terminal-decisions`, "decisions");
+    // A shard name is two hex characters; anything else is unreadable layout
+    // rather than an unreadable record, so it is retained as evidence.
+    await mkdir(join(decisions, "zz"), { recursive: true });
+    await writeFile(join(decisions, "loose-record"), "{}");
+
+    const invalid = await createAnnouncementTerminalDecisionStore(filePath).listInvalid();
+    if (!invalid.ok) throw invalid.error;
+    expect(invalid.value).toHaveLength(2);
+    expect(invalid.value.every((row) => row.reason === "schema_mismatch")).toBe(true);
+    // The valid record beside them still resolves.
+    await expect(createAnnouncementTerminalDecisionStore(filePath).lookup(owner))
+      .resolves.toEqual({ ok: true, value: "delivered" });
+  });
+
+  it("clears a leftover temporary write and quarantines an unrecognized record name", async () => {
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+    await store.record(owner, "delivered");
+    const [recordPath] = await durableRecordFiles(directory);
+    const shard = dirname(recordPath!);
+    const digest = basename(recordPath!, ".json");
+    const leftover = join(shard, `${digest}.json.aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.tmp`);
+    await writeFile(leftover, "half-written");
+    await writeFile(join(shard, "not-a-digest.json"), "{}");
+
+    const invalid = await createAnnouncementTerminalDecisionStore(filePath).listInvalid();
+    if (!invalid.ok) throw invalid.error;
+    // The interrupted write is swept; only the unrecognized name is evidence.
+    expect(invalid.value).toHaveLength(1);
+    expect(await durableRecordFiles(directory)).not.toContain(leftover);
+  });
+
+  it("rejects a retirement intent naming no completion or a malformed producer", async () => {
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+
+    await expect(store.prepareRetirement([], retirementProducer))
+      .resolves.toMatchObject({ ok: false });
+    await expect(store.prepareRetirement([""], retirementProducer))
+      .resolves.toMatchObject({ ok: false });
+    await expect(store.prepareRetirement(
+      ["completion-a"],
+      { kind: "unknown" } as unknown as typeof retirementProducer,
+    )).resolves.toMatchObject({ ok: false });
+  });
+
+  it("keeps a repeated retirement intent single and surfaces probe failures", async () => {
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+    await store.record({ ...owner, completionKeys: ["completion-repeat"] }, "delivered");
+
+    await expect(store.prepareRetirement(["completion-repeat"], retirementProducer))
+      .resolves.toEqual({ ok: true, value: undefined });
+    // Re-preparing the same intent is a no-op, not a second retirement.
+    await expect(store.prepareRetirement(["completion-repeat"], retirementProducer))
+      .resolves.toEqual({ ok: true, value: undefined });
+
+    await expect(store.collectRetirements(async () => err(new Error("producer probe failed"))))
+      .resolves.toMatchObject({ ok: false });
+    await expect(store.collectRetirements(
+      async () => ({ ok: true, value: false }),
+      () => err(new Error("ownership probe failed")),
+    )).resolves.toMatchObject({ ok: false });
+    // Neither failed probe may retire the guard.
+    await expect(store.lookup(owner)).resolves.toEqual({ ok: true, value: "delivered" });
+
+    await expect(store.collectRetirements(async () => ({ ok: true, value: false })))
+      .resolves.toEqual({ ok: true, value: 1 });
   });
 });

@@ -4770,3 +4770,434 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
     expect(queue.size()).toBe(1);
   });
 });
+
+describe("announcement dead-letter unreadable store", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-unreadable-"));
+    // The store path is a directory, so every read of it fails identically for
+    // any user — unlike a permission bit, which a root test runner ignores.
+    filePath = join(tmpDir, "dead-letters.jsonl");
+    await mkdir(filePath, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function decision(overrides: Record<string, unknown> = {}) {
+    return {
+      idempotencyKey: "default:user:telegram:chat-1::run-unreadable",
+      agentId: "parent-agent",
+      runId: "run-unreadable",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: "unreadable store input",
+      channelType: "telegram" as const,
+      channelId: "chat-1",
+      failedAt: 100,
+      rootRunId: "root-unreadable",
+      deliveryAuthority: makeDeliveryAuthority("parent-agent"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1"),
+      completionKeys: ["default:user:telegram:chat-1::run-unreadable"],
+      ...overrides,
+    };
+  }
+
+  function reservation() {
+    const base = decision();
+    return {
+      ...base,
+      producer: {
+        kind: "session" as const,
+        tenantId: base.deliveryAuthority.tenantId,
+        agentId: base.deliveryAuthority.agentId,
+        conversationRef: base.deliveryAuthority.conversationRef,
+        checkpointId: base.runId,
+      },
+    };
+  }
+
+  it("refuses every durable operation instead of acting on an unread store", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+    });
+
+    // Each of these loads the store first; none may report success, because a
+    // store that could not be read cannot prove the operation is safe.
+    await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: false });
+    await expect(queue.reserveProducer(reservation())).resolves.toMatchObject({ ok: false });
+    await expect(queue.reclaimProducer(reservation())).resolves.toMatchObject({ ok: false });
+    await expect(queue.releaseProducer("run-unreadable")).resolves.toMatchObject({ ok: false });
+    await expect(queue.cancelProducer("run-unreadable")).resolves.toMatchObject({ ok: false });
+    await expect(queue.suppressProducer("run-unreadable")).resolves.toMatchObject({ ok: false });
+    await expect(queue.recordProducerOutcome("run-unreadable", {
+      kind: "tool_result",
+      terminalReason: "completed",
+      completedAtMs: 1,
+      response: "done",
+    } as AnnouncementProducerRecoveryOutcome)).resolves.toMatchObject({ ok: false });
+    await expect(queue.reserveDecision(decision())).resolves.toMatchObject({ ok: false });
+    await expect(queue.lookupDecision("run-unreadable")).resolves.toMatchObject({ ok: false });
+    await expect(queue.lookupDecisionTextChunks("run-unreadable"))
+      .resolves.toMatchObject({ ok: false });
+    await expect(queue.resolveDecision("run-unreadable", "no_reply"))
+      .resolves.toMatchObject({ ok: false });
+    await expect(queue.recordDecisionTextChunks("run-unreadable", ["chunk"]))
+      .resolves.toMatchObject({ ok: false });
+    await expect(queue.beginDeliveryAttempt(makeEntry())).resolves.toMatchObject({ ok: false });
+    await expect(queue.settleDeliveryAttempt("run-unreadable", "accepted"))
+      .resolves.toMatchObject({ ok: false });
+    await expect(queue.replaceDecisions(["run-unreadable"], [decision()]))
+      .resolves.toMatchObject({ ok: false });
+    await expect(queue.durableStatus()).resolves.toMatchObject({ ok: false });
+    await expect(queue.listQuarantined()).resolves.toMatchObject({ ok: false });
+    await expect(queue.release("some-id", "discarded")).resolves.toMatchObject({ ok: false });
+  });
+});
+
+describe("announcement dead-letter unwritable store", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-unwritable-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function unwritableQueue() {
+    return createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      retryIntervalMs: 0,
+      fileOperations: {
+        open: vi.fn().mockRejectedValue(new Error("durable storage is offline")),
+        rename: vi.fn(),
+        unlink: vi.fn(),
+        chmod: vi.fn(),
+      } as unknown as DeadLetterWriteOperations,
+    });
+  }
+
+  function decision(overrides: Record<string, unknown> = {}) {
+    return {
+      idempotencyKey: "default:user:telegram:chat-1::run-unwritable",
+      agentId: "parent-agent",
+      runId: "run-unwritable",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: "unwritable store input",
+      channelType: "telegram" as const,
+      channelId: "chat-1",
+      failedAt: 100,
+      rootRunId: "root-unwritable",
+      deliveryAuthority: makeDeliveryAuthority("parent-agent"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1"),
+      completionKeys: ["default:user:telegram:chat-1::run-unwritable"],
+      ...overrides,
+    };
+  }
+
+  it("reports failure rather than acknowledging an unpersisted admission", async () => {
+    const queue = unwritableQueue();
+    const base = decision();
+
+    // The store reads clean (it is simply empty); only the write fails. An
+    // operation that cannot be persisted must not be reported as accepted,
+    // because recovery would then never replay it.
+    await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: false });
+    await expect(queue.reserveDecision(base)).resolves.toMatchObject({ ok: false });
+    await expect(queue.reserveProducer({
+      ...base,
+      producer: {
+        kind: "session" as const,
+        tenantId: base.deliveryAuthority.tenantId,
+        agentId: base.deliveryAuthority.agentId,
+        conversationRef: base.deliveryAuthority.conversationRef,
+        checkpointId: base.runId,
+      },
+    })).resolves.toMatchObject({ ok: false });
+    await expect(queue.beginDeliveryAttempt(makeEntry())).resolves.toMatchObject({ ok: false });
+
+    // Nothing became visible in memory either.
+    expect(queue.size()).toBe(0);
+  });
+
+  it("keeps a drain from claiming delivery it could not record", async () => {
+    const seeded = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(seeded.enqueue(makeEntry())).resolves.toMatchObject({ ok: true });
+
+    const blocked = unwritableQueue();
+    const send = vi.fn(async () => true);
+    await blocked.drain(send as unknown as Parameters<typeof blocked.drain>[0]);
+
+    // The entry is still owed: a delivery whose settlement could not be
+    // written stays retained for the next drain.
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const status = await restarted.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+});
+
+describe("announcement dead-letter ledgerless chunk replay", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-chunk-replay-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  const chunks = ["first durable chunk", "second durable chunk"];
+
+  function chunkDecision(overrides: Record<string, unknown> = {}) {
+    return {
+      idempotencyKey: "chunk-replay-parent",
+      agentId: "parent-agent",
+      runId: "run-chunk-replay",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: chunks.join(" "),
+      channelType: "telegram" as const,
+      channelId: "chat-1",
+      failedAt: Date.now() - 301_000,
+      rootRunId: "root-chunk-replay",
+      deliveryAuthority: makeDeliveryAuthority("parent-agent"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1"),
+      completionKeys: ["chunk-replay-parent"],
+      textChunks: chunks,
+      ...overrides,
+    };
+  }
+
+  it("retains a chunked manifest when no receipt-aware transport is wired", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await queue.reserveDecision(chunkDecision());
+
+    const plainSend = vi.fn(async () => true);
+    await queue.drain(plainSend as unknown as Parameters<typeof queue.drain>[0]);
+
+    // A chunk manifest cannot be replayed through a transport that returns no
+    // receipt: without one there is no way to tell a delivered chunk from a
+    // lost one, so the manifest is retained rather than resent blind.
+    expect(plainSend).not.toHaveBeenCalled();
+    expect(queue.size()).toBe(1);
+  });
+
+  it("stops a chunk replay at the attempt ceiling instead of resending", async () => {
+    const receiptAwareSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-chunk",
+    }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      maxRetries: 0,
+      receiptAwareSendToChannel,
+    });
+    await queue.reserveDecision(chunkDecision());
+
+    await queue.drain(vi.fn(async () => false));
+
+    expect(receiptAwareSendToChannel).not.toHaveBeenCalled();
+    expect(queue.size()).toBe(1);
+  });
+
+  it("does not resend a chunk whose prior send never resolved", async () => {
+    const receiptAwareSendToChannel = vi.fn(async () => ok({
+      delivered: false as const,
+      status: "unknown" as const,
+    }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      receiptAwareSendToChannel,
+    });
+    await queue.reserveDecision(chunkDecision());
+
+    await queue.drain(vi.fn(async () => false));
+    const afterFirst = receiptAwareSendToChannel.mock.calls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    await queue.drain(vi.fn(async () => false));
+
+    // An unresolved send may already have reached the platform, so the retry
+    // must not repeat it — the entry stays owed until the outcome is known.
+    expect(receiptAwareSendToChannel.mock.calls.length).toBe(afterFirst);
+    expect(queue.size()).toBe(1);
+  });
+
+  it("abandons a chunk replay when the transport refuses the chunk", async () => {
+    const receiptAwareSendToChannel = vi.fn(async () => ok({
+      delivered: false as const,
+      status: "rejected" as const,
+    }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      receiptAwareSendToChannel,
+    });
+    await queue.reserveDecision(chunkDecision());
+
+    await queue.drain(vi.fn(async () => false));
+
+    expect(receiptAwareSendToChannel).toHaveBeenCalled();
+    // The refusal is recorded against the entry rather than dropping it.
+    expect(queue.size()).toBe(1);
+  });
+});
+
+describe("announcement dead-letter producer promotion after restart", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-promotion-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function reservation(overrides: Record<string, unknown> = {}) {
+    const authority = makeDeliveryAuthority("parent-agent");
+    return {
+      idempotencyKey: "promotion-parent",
+      agentId: "parent-agent",
+      runId: "run-promotion",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: "promotion candidate",
+      channelType: "telegram" as const,
+      channelId: "chat-1",
+      failedAt: Date.now() - 301_000,
+      rootRunId: "root-promotion",
+      deliveryAuthority: authority,
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1"),
+      completionKeys: ["promotion-parent"],
+      producer: {
+        kind: "session" as const,
+        tenantId: authority.tenantId,
+        agentId: authority.agentId,
+        conversationRef: authority.conversationRef,
+        checkpointId: "run-promotion",
+      },
+      ...overrides,
+    };
+  }
+
+  async function seedReservedProducer() {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      retirementProducerState: async () => ok({ status: "active" as const }),
+    });
+    await expect(queue.reserveProducer(reservation()))
+      .resolves.toEqual(ok({ status: "claimed" }));
+  }
+
+  function restarted(
+    retirementProducerState: Parameters<
+      typeof createAnnouncementDeadLetterQueue
+    >[0]["retirementProducerState"],
+  ) {
+    return createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      retryIntervalMs: 0,
+      retirementProducerState,
+    });
+  }
+
+  it("leaves a still-running producer's reservation alone", async () => {
+    await seedReservedProducer();
+    const queue = restarted(async () => ok({ status: "active" as const }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    // The producer survived the restart, so it still owns its announcement.
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+
+  it("keeps ownership when the producer authority cannot be read", async () => {
+    await seedReservedProducer();
+    const queue = restarted(async () => err(new Error("producer store offline")));
+
+    await queue.drain(vi.fn(async () => true));
+
+    // An unreadable authority is not evidence the producer is gone; releasing
+    // on that basis would drop an announcement its producer still owns.
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+
+  it("releases a reservation whose session producer ended without an outcome", async () => {
+    await seedReservedProducer();
+    const queue = restarted(async () => ok({
+      status: "terminal" as const,
+      terminalReason: "completed" as const,
+    }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+
+  it("adopts the recovery outcome a terminal producer left behind", async () => {
+    await seedReservedProducer();
+    const queue = restarted(async () => ok({
+      status: "terminal" as const,
+      terminalReason: "completed" as const,
+      recoveryOutcome: {
+        kind: "session" as const,
+        terminalReason: "completed" as const,
+        completedAtMs: Date.now(),
+      },
+    }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+
+  it("reclaims a reservation whose producer is gone entirely", async () => {
+    await seedReservedProducer();
+    const queue = restarted(async () => ok({ status: "absent" as const }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+});
