@@ -1380,6 +1380,21 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     };
   }
 
+  function producerInput(overrides: Record<string, unknown> = {}) {
+    const decision = decisionInput(overrides);
+    return {
+      ...decision,
+      producer: {
+        kind: "session" as const,
+        tenantId: decision.deliveryAuthority.tenantId,
+        agentId: decision.deliveryAuthority.agentId,
+        conversationRef: decision.deliveryAuthority.conversationRef,
+      },
+    };
+  }
+
+  const producerExists = async () => ok(true);
+
   it("durably suppresses an existing parent decision across queue restart", async () => {
     const first = createAnnouncementDeadLetterQueue({
       filePath,
@@ -1534,14 +1549,14 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       eventBus: createMockEventBus(),
       maxEntries: 2,
     });
-    const producer = (runId: string) => decisionInput({
+    const producer = (runId: string) => producerInput({
       idempotencyKey: `operation-${runId}`,
       runId,
       completionKeys: [`operation-${runId}`],
       retirementKeys: [`operation-${runId}`],
     });
-    await expect(queue.reserveProducer(producer("producer-a"))).resolves.toEqual(ok(undefined));
-    await expect(queue.reserveProducer(producer("producer-b"))).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveProducer(producer("producer-a"))).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(queue.reserveProducer(producer("producer-b"))).resolves.toEqual(ok({ status: "claimed" }));
 
     let thirdAdmitted = false;
     const third = queue.reserveProducer(producer("producer-c")).then((result) => {
@@ -1553,12 +1568,12 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(queue.size()).toBe(2);
 
     await expect(queue.cancelProducer("producer-a")).resolves.toEqual(ok(undefined));
-    await expect(third).resolves.toEqual(ok(undefined));
+    await expect(third).resolves.toEqual(ok({ status: "claimed" }));
     expect(queue.size()).toBe(2);
   });
 
   it("promotes a persisted producer reservation after restart", async () => {
-    const producer = decisionInput({
+    const producer = producerInput({
       idempotencyKey: "producer-fallback-operation",
       runId: "producer-fallback-run",
       failedAt: Date.now() - 500_000,
@@ -1570,7 +1585,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       eventBus: createMockEventBus(),
       retryIntervalMs: 0,
     });
-    await expect(first.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
     await expect(first.releaseProducer(producer.runId)).resolves.toEqual(ok(undefined));
 
     const restarted = createAnnouncementDeadLetterQueue({
@@ -1591,7 +1606,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
   });
 
   it("does not promote an active producer after cancellation storage fails", async () => {
-    const producer = decisionInput({
+    const producer = producerInput({
       idempotencyKey: "failed-cancellation-operation",
       runId: "failed-cancellation-run",
       completionKeys: ["failed-cancellation-operation"],
@@ -1602,7 +1617,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       eventBus: createMockEventBus(),
       retryIntervalMs: 0,
     });
-    await expect(first.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
 
     const storageError = new Error("producer cancellation storage unavailable");
     const blocked = createAnnouncementDeadLetterQueue({
@@ -1630,8 +1645,68 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(restarted.size()).toBe(1);
   });
 
+  it("removes a restarted active reservation after its producer retires", async () => {
+    const producer = producerInput({
+      idempotencyKey: "retired-active-operation",
+      runId: "retired-active-run",
+      completionKeys: ["retired-active-operation"],
+      retirementKeys: ["retired-active-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+
+    const retiredProducer = vi.fn(async () => ok(false));
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retirementProducerExists: retiredProducer,
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+
+    expect(retiredProducer).toHaveBeenCalledWith(producer.producer);
+    expect(send).not.toHaveBeenCalled();
+    expect(restarted.size()).toBe(0);
+  });
+
+  it("keeps promotion-ready ownership authoritative on producer reentry", async () => {
+    const producer = producerInput({
+      idempotencyKey: "promotion-ready-operation",
+      runId: "promotion-ready-run",
+      failedAt: Date.now() - 500_000,
+      completionKeys: ["promotion-ready-operation"],
+      retirementKeys: ["promotion-ready-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.releaseProducer(producer.runId)).resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      retirementProducerExists: producerExists,
+    });
+    await expect(restarted.reserveProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "promotion_ready",
+    }));
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(restarted.size()).toBe(0);
+  });
+
   it("finishes a durable producer cancellation without promoting its fallback", async () => {
-    const producer = decisionInput({
+    const producer = producerInput({
       idempotencyKey: "cancel-pending-operation",
       runId: "cancel-pending-run",
       completionKeys: ["cancel-pending-operation"],
@@ -1657,7 +1732,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
   });
 
   it("durably suppresses a producer before removing its reservation", async () => {
-    const producer = decisionInput({
+    const producer = producerInput({
       idempotencyKey: "suppressed-producer-operation",
       runId: "suppressed-producer-run",
       completionKeys: ["suppressed-producer-operation"],
@@ -1667,7 +1742,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       filePath,
       eventBus: createMockEventBus(),
     });
-    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
 
     await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
     expect(queue.size()).toBe(0);
@@ -1684,7 +1759,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
 
   it("applies producer suppression to later operation aliases", async () => {
     const completionKey = "suppressed-logical-completion";
-    const producer = decisionInput({
+    const producer = producerInput({
       idempotencyKey: completionKey,
       runId: "suppressed-alias-run",
       completionKeys: [completionKey],
@@ -1694,7 +1769,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       filePath,
       eventBus: createMockEventBus(),
     });
-    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
     await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
 
     const restarted = createAnnouncementDeadLetterQueue({
@@ -1713,7 +1788,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
   });
 
   it("suppresses announcement ownership after it transfers to a decision reservation", async () => {
-    const producer = decisionInput({
+    const producer = producerInput({
       idempotencyKey: "transferred-suppression-operation",
       runId: "transferred-suppression-run",
       completionKeys: ["transferred-suppression-operation", "transferred-suppression-run"],
@@ -1723,7 +1798,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       filePath,
       eventBus: createMockEventBus(),
     });
-    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
     await expect(queue.reserveDecision(producer)).resolves.toEqual(ok({ created: true }));
 
     await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
@@ -1743,7 +1818,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
   });
 
   it("finishes a pending producer suppression when admission resumes", async () => {
-    const producer = decisionInput({
+    const producer = producerInput({
       idempotencyKey: "pending-suppression-operation",
       runId: "pending-suppression-run",
       completionKeys: ["pending-suppression-operation"],
@@ -1757,7 +1832,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       filePath,
       eventBus: createMockEventBus(),
     });
-    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
     await mkdir(decisionsPath, { recursive: true });
     await writeFile(blockedShard, "blocked", "utf8");
 
@@ -1768,7 +1843,10 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       filePath,
       eventBus: createMockEventBus(),
     });
-    await expect(restarted.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+    await expect(restarted.reserveProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "no_reply",
+    }));
     await expect(restarted.reserveDecision(producer)).resolves.toEqual(ok({
       created: false,
       terminalDecision: "no_reply",
@@ -1826,7 +1904,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
   });
 
   it("consumes persisted producer ownership on terminal admission replay", async () => {
-    const operation = decisionInput({
+    const operation = producerInput({
       idempotencyKey: "terminal-producer-operation",
       runId: "terminal-producer-run",
       completionKeys: ["terminal-producer-operation"],
@@ -1837,7 +1915,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       eventBus: createMockEventBus(),
       maxEntries: 1,
     });
-    await expect(queue.reserveProducer(operation)).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveProducer(operation)).resolves.toEqual(ok({ status: "claimed" }));
     await expect(createAnnouncementTerminalDecisionStore(filePath).record(operation, "delivered"))
       .resolves.toEqual(ok(undefined));
 
@@ -1847,17 +1925,17 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     }));
 
     expect(queue.size()).toBe(0);
-    await expect(queue.reserveProducer(decisionInput({
+    await expect(queue.reserveProducer(producerInput({
       idempotencyKey: "next-producer-operation",
       runId: "next-producer-run",
       completionKeys: ["next-producer-operation"],
       retirementKeys: ["next-producer-operation"],
-    }))).resolves.toEqual(ok(undefined));
+    }))).resolves.toEqual(ok({ status: "claimed" }));
   });
 
   it("consumes producer ownership when every replacement is terminal", async () => {
     const completionKey = "terminal-replacement-completion";
-    const first = decisionInput({
+    const first = producerInput({
       idempotencyKey: "terminal-replacement-first",
       runId: "terminal-replacement-run",
       completionKeys: [completionKey],
@@ -1875,7 +1953,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       maxEntries: 1,
     });
     const terminalStore = createAnnouncementTerminalDecisionStore(filePath);
-    await expect(queue.reserveProducer(first)).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveProducer(first)).resolves.toEqual(ok({ status: "claimed" }));
     await expect(terminalStore.record(first, "delivered")).resolves.toEqual(ok(undefined));
     await expect(terminalStore.record(second, "delivered")).resolves.toEqual(ok(undefined));
 

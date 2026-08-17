@@ -15,6 +15,7 @@ import {
   type AnnouncementParentDecisionReservationRecord,
   type AnnouncementProducerReservation,
   type AnnouncementProducerReservationRecord,
+  type AnnouncementRetirementProducer,
   type ChannelEndpoint,
   type DeliveryAuthority,
 } from "@comis/core";
@@ -295,7 +296,49 @@ export function sameAnnouncementProducerReservation(
   left: ProducerReservationRecord,
   right: AnnouncementProducerReservation,
 ): boolean {
-  return sameDecision(left, right);
+  return sameDecision(left, right) && sameRetirementProducer(left.producer, right.producer);
+}
+
+function sameRetirementProducer(
+  left: AnnouncementRetirementProducer,
+  right: AnnouncementRetirementProducer,
+): boolean {
+  if (left.kind !== right.kind || left.tenantId !== right.tenantId) return false;
+  if (left.kind === "graph") return right.kind === "graph" && left.graphId === right.graphId;
+  if (right.kind === "graph") return false;
+  if (
+    left.agentId !== right.agentId
+    || left.conversationRef !== right.conversationRef
+  ) return false;
+  if (left.kind === "tool_result") {
+    return right.kind === "tool_result" && left.toolCallId === right.toolCallId;
+  }
+  if (right.kind === "tool_result") return false;
+  return true;
+}
+
+export function isAnnouncementRetirementProducer(
+  value: unknown,
+): value is AnnouncementRetirementProducer {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const producer = value as Record<string, unknown>;
+  if (typeof producer.tenantId !== "string" || producer.tenantId.length === 0) return false;
+  switch (producer.kind) {
+    case "session":
+      return typeof producer.agentId === "string"
+        && producer.agentId.length > 0
+        && ConversationRefSchema.safeParse(producer.conversationRef).success;
+    case "tool_result":
+      return typeof producer.agentId === "string"
+        && producer.agentId.length > 0
+        && ConversationRefSchema.safeParse(producer.conversationRef).success
+        && typeof producer.toolCallId === "string"
+        && producer.toolCallId.length > 0;
+    case "graph":
+      return typeof producer.graphId === "string" && producer.graphId.length > 0;
+    default:
+      return false;
+  }
 }
 
 export function isAnnouncementProducerHandoffRecord(
@@ -627,6 +670,7 @@ function isAnnouncementProducerReservationRecord(
   return record.recordType === "producer_reservation"
     && typeof record.id === "string"
     && record.id.length > 0
+    && isAnnouncementRetirementProducer(record.producer)
     && (
       record.lifecycleState === "active"
       || record.lifecycleState === "promotion_ready"

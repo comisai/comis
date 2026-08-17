@@ -23,6 +23,7 @@ import {
   type TypedEventBus,
   type AgentToAgentConfig,
   type AnnouncementProducerReservation,
+  type AnnouncementProducerReservationOutcome,
   type AnnouncementRetirementProducer,
   type ComisLogger,
   type RootRunIdResolver,
@@ -64,7 +65,7 @@ export interface CrossSessionSenderDeps {
   sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
   reserveAnnouncementProducer?: (
     reservation: AnnouncementProducerReservation,
-  ) => Promise<Result<void, Error>>;
+  ) => Promise<Result<AnnouncementProducerReservationOutcome, Error>>;
   releaseAnnouncementProducer?: (
     producerKey: string,
   ) => Promise<Result<void, Error>>;
@@ -299,12 +300,24 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           destinationEndpoint: params.callerEndpoint,
           completionKeys: [operationId, params.announceOperationId],
           retirementKeys: [params.announceOperationId],
+          producer: {
+            kind: "tool_result",
+            tenantId: params.callerConversation.conversationScope.tenantId,
+            agentId: params.callerConversation.conversationScope.agentId,
+            conversationRef: params.callerConversation.conversationRef,
+            toolCallId: params.announceOperationId,
+          },
           ...(params.callerEndpoint.threadId
             ? { threadId: params.callerEndpoint.threadId }
             : {}),
         };
         const reserved = await deps.reserveAnnouncementProducer(reservation);
         if (!reserved.ok) throw reserved.error;
+        if (reserved.value.status === "recovery_owned") {
+          return reserved.value.lifecycleState === "no_reply"
+            ? { sent: true, announced: false }
+            : { sent: true };
+        }
         reservedProducerKey = params.announceOperationId;
       }
 

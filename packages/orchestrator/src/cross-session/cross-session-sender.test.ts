@@ -317,7 +317,7 @@ describe("createCrossSessionSender", () => {
       delivered: true as const,
       status: "accepted" as const,
     }));
-    const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
     const suppressAnnouncementProducer = vi.fn(async () => ok(true));
@@ -370,9 +370,53 @@ describe("createCrossSessionSender", () => {
       runId: "announce-tool-call-direct",
       retirementKeys: ["announce-tool-call-direct"],
       destinationEndpoint: PARENT_TWO_ENDPOINT,
+      producer: {
+        kind: "tool_result",
+        tenantId: PARENT_TWO.conversationScope.tenantId,
+        agentId: PARENT_TWO.conversationScope.agentId,
+        conversationRef: PARENT_TWO.conversationRef,
+        toolCallId: "announce-tool-call-direct",
+      },
     }));
     expect(releaseAnnouncementProducer).toHaveBeenCalledWith("announce-tool-call-direct");
     expect(deps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("does not repeat target side effects when recovery owns completion", async () => {
+    const reserveAnnouncementProducer = vi.fn(async () => ok({
+      status: "recovery_owned" as const,
+      lifecycleState: "promotion_ready" as const,
+    }));
+    const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const suppressAnnouncementProducer = vi.fn(async () => ok(true));
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer,
+      releaseAnnouncementProducer,
+      cancelAnnouncementProducer,
+      suppressAnnouncementProducer,
+    });
+
+    const result = await sender.send({
+      target: QUERY_ONE,
+      text: "question",
+      mode: "wait",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "recovered-tool-call",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    });
+
+    expect(result).toEqual({ sent: true });
+    expect(deps.sessionStore.save).not.toHaveBeenCalled();
+    expect(deps.executeInSession).not.toHaveBeenCalled();
+    expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
+    expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
   });
 
   it("durably records announce skip before consuming producer ownership", async () => {
@@ -381,7 +425,7 @@ describe("createCrossSessionSender", () => {
       tokensUsed: { total: 50 },
       cost: { total: 0.005 },
     });
-    const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
     const suppressAnnouncementProducer = vi.fn(async () => ok(true));
@@ -422,7 +466,7 @@ describe("createCrossSessionSender", () => {
       tokensUsed: { total: 50 },
       cost: { total: 0.005 },
     });
-    const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
     const suppressAnnouncementProducer = vi.fn(async () => ok(false));
@@ -453,7 +497,7 @@ describe("createCrossSessionSender", () => {
   });
 
   it("cancels producer ownership when ping-pong fails before completion", async () => {
-    const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
     const suppressAnnouncementProducer = vi.fn(async () => ok(true));
@@ -491,7 +535,7 @@ describe("createCrossSessionSender", () => {
   });
 
   it("surfaces producer cancellation failure before returning execution failure", async () => {
-    const reserveAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
     const cancelAnnouncementProducer = vi.fn(async () =>
       err(new Error("producer cancellation storage unavailable")));

@@ -154,6 +154,11 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       destinationEndpoint: gs.callerEndpoint,
       completionKeys: [operationId, gs.graphId],
       retirementKeys: [gs.graphId],
+      producer: {
+        kind: "graph",
+        tenantId: deps.tenantId,
+        graphId: gs.graphId,
+      },
       ...(gs.callerEndpoint.threadId ? { threadId: gs.callerEndpoint.threadId } : {}),
     }, announcementLifecycle.signal);
     if (!reserved.ok) {

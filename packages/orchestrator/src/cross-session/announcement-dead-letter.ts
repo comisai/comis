@@ -9,6 +9,7 @@ import type {
   AnnouncementDeadLetterQueuePort,
   AnnouncementParentDecisionReservation,
   AnnouncementProducerReservation,
+  AnnouncementProducerReservationOutcome,
   OutwardSendLedgerPort,
   QuarantinedInvalidAnnouncementRecord,
 } from "@comis/core";
@@ -27,6 +28,7 @@ import {
   createParentDecisionReservationStore,
   isAnnouncementProducerHandoff,
   isAnnouncementProducerReservation,
+  isAnnouncementRetirementProducer,
   isAnnouncementTextChunks,
   isValidAnnouncementDecision,
   isParentDecisionReservation,
@@ -492,14 +494,17 @@ export function createAnnouncementDeadLetterQueue(
 
   async function reserveProducerDurably(
     reservation: AnnouncementProducerReservation,
-  ): Promise<Result<void, Error>> {
+  ): Promise<Result<AnnouncementProducerReservationOutcome, Error>> {
     const loadedFromDisk = await loadFromDisk();
     if (!loadedFromDisk.ok) return loadedFromDisk;
     const producerKey = reservation.runId;
     if (producerKey.length === 0 || producerKey.length > 256) {
       return err(new Error("Announcement producer identity is invalid"));
     }
-    if (!isValidAnnouncementDecision(reservation)) {
+    if (
+      !isValidAnnouncementDecision(reservation)
+      || !isAnnouncementRetirementProducer(reservation.producer)
+    ) {
       return err(new Error("Announcement producer reservation is invalid"));
     }
     if (
@@ -508,8 +513,8 @@ export function createAnnouncementDeadLetterQueue(
       || producerHandoffs.some((handoff) => handoff.operations.some((operation) =>
         operation.runId === producerKey))
     ) {
-      activeProducerKeys.add(producerKey);
-      return ok(undefined);
+      activeProducerKeys.delete(producerKey);
+      return ok({ status: "recovery_owned", lifecycleState: "delivery_owned" });
     }
     let existing = producerReservations.find((candidate) => candidate.runId === producerKey);
     if (existing && !sameAnnouncementProducerReservation(existing, reservation)) {
@@ -529,11 +534,18 @@ export function createAnnouncementDeadLetterQueue(
         decisionReservations,
       );
       if (!terminalized.ok) return terminalized;
-      return removeProducerReservationDurably(producerKey);
+      const removed = await removeProducerReservationDurably(producerKey);
+      return removed.ok
+        ? ok({ status: "recovery_owned", lifecycleState: "no_reply" })
+        : err(removed.error);
     }
     if (existing?.lifecycleState === "active") {
       activeProducerKeys.add(producerKey);
-      return ok(undefined);
+      return ok({ status: "claimed" });
+    }
+    if (existing?.lifecycleState === "promotion_ready") {
+      activeProducerKeys.delete(producerKey);
+      return ok({ status: "recovery_owned", lifecycleState: "promotion_ready" });
     }
     if (!existing && !canPersistProducerOwnership(
       producerHandoffs.length + producerReservations.length + 1,
@@ -560,7 +572,7 @@ export function createAnnouncementDeadLetterQueue(
     if (!persisted.ok) return persisted;
     producerReservations = next;
     activeProducerKeys.add(producerKey);
-    return ok(undefined);
+    return ok({ status: "claimed" });
   }
 
   async function releaseProducerDurably(producerKey: string): Promise<Result<void, Error>> {
@@ -2783,7 +2795,23 @@ export function createAnnouncementDeadLetterQueue(
     for (const record of [...producerReservations]) {
       if (activeProducerKeys.has(record.runId)) continue;
       const reservation = publicProducerReservation(record);
-      if (record.lifecycleState === "active") continue;
+      if (record.lifecycleState === "active") {
+        if (!retirementProducerExists) continue;
+        const producerExists = await retirementProducerExists(record.producer);
+        if (!producerExists.ok) {
+          logger?.warn(
+            {
+              runId: record.runId,
+              errorKind: "resource" as const,
+              hint: "restore the authoritative producer store so stale announcement ownership can be reconciled",
+            },
+            "Announcement producer authority could not be reconciled",
+          );
+          continue;
+        }
+        if (!producerExists.value) await removeProducerReservationDurably(record.runId);
+        continue;
+      }
       if (record.lifecycleState === "cancel_pending") {
         await removeProducerReservationDurably(record.runId);
         continue;

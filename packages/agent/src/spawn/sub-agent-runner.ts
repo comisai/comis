@@ -3275,6 +3275,12 @@ function classifyCompletionErrorKind(
             destinationEndpoint: run.callerEndpoint,
             completionKeys: [completionKey],
             retirementKeys: [completionKey],
+            producer: {
+              kind: "session",
+              tenantId: run.conversationScope.tenantId,
+              agentId: run.agentId,
+              conversationRef: run.conversationRef,
+            },
             ...(resolveAnnouncementThreadId(
               params.requesterOrigin,
               params.announceChannelType,

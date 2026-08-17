@@ -110,7 +110,9 @@ export interface AnnouncementParentDecisionReservationRecord
   id: string;
 }
 
-export type AnnouncementProducerReservation = AnnouncementParentDecisionReservation;
+export interface AnnouncementProducerReservation extends AnnouncementParentDecisionReservation {
+  readonly producer: AnnouncementRetirementProducer;
+}
 
 export interface AnnouncementProducerReservationRecord
   extends AnnouncementProducerReservation {
@@ -118,6 +120,13 @@ export interface AnnouncementProducerReservationRecord
   id: string;
   lifecycleState: "active" | "promotion_ready" | "no_reply_pending" | "cancel_pending";
 }
+
+export type AnnouncementProducerReservationOutcome =
+  | { readonly status: "claimed" }
+  | {
+      readonly status: "recovery_owned";
+      readonly lifecycleState: "delivery_owned" | "promotion_ready" | "no_reply";
+    };
 
 /** Content-free operator projection of a retained delivery. */
 export interface QuarantinedDeliveryAnnouncement {
@@ -197,7 +206,7 @@ export interface AnnouncementDeadLetterQueuePort {
   reserveProducer(
     reservation: AnnouncementProducerReservation,
     signal?: AbortSignal,
-  ): Promise<Result<void, Error>>;
+  ): Promise<Result<AnnouncementProducerReservationOutcome, Error>>;
   releaseProducer(
     producerKey: string,
   ): Promise<Result<void, Error>>;

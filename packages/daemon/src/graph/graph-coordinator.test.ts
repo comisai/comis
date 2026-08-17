@@ -440,7 +440,7 @@ describe("createGraphCoordinator", () => {
 
     it("reserves graph announcement ownership before node execution", async () => {
       const announcementDeadLetterQueue = {
-        reserveProducer: vi.fn(async () => ok(undefined)),
+        reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
         releaseProducer: vi.fn(async () => ok(undefined)),
         cancelProducer: vi.fn(async () => ok(undefined)),
         prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
@@ -475,6 +475,10 @@ describe("createGraphCoordinator", () => {
           runId: result.ok ? result.value : undefined,
           retirementKeys: result.ok ? [result.value] : [],
           destinationEndpoint: turnScope.endpoint,
+          producer: expect.objectContaining({
+            kind: "graph",
+            graphId: result.ok ? result.value : undefined,
+          }),
         }),
         expect.any(AbortSignal),
       );
@@ -494,7 +498,7 @@ describe("createGraphCoordinator", () => {
 
     it("surfaces graph producer cancellation failure before node execution", async () => {
       const announcementDeadLetterQueue = {
-        reserveProducer: vi.fn(async () => ok(undefined)),
+        reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
         releaseProducer: vi.fn(async () => ok(undefined)),
         cancelProducer: vi.fn(async () => err(new Error("graph producer cancellation unavailable"))),
         prepareTerminalDecisionRetirement: vi.fn(async () =>
@@ -526,7 +530,7 @@ describe("createGraphCoordinator", () => {
       const announcementDeadLetterQueue = {
         reserveProducer: vi.fn(async (_reservation: unknown, signal?: AbortSignal) => {
           admissionSignal = signal;
-          return new Promise<Result<void, Error>>((resolve) => {
+          return new Promise<Result<{ status: "claimed" }, Error>>((resolve) => {
             signal?.addEventListener("abort", () => {
               resolve(err(new Error("Dead-letter admission cancelled")));
             }, { once: true });
@@ -5310,7 +5314,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
     it("keeps the original graph identity and terminal delivery when the checkpoint authority changes", async () => {
       const durableRuns = createRecordingDurableRuns();
       const announcementDeadLetterQueue = {
-        reserveProducer: vi.fn(async () => ok(undefined)),
+        reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
         releaseProducer: vi.fn(async () => ok(undefined)),
         cancelProducer: vi.fn(async () => ok(undefined)),
         prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
@@ -5382,7 +5386,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
 
     it("reclaims a resumed announcement route from its authenticated endpoint", async () => {
       const announcementDeadLetterQueue = {
-        reserveProducer: vi.fn(async () => ok(undefined)),
+        reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
         releaseProducer: vi.fn(async () => ok(undefined)),
         cancelProducer: vi.fn(async () => ok(undefined)),
         prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),

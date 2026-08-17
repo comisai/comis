@@ -1078,7 +1078,7 @@ describe("createSubAgentRunner", () => {
       stepsExecuted: 2,
     });
     const suppressProducer = vi.fn(async () => ok(true));
-    const reserveProducer = vi.fn(async () => ok(undefined));
+    const reserveProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     deps.deadLetterQueue = {
       reserveProducer,
       releaseProducer: vi.fn(async () => ok(undefined)),
@@ -1133,7 +1133,7 @@ describe("createSubAgentRunner", () => {
       .mockResolvedValueOnce(err(new Error("suppression storage unavailable")))
       .mockResolvedValueOnce(ok(false))
       .mockResolvedValue(ok(true));
-    const reserveProducer = vi.fn(async () => ok(undefined));
+    const reserveProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     deps.deadLetterQueue = {
       reserveProducer,
       releaseProducer: vi.fn(async () => ok(undefined)),
@@ -7328,7 +7328,7 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     vi.mocked(localDeps.executeAgent).mockReturnValue(new Promise((resolve) => {
       resolveExecution = resolve;
     }));
-    const reserveProducer = vi.fn(async () => ok(undefined));
+    const reserveProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseProducer = vi.fn(async () => ok(undefined));
     const cancelProducer = vi.fn(async () => ok(undefined));
     localDeps.deadLetterQueue = {
@@ -7374,7 +7374,11 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     expect(reserveProducer).toHaveBeenCalledWith(
-      expect.objectContaining({ runId, retirementKeys: [expect.any(String)] }),
+      expect.objectContaining({
+        runId,
+        retirementKeys: [expect.any(String)],
+        producer: expect.objectContaining({ kind: "session" }),
+      }),
       expect.any(AbortSignal),
     );
     expect(cancelProducer).toHaveBeenCalledWith(runId);
