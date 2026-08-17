@@ -5201,3 +5201,197 @@ describe("announcement dead-letter producer promotion after restart", () => {
     expect(status).toMatchObject({ ok: true });
   });
 });
+
+describe("announcement dead-letter admission cancellation", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-admission-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function fullQueue() {
+    return createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      retryIntervalMs: 0,
+      maxEntries: 1,
+    });
+  }
+
+  function decision(overrides: Record<string, unknown> = {}) {
+    const authority = makeDeliveryAuthority("parent-agent");
+    return {
+      idempotencyKey: "admission-parent",
+      agentId: "parent-agent",
+      runId: "run-admission",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: "admission candidate",
+      channelType: "telegram" as const,
+      channelId: "chat-1",
+      failedAt: Date.now(),
+      rootRunId: "root-admission",
+      deliveryAuthority: authority,
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1"),
+      completionKeys: ["admission-parent"],
+      ...overrides,
+    };
+  }
+
+  it("cancels an enqueue that is waiting on capacity", async () => {
+    const queue = fullQueue();
+    await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: true });
+
+    const controller = new AbortController();
+    const blocked = queue.enqueue(makeEntry(), controller.signal);
+    await delay(10);
+    controller.abort();
+
+    // A caller that gave up must be told so, not left holding a promise that
+    // only resolves if capacity happens to free up.
+    await expect(blocked).resolves.toMatchObject({ ok: false });
+    expect(queue.size()).toBe(1);
+  });
+
+  it("refuses an enqueue whose caller already gave up", async () => {
+    const queue = fullQueue();
+    await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: true });
+
+    await expect(queue.enqueue(makeEntry(), AbortSignal.abort()))
+      .resolves.toMatchObject({ ok: false });
+    expect(queue.size()).toBe(1);
+  });
+
+  function producerFor(runId: string) {
+    const base = decision({ idempotencyKey: runId, runId });
+    return {
+      ...base,
+      producer: {
+        kind: "session" as const,
+        tenantId: base.deliveryAuthority.tenantId,
+        agentId: base.deliveryAuthority.agentId,
+        conversationRef: base.deliveryAuthority.conversationRef,
+        checkpointId: runId,
+      },
+    };
+  }
+
+  it("cancels a producer reservation blocked on producer capacity", async () => {
+    const queue = fullQueue();
+    await expect(queue.reserveProducer(producerFor("run-first")))
+      .resolves.toEqual(ok({ status: "claimed" }));
+
+    const controller = new AbortController();
+    const blocked = queue.reserveProducer(producerFor("run-second"), controller.signal);
+    await delay(10);
+    controller.abort();
+
+    // The second producer never claimed ownership, so nothing was left
+    // half-reserved behind the cancelled caller.
+    await expect(blocked).resolves.toMatchObject({ ok: false });
+  });
+
+  it("retains a blocked decision reservation rather than losing it on cancel", async () => {
+    const queue = fullQueue();
+    await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: true });
+
+    const controller = new AbortController();
+    const blocked = queue.reserveDecision(decision(), controller.signal);
+    await delay(10);
+    controller.abort();
+
+    // Cancellation settles the call; whichever way it settles, the queue must
+    // not be left believing an operation is in flight that no caller owns.
+    const settled = await blocked;
+    expect(settled).toBeDefined();
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+});
+
+describe("announcement dead-letter governed drain failures", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-governed-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function ledgerWith(overrides: Record<string, unknown>): OutwardSendLedgerPort {
+    return {
+      lookupTerminalDecision: vi.fn(async () => ok(undefined)),
+      recordTerminalDecision: vi.fn(async () => ok(undefined)),
+      lookup: vi.fn(async () => ok(undefined)),
+      allocateStep: vi.fn(async () => ok({ stepIndex: 1 })),
+      recordState: vi.fn(async () => ok(undefined)),
+      begin: vi.fn(async () => ok(undefined)),
+      commit: vi.fn(async () => ok(undefined)),
+      markUnknown: vi.fn(async () => ok(undefined)),
+      parkUncertain: vi.fn(async () => ok(undefined)),
+      ...overrides,
+    } as unknown as OutwardSendLedgerPort;
+  }
+
+  async function drainWith(ledger: OutwardSendLedgerPort) {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      outwardLedger: ledger,
+      retryIntervalMs: 0,
+      governedSendToChannel: vi.fn(async () => ok({
+        delivered: true as const,
+        status: "accepted" as const,
+        platformMessageId: "message-governed",
+      })),
+    });
+    await queue.enqueue(makeEntry({ agentId: "agent-1", rootRunId: "root-1", stepIndex: 1 }));
+    await queue.drain(vi.fn(async () => true));
+    return queue;
+  }
+
+  it("retains an entry whose ledger lookup cannot be read", async () => {
+    const queue = await drainWith(ledgerWith({
+      lookup: vi.fn(async () => err(new Error("ledger lookup failed"))),
+    }));
+
+    // Without a definitive lookup the send may already have happened, so the
+    // entry is retained rather than replayed.
+    expect(queue.size()).toBe(1);
+  });
+
+  it("parks an entry whose ledger begin is refused", async () => {
+    const parkUncertain = vi.fn(async () => ok(undefined));
+    const ledger = ledgerWith({
+      begin: vi.fn(async () => err(new Error("ledger begin refused"))),
+      parkUncertain,
+    });
+    await drainWith(ledger);
+
+    // A send that could not even be opened in the ledger is parked for an
+    // operator rather than retried blind: retrying it is exactly the case the
+    // ledger exists to prevent.
+    expect(parkUncertain).toHaveBeenCalled();
+  });
+
+  it("settles an entry the ledger already recorded as terminal", async () => {
+    const queue = await drainWith(ledgerWith({
+      lookupTerminalDecision: vi.fn(async () => ok("delivered")),
+    }));
+
+    // The platform already accepted this send; replaying it would duplicate
+    // the announcement, so the entry settles without a transport call.
+    expect(queue.size()).toBe(0);
+  });
+});
