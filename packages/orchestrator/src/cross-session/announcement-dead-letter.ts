@@ -3031,10 +3031,12 @@ export function createAnnouncementDeadLetterQueue(
           );
           continue;
         }
+        const hasToolResultRecovery = record.producer.kind === "tool_result"
+          && producerState.value.status === "terminal"
+          && producerState.value.recoveryOutcome !== undefined;
         if (
           producerState.value.status !== "active"
-          && !(record.producer.kind === "tool_result"
-            && producerState.value.recoveryOutcome !== undefined)
+          && !hasToolResultRecovery
         ) {
           await removeProducerReservationDurably(record.runId);
         }
