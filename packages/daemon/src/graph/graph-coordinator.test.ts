@@ -5321,6 +5321,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
         releaseProducer: vi.fn(async () => ok(undefined)),
         cancelProducer: vi.fn(async () => ok(undefined)),
+        recordProducerOutcome: vi.fn(async () => ok(undefined)),
         prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
       };
       const sendGovernedAnnouncement = vi.fn(async () => ok({
@@ -5378,6 +5379,14 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       simulateCompletion(eventBus, resumedRunId, true);
 
       await vi.waitFor(() => {
+        expect(announcementDeadLetterQueue.recordProducerOutcome).toHaveBeenCalledWith(
+          "original-graph-run",
+          expect.objectContaining({
+            kind: "graph",
+            terminalReason: "completed",
+            announcementText: expect.any(String),
+          }),
+        );
         expect(sendGovernedAnnouncement).toHaveBeenCalledTimes(1);
         expect(durableRuns.terminalize).toHaveBeenCalledWith(
           "resume-replacement-authority",

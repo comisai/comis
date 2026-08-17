@@ -75,8 +75,15 @@ export function isRecoverableCompletionAnnouncementConfirmedDelivered(
     || ("terminalDecision" in outcome && outcome.terminalDecision === "delivered");
 }
 
+export type RecoverableCompletionAnnouncementRequest = Omit<
+  GovernedCompletionAnnouncementRequest,
+  "attachment"
+> & {
+  attachment?: never;
+};
+
 export type SendRecoverableCompletionAnnouncement = (
-  request: GovernedCompletionAnnouncementRequest,
+  request: RecoverableCompletionAnnouncementRequest,
 ) => Promise<Result<RecoverableCompletionAnnouncementOutcome, Error>>;
 
 /**

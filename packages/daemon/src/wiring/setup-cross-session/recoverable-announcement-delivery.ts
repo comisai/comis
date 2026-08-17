@@ -107,6 +107,8 @@ function reservationMatches(
       },
     } : {}),
   });
+  const existingRetirementKeys = existing.retirementKeys;
+  const expectedRetirementKeys = expected.retirementKeys;
   return existing.idempotencyKey === expected.idempotencyKey
     && existing.agentId === expected.agentId
     && existing.runId === expected.runId
@@ -133,12 +135,12 @@ function reservationMatches(
     && existing.completionKeys.length === expected.completionKeys.length
     && existing.completionKeys.every((key, index) => key === expected.completionKeys[index])
     && (
-      existing.retirementKeys === undefined && expected.retirementKeys === undefined
+      existingRetirementKeys === undefined && expectedRetirementKeys === undefined
       || (
-        existing.retirementKeys !== undefined
-        && expected.retirementKeys !== undefined
-        && existing.retirementKeys.length === expected.retirementKeys.length
-        && existing.retirementKeys.every((key, index) => key === expected.retirementKeys[index])
+        existingRetirementKeys !== undefined
+        && expectedRetirementKeys !== undefined
+        && existingRetirementKeys.length === expectedRetirementKeys.length
+        && existingRetirementKeys.every((key, index) => key === expectedRetirementKeys[index])
       )
     )
     && (

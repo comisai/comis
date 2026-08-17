@@ -188,12 +188,15 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         tenantId: deps.tenantId,
         graphId: gs.graphId,
       });
-    if (!retirement.ok || announcementLifecycle.signal.aborted) {
+    if (!retirement.ok) {
       const cancelled = await cancelGraphAnnouncementProducer(gs.graphId);
       if (!cancelled.ok) return cancelled;
-      return announcementLifecycle.signal.aborted
-        ? err(new Error("Graph coordinator is shutting down"))
-        : retirement;
+      return err(retirement.error);
+    }
+    if (announcementLifecycle.signal.aborted) {
+      const cancelled = await cancelGraphAnnouncementProducer(gs.graphId);
+      if (!cancelled.ok) return cancelled;
+      return err(new Error("Graph coordinator is shutting down"));
     }
     gs.announcementProducerReserved = true;
     return reserved;
