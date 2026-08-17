@@ -82,6 +82,25 @@ describe("generic runtime specialization boundary", () => {
     expect(violations).toEqual([]);
   });
 
+  it("ships no capability-service companion skill in the auto-seeding skill trees", () => {
+    // Bundled skills auto-seed into EVERY deployment's data directory at boot
+    // (wiring/seed-bundled-skills.ts), and the repo-root tree mirrors them. A
+    // capability-service companion's opt-in skill is installed explicitly into
+    // one selected agent workspace by the operator who installed that service,
+    // so shipping it here hands every unrelated deployment a persona for a
+    // product it does not run. The companion repository owns that skill.
+    const companionSurface = /capability[- ]service|managed[- ]run|companion service/u;
+    const violations: string[] = [];
+    for (const root of ["packages/daemon/bundled-skills", "skills"]) {
+      for (const file of listTextFiles(resolve(REPO_ROOT, root))) {
+        if (companionSurface.test(readFileSync(file, "utf8").toLowerCase())) {
+          violations.push(relative(REPO_ROOT, file));
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
   it("keeps starter workspaces neutral while seeding generic first-run setup", () => {
     const templates = source("packages/core/src/workspace/templates.ts");
     expect(templates).not.toContain('"BOOTSTRAP.md": ""');
