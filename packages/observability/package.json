@@ -1,13 +1,23 @@
 {
   "name": "@comis/observability",
   "private": true,
-  "version": "1.0.62",
+  "version": "1.0.63",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Observability substrate (queued writer, payload bounding, sanitization, path guards) for Comis diagnostics artifacts",
-  "keywords": ["comis", "ai", "agent", "observability", "diagnostics"],
-  "engines": { "node": ">=22.19.0" },
-  "files": ["dist"],
+  "keywords": [
+    "comis",
+    "ai",
+    "agent",
+    "observability",
+    "diagnostics"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,7 +1,7 @@
 {
   "name": "@comis/capability-service-sdk",
   "private": true,
-  "version": "1.0.60",
+  "version": "1.0.63",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Schemas and generated release artifacts for the Comis capability-service protocol",
