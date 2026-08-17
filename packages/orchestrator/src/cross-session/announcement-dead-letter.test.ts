@@ -1717,6 +1717,38 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(admission).resolves.toEqual(ok({ status: "claimed" }));
   });
 
+  it("backpressures physical snapshot capacity until outcome space is released", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    const producers = Array.from({ length: 64 }, (_, index) => producerInput({
+      idempotencyKey: `physical-capacity-operation-${index}`,
+      runId: `physical-capacity-run-${index}`,
+      completionKeys: [`physical-capacity-operation-${index}`],
+      retirementKeys: [`physical-capacity-operation-${index}`],
+    }));
+    for (const producer of producers.slice(0, 63)) {
+      await expect(queue.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    }
+
+    let finalAdmitted = false;
+    const finalAdmission = queue.reserveProducer(producers[63]!).then((result) => {
+      finalAdmitted = true;
+      return result;
+    });
+    await delay(10);
+    expect(finalAdmitted).toBe(false);
+
+    await expect(queue.recordProducerOutcome(producers[0]!.runId, {
+      kind: "session",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      summary: "bounded outcome",
+    })).resolves.toEqual(ok(undefined));
+    await expect(finalAdmission).resolves.toEqual(ok({ status: "claimed" }));
+  });
+
   it("rejects a partially persisted replacement operation set", async () => {
     const first = decisionInput({
       idempotencyKey: "partial-operation-first",

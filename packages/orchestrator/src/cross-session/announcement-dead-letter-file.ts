@@ -260,6 +260,58 @@ export type StoredDeadLetterEntry =
   | AnnouncementProducerHandoffRecord
   | InvalidDeadLetterRecord;
 
+export function isDeadLetterSnapshotCapacityError(error: Error): boolean {
+  return error.message === "Dead-letter snapshot exceeds the row limit"
+    || error.message === "Dead-letter snapshot exceeds the byte limit"
+    || error.message === "Dead-letter quarantine capacity exhausted"
+    || error.message === "Announcement producer capacity exhausted";
+}
+
+export function reservedDeadLetterSnapshotBytes(
+  entries: readonly StoredDeadLetterEntry[],
+): Result<number, Error> {
+  if (entries.length > MAX_DEAD_LETTER_SNAPSHOT_ROWS) {
+    return err(new Error("Dead-letter snapshot exceeds the row limit"));
+  }
+  const serializedRows = tryCatch(() => entries.map((entry) => JSON.stringify(entry)));
+  if (!serializedRows.ok) return serializedRows;
+  let total = 0;
+  for (let index = 0; index < entries.length; index++) {
+    const rowBytes = Buffer.byteLength(serializedRows.value[index]!, "utf8");
+    if (rowBytes > MAX_DEAD_LETTER_ROW_BYTES) {
+      return err(new Error("Dead-letter snapshot contains an oversized record"));
+    }
+    const entry = entries[index]!;
+    total += isAnnouncementProducerReservationRecord(entry)
+      && entry.recoveryOutcome === undefined
+      && (
+        entry.lifecycleState === "active"
+        || entry.lifecycleState === "delivery_owned"
+        || entry.lifecycleState === "promotion_ready"
+      )
+      ? MAX_DEAD_LETTER_ROW_BYTES + 1
+      : rowBytes + 1;
+  }
+  return ok(total);
+}
+
+export function validateDeadLetterSnapshotAdmission(
+  currentEntries: readonly StoredDeadLetterEntry[],
+  nextEntries: readonly StoredDeadLetterEntry[],
+): Result<void, Error> {
+  const currentBytes = reservedDeadLetterSnapshotBytes(currentEntries);
+  if (!currentBytes.ok) return currentBytes;
+  const nextBytes = reservedDeadLetterSnapshotBytes(nextEntries);
+  if (!nextBytes.ok) return nextBytes;
+  if (
+    nextBytes.value > MAX_DEAD_LETTER_SNAPSHOT_BYTES
+    && nextBytes.value >= currentBytes.value
+  ) {
+    return err(new Error("Dead-letter snapshot exceeds the byte limit"));
+  }
+  return ok(undefined);
+}
+
 export interface DeadLetterReadSnapshot {
   readonly entries: StoredDeadLetterEntry[];
   readonly invalidRowCount: number;

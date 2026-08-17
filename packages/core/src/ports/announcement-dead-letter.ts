@@ -259,6 +259,7 @@ export interface AnnouncementDeadLetterQueuePort {
   recordProducerOutcome(
     producerKey: string,
     outcome: AnnouncementProducerRecoveryOutcome,
+    signal?: AbortSignal,
   ): Promise<Result<void, Error>>;
   releaseProducer(
     producerKey: string,

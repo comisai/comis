@@ -1165,7 +1165,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
         await new Promise<void>((resolve) => {
           const retryHandle = timers.setTimeout(resolve, ANNOUNCEMENT_SUPPRESSION_RETRY_MS);
-          if (acceptingSpawns) retryHandle.unref();
+          retryHandle.unref();
         });
       }
     } finally {
@@ -3949,20 +3949,22 @@ function classifyCompletionErrorKind(
                 result.finishReason,
                 result.terminalErrorKind,
               );
-        const completion: SubAgentCompletion = isSuccess
-          ? {
-              endReason: "completed",
-              completedAtMs: completedAt,
-              summary: completionSummary,
-              ...(materializedRef ? { resultRef: materializedRef } : {}),
-            }
-          : {
-              endReason: "failed",
-              completedAtMs: completedAt,
-              errorKind: completionErrorKind,
-              summary: completionSummary || result.errorContext?.originalError,
-              ...(materializedRef ? { resultRef: materializedRef } : {}),
-            };
+        const completion = freezeCompletion(
+          isSuccess
+            ? {
+                endReason: "completed",
+                completedAtMs: completedAt,
+                summary: completionSummary,
+                ...(materializedRef ? { resultRef: materializedRef } : {}),
+              }
+            : {
+                endReason: "failed",
+                completedAtMs: completedAt,
+                errorKind: completionErrorKind,
+                summary: completionSummary || result.errorContext?.originalError,
+                ...(materializedRef ? { resultRef: materializedRef } : {}),
+              },
+        );
         if (producerClaimed) {
           const recordProducerOutcome = deps.deadLetterQueue?.recordProducerOutcome;
           if (!recordProducerOutcome) {
@@ -3988,7 +3990,7 @@ function classifyCompletionErrorKind(
           await settleAnnouncementProducerLifecycle(
             runId,
             "record_outcome",
-            () => recordProducerOutcome(runId, outcome),
+            () => recordProducerOutcome(runId, outcome, producerAdmissionAbort.signal),
           );
         }
 
@@ -4267,12 +4269,12 @@ function classifyCompletionErrorKind(
           params.callerSessionKey,
           runtimeMs,
         );
-        const failureCompletion: SubAgentCompletion = {
+        const failureCompletion = freezeCompletion({
           endReason: "failed",
           completedAtMs: completedAt,
           errorKind: "internal",
           summary: errorMessage,
-        };
+        });
         let producerOutcomeDurable = true;
         if (producerClaimed) {
           const recordProducerOutcome = deps.deadLetterQueue?.recordProducerOutcome;
@@ -4280,19 +4282,19 @@ function classifyCompletionErrorKind(
             producerRecoveryOwned = true;
             producerOutcomeDurable = false;
           } else {
-            const recorded = await recordProducerOutcome(runId, {
-              kind: "session",
-              terminalReason: "failed",
-              completedAtMs: failureCompletion.completedAtMs,
-              errorKind: failureCompletion.errorKind,
-              ...(failureCompletion.summary !== undefined
-                ? { summary: failureCompletion.summary }
-                : {}),
-            });
-            if (!recorded.ok) {
-              producerRecoveryOwned = true;
-              producerOutcomeDurable = false;
-            }
+            await settleAnnouncementProducerLifecycle(
+              runId,
+              "record_outcome",
+              () => recordProducerOutcome(runId, {
+                kind: "session",
+                terminalReason: "failed",
+                completedAtMs: failureCompletion.completedAtMs,
+                errorKind: failureCompletion.errorKind,
+                ...(failureCompletion.summary !== undefined
+                  ? { summary: failureCompletion.summary }
+                  : {}),
+              }, producerAdmissionAbort.signal),
+            );
           }
         }
         terminalizeRun(runId, failureCompletion);

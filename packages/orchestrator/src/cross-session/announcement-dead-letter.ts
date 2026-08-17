@@ -32,15 +32,19 @@ import {
   isAnnouncementProducerReservation,
   isAnnouncementRetirementProducer,
   isAnnouncementTextChunks,
+  isDeadLetterSnapshotCapacityError,
   isValidAnnouncementDecision,
   isParentDecisionReservation,
   readDeadLetterSnapshot,
+  reservedDeadLetterSnapshotBytes,
+  validateDeadLetterSnapshotAdmission,
   writeDeadLetterEntries,
   type ChannelType,
   type DeadLetterEntry,
   type AnnouncementProducerHandoffRecord,
   type ParentDecisionReservationRecord,
   type ProducerReservationRecord,
+  type StoredDeadLetterEntry,
   sameAnnouncementProducerReservation,
 } from "./announcement-dead-letter-file.js";
 import {
@@ -136,6 +140,16 @@ export function createAnnouncementDeadLetterQueue(
     return entries.length + decisionReservations.length + invalidRecords.length;
   }
 
+  function snapshotRecords(): StoredDeadLetterEntry[] {
+    return [
+      ...entries,
+      ...decisionReservations,
+      ...producerReservations,
+      ...producerHandoffs,
+      ...invalidRecords,
+    ];
+  }
+
   function signalCapacityChange(): void {
     capacityVersion++;
     for (const resolve of capacityWaiters) resolve();
@@ -146,10 +160,13 @@ export function createAnnouncementDeadLetterQueue(
     return serialize(async () => {
       const beforeProducer = producerCapacityCount();
       const beforeQuarantine = quarantineCapacityCount();
+      const beforeBytes = reservedDeadLetterSnapshotBytes(snapshotRecords());
       const result = await operation();
+      const afterBytes = reservedDeadLetterSnapshotBytes(snapshotRecords());
       if (
         producerCapacityCount() < beforeProducer
         || quarantineCapacityCount() < beforeQuarantine
+        || (beforeBytes.ok && afterBytes.ok && afterBytes.value < beforeBytes.value)
       ) {
         signalCapacityChange();
         const collected = await collectTerminalRetirementsDurably();
@@ -201,10 +218,7 @@ export function createAnnouncementDeadLetterQueue(
       const result = await serializeStateChange(operation);
       if (
         result.ok
-        || (
-          result.error.message !== "Dead-letter quarantine capacity exhausted"
-          && result.error.message !== "Announcement producer capacity exhausted"
-        )
+        || !isDeadLetterSnapshotCapacityError(result.error)
       ) {
         return result;
       }
@@ -439,15 +453,18 @@ export function createAnnouncementDeadLetterQueue(
       if (reservation.recoveryOutcome === undefined) return [];
       return [{ ...reservation, lifecycleState: "delivery_owned" as const }];
     });
+    const nextRecords: StoredDeadLetterEntry[] = [
+      ...nextEntries,
+      ...nextReservations,
+      ...retainedProducerReservations,
+      ...nextProducerHandoffs,
+      ...nextInvalidRecords,
+    ];
+    const admitted = validateDeadLetterSnapshotAdmission(snapshotRecords(), nextRecords);
+    if (!admitted.ok) return admitted;
     const written = await writeDeadLetterEntries(
       filePath,
-      [
-        ...nextEntries,
-        ...nextReservations,
-        ...retainedProducerReservations,
-        ...nextProducerHandoffs,
-        ...nextInvalidRecords,
-      ],
+      nextRecords,
       fileOperations,
     );
     if (written.ok) {
@@ -3086,8 +3103,9 @@ export function createAnnouncementDeadLetterQueue(
       () => reserveProducerDurably(reservation, true),
       signal,
     ),
-    recordProducerOutcome: (producerKey, outcome) => serializeStateChange(
+    recordProducerOutcome: (producerKey, outcome, signal) => admitWithBackpressure(
       () => recordProducerOutcomeDurably(producerKey, outcome),
+      signal,
     ),
     releaseProducer: (producerKey) => serializeStateChange(
       () => releaseProducerDurably(producerKey),

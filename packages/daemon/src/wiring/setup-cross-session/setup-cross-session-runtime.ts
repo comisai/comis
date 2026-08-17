@@ -593,7 +593,11 @@ export function setupCrossSession(deps: {
     ),
     releaseAnnouncementProducer: (producerKey) => deadLetterQueue.releaseProducer(producerKey),
     recordAnnouncementProducerOutcome: (producerKey, outcome) =>
-      deadLetterQueue.recordProducerOutcome(producerKey, outcome),
+      deadLetterQueue.recordProducerOutcome(
+        producerKey,
+        outcome,
+        announcementAdmissionAbort.signal,
+      ),
     cancelAnnouncementProducer: (producerKey) => deadLetterQueue.cancelProducer(producerKey),
     suppressAnnouncementProducer: (producerKey) => deadLetterQueue.suppressProducer(producerKey),
     prepareAnnouncementRetirement: (completionKeys, producer) =>

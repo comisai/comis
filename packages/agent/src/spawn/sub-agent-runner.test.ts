@@ -9,12 +9,15 @@ import {
   formatSessionKey,
   RequiredToolsUnreachableError,
   TypedEventBus,
-  type ConversationLocator, SUB_AGENT_TOOL_DENYLIST} from "@comis/core";
+  type ConversationLocator,
+  SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
+  SUB_AGENT_TOOL_DENYLIST,
+} from "@comis/core";
 import { SandboxDowngradeError } from "./sandbox-posture.js";
 import { mkdtemp, writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { err, ok } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
@@ -1256,13 +1259,196 @@ describe("createSubAgentRunner", () => {
       kind: "session",
       terminalReason: "completed",
       summary: expect.any(String),
-    }));
+    }), expect.any(AbortSignal));
     await expect(completion).resolves.toMatchObject({
       endReason: "completed",
       summary: expect.any(String),
     });
     expect(suppressProducer).toHaveBeenCalledWith(runId);
     await runner.shutdown();
+  });
+
+  it("bounds the durable producer outcome before terminalizing completion", async () => {
+    const response = "x".repeat(SUBAGENT_RESULT_SUMMARY_MAX_CHARS + 2_000);
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response,
+      tokensUsed: { total: 100 },
+      cost: { total: 0.01 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    const recordProducerOutcome = vi.fn(async () => ok(undefined));
+    deps.deadLetterQueue = {
+      reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordProducerOutcome,
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer: vi.fn(async () => ok(true)),
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "persist bounded result",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+    const completion = runner.waitForCompletion(runId);
+    if (!completion) throw new Error("Bounded completion was not registered");
+
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(completion).resolves.toMatchObject({
+      endReason: "completed",
+      summary: "x".repeat(SUBAGENT_RESULT_SUMMARY_MAX_CHARS),
+    });
+    expect(recordProducerOutcome).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({
+        terminalReason: "completed",
+        summary: "x".repeat(SUBAGENT_RESULT_SUMMARY_MAX_CHARS),
+      }),
+      expect.any(AbortSignal),
+    );
+    await runner.shutdown();
+  });
+
+  it("retries failed outcome persistence before terminalizing the run", async () => {
+    vi.mocked(deps.executeAgent).mockRejectedValue(new Error("provider unavailable"));
+    const recordProducerOutcome = vi.fn()
+      .mockResolvedValueOnce(err(new Error("outcome storage unavailable")))
+      .mockResolvedValue(ok(undefined));
+    deps.deadLetterQueue = {
+      reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordProducerOutcome,
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer: vi.fn(async () => ok(true)),
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "persist failed result",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+    const completion = runner.waitForCompletion(runId);
+    if (!completion) throw new Error("Failed completion was not registered");
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(recordProducerOutcome).toHaveBeenCalledTimes(1);
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "running" });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(recordProducerOutcome).toHaveBeenCalledTimes(2);
+    await expect(completion).resolves.toMatchObject({
+      endReason: "failed",
+      summary: "provider unavailable",
+    });
+    await runner.shutdown();
+  });
+
+  it("unrefs outcome persistence retries that begin during shutdown", async () => {
+    const retryHandles: Array<{ delayMs: number; unref: ReturnType<typeof vi.fn> }> = [];
+    deps.timers = {
+      setTimeout: (callback, delayMs) => {
+        const handle = testTimers.setTimeout(callback, delayMs);
+        const unref = vi.fn(() => handle.unref());
+        retryHandles.push({ delayMs, unref });
+        return { ...handle, unref };
+      },
+      setInterval: testTimers.setInterval,
+    };
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "persist after shutdown starts",
+      tokensUsed: { total: 100 },
+      cost: { total: 0.01 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    let rejectFirstOutcome!: (result: Result<void, Error>) => void;
+    const recordProducerOutcome = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        rejectFirstOutcome = resolve;
+      }))
+      .mockResolvedValue(ok(undefined));
+    deps.deadLetterQueue = {
+      reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordProducerOutcome,
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer: vi.fn(async () => ok(true)),
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "persist during shutdown",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(recordProducerOutcome).toHaveBeenCalledOnce();
+
+    const shutdown = runner.shutdown();
+    rejectFirstOutcome(err(new Error("outcome storage unavailable")));
+    await vi.advanceTimersByTimeAsync(0);
+    const retry = retryHandles.findLast((record) => record.delayMs === 1_000);
+    expect(retry?.unref).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await shutdown;
   });
 
   it("retries announce skip persistence without sending a failure notice", async () => {
