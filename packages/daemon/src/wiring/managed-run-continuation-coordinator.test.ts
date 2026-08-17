@@ -171,6 +171,7 @@ function makeCoordinator(overrides: {
     input: ManagedRunContinuationExecutionInput,
   ) => Promise<ReturnType<typeof ok<ManagedRunContinuationExecutionOutcome>>>;
   claimContinuation?: ManagedRunStorePort["claimContinuation"];
+  requiresLiveness?: boolean;
 } = {}) {
   const recordValue = overrides.record ?? makeRecord();
   const reports = overrides.reports ?? [report(1, "progress"), report(2, "candidate_complete")];
@@ -207,6 +208,7 @@ function makeCoordinator(overrides: {
     execute,
     nowMs: () => NOW_MS,
     heartbeatMaxAgeMs: 10_000,
+    resolveHeartbeatRequirement: () => overrides.requiresLiveness ?? true,
     claimTtlMs: 60_000,
     resolveEvidencePolicies: () => overrides.evidencePolicies ?? [],
     eventBus: new TypedEventBus(),
@@ -296,6 +298,34 @@ describe("managed-run continuation coordination", () => {
       status: "succeeded",
       statusReason: "outcome_verified",
       terminalOutcome: { kind: "succeeded", recordedAtMs: NOW_MS },
+    }));
+  });
+
+  it("requires liveness only from a service that declared the health scope", async () => {
+    // heartbeatRequired was hard-coded true while nothing wrote a heartbeat, so
+    // every real reduction resolved to unknown; only the fixture record's
+    // hand-set beat kept these tests green. A service that never asked for the
+    // health scope has no way to satisfy the requirement and must not carry it.
+    const setup = makeCoordinator({ record: makeRecord({ lastHeartbeatAtMs: undefined }), requiresLiveness: false });
+
+    const result = await setup.coordinator.process(ownerScope(), "managed-run-a");
+
+    expect(result.ok).toBe(true);
+    expect(setup.commitReducedState).toHaveBeenCalledWith(ownerScope(), expect.objectContaining({
+      status: "candidate_complete",
+      statusReason: "verification_pending",
+    }));
+  });
+
+  it("holds a liveness-declaring service at unknown until it reports a beat", async () => {
+    const setup = makeCoordinator({ record: makeRecord({ lastHeartbeatAtMs: undefined }), requiresLiveness: true });
+
+    const result = await setup.coordinator.process(ownerScope(), "managed-run-a");
+
+    expect(result.ok).toBe(true);
+    expect(setup.commitReducedState).toHaveBeenCalledWith(ownerScope(), expect.objectContaining({
+      status: "unknown",
+      statusReason: "service_state_unavailable",
     }));
   });
 
