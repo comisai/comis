@@ -4,6 +4,8 @@ import {
   CAPABILITY_SERVICE_METHODS,
   CAPABILITY_SERVICE_PROTOCOL_ID,
   CapabilityActivateRequestSchema,
+  CapabilityCancelRequestSchema,
+  CapabilityCancelResponseSchema,
   CapabilityHandshakeRequestSchema,
   CapabilityHeartbeatRequestSchema,
   CapabilityHeartbeatResponseSchema,
@@ -176,5 +178,53 @@ describe("capability-service run liveness contract", () => {
     });
 
     expect(parsed.success).toBe(true);
+  });
+});
+
+describe("capability-service cancellation contract", () => {
+  it("requests idempotent cancellation of one bound run", () => {
+    const parsed = CapabilityCancelRequestSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "operation_cancel",
+      method: "managedRuns.cancel",
+      params: {
+        operationId: "operation_cancel",
+        managedRunId: "managed-run_a",
+        reason: "owner_cancelled",
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("refuses a cancellation that names its own disposition", () => {
+    // Whether the service's artifacts survive is a domain decision the service
+    // makes and reports; the host asks it to stop, it does not instruct it how
+    // to dispose of work it cannot see.
+    const parsed = CapabilityCancelRequestSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "operation_cancel",
+      method: "managedRuns.cancel",
+      params: {
+        operationId: "operation_cancel",
+        managedRunId: "managed-run_a",
+        reason: "owner_cancelled",
+        disposition: "reap_safe",
+      },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts an acknowledgement that the run is stopping or already settled", () => {
+    for (const state of ["cancelling", "cancelled", "already_terminal"] as const) {
+      const parsed = CapabilityCancelResponseSchema.safeParse({
+        jsonrpc: "2.0",
+        id: "operation_cancel",
+        result: { managedRunId: "managed-run_a", state, acknowledgedAtMs: 1_800_000_000_000 },
+      });
+
+      expect(parsed.success, state).toBe(true);
+    }
   });
 });

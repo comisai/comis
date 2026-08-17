@@ -27,6 +27,7 @@ const EXPECTED_METHODS = [
   "capabilityServices.health",
   "managedRuns.abandon",
   "managedRuns.activate",
+  "managedRuns.cancel",
   "managedRuns.heartbeat",
   "managedRuns.putEvidence",
   "managedRuns.receiveAttentionResponse",
