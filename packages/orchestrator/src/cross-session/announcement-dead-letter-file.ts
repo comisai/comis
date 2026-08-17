@@ -8,6 +8,7 @@ import {
   ChannelEndpointSchema,
   ConversationRefSchema,
   ERROR_KINDS,
+  SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
   toSafeErrorLogString,
   type AnnouncementChannelType,
   type AnnouncementDeadLetterAttachmentSnapshot,
@@ -20,6 +21,7 @@ import {
   type AnnouncementRetirementProducer,
   type ChannelEndpoint,
   type DeliveryAuthority,
+  type ResultRef,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
@@ -41,6 +43,7 @@ const MAX_DEAD_LETTER_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const DEAD_LETTER_READ_BUFFER_BYTES = 64 * 1024;
 const INVALID_ROW_EVIDENCE_BYTES = 16 * 1024;
 const ERROR_KIND_SET = new Set<string>(ERROR_KINDS);
+const RESULT_REF_KIND_SET = new Set(["jsonl", "json", "csv", "html", "text", "binary"]);
 
 export interface DeadLetterReadLimits { readonly maxRows?: number; readonly maxBytes?: number }
 
@@ -168,11 +171,26 @@ export function isAnnouncementProducerRecoveryOutcome(
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   if (record.kind === "session") {
+    const resultRef = record.resultRef;
+    const validResultRef = resultRef === undefined || isAnnouncementResultRef(resultRef);
     return Object.keys(record).every((key) =>
-      key === "kind" || key === "terminalReason" || key === "errorKind")
+      key === "kind"
+      || key === "terminalReason"
+      || key === "completedAtMs"
+      || key === "errorKind"
+      || key === "summary"
+      || key === "resultRef")
       && (record.terminalReason === "completed" || record.terminalReason === "failed")
-      && (record.errorKind === undefined
-        || (typeof record.errorKind === "string" && ERROR_KIND_SET.has(record.errorKind)));
+      && typeof record.completedAtMs === "number"
+      && Number.isSafeInteger(record.completedAtMs)
+      && record.completedAtMs >= 0
+      && (record.summary === undefined
+        || (typeof record.summary === "string"
+          && record.summary.length <= SUBAGENT_RESULT_SUMMARY_MAX_CHARS))
+      && validResultRef
+      && (record.terminalReason === "completed"
+        ? record.errorKind === undefined
+        : typeof record.errorKind === "string" && ERROR_KIND_SET.has(record.errorKind));
   }
   if (record.kind !== "tool_result") return false;
   if (typeof record.response !== "string") return false;
@@ -201,6 +219,38 @@ export function isAnnouncementProducerRecoveryOutcome(
     && typeof stats.totalCost === "number"
     && Number.isFinite(stats.totalCost)
     && stats.totalCost >= 0;
+}
+
+function isAnnouncementResultRef(value: unknown): value is ResultRef {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).every((key) =>
+    key === "ref"
+    || key === "kind"
+    || key === "bytes"
+    || key === "rows"
+    || key === "schema"
+    || key === "preview"
+    || key === "expiresAt")
+    && typeof record.ref === "string"
+    && record.ref.length > 0
+    && record.ref.length <= 1_024
+    && typeof record.kind === "string"
+    && RESULT_REF_KIND_SET.has(record.kind)
+    && typeof record.bytes === "number"
+    && Number.isSafeInteger(record.bytes)
+    && record.bytes >= 0
+    && (record.rows === undefined
+      || (typeof record.rows === "number" && Number.isSafeInteger(record.rows) && record.rows >= 0))
+    && (record.schema === undefined
+      || (Array.isArray(record.schema)
+        && record.schema.length <= 256
+        && record.schema.every((field) => typeof field === "string" && field.length <= 256)))
+    && typeof record.preview === "string"
+    && record.preview.length <= 4_096
+    && typeof record.expiresAt === "string"
+    && record.expiresAt.length > 0
+    && record.expiresAt.length <= 64;
 }
 
 export type StoredDeadLetterEntry =
@@ -574,25 +624,31 @@ export function createParentDecisionReservationStore(
     );
     const expectedReservations = current.filter((reservation) =>
       expected.has(reservation.idempotencyKey));
-    const alreadyTransitioned = current.some((reservation) =>
-      reservation.completionKeys.some((key) => completionKeys.has(key))
-      && !expected.has(reservation.idempotencyKey));
-    const deliveryTransitioned = [...completionKeys].some(deps.hasDeliveryKey);
+    const replacementTransitioned = operations.every((operation) =>
+      current.some((reservation) =>
+        reservation.idempotencyKey === operation.idempotencyKey
+        && sameDecision(reservation, operation))
+      || deps.hasDeliveryKey(operation.idempotencyKey));
     const retained = current.filter((reservation) => !expected.has(reservation.idempotencyKey));
+    const transitionedRetained = current.filter((reservation) =>
+      !expected.has(reservation.idempotencyKey)
+      || operations.some((operation) =>
+        operation.idempotencyKey === reservation.idempotencyKey
+        && sameDecision(reservation, operation)));
     const persistReplacement = (reservations: readonly ParentDecisionReservationRecord[]) =>
       consumedProducerKeys.length > 0
         ? deps.persist(reservations, consumedProducerKeys)
         : deps.persist(reservations);
     const finishTransitionedReplacement = async (): Promise<Result<{ created: boolean }, Error>> => {
-      if (retained.length !== current.length || consumedProducerKeys.length > 0) {
-        const persisted = await persistReplacement(retained);
+      if (transitionedRetained.length !== current.length || consumedProducerKeys.length > 0) {
+        const persisted = await persistReplacement(transitionedRetained);
         if (!persisted.ok) return persisted;
-        deps.replaceReservations(retained);
+        deps.replaceReservations(transitionedRetained);
       }
       return ok({ created: false });
     };
     if (expectedReservations.length !== expectedKeys.length) {
-      if (alreadyTransitioned || deliveryTransitioned) {
+      if (replacementTransitioned) {
         return finishTransitionedReplacement();
       }
       return err(new Error("Announcement decision reservation transition lost its expected owner"));
@@ -611,7 +667,7 @@ export function createParentDecisionReservationStore(
       }
     }
 
-    if (alreadyTransitioned || deliveryTransitioned) {
+    if (replacementTransitioned) {
       return finishTransitionedReplacement();
     }
     if (!deps.canPersistReservationCount(retained.length + operations.length)) {

@@ -6,6 +6,7 @@ import {
   conversationScopeToSessionKey,
   createStableAnnouncementOperationId,
   formatSessionKey,
+  SessionStoreError,
 } from "@comis/core";
 import {
   createCrossSessionSender,
@@ -459,6 +460,148 @@ describe("createCrossSessionSender", () => {
     expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
   });
 
+  it("reconciles an unsettled recovered announcement without target reexecution", async () => {
+    const reserveAnnouncementProducer = vi.fn(async () => ok({
+      status: "recovery_owned" as const,
+      lifecycleState: "promotion_ready" as const,
+      recoveryOutcome: {
+        kind: "tool_result" as const,
+        response: "persisted response",
+        stats: { runtimeMs: 41, totalTokens: 12, totalCost: 0.003 },
+      },
+    }));
+    const sendRecoverableAnnouncement = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+    }));
+    const recordAnnouncementProducerOutcome = vi.fn(async () => ok(undefined));
+    const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer,
+      sendRecoverableAnnouncement,
+      recordAnnouncementProducerOutcome,
+      releaseAnnouncementProducer,
+      cancelAnnouncementProducer: vi.fn(async () => ok(undefined)),
+      suppressAnnouncementProducer: vi.fn(async () => ok(true)),
+    });
+
+    const result = await sender.send({
+      target: QUERY_ONE,
+      text: "question",
+      mode: "wait",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "recovered-unsettled-tool-call",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    });
+
+    expect(result).toMatchObject({
+      sent: true,
+      response: "persisted response",
+      announced: true,
+    });
+    expect(deps.sessionStore.save).not.toHaveBeenCalled();
+    expect(deps.executeInSession).not.toHaveBeenCalled();
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledOnce();
+    expect(recordAnnouncementProducerOutcome).toHaveBeenCalledWith(
+      scopedProducerKey("recovered-unsettled-tool-call"),
+      expect.objectContaining({ announced: true }),
+    );
+    expect(releaseAnnouncementProducer).toHaveBeenCalledWith(
+      scopedProducerKey("recovered-unsettled-tool-call"),
+    );
+  });
+
+  it("retries completed outcome persistence without repeating target execution", async () => {
+    const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const recordAnnouncementProducerOutcome = vi.fn()
+      .mockResolvedValueOnce(err(new Error("outcome storage unavailable")))
+      .mockResolvedValue(ok(undefined));
+    const sendRecoverableAnnouncement = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+    }));
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordAnnouncementProducerOutcome,
+      releaseAnnouncementProducer,
+      cancelAnnouncementProducer,
+      suppressAnnouncementProducer: vi.fn(async () => ok(true)),
+      sendRecoverableAnnouncement,
+    });
+
+    const result = await sender.send({
+      target: QUERY_ONE,
+      text: "question",
+      mode: "wait",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "outcome-storage-tool-call",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    });
+
+    expect(result).toMatchObject({ sent: true, response: "test response", announced: true });
+    expect(deps.sessionStore.save).toHaveBeenCalledOnce();
+    expect(deps.executeInSession).toHaveBeenCalledOnce();
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledOnce();
+    expect(recordAnnouncementProducerOutcome).toHaveBeenCalledTimes(3);
+    expect(releaseAnnouncementProducer).toHaveBeenCalledOnce();
+    expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
+  });
+
+  it("retains confirmed delivery until its returned outcome is durable", async () => {
+    const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const cancelAnnouncementProducer = vi.fn(async () => ok(undefined));
+    const recordAnnouncementProducerOutcome = vi.fn()
+      .mockResolvedValueOnce(ok(undefined))
+      .mockResolvedValueOnce(err(new Error("confirmed outcome storage unavailable")))
+      .mockResolvedValue(ok(undefined));
+    const sendRecoverableAnnouncement = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+    }));
+    const sender = createCrossSessionSender({
+      ...deps,
+      reserveAnnouncementProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordAnnouncementProducerOutcome,
+      releaseAnnouncementProducer,
+      cancelAnnouncementProducer,
+      suppressAnnouncementProducer: vi.fn(async () => ok(true)),
+      sendRecoverableAnnouncement,
+    });
+
+    const result = await sender.send({
+      target: QUERY_ONE,
+      text: "question",
+      mode: "wait",
+      caller: QUERY_TWO,
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      callerEndpoint: PARENT_TWO_ENDPOINT,
+      callerAgentId: "parent-agent",
+      announceOperationId: "confirmed-outcome-tool-call",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+    });
+
+    expect(result).toMatchObject({ sent: true, response: "test response", announced: true });
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledOnce();
+    expect(recordAnnouncementProducerOutcome).toHaveBeenCalledTimes(3);
+    expect(releaseAnnouncementProducer).toHaveBeenCalledOnce();
+    expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
+  });
+
   it("refuses to replay an active cross-session operation", async () => {
     const sender = createCrossSessionSender({
       ...deps,
@@ -573,7 +716,7 @@ describe("createCrossSessionSender", () => {
     expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
   });
 
-  it("cancels producer ownership when ping-pong fails before completion", async () => {
+  it("retains producer ownership when ping-pong fails after execution starts", async () => {
     const reserveAnnouncementProducer = vi.fn(async () => ok({ status: "claimed" as const }));
     const releaseAnnouncementProducer = vi.fn(async () => ok(undefined));
     const recordAnnouncementProducerOutcome = vi.fn(async () => ok(undefined));
@@ -609,9 +752,7 @@ describe("createCrossSessionSender", () => {
       announceChannelId: "guild-channel-42",
     })).rejects.toThrow("ping-pong execution failed");
 
-    expect(cancelAnnouncementProducer).toHaveBeenCalledWith(
-      scopedProducerKey("failed-ping-pong-tool-call"),
-    );
+    expect(cancelAnnouncementProducer).not.toHaveBeenCalled();
     expect(releaseAnnouncementProducer).not.toHaveBeenCalled();
   });
 
@@ -622,13 +763,9 @@ describe("createCrossSessionSender", () => {
     const cancelAnnouncementProducer = vi.fn(async () =>
       err(new Error("producer cancellation storage unavailable")));
     const suppressAnnouncementProducer = vi.fn(async () => ok(true));
-    vi.mocked(deps.executeInSession)
-      .mockResolvedValueOnce({
-        response: "continue",
-        tokensUsed: { total: 10 },
-        cost: { total: 0.001 },
-      })
-      .mockRejectedValueOnce(new Error("ping-pong execution failed"));
+    vi.mocked(deps.sessionStore.save).mockReturnValue(
+      err(new SessionStoreError("target save failed", "resource")),
+    );
     const sender = createCrossSessionSender({
       ...deps,
       reserveAnnouncementProducer,

@@ -24,6 +24,7 @@ import {
   type OutwardSendLedgerPort,
   type OutwardSendRecord,
   type OutwardSendState,
+  type AnnouncementProducerRecoveryOutcome,
 } from "@comis/core";
 
 import {
@@ -1615,7 +1616,9 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     const outcome = {
       kind: "session" as const,
       terminalReason: "failed" as const,
+      completedAtMs: 1_234,
       errorKind: "dependency" as const,
+      summary: "persisted failure",
     };
     const first = createAnnouncementDeadLetterQueue({
       filePath,
@@ -1624,6 +1627,9 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
     await expect(first.recordProducerOutcome(producer.runId, outcome)).resolves.toEqual(ok(undefined));
     await expect(first.reserveDecision(producer)).resolves.toEqual(ok({ created: true }));
+    const settledOutcome = { ...outcome, summary: "persisted delivery result" };
+    await expect(first.recordProducerOutcome(producer.runId, settledOutcome))
+      .resolves.toEqual(ok(undefined));
 
     const restarted = createAnnouncementDeadLetterQueue({
       filePath,
@@ -1632,8 +1638,115 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     await expect(restarted.reserveProducer(producer)).resolves.toEqual(ok({
       status: "recovery_owned",
       lifecycleState: "delivery_owned",
+      recoveryOutcome: settledOutcome,
+    }));
+  });
+
+  it("revokes execution ownership when a producer outcome commits", async () => {
+    const producer = producerInput({
+      idempotencyKey: "completion-ready-operation",
+      runId: "completion-ready-run",
+      completionKeys: ["completion-ready-operation"],
+      retirementKeys: ["completion-ready-operation"],
+    });
+    const outcome: AnnouncementProducerRecoveryOutcome = {
+      kind: "session",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      summary: "persisted completion",
+    };
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.recordProducerOutcome(producer.runId, outcome))
+      .resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reclaimProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "promotion_ready",
       recoveryOutcome: outcome,
     }));
+  });
+
+  it("counts retained outcomes against producer snapshot capacity", async () => {
+    let producerRetired = false;
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+      retirementProducerState: async () => ok(producerRetired
+        ? { status: "absent" as const }
+        : { status: "active" as const }),
+    });
+    const first = producerInput({
+      idempotencyKey: "retained-outcome-first-operation",
+      runId: "retained-outcome-first-run",
+      completionKeys: ["retained-outcome-first-operation"],
+      retirementKeys: ["retained-outcome-first-operation"],
+    });
+    const second = producerInput({
+      idempotencyKey: "retained-outcome-second-operation",
+      runId: "retained-outcome-second-run",
+      completionKeys: ["retained-outcome-second-operation"],
+      retirementKeys: ["retained-outcome-second-operation"],
+    });
+    await expect(queue.reserveProducer(first)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(queue.recordProducerOutcome(first.runId, {
+      kind: "session",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+    })).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveDecision(first)).resolves.toEqual(ok({ created: true }));
+
+    let secondAdmitted = false;
+    const admission = queue.reserveProducer(second).then((result) => {
+      secondAdmitted = true;
+      return result;
+    });
+    await delay(10);
+    expect(secondAdmitted).toBe(false);
+
+    producerRetired = true;
+    await queue.drain(vi.fn(async () => true));
+    await expect(admission).resolves.toEqual(ok({ status: "claimed" }));
+  });
+
+  it("rejects a partially persisted replacement operation set", async () => {
+    const first = decisionInput({
+      idempotencyKey: "partial-operation-first",
+      runId: "partial-operation-run",
+      completionKeys: ["partial-owner-first", "partial-owner-second"],
+    });
+    const second = decisionInput({
+      idempotencyKey: "partial-operation-second",
+      runId: "partial-operation-run",
+      completionKeys: ["partial-owner-first", "partial-owner-second"],
+    });
+    await writeFile(filePath, `${JSON.stringify({
+      ...first,
+      recordType: "parent_decision_reservation",
+      id: "surviving-operation-record",
+    })}\n`, "utf8");
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    await expect(queue.replaceDecisions(
+      ["partial-owner-first", "partial-owner-second"],
+      [first, second],
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Announcement decision reservation transition lost its expected owner" },
+    });
+    await expect(queue.lookupDecision("partial-operation-first"))
+      .resolves.toMatchObject({ ok: true, value: first });
   });
 
   it("requires an explicit restart reclaim before active producer work resumes", async () => {

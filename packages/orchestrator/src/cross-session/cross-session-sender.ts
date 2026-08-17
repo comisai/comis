@@ -30,6 +30,7 @@ import {
   type RootRunIdResolver,
   createStableAnnouncementOperationId,
   systemNowMs,
+  systemSleep,
   systemSetTimeout,
 } from "@comis/core";
 import { fromPromise, type Result } from "@comis/shared";
@@ -121,6 +122,44 @@ export interface CrossSessionSendResult {
 // ---------------------------------------------------------------------------
 
 export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
+  async function persistProducerOutcome(
+    producerKey: string,
+    outcome: AnnouncementProducerRecoveryOutcome,
+  ): Promise<void> {
+    const record = deps.recordAnnouncementProducerOutcome;
+    if (record === undefined) throw new Error("Announcement producer lifecycle is incomplete");
+    let failureCount = 0;
+    while (true) {
+      const boundary = await fromPromise(record(producerKey, outcome));
+      if (boundary.ok && boundary.value.ok) return;
+      const failure = !boundary.ok
+        ? boundary.error
+        : boundary.value.ok
+          ? new Error("Announcement producer outcome persistence failed without an error")
+          : boundary.value.error;
+      if (
+        failure.message === "Announcement producer recovery outcome is invalid"
+        || failure.message === "Announcement producer recovery owner was not found"
+        || failure.message === "Announcement producer recovery outcome identity mismatch"
+        || failure.message === "Announcement producer has a conflicting terminal transition"
+      ) {
+        throw failure;
+      }
+      failureCount++;
+      if (failureCount === 1) {
+        deps.logger?.error(
+          {
+            step: "producer-outcome",
+            errorKind: "resource" as const,
+            hint: "restore dead-letter storage; completed cross-session work remains owned and its result persistence will retry",
+          },
+          "Cross-session producer outcome persistence failed",
+        );
+      }
+      if (failureCount > 1) await systemSleep(1_000);
+    }
+  }
+
   async function announce(
     channelType: string | undefined,
     channelId: string | undefined,
@@ -259,7 +298,8 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       }
       let reservedProducerKey: string | undefined;
       let reservedProducerToolCallId: string | undefined;
-      let producerDisposition: "cancel" | "release" | "retain" | "settled" = "cancel";
+      let producerDisposition: "cancel" | "release" | "retain" = "cancel";
+      let producerSettled = false;
       if (
         params.mode !== "fire-and-forget"
         && params.announceOperationId !== undefined
@@ -333,6 +373,36 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           if (!recovery || recovery.kind !== "tool_result") {
             throw new Error("Cross-session recovery result is unavailable");
           }
+          if (
+            reserved.value.lifecycleState !== "no_reply"
+            && recovery.announced === undefined
+          ) {
+            const announced = await announce(
+              params.announceChannelType,
+              params.announceChannelId,
+              recovery.response,
+              params.callerAgentId,
+              params.callerSessionKey,
+              params.callerConversation,
+              params.callerEndpoint,
+              params.announceOperationId,
+            );
+            await persistProducerOutcome(
+              operationId,
+              { ...recovery, announced },
+            );
+            const released = await deps.releaseAnnouncementProducer(operationId);
+            if (!released.ok) throw released.error;
+            return {
+              sent: true,
+              response: recovery.response,
+              ...(recovery.turnsCompleted !== undefined
+                ? { turnsCompleted: recovery.turnsCompleted }
+                : {}),
+              announced,
+              stats: recovery.stats,
+            };
+          }
           return {
             sent: true,
             response: recovery.response,
@@ -361,17 +431,15 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         if (!suppressed.value) {
           throw new Error("Announcement producer suppression did not find durable ownership");
         }
-        producerDisposition = "settled";
+        producerSettled = true;
       };
 
       const recordProducerOutcome = async (
         outcome: Extract<AnnouncementProducerRecoveryOutcome, { kind: "tool_result" }>,
       ): Promise<void> => {
         if (reservedProducerKey === undefined) return;
-        const record = deps.recordAnnouncementProducerOutcome;
-        if (record === undefined) throw new Error("Announcement producer lifecycle is incomplete");
-        const recorded = await record(reservedProducerKey, outcome);
-        if (!recorded.ok) throw recorded.error;
+        producerDisposition = "retain";
+        await persistProducerOutcome(reservedProducerKey, outcome);
       };
 
       try {
@@ -408,6 +476,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           data.metadata,
         );
         if (!saved.ok) throw saved.error;
+        if (reservedProducerKey !== undefined) producerDisposition = "retain";
 
         // 4. Emit cross-send event
         deps.eventBus.emit("session:cross_send", {
@@ -451,17 +520,16 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           const recoveryOutcome = {
             kind: "tool_result" as const,
             response: stripped,
-            announced: false,
             stats,
           };
           await recordProducerOutcome(recoveryOutcome);
           if (hadSkip) await suppressAnnouncementProducer();
-          else producerDisposition = "release";
           const announced = hadSkip
             ? false
             : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
-          if (announced !== recoveryOutcome.announced) {
+          if (!hadSkip) {
             await recordProducerOutcome({ ...recoveryOutcome, announced });
+            producerDisposition = "release";
           }
           return {
             sent: true,
@@ -527,17 +595,16 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           kind: "tool_result" as const,
           response: stripped,
           turnsCompleted,
-          announced: false,
           stats,
         };
         await recordProducerOutcome(recoveryOutcome);
         if (hadSkip) await suppressAnnouncementProducer();
-        else producerDisposition = "release";
         const announced = hadSkip
           ? false
           : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
-        if (announced !== recoveryOutcome.announced) {
+        if (!hadSkip) {
           await recordProducerOutcome({ ...recoveryOutcome, announced });
+          producerDisposition = "release";
         }
 
         return {
@@ -548,7 +615,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           stats,
         };
       } finally {
-        if (reservedProducerKey !== undefined && producerDisposition !== "settled"
+        if (reservedProducerKey !== undefined && !producerSettled
           && producerDisposition !== "retain") {
           const transition = producerDisposition === "cancel"
             ? await deps.cancelAnnouncementProducer!(reservedProducerKey)

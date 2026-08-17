@@ -1107,6 +1107,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const deliveryAdmissionRunIds = new Set<string>();
   const producerSuppressionPendingRunIds = new Set<string>();
   const producerLifecyclePendingRunIds = new Set<string>();
+  const producerOutcomePendingRunIds = new Set<string>();
   const producerTransferAttemptedRunIds = new Set<string>();
   const producerAdmissionAbort = new AbortController();
   const forcedTerminalRunIds = new Set<string>();
@@ -1123,10 +1124,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
   async function settleAnnouncementProducerLifecycle(
     runId: string,
-    transition: "cancel" | "release" | "suppress",
+    transition: "cancel" | "release" | "suppress" | "record_outcome",
     operation: () => Promise<Result<void, Error>>,
   ): Promise<void> {
     producerLifecyclePendingRunIds.add(runId);
+    if (transition === "record_outcome") producerOutcomePendingRunIds.add(runId);
     let attemptCount = 0;
     const startedAt = clock.now();
     try {
@@ -1144,7 +1146,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
           return;
         }
-        const failure = boundary.ok ? boundary.value.error : boundary.error;
+        const failure = !boundary.ok
+          ? boundary.error
+          : boundary.value.ok
+            ? new Error("Announcement producer lifecycle transition failed without an error")
+            : boundary.value.error;
         if (attemptCount === 1) {
           deps.logger?.warn({
             runId,
@@ -1164,6 +1170,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }
     } finally {
       producerLifecyclePendingRunIds.delete(runId);
+      if (transition === "record_outcome") producerOutcomePendingRunIds.delete(runId);
     }
   }
 
@@ -3301,9 +3308,9 @@ function classifyCompletionErrorKind(
           const reserveProducer = params.callerType === "durable-resume"
             ? deps.deadLetterQueue.reclaimProducer
             : deps.deadLetterQueue.reserveProducer;
-          if (!reserveProducer) {
+          if (!reserveProducer || !deps.deadLetterQueue.recordProducerOutcome) {
             throw new DurableSubAgentAdmissionError(
-              "Sub-agent announcement producer reclaim is unavailable",
+              "Sub-agent announcement producer lifecycle is incomplete",
             );
           }
           const reservedProducer = await reserveProducer(
@@ -3328,13 +3335,22 @@ function classifyCompletionErrorKind(
             if (!durableResumeHandshakeRunIds.has(runId)) {
               startDeferreds.delete(runId);
             }
-            terminalizeRun(runId, {
-              endReason: recovery.terminalReason,
-              completedAtMs: clock.now(),
-              ...(recovery.terminalReason === "failed"
-                ? { errorKind: recovery.errorKind ?? ("internal" as const) }
-                : {}),
-            });
+            if (recovery.terminalReason === "completed") {
+              terminalizeRun(runId, {
+                endReason: "completed",
+                completedAtMs: recovery.completedAtMs,
+                ...(recovery.summary !== undefined ? { summary: recovery.summary } : {}),
+                ...(recovery.resultRef !== undefined ? { resultRef: recovery.resultRef } : {}),
+              });
+            } else {
+              terminalizeRun(runId, {
+                endReason: "failed",
+                completedAtMs: recovery.completedAtMs,
+                errorKind: recovery.errorKind,
+                ...(recovery.summary !== undefined ? { summary: recovery.summary } : {}),
+                ...(recovery.resultRef !== undefined ? { resultRef: recovery.resultRef } : {}),
+              });
+            }
             return;
           }
           producerClaimed = true;
@@ -3954,17 +3970,26 @@ function classifyCompletionErrorKind(
             throw new Error("Announcement producer lifecycle is incomplete");
           }
           const outcome: AnnouncementProducerRecoveryOutcome = completion.endReason === "completed"
-            ? { kind: "session", terminalReason: "completed" }
+            ? {
+                kind: "session",
+                terminalReason: "completed",
+                completedAtMs: completion.completedAtMs,
+                ...(completion.summary !== undefined ? { summary: completion.summary } : {}),
+                ...(completion.resultRef !== undefined ? { resultRef: completion.resultRef } : {}),
+              }
             : {
                 kind: "session",
                 terminalReason: "failed",
+                completedAtMs: completion.completedAtMs,
                 errorKind: completion.errorKind,
+                ...(completion.summary !== undefined ? { summary: completion.summary } : {}),
+                ...(completion.resultRef !== undefined ? { resultRef: completion.resultRef } : {}),
               };
-          const recorded = await recordProducerOutcome(runId, outcome);
-          if (!recorded.ok) {
-            producerRecoveryOwned = true;
-            throw recorded.error;
-          }
+          await settleAnnouncementProducerLifecycle(
+            runId,
+            "record_outcome",
+            () => recordProducerOutcome(runId, outcome),
+          );
         }
 
         // Route provider_degraded to failure notification path
@@ -4258,7 +4283,11 @@ function classifyCompletionErrorKind(
             const recorded = await recordProducerOutcome(runId, {
               kind: "session",
               terminalReason: "failed",
+              completedAtMs: failureCompletion.completedAtMs,
               errorKind: failureCompletion.errorKind,
+              ...(failureCompletion.summary !== undefined
+                ? { summary: failureCompletion.summary }
+                : {}),
             });
             if (!recorded.ok) {
               producerRecoveryOwned = true;
@@ -5066,6 +5095,14 @@ function classifyCompletionErrorKind(
               errorKind: "resource" as const,
               hint: "Restore dead-letter storage; shutdown will keep retrying the explicit suppression authority",
             }, "Explicit announcement suppression remains pending at shutdown");
+            continue;
+          }
+          if (producerOutcomePendingRunIds.has(runId)) {
+            deps.logger?.error({
+              runId,
+              errorKind: "resource" as const,
+              hint: "Restore dead-letter storage; shutdown will keep the completed producer outcome pending",
+            }, "Completed announcement producer outcome remains pending at shutdown");
             continue;
           }
           deliverySuppressedRunIds.add(runId);

@@ -5,6 +5,7 @@ import type { Result } from "@comis/shared";
 import type { ChannelEndpoint, ConversationRef } from "../domain/conversation-scope.js";
 import type { DurableRunTerminalReason } from "../domain/durable-run.js";
 import type { ErrorKind } from "../logging/log-fields.js";
+import type { ResultRef } from "../security/result-ref.js";
 import type { DeliveryAuthority } from "./delivery-queue.js";
 import type { OutwardTerminalDecision } from "./outward-send-ledger.js";
 
@@ -133,8 +134,18 @@ export interface AnnouncementProducerReservationRecord
 export type AnnouncementProducerRecoveryOutcome =
   | {
       readonly kind: "session";
-      readonly terminalReason: "completed" | "failed";
-      readonly errorKind?: ErrorKind;
+      readonly terminalReason: "completed";
+      readonly completedAtMs: number;
+      readonly summary?: string;
+      readonly resultRef?: ResultRef;
+    }
+  | {
+      readonly kind: "session";
+      readonly terminalReason: "failed";
+      readonly completedAtMs: number;
+      readonly errorKind: ErrorKind;
+      readonly summary?: string;
+      readonly resultRef?: ResultRef;
     }
   | {
       readonly kind: "tool_result";

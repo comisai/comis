@@ -129,9 +129,7 @@ export function createAnnouncementDeadLetterQueue(
   }
 
   function producerCapacityCount(): number {
-    return producerHandoffs.length + producerReservations.filter((reservation) =>
-      reservation.lifecycleState !== "delivery_owned"
-      && reservation.lifecycleState !== "no_reply").length;
+    return producerHandoffs.length + producerReservations.length;
   }
 
   function quarantineCapacityCount(): number {
@@ -489,15 +487,8 @@ export function createAnnouncementDeadLetterQueue(
     consumedProducerKeys: ReadonlySet<string> = new Set(),
   ): boolean {
     const consumedReservationCount = producerReservations.filter((reservation) =>
-      consumedProducerKeys.has(reservation.runId)
-      && reservation.lifecycleState !== "delivery_owned"
-      && reservation.lifecycleState !== "no_reply").length;
-    const retainedOutcomeCount = producerReservations.filter((reservation) =>
-      reservation.lifecycleState === "delivery_owned"
-      || reservation.lifecycleState === "no_reply").length;
-    const nextCount = nextProducerOwnershipCount
-      - consumedReservationCount
-      - retainedOutcomeCount;
+      consumedProducerKeys.has(reservation.runId)).length;
+    const nextCount = nextProducerOwnershipCount - consumedReservationCount;
     const currentCount = producerCapacityCount();
     if (nextCount <= maxEntries || nextCount <= currentCount) return true;
     logger?.warn(
@@ -625,7 +616,12 @@ export function createAnnouncementDeadLetterQueue(
       producerHandoffs,
       next,
     );
-    if (!persisted.ok) return persisted;
+    if (!persisted.ok) {
+      return persisted.error.message === "Dead-letter snapshot exceeds the row limit"
+        || persisted.error.message === "Dead-letter snapshot exceeds the byte limit"
+        ? err(new Error("Announcement producer capacity exhausted"))
+        : persisted;
+    }
     producerReservations = next;
     activeProducerKeys.add(producerKey);
     return ok({ status: "claimed" });
@@ -685,8 +681,35 @@ export function createAnnouncementDeadLetterQueue(
     if (record.producer.kind !== outcome.kind) {
       return err(new Error("Announcement producer recovery outcome identity mismatch"));
     }
-    const next = producerReservations.map((candidate) =>
-      candidate.runId === producerKey ? { ...candidate, recoveryOutcome: outcome } : candidate);
+    const transferred = entries.some((entry) => entry.runId === producerKey)
+      || decisionReservations.some((entry) => entry.runId === producerKey)
+      || producerHandoffs.some((handoff) => handoff.operations.some((operation) =>
+        operation.runId === producerKey));
+    const next = producerReservations.map((candidate) => {
+      if (candidate.runId !== producerKey) return candidate;
+      if (
+        candidate.lifecycleState === "cancel_pending"
+        || candidate.lifecycleState === "no_reply_pending"
+      ) {
+        return candidate;
+      }
+      return {
+        ...candidate,
+        lifecycleState: candidate.lifecycleState === "delivery_owned" || transferred
+          ? "delivery_owned" as const
+          : candidate.lifecycleState === "no_reply"
+            ? "no_reply" as const
+            : "promotion_ready" as const,
+        recoveryOutcome: outcome,
+      };
+    });
+    const updated = next.find((candidate) => candidate.runId === producerKey);
+    if (
+      updated?.lifecycleState === "cancel_pending"
+      || updated?.lifecycleState === "no_reply_pending"
+    ) {
+      return err(new Error("Announcement producer has a conflicting terminal transition"));
+    }
     const persisted = await persist(
       entries,
       decisionReservations,
@@ -695,16 +718,6 @@ export function createAnnouncementDeadLetterQueue(
       next,
     );
     if (!persisted.ok) return persisted;
-    producerReservations = next.map((candidate) => {
-      if (candidate.runId !== producerKey) return candidate;
-      const transferred = entries.some((entry) => entry.runId === producerKey)
-        || decisionReservations.some((entry) => entry.runId === producerKey)
-        || producerHandoffs.some((handoff) => handoff.operations.some((operation) =>
-          operation.runId === producerKey));
-      return transferred && candidate.lifecycleState !== "no_reply"
-        ? { ...candidate, lifecycleState: "delivery_owned" as const }
-        : candidate;
-    });
     return ok(undefined);
   }
 
