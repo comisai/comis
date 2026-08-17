@@ -15,6 +15,8 @@ import {
   type ManagedRunContinuationOutcomeInput,
   type ManagedRunCreateOutcome,
   type ManagedRunExecutionAttachmentBindingInput,
+  type ManagedRunHeartbeatInput,
+  type ManagedRunHeartbeatOutcome,
   type ManagedRunLookupScope,
   type ManagedRunMutationOutcome,
   type ManagedRunOwnerScope,
@@ -585,6 +587,44 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     return persisted.ok ? ok(resultRecord("bound", next)) : persisted;
   });
 
+  /**
+   * Liveness carries no operation ID because a heartbeat is an observation, not
+   * a mutation to replay: a duplicate is simply a beat that no longer advances
+   * the record. Refusing a backward beat keeps a late-arriving older observation
+   * from making a stalled service look current, and refusing a terminal run
+   * keeps a service that outlived its own work from holding it open.
+   */
+  const heartbeatTransaction = db.transaction((
+    scope: ManagedRunServiceScope,
+    input: ManagedRunHeartbeatInput,
+  ): Result<ManagedRunHeartbeatOutcome, Error> => {
+    if (!Number.isInteger(input.observedAtMs) || input.observedAtMs < 0) {
+      return err(new Error("managed-run heartbeat observation time is invalid"));
+    }
+    const current = readRecord(input.managedRunId);
+    if (!current.ok) return current;
+    if (current.value === undefined) return ok({ kind: "rejected", reasonCode: "not_found" });
+    if (!scopeMatches(current.value, scope)) {
+      return ok({ kind: "rejected", reasonCode: "ownership_mismatch" });
+    }
+    if (
+      current.value.status === "succeeded"
+      || current.value.status === "failed"
+      || current.value.status === "cancelled"
+    ) return ok({ kind: "rejected", reasonCode: "terminal_run" });
+    if (
+      current.value.lastHeartbeatAtMs !== undefined
+      && input.observedAtMs <= current.value.lastHeartbeatAtMs
+    ) return ok({ kind: "rejected", reasonCode: "stale_observation" });
+    const next: ManagedRunRecord = {
+      ...current.value,
+      lastHeartbeatAtMs: input.observedAtMs,
+      updatedAtMs: Math.max(current.value.updatedAtMs, input.observedAtMs),
+    };
+    const persisted = persistMutable(next);
+    return persisted.ok ? ok({ kind: "committed", record: next }) : persisted;
+  });
+
   const terminalReleaseTransaction = db.transaction((
     scope: ManagedRunServiceScope,
     input: ManagedRunTerminalReleaseInput,
@@ -852,6 +892,9 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     bindExecutionAttachment: (scope, input) => boundary(() => bindingTransaction.immediate(scope, input)),
     reserveRelease: (scope, input) => boundary(
       () => releaseReservationTransaction.immediate(scope, input),
+    ),
+    recordHeartbeat: (scope, input) => boundary(
+      () => heartbeatTransaction.immediate(scope, input),
     ),
     appendReportAndAdvanceAcceptedCursor: (scope, input) => boundary(
       () => reportTransaction.immediate(scope, input),

@@ -123,6 +123,23 @@ export type ManagedRunReleaseReservationOutcome =
   | { readonly kind: "authority_mismatch" }
   | { readonly kind: "replay_conflict" };
 
+export interface ManagedRunHeartbeatInput {
+  readonly managedRunId: string;
+  readonly observedAtMs: number;
+}
+
+/**
+ * Liveness is an observation, not a transition: it carries no operation ID and
+ * is never replayed. A rejection says the observation is not admissible, which
+ * keeps a stale or foreign beat from making a dead service look current.
+ */
+export type ManagedRunHeartbeatOutcome =
+  | { readonly kind: "committed"; readonly record: ManagedRunRecord }
+  | {
+    readonly kind: "rejected";
+    readonly reasonCode: "not_found" | "ownership_mismatch" | "terminal_run" | "stale_observation";
+  };
+
 export type ManagedRunTerminalReleaseOutcome =
   | { readonly kind: "released"; readonly record: ManagedRunRecord }
   | { readonly kind: "identical_replay"; readonly record: ManagedRunRecord }
@@ -339,6 +356,7 @@ export interface ManagedRunStorePort {
   setWorkspaceLease(scope: ManagedRunOwnerScope, input: ManagedRunWorkspaceBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   bindExecutionAttachment(scope: ManagedRunOwnerScope, input: ManagedRunExecutionAttachmentBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   reserveRelease(scope: ManagedRunServiceScope, input: ManagedRunReleaseReservationInput): Promise<Result<ManagedRunReleaseReservationOutcome, Error>>;
+  recordHeartbeat(scope: ManagedRunServiceScope, input: ManagedRunHeartbeatInput): Promise<Result<ManagedRunHeartbeatOutcome, Error>>;
   appendReportAndAdvanceAcceptedCursor(scope: ManagedRunServiceScope, input: ManagedRunReportAppendInput): Promise<Result<ManagedRunReportAppendOutcome, Error>>;
   listReportRange(scope: ManagedRunOwnerScope, input: ManagedRunReportRangeInput): Promise<Result<ManagedRunReportIndex[], Error>>;
   appendEvidence(scope: ManagedRunServiceScope, input: ManagedEvidenceAppendInput): Promise<Result<ManagedEvidenceAppendOutcome, Error>>;
