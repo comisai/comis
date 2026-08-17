@@ -493,11 +493,21 @@ A JSONL **snapshot** of retained announcement-delivery failures, parked parent-d
 
 The file tracks the queue rather than accumulating: every change rewrites it atomically, and it is **removed** as soon as the queue drains to zero. It therefore exists only while something is actually pending — if the daemon logged a quarantine WARN and this file is absent, the quarantine has since **resolved**, not vanished. Look for the matching resolution line (`Committed dead-letter operation removed without replay`, or `Dead-letter entry delivered successfully`) rather than treating the announcement as lost.
 
-Ledgerless terminal decisions are stored separately as a bounded, content-free,
-digest-keyed index in `dead-letters.jsonl.terminal-decisions.jsonl`. This index
-suppresses replay without keeping the pending snapshot alive or creating one
-filesystem entry per decision. Ledger-governed decisions use the indexed SQLite
-outward terminal-decision store instead.
+Ledgerless replay guards are stored separately under
+`dead-letters.jsonl.terminal-decisions/`. The `decisions/` and `retirements/`
+subdirectories contain content-free JSON records, sharded by the first two
+characters of their SHA-256 digest. Decision records suppress repeated delivery;
+retirement records keep those guards until the authoritative session, tool
+result, or graph producer can no longer replay. Records are written atomically,
+and invalid, oversized, or misplaced records appear in the quarantine health
+surface without disabling unrelated guards. Ledger-governed decisions use the
+indexed SQLite outward terminal-decision store instead.
+
+Back up and restore `dead-letters.jsonl` together with the complete
+`dead-letters.jsonl.terminal-decisions/` directory. Omitting either side can
+lose pending ownership or replay suppression. Do not edit digest records while
+the daemon is running; after an offline repair, `quarantine list` reloads the
+collections and reports any corruption that remains.
 
 **Written by:** the announcement delivery subsystem.
 **Safe to delete?** No. Deleting it discards delivery evidence and pending outcomes. Do not edit or remove it while the daemon is running; the live queue is the authority and may rewrite the snapshot. Use `node packages/cli/dist/cli.js quarantine list` and `quarantine release` for operator decisions.

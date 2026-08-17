@@ -9,10 +9,10 @@ import {
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import type {
   AnnouncementDeliveryOptions,
-  CompletionAnnouncementSendRequest,
   GovernedAnnouncementFailure,
   GovernedAnnouncementSendOutcome,
   RecoverableAnnouncementSendOutcome,
+  RecoverableCompletionAnnouncementSendRequest,
 } from "@comis/orchestrator";
 
 export type GraphAnnouncementSettlement = "committed" | "retained" | "suppressed";
@@ -31,7 +31,7 @@ interface GraphAnnouncementDeliveryParams {
 
 interface GraphAnnouncementDeliveryDeps {
   send?: (
-    request: CompletionAnnouncementSendRequest,
+    request: RecoverableCompletionAnnouncementSendRequest,
   ) => Promise<Result<
     GovernedAnnouncementSendOutcome | RecoverableAnnouncementSendOutcome,
     Error

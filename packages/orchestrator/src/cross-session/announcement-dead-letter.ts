@@ -515,12 +515,12 @@ export function createAnnouncementDeadLetterQueue(
     if (existing && !sameAnnouncementProducerReservation(existing, reservation)) {
       return err(new Error("Announcement producer reservation identity mismatch"));
     }
-    if (existing?.terminalState === "cancel_pending") {
+    if (existing?.lifecycleState === "cancel_pending") {
       const cancelled = await removeProducerReservationDurably(producerKey);
       if (!cancelled.ok) return cancelled;
       existing = undefined;
     }
-    if (existing?.terminalState === "no_reply_pending") {
+    if (existing?.lifecycleState === "no_reply_pending") {
       activeProducerKeys.delete(producerKey);
       const terminalized = await terminalizeOwner(
         publicProducerReservation(existing),
@@ -530,6 +530,10 @@ export function createAnnouncementDeadLetterQueue(
       );
       if (!terminalized.ok) return terminalized;
       return removeProducerReservationDurably(producerKey);
+    }
+    if (existing?.lifecycleState === "active") {
+      activeProducerKeys.add(producerKey);
+      return ok(undefined);
     }
     if (!existing && !canPersistProducerOwnership(
       producerHandoffs.length + producerReservations.length + 1,
@@ -541,6 +545,7 @@ export function createAnnouncementDeadLetterQueue(
       ...reservation,
       recordType: "producer_reservation",
       id,
+      lifecycleState: "active",
     };
     const next = existing
       ? producerReservations.map((candidate) => candidate.runId === producerKey ? record : candidate)
@@ -559,6 +564,34 @@ export function createAnnouncementDeadLetterQueue(
   }
 
   async function releaseProducerDurably(producerKey: string): Promise<Result<void, Error>> {
+    const loadedFromDisk = await loadFromDisk();
+    if (!loadedFromDisk.ok) return loadedFromDisk;
+    const record = producerReservations.find((candidate) => candidate.runId === producerKey);
+    if (!record) {
+      activeProducerKeys.delete(producerKey);
+      return ok(undefined);
+    }
+    if (
+      record.lifecycleState === "cancel_pending"
+      || record.lifecycleState === "no_reply_pending"
+    ) {
+      return err(new Error("Announcement producer has a conflicting terminal transition"));
+    }
+    if (record.lifecycleState !== "promotion_ready") {
+      const next = producerReservations.map((candidate) =>
+        candidate.runId === producerKey
+          ? { ...candidate, lifecycleState: "promotion_ready" as const }
+          : candidate);
+      const persisted = await persist(
+        entries,
+        decisionReservations,
+        invalidRecords,
+        producerHandoffs,
+        next,
+      );
+      if (!persisted.ok) return persisted;
+      producerReservations = next;
+    }
     activeProducerKeys.delete(producerKey);
     return ok(undefined);
   }
@@ -604,13 +637,13 @@ export function createAnnouncementDeadLetterQueue(
       activeProducerKeys.delete(producerKey);
       return ok(undefined);
     }
-    if (record.terminalState === "no_reply_pending") {
+    if (record.lifecycleState === "no_reply_pending") {
       return err(new Error("Announcement producer suppression is already pending"));
     }
-    if (record.terminalState !== "cancel_pending") {
+    if (record.lifecycleState !== "cancel_pending") {
       const pendingRecord: ProducerReservationRecord = {
         ...record,
-        terminalState: "cancel_pending",
+        lifecycleState: "cancel_pending",
       };
       const next = producerReservations.map((candidate) =>
         candidate.runId === producerKey ? pendingRecord : candidate);
@@ -622,7 +655,7 @@ export function createAnnouncementDeadLetterQueue(
         next,
       );
       if (!persisted.ok && !producerReservations.some((candidate) =>
-        candidate.runId === producerKey && candidate.terminalState === "cancel_pending")) {
+        candidate.runId === producerKey && candidate.lifecycleState === "cancel_pending")) {
         return persisted;
       }
       if (persisted.ok) producerReservations = next;
@@ -660,14 +693,14 @@ export function createAnnouncementDeadLetterQueue(
       && ownedHandoffOperations.length === 0) {
       return ok(false);
     }
-    let pendingProducerDurable = record?.terminalState === "no_reply_pending";
+    let pendingProducerDurable = record?.lifecycleState === "no_reply_pending";
     const pendingRecord = record
-      ? { ...record, terminalState: "no_reply_pending" as const }
+      ? { ...record, lifecycleState: "no_reply_pending" as const }
       : undefined;
-    if (record && record.terminalState !== "no_reply_pending") {
+    if (record && record.lifecycleState !== "no_reply_pending") {
       const next = producerReservations.map((candidate) =>
         candidate.runId === producerKey
-          ? { ...record, terminalState: "no_reply_pending" as const }
+          ? { ...record, lifecycleState: "no_reply_pending" as const }
           : candidate);
       const persisted = await persist(
         entries,
@@ -678,7 +711,7 @@ export function createAnnouncementDeadLetterQueue(
       );
       if (!persisted.ok) {
         pendingProducerDurable = producerReservations.some((candidate) =>
-          candidate.runId === producerKey && candidate.terminalState === "no_reply_pending");
+          candidate.runId === producerKey && candidate.lifecycleState === "no_reply_pending");
         if (!pendingProducerDurable) {
           const terminalized = await terminalizeOwner(
             publicProducerReservation(record),
@@ -2740,7 +2773,7 @@ export function createAnnouncementDeadLetterQueue(
     const {
       recordType: _recordType,
       id: _id,
-      terminalState: _terminalState,
+      lifecycleState: _lifecycleState,
       ...reservation
     } = record;
     return reservation;
@@ -2750,11 +2783,12 @@ export function createAnnouncementDeadLetterQueue(
     for (const record of [...producerReservations]) {
       if (activeProducerKeys.has(record.runId)) continue;
       const reservation = publicProducerReservation(record);
-      if (record.terminalState === "cancel_pending") {
+      if (record.lifecycleState === "active") continue;
+      if (record.lifecycleState === "cancel_pending") {
         await removeProducerReservationDurably(record.runId);
         continue;
       }
-      if (record.terminalState === "no_reply_pending") {
+      if (record.lifecycleState === "no_reply_pending") {
         const terminalized = await terminalizeOwner(
           reservation,
           "no_reply",

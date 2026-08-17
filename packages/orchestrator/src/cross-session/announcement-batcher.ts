@@ -269,6 +269,14 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     }
 
     if (deps.sendRecoverableAnnouncement) {
+      if (attachment) {
+        return {
+          delivered: false,
+          lastError: "attachment delivery unavailable",
+          failure: "operation_validation_blocked",
+          platformStatus: "rejected",
+        };
+      }
       const boundary = await fromPromise(deps.sendRecoverableAnnouncement({
         agentId: item.callerAgentId,
         callerSessionKey: item.callerSessionKey,
@@ -281,7 +289,6 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         completionKeys,
         signal: admissionAbort.signal,
         ...(partId ? { partId } : {}),
-        ...(attachment ? { attachment } : {}),
         ...(item.announceThreadId ? { options: { threadId: item.announceThreadId } } : {}),
       }));
       if (!boundary.ok || !boundary.value.ok) {
@@ -944,7 +951,6 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     if (
       (params.attachments?.length ?? 0) > 0
       && !deps.sendGovernedAnnouncement
-      && !deps.sendRecoverableAnnouncement
     ) {
       deps.logger?.warn(
         {
@@ -1085,6 +1091,15 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     const batchKey = JSON.stringify([
       params.callerAgentId,
       params.callerSessionKey,
+      params.callerConversation.conversationScope.tenantId,
+      params.callerConversation.conversationScope.agentId,
+      params.callerConversation.conversationRef,
+      params.destinationEndpoint.channelType,
+      params.destinationEndpoint.channelInstanceId,
+      params.destinationEndpoint.conversationId,
+      params.destinationEndpoint.threadId ?? null,
+      params.destinationEndpoint.conversationKind,
+      params.reservationRootRunId ?? null,
       params.announceChannelType,
       params.announceChannelId,
       params.announceThreadId ?? null,

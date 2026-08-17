@@ -628,9 +628,10 @@ function isAnnouncementProducerReservationRecord(
     && typeof record.id === "string"
     && record.id.length > 0
     && (
-      record.terminalState === undefined
-      || record.terminalState === "no_reply_pending"
-      || record.terminalState === "cancel_pending"
+      record.lifecycleState === "active"
+      || record.lifecycleState === "promotion_ready"
+      || record.lifecycleState === "no_reply_pending"
+      || record.lifecycleState === "cancel_pending"
     );
 }
 

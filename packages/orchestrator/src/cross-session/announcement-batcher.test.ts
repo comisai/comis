@@ -411,6 +411,51 @@ describe("AnnouncementBatcher", () => {
     expect(deps.announceToParent).toHaveBeenCalledTimes(2);
   });
 
+  it("partitions batches by durable authority endpoint and root", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendRecoverableAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true,
+      status: "accepted" as const,
+    }));
+    const deps = makeDeps({
+      deadLetterQueue,
+      sendRecoverableAnnouncement,
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+    const base = makeAnnouncement({
+      idempotencyKey: "authority-base",
+      runId: "authority-base-run",
+    });
+
+    await batcher.enqueue(base);
+    await batcher.enqueue({
+      ...base,
+      idempotencyKey: "authority-conversation",
+      runId: "authority-conversation-run",
+      callerConversation: makeCallerConversation("agent-main", "other-tenant"),
+    });
+    await batcher.enqueue({
+      ...base,
+      idempotencyKey: "authority-endpoint",
+      runId: "authority-endpoint-run",
+      destinationEndpoint: {
+        ...base.destinationEndpoint,
+        channelInstanceId: "other-instance",
+      },
+    });
+    await batcher.enqueue({
+      ...base,
+      idempotencyKey: "authority-root",
+      runId: "authority-root-run",
+      reservationRootRunId: "other-root",
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(deps.announceToParent).toHaveBeenCalledTimes(4);
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledTimes(4);
+  });
+
   it("flush delivers all pending immediately", async () => {
     const deps = makeDeps();
     const batcher = createAnnouncementBatcher(deps);
@@ -757,7 +802,7 @@ describe("AnnouncementBatcher", () => {
     );
   });
 
-  it("retains ledgerless attachments through the recoverable delivery boundary", async () => {
+  it("rejects attachments without an attachment-capable boundary", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const sendRecoverableAnnouncement = vi.fn().mockResolvedValue(ok({
       delivered: false,
@@ -778,16 +823,11 @@ describe("AnnouncementBatcher", () => {
       }),
       suppressText: true,
     });
-    await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(admitted).toEqual(ok("queued"));
-    expect(sendRecoverableAnnouncement).toHaveBeenCalledOnce();
-    expect(sendRecoverableAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
-      partId: "attachment:0",
-      attachment,
-      text: "",
-    }));
+    expect(admitted).toMatchObject({ ok: false });
+    expect(sendRecoverableAnnouncement).not.toHaveBeenCalled();
     expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(deadLetterQueue.replaceDecisions).not.toHaveBeenCalled();
     expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
   });
 

@@ -130,8 +130,16 @@ export type RecoverableAnnouncementSendOutcome =
   | AnnouncementPlatformSendOutcome
   | { delivered: false; terminalDecision: OutwardTerminalDecision };
 
+export type RecoverableCompletionAnnouncementSendRequest = Omit<
+  CompletionAnnouncementSendRequest,
+  "attachment" | "preparedAttachment"
+> & {
+  attachment?: never;
+  preparedAttachment?: never;
+};
+
 export type SendRecoverableCompletionAnnouncement = (
-  request: CompletionAnnouncementSendRequest,
+  request: RecoverableCompletionAnnouncementSendRequest,
 ) => Promise<Result<RecoverableAnnouncementSendOutcome, Error>>;
 
 interface GovernedAnnouncementSenderDeps {

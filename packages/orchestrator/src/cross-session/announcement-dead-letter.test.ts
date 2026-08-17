@@ -1590,6 +1590,46 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(restarted.size()).toBe(0);
   });
 
+  it("does not promote an active producer after cancellation storage fails", async () => {
+    const producer = decisionInput({
+      idempotencyKey: "failed-cancellation-operation",
+      runId: "failed-cancellation-run",
+      completionKeys: ["failed-cancellation-operation"],
+      retirementKeys: ["failed-cancellation-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok(undefined));
+
+    const storageError = new Error("producer cancellation storage unavailable");
+    const blocked = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      fileOperations: {
+        open: vi.fn().mockRejectedValue(storageError),
+        rename: vi.fn(),
+        unlink: vi.fn(),
+        chmod: vi.fn(),
+      } as unknown as DeadLetterWriteOperations,
+    });
+    await expect(blocked.cancelProducer(producer.runId)).resolves.toMatchObject({ ok: false });
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(restarted.size()).toBe(1);
+  });
+
   it("finishes a durable producer cancellation without promoting its fallback", async () => {
     const producer = decisionInput({
       idempotencyKey: "cancel-pending-operation",
@@ -1601,7 +1641,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       ...producer,
       recordType: "producer_reservation",
       id: "cancel-pending-record",
-      terminalState: "cancel_pending",
+      lifecycleState: "cancel_pending",
     })}\n`, "utf8");
     const restarted = createAnnouncementDeadLetterQueue({
       filePath,
@@ -3277,6 +3317,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       deliveryAuthority: DeliveryAuthority;
       destinationEndpoint: ChannelEndpoint;
     };
+    const expectedOperation = ledgerRow(entry, "in_flight");
     await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
 
     const { ledger, lookupCalls } = makeStubLedger({ lookupResult: ok(undefined) });
@@ -3316,8 +3357,8 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       channelType: "telegram",
       channelId: "chat-123",
       operationKind: "cross_session_announcement",
-      operationFingerprint: operationFingerprint(entry),
-      contentDigest: createHash("sha256").update(entry.announcementText).digest("hex"),
+      operationFingerprint: expectedOperation.operationFingerprint,
+      contentDigest: expectedOperation.contentDigest,
     });
     expect(ledger.markUnknown).toHaveBeenCalledWith("root-uncommitted-1", 9);
     expect(ledger.commit).toHaveBeenCalledWith(

@@ -116,7 +116,7 @@ export interface AnnouncementProducerReservationRecord
   extends AnnouncementProducerReservation {
   recordType: "producer_reservation";
   id: string;
-  terminalState?: "no_reply_pending" | "cancel_pending";
+  lifecycleState: "active" | "promotion_ready" | "no_reply_pending" | "cancel_pending";
 }
 
 /** Content-free operator projection of a retained delivery. */
