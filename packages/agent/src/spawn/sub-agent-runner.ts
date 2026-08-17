@@ -4316,10 +4316,11 @@ function classifyCompletionErrorKind(
           params.callerSessionKey,
           runtimeMs,
         );
+        const failureErrorKind: ErrorKind = "internal";
         const failureCompletion = freezeCompletion({
           endReason: "failed",
           completedAtMs: completedAt,
-          errorKind: "internal",
+          errorKind: failureErrorKind,
           summary: errorMessage,
         });
         let producerOutcomeDurable = true;
@@ -4333,7 +4334,7 @@ function classifyCompletionErrorKind(
               kind: "session",
               terminalReason: "failed",
               completedAtMs: failureCompletion.completedAtMs,
-              errorKind: failureCompletion.errorKind,
+              errorKind: failureErrorKind,
               ...(failureCompletion.summary !== undefined
                 ? { summary: failureCompletion.summary }
                 : {}),
