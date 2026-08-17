@@ -3,15 +3,15 @@
  * `@comis/core/api-contracts` aggregator (barrel-only public surface).
  * External consumers always import from `"@comis/core"`.
  *
- * One contract file per logical domain; this file aggregates the 17
+ * One contract file per logical domain; this file aggregates the 19
  * domain registries into a single deterministic registry. Imports are
  * alphabetically sorted so future contract authors get deterministic
  * git diffs (alphabetical position of the domain).
  *
- * Domain order: agents → auth → capabilities → channels → config → context →
- * daemon → mcp → mcp-oauth → media → memory → observability → orchestrator →
- * secrets → sessions → tokens → workspace. Note: `mcp` < `mcp-oauth` < `media`
- * alphabetically.
+ * Domain order: agents → auth → capabilities → capability-services → channels →
+ * config → context → daemon → managed-runs → mcp → mcp-oauth → media → memory →
+ * observability → orchestrator → secrets → sessions → tokens → workspace.
+ * Note: `mcp` < `mcp-oauth` < `media` alphabetically.
  *
  * The bidirectional 1:1 test in
  * `test/architecture/api-contracts-bidirectional.test.ts` is the
@@ -23,14 +23,16 @@
 import type { ZodTypeAny } from "zod";
 import type { ApiContract } from "./types.js";
 
-// 17 domain imports — alphabetical order for deterministic git diffs.
+// 19 domain imports — alphabetical order for deterministic git diffs.
 import { AGENTS_CONTRACTS } from "./agents.js";
 import { AUTH_CONTRACTS } from "./auth.js";
 import { CAPABILITIES_CONTRACTS } from "./capabilities.js";
+import { CAPABILITY_SERVICES_CONTRACTS } from "./capability-services.js";
 import { CHANNELS_CONTRACTS } from "./channels.js";
 import { CONFIG_CONTRACTS } from "./config.js";
 import { CONTEXT_CONTRACTS } from "./context.js";
 import { DAEMON_CONTRACTS } from "./daemon.js";
+import { MANAGED_RUNS_CONTRACTS } from "./managed-runs.js";
 import { MCP_CONTRACTS } from "./mcp.js";
 import { MCP_OAUTH_CONTRACTS } from "./mcp-oauth.js";
 import { MEDIA_CONTRACTS } from "./media.js";
@@ -51,10 +53,12 @@ export const API_CONTRACTS_ORDERED: readonly ApiContract<ZodTypeAny, ZodTypeAny>
   ...AGENTS_CONTRACTS,
   ...AUTH_CONTRACTS,
   ...CAPABILITIES_CONTRACTS,
+  ...CAPABILITY_SERVICES_CONTRACTS,
   ...CHANNELS_CONTRACTS,
   ...CONFIG_CONTRACTS,
   ...CONTEXT_CONTRACTS,
   ...DAEMON_CONTRACTS,
+  ...MANAGED_RUNS_CONTRACTS,
   ...MCP_CONTRACTS,
   ...MCP_OAUTH_CONTRACTS,
   ...MEDIA_CONTRACTS,
@@ -80,10 +84,12 @@ export { INTERNAL_FIELD_NAMES, stripInternalFields } from "./internals.js";
 export * from "./agents.js";
 export * from "./auth.js";
 export * from "./capabilities.js";
+export * from "./capability-services.js";
 export * from "./channels.js";
 export * from "./config.js";
 export * from "./context.js";
 export * from "./daemon.js";
+export * from "./managed-runs.js";
 export * from "./mcp.js";
 export * from "./mcp-oauth.js";
 export * from "./media.js";
