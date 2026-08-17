@@ -314,6 +314,26 @@ export interface ManagedRunScopedListInput {
   readonly limit: number;
 }
 
+/**
+ * A cross-scope operator read. The explicit discriminator is the safety
+ * property: the scoped list can never degrade into this one by having its scope
+ * omitted, so a caller reaches another principal's work only by naming that it
+ * is administering the host rather than serving a conversation.
+ */
+export interface ManagedRunAdministrationListInput {
+  readonly kind: "administration";
+  readonly serviceInstanceId?: string;
+  readonly agentId?: string;
+  readonly statuses?: readonly ManagedRunStatus[];
+  readonly limit: number;
+}
+
+export interface ManagedRunAttentionAdministrationListInput {
+  readonly kind: "administration";
+  readonly managedRunId?: string;
+  readonly limit: number;
+}
+
 export interface ManagedRunRecoveryScanInput {
   readonly kind: "recovery";
   readonly statuses: readonly ManagedRunStatus[];
@@ -373,6 +393,8 @@ export interface ManagedRunStorePort {
   commitReducedState(scope: ManagedRunOwnerScope, input: ManagedRunReducedStateInput): Promise<Result<ManagedRunMutationOutcome, Error>>;
   markContinuationOutcome(scope: ManagedRunOwnerScope, input: ManagedRunContinuationOutcomeInput): Promise<Result<ManagedRunMutationOutcome, Error>>;
   listScoped(input: ManagedRunScopedListInput): Promise<Result<ManagedRunRecord[], Error>>;
+  listForAdministration(input: ManagedRunAdministrationListInput): Promise<Result<ManagedRunRecord[], Error>>;
+  listAttentionForAdministration(input: ManagedRunAttentionAdministrationListInput): Promise<Result<ManagedRunAttentionRecord[], Error>>;
   listRecoverable(input: ManagedRunRecoveryScanInput): Promise<Result<ManagedRunRecoveryScan, Error>>;
   revoke(scope: ManagedRunOwnerScope, input: ManagedRunRevokeInput): Promise<Result<ManagedRunTransitionClaimOutcome, Error>>;
 }

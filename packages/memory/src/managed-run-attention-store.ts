@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import {
   ManagedRunAttentionRecordSchema,
   type ManagedRunAttentionDeliveryInput,
+  type ManagedRunAttentionAdministrationListInput,
   type ManagedRunAttentionListInput,
   type ManagedRunAttentionMutationOutcome,
   type ManagedRunAttentionRecord,
@@ -73,6 +74,9 @@ export interface ManagedRunAttentionStoreStatements {
     scope: ManagedRunOwnerScope,
     input: ManagedRunAttentionListInput,
   ): Result<ManagedRunAttentionRecord[], Error>;
+  listForAdministration(
+    input: ManagedRunAttentionAdministrationListInput,
+  ): Result<ManagedRunAttentionRecord[], Error>;
   claimResponse(
     scope: ManagedRunOwnerScope,
     input: ManagedRunAttentionResponseInput,
@@ -113,6 +117,15 @@ export function createManagedRunAttentionStoreStatements(
     WHERE tenant_id = ? AND agent_id = ? AND principal_id = ? AND conversation_ref = ?
       AND (? IS NULL OR managed_run_id = ?)
       AND status IN ('open','response_pending','delivered')
+    ORDER BY created_at_ms ASC, attention_id ASC
+    LIMIT ?
+  `);
+  // Deliberately unscoped and status-inclusive: an operator asking why a run is
+  // stuck needs the resolved and cancelled records too, and cannot be expected
+  // to already know which principal the question was routed to.
+  const listForAdministrationRows = db.prepare(`
+    SELECT * FROM managed_run_attention
+    WHERE (? IS NULL OR managed_run_id = ?)
     ORDER BY created_at_ms ASC, attention_id ASC
     LIMIT ?
   `);
@@ -337,6 +350,24 @@ export function createManagedRunAttentionStoreStatements(
         scope.agentId,
         scope.principalId,
         scope.conversationRef,
+        input.managedRunId ?? null,
+        input.managedRunId ?? null,
+        input.limit,
+      ));
+      if (!rows.ok) return err(new Error(rows.error.message));
+      const records: ManagedRunAttentionRecord[] = [];
+      for (const row of rows.value) {
+        const record = rowToRecord(row);
+        if (!record.ok) return record;
+        records.push(record.value);
+      }
+      return ok(records);
+    },
+    listForAdministration: (input) => {
+      if (!Number.isInteger(input.limit) || input.limit <= 0 || input.limit > 10_000) {
+        return err(new Error("managed-run attention administration limit is invalid"));
+      }
+      const rows = attentionMapper.parseRows(listForAdministrationRows.all(
         input.managedRunId ?? null,
         input.managedRunId ?? null,
         input.limit,

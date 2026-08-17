@@ -43,6 +43,8 @@ export type {
   ManagedRunWorkspaceBindingInput,
   ManagedRunBindingOutcome,
   ManagedRunExecutionAttachmentBindingInput,
+  ManagedRunAdministrationListInput,
+  ManagedRunAttentionAdministrationListInput,
   ManagedRunHeartbeatInput,
   ManagedRunHeartbeatOutcome,
   ManagedRunReleaseReservationInput,

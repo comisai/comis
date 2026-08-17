@@ -1785,11 +1785,33 @@ describe("managed-run administration reads", () => {
     // rather than an optional scope on the scoped one.
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);
+    const otherConversation = {
+      ...CONVERSATION_SCOPE,
+      partition: {
+        ...CONVERSATION_SCOPE.partition,
+        principalId: "principal_b",
+      },
+    };
+    const otherRef = createConversationRef(otherConversation);
+    if (!otherRef.ok) throw otherRef.error;
     expect((await store.create(makeRecord({
       managedRunId: "managed-run_b",
       externalRunRefDigest: createHash("sha256").update("external-run_b", "utf8").digest("hex"),
-      principalId: "principal_b",
       serviceInstanceId: "service-instance_b",
+      principalId: "principal_b",
+      conversationRef: otherRef.value,
+      turnScope: {
+        conversation: otherConversation,
+        principal: { principalId: "principal_b" },
+        endpoint: otherConversation.partition.endpoint,
+      },
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "conversation_a",
+        userId: "principal_b",
+        threadId: "thread_a",
+        tenantId: "tenant_a",
+      },
     }))).ok).toBe(true);
 
     const all = await store.listForAdministration({ kind: "administration", limit: 50 });
@@ -1827,13 +1849,11 @@ describe("managed-run administration reads", () => {
       managedRunId: "managed-run_a",
       serviceReportId: "service-report_attention",
       kind: "attention",
-      externalKey: "decision-a",
       contentRef: "service-report_attention",
       contentHash: "a".repeat(64),
       receivedAtMs: 1_800_000_000_100,
       retainedUntilMs: 1_800_000_060_000,
-      attentionRef: "attention-body_a",
-      attentionId: "attention_a",
+      attention: { attentionId: "attention_a", attentionRef: "attention-body_a", externalKey: "decision-a" },
     });
     expect(appended.ok && appended.value.kind).toBe("accepted");
 

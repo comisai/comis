@@ -216,6 +216,16 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     ORDER BY created_at_ms ASC, managed_run_id ASC
     LIMIT ?
   `);
+  // Cross-scope by design and reachable only through the named administration
+  // read. Filters are optional so an operator can start from the whole fleet.
+  const listForAdministrationRows = db.prepare(`
+    SELECT * FROM managed_runs
+    WHERE (? IS NULL OR service_instance_id = ?)
+      AND (? IS NULL OR agent_id = ?)
+      AND (json_array_length(?) = 0 OR status IN (SELECT value FROM json_each(?)))
+    ORDER BY updated_at_ms DESC, managed_run_id ASC
+    LIMIT ?
+  `);
   const listRecoverableRows = db.prepare(`
     SELECT * FROM managed_runs
     WHERE status IN (SELECT value FROM json_each(?)) AND updated_at_ms <= ?
@@ -989,6 +999,30 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       }
       return ok(records);
     }),
+    listForAdministration: (input) => boundary(() => {
+      if (!validLimit(input.limit)) {
+        return err(new Error("managed-run administration list limit is invalid"));
+      }
+      const statuses = JSON.stringify(input.statuses ?? []);
+      const rows = runMapper.parseRows(listForAdministrationRows.all(
+        input.serviceInstanceId ?? null,
+        input.serviceInstanceId ?? null,
+        input.agentId ?? null,
+        input.agentId ?? null,
+        statuses,
+        statuses,
+        input.limit,
+      ));
+      if (!rows.ok) return err(new Error(rows.error.message));
+      const records: ManagedRunRecord[] = [];
+      for (const row of rows.value) {
+        const record = rowToManagedRunRecord(row);
+        if (!record.ok) return record;
+        records.push(record.value);
+      }
+      return ok(records);
+    }),
+    listAttentionForAdministration: (input) => boundary(() => attention.listForAdministration(input)),
     listRecoverable: (input) => boundary((): Result<ManagedRunRecoveryScan, Error> => {
       if (!validLimit(input.limit) || input.statuses.length === 0) {
         return err(new Error("managed-run recovery scan input is invalid"));
