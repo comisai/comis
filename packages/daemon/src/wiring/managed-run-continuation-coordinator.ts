@@ -50,6 +50,12 @@ export interface ManagedRunContinuationCoordinatorDeps {
   readonly resolveEvidencePolicies: (
     serviceInstanceId: string,
   ) => readonly CapabilityServiceEvidencePolicy[] | undefined;
+  /**
+   * Whether this instance's definition declared the health scope. Liveness is a
+   * declared obligation: a service that never requested the scope has no way to
+   * send a beat, so requiring one would pin its runs at unknown forever.
+   */
+  readonly resolveHeartbeatRequirement: (serviceInstanceId: string) => boolean;
   readonly eventBus: TypedEventBus;
   readonly logger: ComisLogger;
 }
@@ -271,6 +277,7 @@ export function createManagedRunContinuationCoordinator(
         }
       }
 
+      const livenessRequired = deps.resolveHeartbeatRequirement(record.serviceInstanceId);
       const verifiedOutcome = reports.some((report) => report.kind === "failed")
         ? "failed" as const
         : "none" as const;
@@ -282,7 +289,7 @@ export function createManagedRunContinuationCoordinator(
         throughReportSequence,
         lastHeartbeatAtMs: record.lastHeartbeatAtMs,
         heartbeatMaxAgeMs: deps.heartbeatMaxAgeMs,
-        heartbeatRequired: true,
+        heartbeatRequired: livenessRequired,
         evidenceHealth,
         verifiedOutcome,
         deliveryState: "not_required",
@@ -317,7 +324,7 @@ export function createManagedRunContinuationCoordinator(
           throughReportSequence,
           lastHeartbeatAtMs: record.lastHeartbeatAtMs,
           heartbeatMaxAgeMs: deps.heartbeatMaxAgeMs,
-          heartbeatRequired: true,
+          heartbeatRequired: livenessRequired,
           evidenceHealth: "unavailable",
           verifiedOutcome: "none",
           deliveryState: "unavailable",
@@ -334,7 +341,7 @@ export function createManagedRunContinuationCoordinator(
             throughReportSequence,
             lastHeartbeatAtMs: record.lastHeartbeatAtMs,
             heartbeatMaxAgeMs: deps.heartbeatMaxAgeMs,
-            heartbeatRequired: true,
+            heartbeatRequired: livenessRequired,
             evidenceHealth,
             verifiedOutcome: "succeeded",
             deliveryState: evidenceVerification.deliveryRequired ? "verified" : "not_required",

@@ -16,6 +16,7 @@ import {
   type ExecutionAttachmentPort,
   type ManagedRunContentPort,
   type ManagedRunStorePort,
+  type PlannedCapabilityServiceDefinition,
   type SecretManager,
   type TimerPort,
   type TypedEventBus,
@@ -119,6 +120,25 @@ async function purgeAllExpiredContent(
     purgedCount += page.value;
     if (page.value < limit) return ok(purgedCount);
   }
+}
+
+/**
+ * The definition an activated instance was planned from. Obligations the host
+ * enforces per run — required evidence kinds, declared liveness — are properties
+ * of the definition, so both resolvers must read the same planned record.
+ */
+export function definitionForInstance(
+  plan: CapabilityServiceActivationPlan,
+  serviceInstanceId: string,
+): PlannedCapabilityServiceDefinition | undefined {
+  const instance = plan.orderedInstances.find(
+    (candidate) => candidate.serviceInstanceId === serviceInstanceId,
+  );
+  return instance === undefined
+    ? undefined
+    : plan.orderedDefinitions.find(
+      (definition) => definition.serviceDefinitionId === instance.serviceDefinitionId,
+    );
 }
 
 export interface CapabilityServicePlatform {
@@ -310,9 +330,7 @@ export async function setupCapabilityServices(
   });
   const definitionByInstance = new Map(plan.value.orderedInstances.map((instance) => [
     instance.serviceInstanceId,
-    plan.value.orderedDefinitions.find(
-      (definition) => definition.serviceDefinitionId === instance.serviceDefinitionId,
-    ),
+    definitionForInstance(plan.value, instance.serviceInstanceId),
   ]));
   const evidenceBridge = createManagedRunEvidenceBridge({
     store,

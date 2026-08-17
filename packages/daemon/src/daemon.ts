@@ -89,6 +89,7 @@ import {
   setupBroker,
   acquireDataDirLock,
   releaseDataDirLock,
+  definitionForInstance,
   setupCapabilityServices,
 } from "./wiring/index.js";
 import { resolveEffectiveTrajectoryConfig } from "./wiring/trajectory-runtime-config.js";
@@ -2254,16 +2255,13 @@ async function bootChannels(boot: BootContext): Promise<void> {
       ),
       logger: daemonLogger,
     }),
-    resolveEvidencePolicies: (serviceInstanceId) => {
-      const instance = capabilityServices.plan.orderedInstances.find(
-        (candidate) => candidate.serviceInstanceId === serviceInstanceId,
-      );
-      return instance === undefined
-        ? undefined
-        : capabilityServices.plan.orderedDefinitions.find(
-          (definition) => definition.serviceDefinitionId === instance.serviceDefinitionId,
-        )?.evidencePolicies;
-    },
+    resolveEvidencePolicies: (serviceInstanceId) => (
+      definitionForInstance(capabilityServices.plan, serviceInstanceId)?.evidencePolicies
+    ),
+    resolveHeartbeatRequirement: (serviceInstanceId) => (
+      definitionForInstance(capabilityServices.plan, serviceInstanceId)
+        ?.requestedScopes.includes("health") ?? false
+    ),
     nowMs: () => handle.clock.now(),
     timers: handle.timers,
     heartbeatMaxAgeMs: 300_000,

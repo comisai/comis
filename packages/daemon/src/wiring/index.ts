@@ -14,6 +14,7 @@ export { setupObservability, rehydrateSpendFromStore, type ObservabilityResult }
 export { setupHealth, type HealthResult, setupMonitoring, type MonitoringResult } from "./setup-health.js";
 export { setupMemory, type MemoryResult } from "./setup-memory.js";
 export {
+  definitionForInstance,
   setupCapabilityServices,
   type CapabilityServicePlatform,
 } from "./setup-capability-services.js";

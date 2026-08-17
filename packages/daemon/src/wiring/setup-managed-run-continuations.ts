@@ -206,6 +206,7 @@ export async function setupManagedRunContinuations(deps: {
   readonly resolveEvidencePolicies: (
     serviceInstanceId: string,
   ) => readonly CapabilityServiceEvidencePolicy[] | undefined;
+  readonly resolveHeartbeatRequirement: (serviceInstanceId: string) => boolean;
   readonly nowMs: () => number;
   readonly timers: TimerPort;
   readonly heartbeatMaxAgeMs: number;
@@ -225,6 +226,7 @@ export async function setupManagedRunContinuations(deps: {
     heartbeatMaxAgeMs: deps.heartbeatMaxAgeMs,
     claimTtlMs: deps.claimTtlMs,
     resolveEvidencePolicies: deps.resolveEvidencePolicies,
+    resolveHeartbeatRequirement: deps.resolveHeartbeatRequirement,
     eventBus: deps.eventBus,
     logger: deps.logger,
     execute: async (input) => {
