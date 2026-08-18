@@ -291,6 +291,49 @@ describe("managed-run report bridge", () => {
     expect(JSON.stringify(audit.mock.calls)).not.toContain("Altered private body");
   });
 
+  it("emits content-free attention lifecycle events on open and resolution", async () => {
+    const opened = vi.fn();
+    const resolved = vi.fn();
+    eventBus.on("managed_run:attention_opened", opened);
+    eventBus.on("managed_run:attention_resolved", resolved);
+    const bridge = makeBridge();
+
+    const attention = await bridge.ingestReport({
+      ...makeInput(),
+      report: {
+        serviceReportId: "service-report_attention",
+        kind: "attention",
+        externalKey: "approval-a",
+        summary: "Approval is required",
+      },
+    });
+    expect(attention).toMatchObject({ ok: true, value: { kind: "accepted" } });
+    expect(opened).toHaveBeenCalledWith(expect.objectContaining({
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      attentionId: expect.stringMatching(/^attention-[a-f0-9]{48}$/),
+    }));
+    expect(resolved).not.toHaveBeenCalled();
+    // Content-free: no report body leaks into the event payload.
+    expect(JSON.stringify(opened.mock.calls)).not.toContain("Approval is required");
+
+    const resolution = await bridge.ingestReport({
+      ...makeInput(),
+      report: {
+        serviceReportId: "service-report_resolution",
+        kind: "resolution",
+        externalKey: "approval-a",
+        summary: "Approval was applied",
+      },
+    });
+    expect(resolution).toMatchObject({ ok: true, value: { kind: "accepted" } });
+    expect(resolved).toHaveBeenCalledWith(expect.objectContaining({
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      attentionId: expect.stringMatching(/^attention-[a-f0-9]{48}$/),
+    }));
+  });
+
   it("derives durable attention identity and closes it only from a matching resolution", async () => {
     const bridge = makeBridge();
     const attention = await bridge.ingestReport({
