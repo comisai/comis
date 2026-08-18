@@ -2313,6 +2313,40 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       model: "claude-opus-4",
       timestamp: 0,
     },
+    // Managed-run lifecycle — content-free (run/service/attention/evidence ids
+    // + closed enums); the envelope correlation keys are stripped.
+    "managed_run:attention_opened": {
+      managedRunId: "run-a",
+      serviceInstanceId: "svc-a",
+      attentionId: "att-a",
+      timestamp: 0,
+    },
+    "managed_run:attention_resolved": {
+      managedRunId: "run-a",
+      serviceInstanceId: "svc-a",
+      attentionId: "att-a",
+      timestamp: 0,
+    },
+    "managed_run:evidence_accepted": {
+      managedRunId: "run-a",
+      serviceInstanceId: "svc-a",
+      evidenceRef: "ev-a",
+      verificationLevel: "adapter_verified",
+      deliveryKind: "reference",
+      timestamp: 0,
+    },
+    "managed_run:evidence_rejected": {
+      managedRunId: "run-a",
+      serviceInstanceId: "svc-a",
+      reasonCode: "invalid_evidence",
+      timestamp: 0,
+    },
+    "managed_run:revoked": {
+      managedRunId: "run-a",
+      serviceInstanceId: "svc-a",
+      reasonCode: "authority_revoked",
+      timestamp: 0,
+    },
   };
 
   it.each(Object.keys(TRAJECTORY_BRIDGE_MAPPING))(
@@ -4770,7 +4804,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(149);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(154);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
