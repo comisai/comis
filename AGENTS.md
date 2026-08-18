@@ -402,5 +402,6 @@ If full validation is impractical, document what was run and what was skipped.
 3. `pnpm validate`, plus `pnpm validate:full` on Linux for the integration and tarball tiers.
 4. Commit, push, tag. The `vX.Y.Z` tag triggers npm publish (with provenance) and the multi-arch image builds.
 5. **Verify the publish actually landed** — `npm view comisai dist-tags` must show the new version. The publish job has silently drifted before; a green workflow is not proof.
+6. **Verify the capability-service protocol bundle attached** — the release must carry `comis-capability-service-protocol-vX.Y.Z.tar.gz` and its `.manifest.json` sidecar. External companion services pin those bytes by digest; the private SDK is never published to npm. Renaming an asset invalidates every pin already in the field, so it is a coordinated release-train step across the companion repositories, not a rename.
 
 **Worktrees.** After merging a worktree branch back, remove the worktree and delete its tracking branch in the same step — do not leave stale worktrees behind.

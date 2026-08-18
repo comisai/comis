@@ -58,6 +58,10 @@ observability packages; it also manages startup, shutdown, and signals.
 The published umbrella package is named `comisai` on npm (the directory is `packages/comis/`). It bundles the runtime `@comis/*` workspace packages, including the private capability-service SDK needed by the daemon and skills packages, and exposes a `comis` CLI binary. Subpath imports such as `comisai/core` or `comisai/agent` are exposed via the umbrella's `exports` map. The SDK remains private and has no standalone npm publication or `comisai` subpath export.
 </Note>
 
+<Note>
+A capability service written in another language consumes the protocol through **release assets**, not through npm. Every `vX.Y.Z` release carries `comis-capability-service-protocol-vX.Y.Z.tar.gz` — the generated JSON Schemas, conformance fixtures, and bundle manifest — alongside a `comis-capability-service-protocol-vX.Y.Z.manifest.json` sidecar that states the protocol identity and `bundleDigest` without unpacking the archive. Pin the release asset rather than a repository commit: the asset's bytes are fixed for the tag that produced them, and the digest is the value the daemon asserts at handshake.
+</Note>
+
 ## Dependency relationships
 
 Package manifests and TypeScript project references are the authoritative
