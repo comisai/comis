@@ -353,6 +353,7 @@ export async function setupCapabilityServices(
     maxObservedClockSkewMs: deps.config.maxObservedClockSkewMs,
     resolveEvidencePolicies: (serviceInstanceId) => definitionByInstance.get(serviceInstanceId)?.evidencePolicies,
     resolveMaxEvidenceBytes: (serviceInstanceId) => limitsByInstance.get(serviceInstanceId)?.maxEvidenceBytes,
+    eventBus: deps.eventBus,
     logger: deps.logger,
   });
   const attentionResponseBridge = createManagedAttentionResponseBridge({

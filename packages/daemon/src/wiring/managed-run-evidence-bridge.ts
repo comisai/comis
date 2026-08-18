@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   ManagedEvidencePrivateBodySchema,
   MAX_MANAGED_EVIDENCE_BYTES,
+  emitObservationalEventSafely,
   type CapabilityServiceEvidencePolicy,
   type ComisLogger,
   type ManagedEvidenceDelivery,
@@ -13,6 +14,7 @@ import {
   type ManagedRunContentScope,
   type ManagedRunOwnerScope,
   type ManagedRunStorePort,
+  type TypedEventBus,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
@@ -88,6 +90,7 @@ export interface ManagedRunEvidenceBridgeDeps {
   /** The service's self-declared max evidence bytes (tighter than the protocol
    *  ceiling), or undefined to fall back to that ceiling. */
   readonly resolveMaxEvidenceBytes?: (serviceInstanceId: string) => number | undefined;
+  readonly eventBus: TypedEventBus;
   readonly logger: ComisLogger;
 }
 
@@ -158,6 +161,11 @@ export function createManagedRunEvidenceBridge(
       reasonCode,
       ...(identity === undefined ? {} : identity),
     }, "Managed-run evidence rejected");
+    emitObservationalEventSafely(
+      { eventBus: deps.eventBus, logger: deps.logger },
+      "managed_run:evidence_rejected",
+      { ...(identity === undefined ? {} : identity), reasonCode, timestamp: deps.nowMs() },
+    );
     return ok({ kind: "rejected", reasonCode });
   }
 
@@ -319,6 +327,19 @@ export function createManagedRunEvidenceBridge(
       }, appended.value.kind === "accepted"
         ? "Managed-run evidence accepted"
         : "Managed-run evidence replay accepted");
+      if (appended.value.kind === "accepted") {
+        emitObservationalEventSafely(
+          { eventBus: deps.eventBus, logger: deps.logger },
+          "managed_run:evidence_accepted",
+          {
+            ...identity,
+            evidenceRef: appended.value.evidence.evidenceRef,
+            verificationLevel: appended.value.evidence.verificationLevel,
+            deliveryKind: appended.value.evidence.deliveryKind,
+            timestamp: deps.nowMs(),
+          },
+        );
+      }
       return ok(appended.value);
     },
   });

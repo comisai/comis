@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { ManagedRunReportKind } from "../domain/managed-run-content.js";
+import type {
+  ManagedRunReportKind,
+  ManagedEvidenceVerificationLevel,
+} from "../domain/managed-run-content.js";
 import type { ManagedRunStatus } from "../domain/managed-run.js";
 
 /** Content-free managed-run binding transitions. */
@@ -84,6 +87,20 @@ export interface ManagedRunEvents {
     managedRunId?: string;
     serviceInstanceId?: string;
     reasonCode: "attention_not_found" | "invalid_request" | "managed_run_not_found" | "state_mismatch" | "storage_failure";
+    timestamp: number;
+  };
+  "managed_run:evidence_accepted": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    evidenceRef: string;
+    verificationLevel: ManagedEvidenceVerificationLevel;
+    deliveryKind: "none" | "reference" | "attachment";
+    timestamp: number;
+  };
+  "managed_run:evidence_rejected": {
+    managedRunId?: string;
+    serviceInstanceId?: string;
+    reasonCode: "delivery_policy_mismatch" | "evidence_stale" | "invalid_evidence" | "managed_run_not_found" | "replay_conflict" | "state_mismatch" | "verification_not_allowed";
     timestamp: number;
   };
   "managed_run:recovery_quarantined": {
