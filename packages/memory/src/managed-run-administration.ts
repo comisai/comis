@@ -54,6 +54,7 @@ export interface ManagedRunAdministrationReads {
   listRuns(input: ManagedRunAdministrationListInput): Result<ManagedRunRecord[], Error>;
   countByStatus(input: ManagedRunHealthCountInput): Result<ManagedRunHealthCounts, Error>;
   countActiveByService(serviceInstanceId: string): Result<number, Error>;
+  countReportsSince(serviceInstanceId: string, managedRunId: string, sinceMs: number): Result<number, Error>;
   listByTraceIds(input: ManagedRunLinkageInput): Result<ManagedRunLinkage[], Error>;
 }
 
@@ -105,6 +106,13 @@ export function createManagedRunAdministrationReads(
   const activeCountRow = db.prepare(`
     SELECT COUNT(*) AS c FROM managed_runs
     WHERE service_instance_id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled')
+  `);
+  // Per-run report rate: how many reports one run has received at or after a
+  // rolling-window boundary, scoped to the owning service. The report bridge
+  // reads this scalar to enforce a service's per-run reports-per-minute ceiling.
+  const reportRateRow = db.prepare(`
+    SELECT COUNT(*) AS c FROM managed_run_reports
+    WHERE service_instance_id = ? AND managed_run_id = ? AND received_at_ms >= ?
   `);
   // Session→run linkage: the managed runs whose prepare-time trace is one of the
   // traces a session's trajectory ran. Content-free projection — ids, closed
@@ -180,6 +188,18 @@ export function createManagedRunAdministrationReads(
         return err(new Error("managed-run active-count service instance id is invalid"));
       }
       const rows = scalarCountMapper.parseRows(activeCountRow.all(serviceInstanceId));
+      if (!rows.ok) return err(new Error(rows.error.message));
+      return ok(rows.value[0]?.c ?? 0);
+    },
+    countReportsSince: (serviceInstanceId, managedRunId, sinceMs) => {
+      if (
+        serviceInstanceId.length === 0 || serviceInstanceId.length > 256
+        || managedRunId.length === 0 || managedRunId.length > 256
+        || !Number.isInteger(sinceMs)
+      ) {
+        return err(new Error("managed-run report-rate count input is invalid"));
+      }
+      const rows = scalarCountMapper.parseRows(reportRateRow.all(serviceInstanceId, managedRunId, sinceMs));
       if (!rows.ok) return err(new Error(rows.error.message));
       return ok(rows.value[0]?.c ?? 0);
     },

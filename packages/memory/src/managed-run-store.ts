@@ -970,6 +970,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     getForAdministration: (input) => boundary(() => readRecord(input.managedRunId)),
     countByStatus: (input) => boundary(() => administration.countByStatus(input)),
     countActiveByService: (serviceInstanceId) => boundary(() => administration.countActiveByService(serviceInstanceId)),
+    countReportsSince: (scope, managedRunId, sinceMs) => boundary(() => administration.countReportsSince(scope.serviceInstanceId, managedRunId, sinceMs)),
     listByTraceIds: (input) => boundary(() => administration.listByTraceIds(input)),
     listAttentionForAdministration: (input) => boundary(() => attention.listForAdministration(input)),
     listRecoverable: (input) => boundary((): Result<ManagedRunRecoveryScan, Error> => {

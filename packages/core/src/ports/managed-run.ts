@@ -461,6 +461,16 @@ export interface ManagedRunStorePort {
    * reads to admit or refuse a new run against a service's concurrency ceiling.
    */
   countActiveByService(serviceInstanceId: string): Promise<Result<number, Error>>;
+  /**
+   * How many reports one run has received at or after `sinceMs`, scoped to the
+   * owning service. A content-free scalar the report bridge reads to enforce a
+   * service's per-run rate ceiling over a rolling window.
+   */
+  countReportsSince(
+    scope: ManagedRunServiceScope,
+    managedRunId: string,
+    sinceMs: number,
+  ): Promise<Result<number, Error>>;
   listByTraceIds(input: ManagedRunLinkageInput): Promise<Result<ManagedRunLinkage[], Error>>;
   listAttentionForAdministration(input: ManagedRunAttentionAdministrationListInput): Promise<Result<ManagedRunAttentionRecord[], Error>>;
   listRecoverable(input: ManagedRunRecoveryScanInput): Promise<Result<ManagedRunRecoveryScan, Error>>;
