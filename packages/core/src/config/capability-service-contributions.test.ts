@@ -389,11 +389,27 @@ describe("capability-service self-declared limits", () => {
     expect(CapabilityServiceLimitsSchema.safeParse({ maxReportBytes: 0 }).success).toBe(false);
   });
 
+  it("bounds a maxConcurrentRuns admission ceiling at a positive integer count", () => {
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxConcurrentRuns: 8 }).success).toBe(true);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxConcurrentRuns: 10_000 }).success).toBe(true);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxConcurrentRuns: 10_001 }).success).toBe(false);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxConcurrentRuns: 0 }).success).toBe(false);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxConcurrentRuns: 1.5 }).success).toBe(false);
+  });
+
   it("resolves the instance override over the definition, then falls back", () => {
     expect(resolveEffectiveCapabilityServiceLimits({ maxReportBytes: 8_000, maxEvidenceBytes: 100 }, { maxReportBytes: 2_000 }))
       .toEqual({ maxReportBytes: 2_000, maxEvidenceBytes: 100 });
     expect(resolveEffectiveCapabilityServiceLimits(undefined, undefined)).toEqual({});
     expect(resolveEffectiveCapabilityServiceLimits({ maxReportBytes: 4_000 }, undefined)).toEqual({ maxReportBytes: 4_000 });
+  });
+
+  it("resolves the maxConcurrentRuns override over the definition, then falls back", () => {
+    expect(resolveEffectiveCapabilityServiceLimits({ maxConcurrentRuns: 8 }, { maxConcurrentRuns: 3 }))
+      .toEqual({ maxConcurrentRuns: 3 });
+    expect(resolveEffectiveCapabilityServiceLimits({ maxConcurrentRuns: 8 }, undefined))
+      .toEqual({ maxConcurrentRuns: 8 });
+    expect(resolveEffectiveCapabilityServiceLimits(undefined, undefined)).toEqual({});
   });
 
   it("plans a definition and instance that both declare limits", () => {
