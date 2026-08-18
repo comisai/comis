@@ -162,6 +162,29 @@ describe("managed-run report bridge", () => {
     });
   }
 
+  it("rejects a report whose content exceeds the service's self-declared maxReportBytes", async () => {
+    // A definition that pins a tiny cap has an oversized report refused early —
+    // before any private body is written — while a report within the cap lands.
+    const rejected = vi.fn();
+    eventBus.on("managed_run:report_rejected", rejected);
+    const bridge = makeBridge({ resolveMaxReportBytes: () => 16 });
+
+    const tooLarge = await bridge.ingestReport({
+      ...makeInput(),
+      report: { ...makeInput().report, summary: "x".repeat(64), details: undefined },
+    });
+    expect(tooLarge).toMatchObject({ ok: true, value: { kind: "rejected", reasonCode: "invalid_report" } });
+    expect(rejected).toHaveBeenCalled();
+    // No private body was published for the refused report.
+    expect(db.prepare("SELECT COUNT(*) AS c FROM managed_run_reports").get()).toEqual({ c: 0 });
+
+    const withinCap = await bridge.ingestReport({
+      ...makeInput(),
+      report: { ...makeInput().report, summary: "ok", details: undefined },
+    });
+    expect(withinCap).toMatchObject({ ok: true, value: { kind: "accepted" } });
+  });
+
   it("commits a private report body and content-free sequence before emitting", async () => {
     const emitted = vi.fn();
     eventBus.on("managed_run:report_accepted", emitted);

@@ -176,6 +176,17 @@ describe("managed-run evidence bridge", () => {
     });
   }
 
+  it("rejects evidence whose decoded body exceeds the service's self-declared maxEvidenceBytes", async () => {
+    // A definition that pins a tiny evidence cap has an oversized body refused as
+    // invalid, tighter than the protocol ceiling, while the same body lands under
+    // a bridge with no self-declared cap.
+    const rejected = await makeBridge({ resolveMaxEvidenceBytes: () => 4 }).putEvidence(makeInput());
+    expect(rejected).toMatchObject({ ok: true, value: { kind: "rejected", reasonCode: "invalid_evidence" } });
+
+    const accepted = await makeBridge().putEvidence(makeInput());
+    expect(accepted).toMatchObject({ ok: true, value: { kind: "accepted" } });
+  });
+
   it("stores configured adapter evidence immutably under exact run authority", async () => {
     const accepted = await makeBridge().putEvidence(makeInput());
 

@@ -4,7 +4,9 @@ import { z } from "zod";
 import {
   CAPABILITY_SERVICE_CONTROL_PROTOCOL,
   CapabilityServiceInstanceConfigSchema,
+  CapabilityServiceLimitsSchema,
   buildCapabilityServiceActivationPlan,
+  resolveEffectiveCapabilityServiceLimits,
   type CapabilityServiceContributionRegistration,
   type CapabilityServiceDefinition,
   type CapabilityServiceInstanceConfig,
@@ -376,5 +378,35 @@ describe("capability-service contribution planning", () => {
     expect(unknownField.success).toBe(false);
     expect(buildCapabilityServiceActivationPlan([mismatchedProtocol], [makeInstance()]))
       .toMatchObject({ ok: false, error: { kind: "invalid_contribution" } });
+  });
+});
+
+describe("capability-service self-declared limits", () => {
+  it("bounds each declared limit at the protocol ceiling and rejects a looser one", () => {
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxReportBytes: 8_000, maxEvidenceBytes: 500_000 }).success).toBe(true);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxReportBytes: 16_385 }).success).toBe(false);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxEvidenceBytes: 1_048_577 }).success).toBe(false);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxReportBytes: 0 }).success).toBe(false);
+  });
+
+  it("resolves the instance override over the definition, then falls back", () => {
+    expect(resolveEffectiveCapabilityServiceLimits({ maxReportBytes: 8_000, maxEvidenceBytes: 100 }, { maxReportBytes: 2_000 }))
+      .toEqual({ maxReportBytes: 2_000, maxEvidenceBytes: 100 });
+    expect(resolveEffectiveCapabilityServiceLimits(undefined, undefined)).toEqual({});
+    expect(resolveEffectiveCapabilityServiceLimits({ maxReportBytes: 4_000 }, undefined)).toEqual({ maxReportBytes: 4_000 });
+  });
+
+  it("plans a definition and instance that both declare limits", () => {
+    const contribution = makeContribution({
+      serviceDefinitions: [{
+        ...makeContribution().serviceDefinitions[0]!,
+        limits: { maxReportBytes: 8_000 },
+      }],
+    });
+    const plan = buildCapabilityServiceActivationPlan([contribution], [makeInstance({ limits: { maxReportBytes: 2_000 } })]);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.value.orderedDefinitions[0]?.limits).toEqual({ maxReportBytes: 8_000 });
+    expect(plan.value.orderedInstances[0]?.limits).toEqual({ maxReportBytes: 2_000 });
   });
 });
