@@ -266,7 +266,9 @@ export async function routeManagedRunReportIngress(
       ? "replay_conflict"
       : settled.value.reasonCode === "invalid_report"
         ? "invalid_params"
-        : "precondition_failed", deadline.settlement);
+        : settled.value.reasonCode === "rate_limited"
+          ? "rate_limited"
+          : "precondition_failed", deadline.settlement);
   } else {
     result = {
       response: {

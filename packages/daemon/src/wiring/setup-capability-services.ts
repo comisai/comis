@@ -342,6 +342,7 @@ export async function setupCapabilityServices(
     retentionMs: deps.config.reportRetentionMs,
     maxObservedClockSkewMs: deps.config.maxObservedClockSkewMs,
     resolveMaxReportBytes: (serviceInstanceId) => limitsByInstance.get(serviceInstanceId)?.maxReportBytes,
+    resolveMaxReportsPerMinute: (serviceInstanceId) => limitsByInstance.get(serviceInstanceId)?.maxReportsPerMinute,
     eventBus: deps.eventBus,
     logger: deps.logger,
   });

@@ -2287,20 +2287,25 @@ capabilityServices:
         maxReportBytes: 8192
         maxEvidenceBytes: 262144
         maxConcurrentRuns: 8
+        maxReportsPerMinute: 60
 ```
 
 An instance may declare `limits` to **tighten** the protocol ceilings for itself:
 `maxReportBytes` (combined report summary + details bytes; ceiling `16384`),
-`maxEvidenceBytes` (decoded evidence body bytes; ceiling `1048576`), and
+`maxEvidenceBytes` (decoded evidence body bytes; ceiling `1048576`),
 `maxConcurrentRuns` (how many of the service's runs may be non-terminal at once;
-ceiling `10000`). Each field is optional and can never exceed its ceiling — a
-larger value is rejected at config validation. An absent field falls back to the
-linked definition's own `limits`, then to the protocol ceiling. A service that
-only ever produces small reports or evidence, or runs a bounded number of
-concurrent jobs, can pin a smaller cap so an oversized payload or a runaway
-fan-out — from a bug or a compromised service — is refused early rather than at
-the global limit. A run refused for `maxConcurrentRuns` is rejected at activation
-admission with reason `capacity_exceeded`, before any durable binding.
+ceiling `10000`), and `maxReportsPerMinute` (how many reports one run may send
+inside a rolling minute; ceiling `10000`). Each field is optional and can never
+exceed its ceiling — a larger value is rejected at config validation. An absent
+field falls back to the linked definition's own `limits`, then to the protocol
+ceiling. A service that only ever produces small reports or evidence, runs a
+bounded number of concurrent jobs, or emits at a bounded rate can pin a smaller
+cap so an oversized payload, a runaway fan-out, or a report flood — from a bug or
+a compromised service — is refused early rather than at the global limit. A run
+refused for `maxConcurrentRuns` is rejected at activation admission with reason
+`capacity_exceeded`, before any durable binding; a report refused for
+`maxReportsPerMinute` is rejected at report ingress with the retryable
+`rate_limited` error, before any private body is written.
 
 The `serviceDefinitionId` and `mcpServerName` must match a linked contribution.
 The control transport is Unix-socket only; `socketPath` must be normalized,

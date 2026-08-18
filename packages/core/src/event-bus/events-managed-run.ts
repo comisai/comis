@@ -42,7 +42,7 @@ export interface ManagedRunEvents {
   "managed_run:report_rejected": {
     managedRunId?: string;
     serviceInstanceId?: string;
-    reasonCode: "invalid_report" | "managed_run_not_found" | "observed_time_out_of_bounds" | "replay_conflict" | "state_mismatch" | "storage_failure";
+    reasonCode: "invalid_report" | "managed_run_not_found" | "observed_time_out_of_bounds" | "rate_limited" | "replay_conflict" | "state_mismatch" | "storage_failure";
     timestamp: number;
   };
   "managed_run:continuation_completed": {

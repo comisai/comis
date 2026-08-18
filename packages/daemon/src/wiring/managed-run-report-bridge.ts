@@ -20,6 +20,8 @@ const REPORTABLE_STATUSES = new Set(["active", "waiting", "paused", "candidate_c
 /** The protocol ceiling for combined report content bytes (summary + details);
  *  the wire schema already enforces it. A per-definition cap only tightens it. */
 const PROTOCOL_MAX_REPORT_BYTES = 16_384;
+/** The rolling window a service's per-run reports-per-minute ceiling counts over. */
+const REPORT_RATE_WINDOW_MS = 60_000;
 
 const ManagedRunReportIngressSchema = z.strictObject({
   serviceInstanceId: z.string().regex(OPAQUE_ID_PATTERN),
@@ -37,6 +39,7 @@ export type ManagedRunReportRejectionReason =
   | "invalid_report"
   | "managed_run_not_found"
   | "observed_time_out_of_bounds"
+  | "rate_limited"
   | "replay_conflict"
   | "state_mismatch";
 
@@ -60,6 +63,9 @@ export interface ManagedRunReportBridgeDeps {
   /** The service's self-declared max report content bytes (tighter than the
    *  protocol ceiling), or undefined to fall back to that ceiling. */
   readonly resolveMaxReportBytes?: (serviceInstanceId: string) => number | undefined;
+  /** The service's self-declared max reports one run may send inside a rolling
+   *  minute, or undefined for no per-run rate ceiling. */
+  readonly resolveMaxReportsPerMinute?: (serviceInstanceId: string) => number | undefined;
   readonly eventBus: TypedEventBus;
   readonly logger: ComisLogger;
 }
@@ -200,6 +206,24 @@ export function createManagedRunReportBridge(deps: ManagedRunReportBridgeDeps): 
       }
       if (!REPORTABLE_STATUSES.has(recordResult.value.status)) {
         return rejectReport("state_mismatch", identity);
+      }
+      // The service's self-declared per-run rate ceiling: once this run has
+      // already received the cap's worth of reports inside the rolling window,
+      // the next is refused before any private body is written.
+      const maxReportsPerMinute = deps.resolveMaxReportsPerMinute?.(identity.serviceInstanceId);
+      if (maxReportsPerMinute !== undefined) {
+        const recentCount = await invoke(() => deps.store.countReportsSince(
+          { kind: "service", serviceInstanceId: identity.serviceInstanceId },
+          identity.managedRunId,
+          receivedAtMs - REPORT_RATE_WINDOW_MS,
+        ));
+        if (!recentCount.ok) {
+          logTransactionFailure(identity, "report-rate");
+          return recentCount;
+        }
+        if (recentCount.value >= maxReportsPerMinute) {
+          return rejectReport("rate_limited", identity);
+        }
       }
 
       const scope = contentScope(recordResult.value);
