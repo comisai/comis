@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CAPABILITY_SERVICE_BUNDLE_DIGEST } from "@comis/capability-service-sdk";
 import {
   TypedEventBus,
+  buildCapabilityServiceActivationPlan,
   createSecretManager,
   type CapabilityServiceContributionRegistration,
   type CapabilityServiceScope,
@@ -251,5 +252,76 @@ describe("capability-service shape conformance", () => {
     // Activation is left unresolved by the refusal; drop it so the suite does
     // not carry an unhandled rejection past this test.
     void pending.catch(() => undefined);
+  });
+});
+
+describe("capability-service scope and root agreement", () => {
+  function planFor(
+    scopes: readonly CapabilityServiceScope[],
+    roots: { workspace?: readonly string[]; runtime?: readonly string[] },
+  ) {
+    return buildCapabilityServiceActivationPlan([{
+      contributionId: "shape.fixture",
+      configSections: [],
+      serviceDefinitions: [{
+        serviceDefinitionId: "shape.fixture-definition",
+        protocolId: "comis.capability-service/1",
+        mcpServerName: "shape-fixture",
+        managedToolBindings: [],
+        requestedScopes: [...scopes],
+        evidencePolicies: [],
+        dependsOn: [],
+      }],
+    }], [{
+      serviceInstanceId: "service-instance_shape",
+      serviceDefinitionId: "shape.fixture-definition",
+      enabled: true,
+      mcpServerName: "shape-fixture",
+      control: {
+        transport: "unix",
+        socketPath: "/private/run/shape-fixture.sock",
+        credentialRef: "secret://capability-services/service-instance_shape",
+      },
+      allowedAgents: ["agent_a"],
+      allowedWorkspaceRoots: [...(roots.workspace ?? [])],
+      allowedRuntimeRoots: [...(roots.runtime ?? [])],
+    }]);
+  }
+
+  it("rejects approved roots the definition's scopes can never use", () => {
+    // A root configured for a scope the service never requested is dormant
+    // authority: nothing consumes it, nothing revokes it, and it reads as
+    // permission that was reviewed and granted. It is refused at planning time.
+    const workspace = planFor(["health", "report"], { workspace: ["/approved/workspaces/x"] });
+    const runtime = planFor(["health", "report"], { runtime: ["/private/runtime/x"] });
+
+    expect(workspace.ok).toBe(false);
+    expect(runtime.ok).toBe(false);
+  });
+
+  it("rejects an executor scope with no root it may lease under", () => {
+    // The inverse: a service holding workspace_lease with no approved root can
+    // never be granted a lease, so activation would publish a capability that
+    // fails on first use rather than at configuration time.
+    const noWorkspaceRoot = planFor(["health", "workspace_lease"], {});
+    const noRuntimeRoot = planFor(["health", "execution_attachment"], {
+      workspace: ["/approved/workspaces/x"],
+    });
+
+    expect(noWorkspaceRoot.ok).toBe(false);
+    expect(noRuntimeRoot.ok).toBe(false);
+  });
+
+  it("accepts an executor instance whose roots match its declared scopes", () => {
+    const plan = planFor(["health", "workspace_lease", "execution_attachment"], {
+      workspace: ["/approved/workspaces/x"],
+      runtime: ["/private/runtime/x"],
+    });
+
+    expect(plan.ok).toBe(true);
+  });
+
+  it("accepts a record-only instance that configures no root at all", () => {
+    expect(planFor(["health", "report", "evidence"], {}).ok).toBe(true);
   });
 });
