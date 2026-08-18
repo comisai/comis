@@ -21,6 +21,7 @@
  * @module
  */
 import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
+import { isManagedRunTrajectoryEvent, translateManagedRunPayload } from "./translate-managed-run-payload.js";
 import { translateCacheBreakPayload } from "./translate-cache-break-payload.js";
 import { translateImagePayload } from "./translate-image-payload.js";
 import { translateOrchestrationPayload } from "./translate-orchestration-payload.js";
@@ -44,6 +45,7 @@ export function translatePayload(
   rawPayload: unknown,
 ): Record<string, unknown> {
   const payload = rawPayload as Record<string, unknown>;
+  if (isManagedRunTrajectoryEvent(eventName)) return translateManagedRunPayload(eventName, payload);
   switch (eventName) {
     case "tool:started":
       return {
@@ -988,9 +990,7 @@ export function translatePayload(
       return translateVoicePayload(eventName, payload);
 
     default: {
-      // Exhaustiveness — switch covers every TrajectoryBridgedEventName.
-      // If a new bridge entry is added without a translator, TypeScript
-      // flags this branch.
+      // Exhaustiveness: covers every non-managed-run TrajectoryBridgedEventName (a missing translator fails TS here).
       const _exhaustive: never = eventName;
       void _exhaustive;
       return payload;

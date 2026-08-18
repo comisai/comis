@@ -519,6 +519,20 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "observability:spend_warning": "spend.warning",
   "observability:spend_exceeded": "spend.exceeded",
   "observability:spend_unpriceable": "spend.unpriceable",
+
+  // ---- Managed-run (capability-service) lifecycle ----
+  // DAEMON-emitted by the report/evidence bridges and the cancellation
+  // coordinator (off-turn socket ingress), so the agent/orchestrator emit-scanner
+  // arch gate does NOT require them (the capability:audited daemon-emitted
+  // precedent); mapped here so a managed run's attention/evidence/revoke lifecycle
+  // reaches `comis explain`. Content-free translators (translate-managed-run-payload.ts)
+  // forward run/service/attention/evidence ids + closed enums ONLY — never a
+  // report/evidence body, a subject digest, or an external key value.
+  "managed_run:attention_opened": "managed_run.attention_opened",
+  "managed_run:attention_resolved": "managed_run.attention_resolved",
+  "managed_run:evidence_accepted": "managed_run.evidence_accepted",
+  "managed_run:evidence_rejected": "managed_run.evidence_rejected",
+  "managed_run:revoked": "managed_run.revoked",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**

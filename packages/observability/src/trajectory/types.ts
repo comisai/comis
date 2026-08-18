@@ -450,6 +450,19 @@ export const TRAJECTORY_EVENT_TYPES = [
   // before the per-session EventBus bridge subscribes. Counts and duration
   // only — never a URL, page title, response body, or error message.
   "link.prefetch",
+
+  // Managed-run (capability-service) lifecycle on the explain timeline.
+  // DAEMON-emitted by the report/evidence bridges and the cancellation
+  // coordinator (off-turn socket ingress, OUTSIDE the agent/orchestrator
+  // emit-scanner — the capability.audited/background_task precedent), so the
+  // bridge mapping is what records them; APPEND-ONLY beside the tuples above.
+  // Content-free: run/service/attention/evidence ids + closed enums ONLY —
+  // never a report body, an evidence body, a subject, or an external key value.
+  "managed_run.attention_opened",
+  "managed_run.attention_resolved",
+  "managed_run.evidence_accepted",
+  "managed_run.evidence_rejected",
+  "managed_run.revoked",
 ] as const;
 
 /** Closed union of trajectory event type strings. */
