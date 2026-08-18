@@ -397,6 +397,14 @@ describe("capability-service self-declared limits", () => {
     expect(CapabilityServiceLimitsSchema.safeParse({ maxConcurrentRuns: 1.5 }).success).toBe(false);
   });
 
+  it("bounds a maxReportsPerMinute rate ceiling at a positive integer count", () => {
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxReportsPerMinute: 30 }).success).toBe(true);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxReportsPerMinute: 10_000 }).success).toBe(true);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxReportsPerMinute: 10_001 }).success).toBe(false);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxReportsPerMinute: 0 }).success).toBe(false);
+    expect(CapabilityServiceLimitsSchema.safeParse({ maxReportsPerMinute: 2.5 }).success).toBe(false);
+  });
+
   it("resolves the instance override over the definition, then falls back", () => {
     expect(resolveEffectiveCapabilityServiceLimits({ maxReportBytes: 8_000, maxEvidenceBytes: 100 }, { maxReportBytes: 2_000 }))
       .toEqual({ maxReportBytes: 2_000, maxEvidenceBytes: 100 });
@@ -409,6 +417,14 @@ describe("capability-service self-declared limits", () => {
       .toEqual({ maxConcurrentRuns: 3 });
     expect(resolveEffectiveCapabilityServiceLimits({ maxConcurrentRuns: 8 }, undefined))
       .toEqual({ maxConcurrentRuns: 8 });
+    expect(resolveEffectiveCapabilityServiceLimits(undefined, undefined)).toEqual({});
+  });
+
+  it("resolves the maxReportsPerMinute override over the definition, then falls back", () => {
+    expect(resolveEffectiveCapabilityServiceLimits({ maxReportsPerMinute: 60 }, { maxReportsPerMinute: 10 }))
+      .toEqual({ maxReportsPerMinute: 10 });
+    expect(resolveEffectiveCapabilityServiceLimits({ maxReportsPerMinute: 60 }, undefined))
+      .toEqual({ maxReportsPerMinute: 60 });
     expect(resolveEffectiveCapabilityServiceLimits(undefined, undefined)).toEqual({});
   });
 
