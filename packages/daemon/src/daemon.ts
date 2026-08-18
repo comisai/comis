@@ -728,9 +728,7 @@ function buildRpcDispatchDeps(deps: {
   const conversationReset = createConversationReset({ lcdStore: c.lcdStore, sessionStore: g.sessionStoreBridge, piSessionAdapters: c.piSessionAdapters, logger: c.logger });
   return {
     managedRuns,
-    // The durable managed-run store powers the system-health capabilityServices
-    // block (countByStatus) and the obs.explain session→managed-run linkage
-    // (listByTraceIds). Same object the operator read model reads.
+    // Durable managed-run store: system-health capabilityServices block (countByStatus) + obs.explain session→managed-run linkage (listByTraceIds). Same object the operator read model reads.
     managedRunReads: c.capabilityServices.store,
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     getAgentCronAuthoringConfig: c.getAgentCronAuthoringConfig,
@@ -2579,8 +2577,7 @@ async function bootGateway(
     clock: boot.clock,
     durableRuns: boot.durableRunStore,
     managedRunReads: channels.capabilityServices.store,
-    billingEstimator,
-    startupTimestamp: startupStartMs,
+    billingEstimator, startupTimestamp: startupStartMs,
     workspaceDirs, contextBrowse,
   });
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
