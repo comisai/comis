@@ -2283,7 +2283,19 @@ capabilityServices:
       allowedAgents: [assistant]
       allowedWorkspaceRoots: [/srv/comis-workspaces]
       allowedRuntimeRoots: [/srv/example-service/runtime]
+      limits:
+        maxReportBytes: 8192
+        maxEvidenceBytes: 262144
 ```
+
+An instance may declare `limits` to **tighten** the protocol ceilings for itself:
+`maxReportBytes` (combined report summary + details bytes; ceiling `16384`) and
+`maxEvidenceBytes` (decoded evidence body bytes; ceiling `1048576`). Each field
+is optional and can never exceed its ceiling — a larger value is rejected at
+config validation. An absent field falls back to the linked definition's own
+`limits`, then to the protocol ceiling. A service that only ever produces small
+reports or evidence can pin a smaller cap so an oversized payload — from a bug or
+a compromised service — is refused early rather than at the global limit.
 
 The `serviceDefinitionId` and `mcpServerName` must match a linked contribution.
 The control transport is Unix-socket only; `socketPath` must be normalized,
