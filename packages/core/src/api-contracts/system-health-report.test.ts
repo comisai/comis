@@ -428,6 +428,71 @@ describe("SystemHealthReportSchema (bounded/deterministic system wire shape)", (
     const parsed = SystemHealthReportSchema.parse(smuggled) as Record<string, unknown>;
     expect(parsed).not.toHaveProperty("generatedAtMs");
   });
+
+  // -------------------------------------------------------------------------
+  // The additive-optional `capabilityServices` block: the cross-session
+  // capability-service / managed-run health slice (run/service degradation
+  // counts + top closed reason codes + the worst run id). Counts + closed enums
+  // + one opaque id ONLY. Without the schema field, the non-strict z.object
+  // STRIPS the block on .parse() and it never reaches the operator.
+  // -------------------------------------------------------------------------
+  it("the populated `capabilityServices` block SURVIVES .parse() (additive block round-trip)", () => {
+    const withBlock = {
+      ...validReport(),
+      capabilityServices: {
+        runs: { total: 13, degraded: 5, degradedRate: 5 / 13 },
+        services: { total: 3, degraded: 2 },
+        topReasonCodes: [
+          { code: "service_state_unavailable", count: 3 },
+          { code: "failure_verified", count: 2 },
+        ],
+        worstManagedRunId: "managed-run_worst",
+      },
+    };
+    const parsed = SystemHealthReportSchema.parse(withBlock);
+    expect(parsed.capabilityServices?.runs).toEqual({ total: 13, degraded: 5, degradedRate: 5 / 13 });
+    expect(parsed.capabilityServices?.services).toEqual({ total: 3, degraded: 2 });
+    expect(parsed.capabilityServices?.topReasonCodes).toHaveLength(2);
+    expect(parsed.capabilityServices?.worstManagedRunId).toBe("managed-run_worst");
+    expect(parsed.schemaVersion).toBe(1);
+  });
+
+  it("treats `capabilityServices` as optional; the worst run id is itself optional", () => {
+    const without = validReport() as Partial<SystemHealthReport>;
+    expect(without).not.toHaveProperty("capabilityServices");
+    expect(SystemHealthReportSchema.parse(without).capabilityServices).toBeUndefined();
+
+    const noWorst = {
+      ...validReport(),
+      capabilityServices: {
+        runs: { total: 4, degraded: 0, degradedRate: 0 },
+        services: { total: 1, degraded: 0 },
+        topReasonCodes: [],
+      },
+    };
+    expect(SystemHealthReportSchema.parse(noWorst).capabilityServices?.worstManagedRunId).toBeUndefined();
+  });
+
+  it("CONTENT-FREE: a smuggled body key inside the capabilityServices block is STRIPPED on parse", () => {
+    const smuggled = {
+      ...validReport(),
+      capabilityServices: {
+        runs: { total: 2, degraded: 1, degradedRate: 0.5 },
+        services: { total: 1, degraded: 1 },
+        topReasonCodes: [{ code: "failure_verified", count: 1 }],
+        worstManagedRunId: "managed-run_xyz",
+        objective: "process /home/op/private-report.xlsx", // smuggled body
+        credentialRef: "secret://capability-services/x", // smuggled secret ref
+      },
+    } as Record<string, unknown>;
+    const parsed = SystemHealthReportSchema.parse(smuggled) as {
+      capabilityServices?: Record<string, unknown>;
+    };
+    expect(parsed.capabilityServices).toBeDefined();
+    expect(parsed.capabilityServices).not.toHaveProperty("objective");
+    expect(parsed.capabilityServices).not.toHaveProperty("credentialRef");
+    expect(parsed.capabilityServices?.worstManagedRunId).toBe("managed-run_xyz");
+  });
 });
 
 /**

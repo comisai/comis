@@ -758,3 +758,48 @@ describe("ObsExplainContract.request graphId arm", () => {
     })).toThrow();
   });
 });
+
+describe("IncidentReportSchema managedRuns? section", () => {
+  it("round-trips the content-free session→managed-run linkage block", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      managedRuns: {
+        total: 2,
+        degraded: 1,
+        runs: [
+          { managedRunId: "managed-run_a", serviceInstanceId: "service_x", status: "active", statusReason: "activation_acknowledged" },
+          { managedRunId: "managed-run_b", serviceInstanceId: "service_y", status: "unknown", statusReason: "service_state_unavailable" },
+        ],
+      },
+    });
+    expect(parsed.managedRuns?.total).toBe(2);
+    expect(parsed.managedRuns?.degraded).toBe(1);
+    expect(parsed.managedRuns?.runs).toHaveLength(2);
+    expect(parsed.schemaVersion).toBe(1);
+  });
+
+  it("treats managedRuns as optional (additive — a report without it still parses)", () => {
+    expect(IncidentReportSchema.parse(baseReport()).managedRuns).toBeUndefined();
+  });
+
+  it("CONTENT-FREE: a smuggled body key inside a managed-run row is stripped on parse", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      managedRuns: {
+        total: 1,
+        degraded: 0,
+        runs: [{
+          managedRunId: "managed-run_a",
+          serviceInstanceId: "service_x",
+          status: "active",
+          statusReason: "activation_acknowledged",
+          objective: "process /home/op/private.xlsx",
+          credentialRef: "secret://capability-services/x",
+        }],
+      },
+    }) as { managedRuns?: { runs: Array<Record<string, unknown>> } };
+    expect(parsed.managedRuns?.runs[0]).not.toHaveProperty("objective");
+    expect(parsed.managedRuns?.runs[0]).not.toHaveProperty("credentialRef");
+    expect(parsed.managedRuns?.runs[0]?.managedRunId).toBe("managed-run_a");
+  });
+});
