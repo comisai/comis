@@ -53,6 +53,7 @@ const DEGRADED_STATUS_LIST = DEGRADED_STATUSES.map((status) => `'${status}'`).jo
 export interface ManagedRunAdministrationReads {
   listRuns(input: ManagedRunAdministrationListInput): Result<ManagedRunRecord[], Error>;
   countByStatus(input: ManagedRunHealthCountInput): Result<ManagedRunHealthCounts, Error>;
+  countActiveByService(serviceInstanceId: string): Result<number, Error>;
   listByTraceIds(input: ManagedRunLinkageInput): Result<ManagedRunLinkage[], Error>;
 }
 
@@ -97,6 +98,13 @@ export function createManagedRunAdministrationReads(
     WHERE updated_at_ms >= ? AND status IN (${DEGRADED_STATUS_LIST})
     ORDER BY updated_at_ms DESC, managed_run_id ASC
     LIMIT 1
+  `);
+  // Active-concurrency count for one service: every run that has not reached a
+  // terminal status. The activation coordinator reads this scalar to admit or
+  // refuse a new run against the service's declared concurrency ceiling.
+  const activeCountRow = db.prepare(`
+    SELECT COUNT(*) AS c FROM managed_runs
+    WHERE service_instance_id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled')
   `);
   // Session→run linkage: the managed runs whose prepare-time trace is one of the
   // traces a session's trajectory ran. Content-free projection — ids, closed
@@ -166,6 +174,14 @@ export function createManagedRunAdministrationReads(
         degradedServiceInstances: degradedServices.value[0]?.c ?? 0,
         ...(worstManagedRunId === undefined ? {} : { worstManagedRunId }),
       });
+    },
+    countActiveByService: (serviceInstanceId) => {
+      if (serviceInstanceId.length === 0 || serviceInstanceId.length > 256) {
+        return err(new Error("managed-run active-count service instance id is invalid"));
+      }
+      const rows = scalarCountMapper.parseRows(activeCountRow.all(serviceInstanceId));
+      if (!rows.ok) return err(new Error(rows.error.message));
+      return ok(rows.value[0]?.c ?? 0);
     },
     listByTraceIds: (input) => {
       if (!Number.isInteger(input.limit) || input.limit <= 0 || input.limit > 10_000) {

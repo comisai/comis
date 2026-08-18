@@ -969,6 +969,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     listForAdministration: (input) => boundary(() => administration.listRuns(input)),
     getForAdministration: (input) => boundary(() => readRecord(input.managedRunId)),
     countByStatus: (input) => boundary(() => administration.countByStatus(input)),
+    countActiveByService: (serviceInstanceId) => boundary(() => administration.countActiveByService(serviceInstanceId)),
     listByTraceIds: (input) => boundary(() => administration.listByTraceIds(input)),
     listAttentionForAdministration: (input) => boundary(() => attention.listForAdministration(input)),
     listRecoverable: (input) => boundary((): Result<ManagedRunRecoveryScan, Error> => {

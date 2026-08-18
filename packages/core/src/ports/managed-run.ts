@@ -455,6 +455,12 @@ export interface ManagedRunStorePort {
   listForAdministration(input: ManagedRunAdministrationListInput): Promise<Result<ManagedRunRecord[], Error>>;
   getForAdministration(input: ManagedRunAdministrationGetInput): Promise<Result<ManagedRunRecord | undefined, Error>>;
   countByStatus(input: ManagedRunHealthCountInput): Promise<Result<ManagedRunHealthCounts, Error>>;
+  /**
+   * How many of one service's runs are still non-terminal (every status except
+   * succeeded/failed/cancelled). A content-free scalar the activation coordinator
+   * reads to admit or refuse a new run against a service's concurrency ceiling.
+   */
+  countActiveByService(serviceInstanceId: string): Promise<Result<number, Error>>;
   listByTraceIds(input: ManagedRunLinkageInput): Promise<Result<ManagedRunLinkage[], Error>>;
   listAttentionForAdministration(input: ManagedRunAttentionAdministrationListInput): Promise<Result<ManagedRunAttentionRecord[], Error>>;
   listRecoverable(input: ManagedRunRecoveryScanInput): Promise<Result<ManagedRunRecoveryScan, Error>>;
