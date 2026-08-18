@@ -13650,6 +13650,51 @@ export const CONTRACTS = {
             "additionalProperties": false
           }
         },
+        "managedRuns": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "number"
+            },
+            "degraded": {
+              "type": "number"
+            },
+            "runs": {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "managedRunId": {
+                    "type": "string"
+                  },
+                  "serviceInstanceId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "statusReason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "managedRunId",
+                  "serviceInstanceId",
+                  "status",
+                  "statusReason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "total",
+            "degraded",
+            "runs"
+          ],
+          "additionalProperties": false
+        },
         "contextBudget": {
           "type": "object",
           "properties": {
@@ -15758,6 +15803,75 @@ export const CONTRACTS = {
             "turnsSaved",
             "toolCalls",
             "perAgent"
+          ],
+          "additionalProperties": false
+        },
+        "capabilityServices": {
+          "type": "object",
+          "properties": {
+            "runs": {
+              "type": "object",
+              "properties": {
+                "total": {
+                  "type": "number"
+                },
+                "degraded": {
+                  "type": "number"
+                },
+                "degradedRate": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "total",
+                "degraded",
+                "degradedRate"
+              ],
+              "additionalProperties": false
+            },
+            "services": {
+              "type": "object",
+              "properties": {
+                "total": {
+                  "type": "number"
+                },
+                "degraded": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "total",
+                "degraded"
+              ],
+              "additionalProperties": false
+            },
+            "topReasonCodes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "code",
+                  "count"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "worstManagedRunId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "runs",
+            "services",
+            "topReasonCodes"
           ],
           "additionalProperties": false
         }

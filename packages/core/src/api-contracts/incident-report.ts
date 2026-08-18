@@ -254,6 +254,25 @@ export const IncidentReportSchema = z.object({
    *  Optional + additive (present only when the trajectory carried run_summary records;
    *  schemaVersion stays 1 — the `spawnTree` presence-conditional precedent). */
   orchestrate: OrchestrateRunSchema.array().optional(),
+  /** The managed (capability-service) runs this session prepared, linked by the
+   *  trace ids the session's trajectory actually ran. Content-free — the opaque
+   *  run and service ids plus the closed status/reason enums and summary counts,
+   *  never a report body, workspace path, objective, or service credential.
+   *  `degraded` counts the `failed` + `unknown` runs (a `cancelled` run is an
+   *  intended outcome). Optional + additive (present only when the session
+   *  prepared at least one managed run; schemaVersion stays 1 — the `spawnTree`
+   *  presence-conditional precedent, and the non-strict `.parse()` strips any
+   *  undeclared key). Drill into a run with `comis managed-runs explain <id>`. */
+  managedRuns: z.object({
+    total: z.number(),
+    degraded: z.number(),
+    runs: z.array(z.object({
+      managedRunId: z.string(),
+      serviceInstanceId: z.string(),
+      status: z.string(),
+      statusReason: z.string(),
+    })).max(64),
+  }).optional(),
   /** The terminal per-call budget equation (optional — present only when the
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
