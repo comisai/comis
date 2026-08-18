@@ -1961,3 +1961,96 @@ describe("pickWorstDegradedExecution", () => {
     expect(pickWorstDegradedExecution([], undefined)).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// The capability-service / managed-run health block. The assembler reads
+// ManagedRunStorePort.countByStatus (windowed status + degraded-reason counts)
+// off the durable managed-run index — content-free, admin-gated, and honestly
+// omitted when the window held no managed-run activity or the store is unwired.
+// ---------------------------------------------------------------------------
+
+/** A fixed managed-run status/reason count over the window (mirror ManagedRunHealthCounts). */
+function managedRunCounts(
+  overrides: Partial<import("@comis/core").ManagedRunHealthCounts> = {},
+): import("@comis/core").ManagedRunHealthCounts {
+  return {
+    byStatus: {
+      preparing: 0, active: 0, waiting: 0, paused: 0, candidate_complete: 0,
+      succeeded: 0, failed: 0, cancelled: 0, unknown: 0,
+    },
+    degradedReasonCodes: {},
+    distinctServiceInstances: 0,
+    degradedServiceInstances: 0,
+    ...overrides,
+  };
+}
+
+/** A managedRunHealth stub whose countByStatus returns a fixed windowed count. */
+function fakeManagedRunHealth(
+  counts: import("@comis/core").ManagedRunHealthCounts,
+): Pick<import("@comis/core").ManagedRunStorePort, "countByStatus"> {
+  return { countByStatus: async () => ({ ok: true as const, value: counts }) };
+}
+
+describe("assembleSystemHealthReport — capabilityServices block", () => {
+  it("surfaces run degradation counts, top reason codes, and a degradation finding", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    const managedRunHealth = fakeManagedRunHealth(managedRunCounts({
+      byStatus: {
+        preparing: 0, active: 3, waiting: 0, paused: 0, candidate_complete: 0,
+        succeeded: 4, failed: 2, cancelled: 1, unknown: 3,
+      },
+      degradedReasonCodes: { service_state_unavailable: 3, failure_verified: 2 },
+      distinctServiceInstances: 3,
+      degradedServiceInstances: 2,
+      worstManagedRunId: "managed-run_worst",
+    }));
+
+    const report = await assembleSystemHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), managedRunHealth },
+      24,
+    );
+
+    expect(report.capabilityServices).toBeDefined();
+    // total = 3+4+2+1+3 = 13; degraded = failed(2)+unknown(3) = 5.
+    expect(report.capabilityServices?.runs).toEqual({ total: 13, degraded: 5, degradedRate: 5 / 13 });
+    expect(report.capabilityServices?.services).toEqual({ total: 3, degraded: 2 });
+    expect(report.capabilityServices?.topReasonCodes).toEqual([
+      { code: "service_state_unavailable", count: 3 },
+      { code: "failure_verified", count: 2 },
+    ]);
+    expect(report.capabilityServices?.worstManagedRunId).toBe("managed-run_worst");
+    expect(report.findings).toContainEqual({
+      code: "managed_run_degradation",
+      detail: "5 managed run(s) degraded across 2 service(s); top reason: service_state_unavailable",
+      count: 5,
+      hint: "run comis managed-runs explain on the worst run for its likely root cause and repair knob",
+    });
+    // The report round-trips through the wire schema (no smuggled field, block preserved).
+    expect(() => SystemHealthReportSchema.parse(report)).not.toThrow();
+  });
+
+  it("omits the block and the finding when no managed run is present in the window", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    const managedRunHealth = fakeManagedRunHealth(managedRunCounts());
+
+    const report = await assembleSystemHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), managedRunHealth },
+      24,
+    );
+
+    expect(report.capabilityServices).toBeUndefined();
+    expect(report.findings.some((finding) => finding.code === "managed_run_degradation")).toBe(false);
+  });
+
+  it("omits the block when the managed-run store is unwired (offline)", async () => {
+    const now = systemNowMs();
+    const report = await assembleSystemHealthReport(
+      { obsStore: makeStore(), dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+    expect(report.capabilityServices).toBeUndefined();
+  });
+});
