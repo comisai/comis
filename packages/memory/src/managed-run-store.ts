@@ -968,23 +968,21 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     }),
     listForAdministration: (input) => boundary(() => administration.listRuns(input)),
     getForAdministration: (input) => boundary(() => readRecord(input.managedRunId)),
+    countByStatus: (input) => boundary(() => administration.countByStatus(input)),
+    listByTraceIds: (input) => boundary(() => administration.listByTraceIds(input)),
     listAttentionForAdministration: (input) => boundary(() => attention.listForAdministration(input)),
     listRecoverable: (input) => boundary((): Result<ManagedRunRecoveryScan, Error> => {
       if (!validLimit(input.limit) || input.statuses.length === 0) {
         return err(new Error("managed-run recovery scan input is invalid"));
       }
       const rawRows = listRecoverableRows.all(
-        JSON.stringify(input.statuses),
-        input.updatedBeforeMs,
-        input.afterManagedRunId ?? null,
-        input.afterManagedRunId ?? null,
-        input.limit,
+        JSON.stringify(input.statuses), input.updatedBeforeMs,
+        input.afterManagedRunId ?? null, input.afterManagedRunId ?? null, input.limit,
       );
       return mapManagedRunRecoveryRows(rawRows, input.limit);
     }),
     revoke: (scope, input) => boundary(() => transitionTransaction.immediate(
-      scope,
-      {
+      scope, {
         operationId: input.operationId,
         managedRunId: input.managedRunId,
         expectedStatuses: ["preparing", "active", "waiting", "paused", "candidate_complete", "unknown"],

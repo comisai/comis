@@ -339,6 +339,60 @@ export interface ManagedRunAttentionAdministrationListInput {
   readonly limit: number;
 }
 
+/**
+ * A cross-scope health read over the durable run index. Like the administration
+ * list it names the operator intent explicitly so the scoped path can never
+ * degrade into it, and it aggregates rows updated within one window. It returns
+ * content-free facts only — closed status/reason enums, counts, and opaque
+ * host-minted identifiers — never a body, path, or objective.
+ */
+export interface ManagedRunHealthCountInput {
+  readonly kind: "administration";
+  readonly updatedSinceMs: number;
+}
+
+/**
+ * Windowed run-health counts for the system-health digest. `byStatus` carries
+ * every managed-run status with an explicit zero for the absent ones;
+ * `degradedReasonCodes` tallies the closed status-reason enum across the
+ * degraded runs only; the service-instance counts and `worstManagedRunId` let an
+ * operator see how many services are affected and which run to drill into,
+ * without any contentful field.
+ */
+export interface ManagedRunHealthCounts {
+  readonly byStatus: Readonly<Record<ManagedRunStatus, number>>;
+  readonly degradedReasonCodes: Readonly<Record<string, number>>;
+  readonly distinctServiceInstances: number;
+  readonly degradedServiceInstances: number;
+  readonly worstManagedRunId?: string;
+}
+
+/**
+ * A session→managed-run linkage lookup. Given the trace ids a session's
+ * trajectory actually ran, it returns the managed runs those turns prepared, so
+ * a per-session incident report can name them without a raw-log join. It names
+ * the operator intent explicitly (like the administration reads) so the scoped
+ * path can never degrade into it, and returns content-free facts only.
+ */
+export interface ManagedRunLinkageInput {
+  readonly kind: "administration";
+  readonly traceIds: readonly string[];
+  readonly limit: number;
+}
+
+/**
+ * One content-free managed-run linkage row: the opaque run and service
+ * identifiers, the closed status/reason enums, and the trace it was prepared in.
+ * Never a body, path, objective, or credential.
+ */
+export interface ManagedRunLinkage {
+  readonly managedRunId: string;
+  readonly serviceInstanceId: string;
+  readonly status: ManagedRunStatus;
+  readonly statusReason: ManagedRunStatusReason;
+  readonly traceId: string;
+}
+
 export interface ManagedRunRecoveryScanInput {
   readonly kind: "recovery";
   readonly statuses: readonly ManagedRunStatus[];
@@ -400,6 +454,8 @@ export interface ManagedRunStorePort {
   listScoped(input: ManagedRunScopedListInput): Promise<Result<ManagedRunRecord[], Error>>;
   listForAdministration(input: ManagedRunAdministrationListInput): Promise<Result<ManagedRunRecord[], Error>>;
   getForAdministration(input: ManagedRunAdministrationGetInput): Promise<Result<ManagedRunRecord | undefined, Error>>;
+  countByStatus(input: ManagedRunHealthCountInput): Promise<Result<ManagedRunHealthCounts, Error>>;
+  listByTraceIds(input: ManagedRunLinkageInput): Promise<Result<ManagedRunLinkage[], Error>>;
   listAttentionForAdministration(input: ManagedRunAttentionAdministrationListInput): Promise<Result<ManagedRunAttentionRecord[], Error>>;
   listRecoverable(input: ManagedRunRecoveryScanInput): Promise<Result<ManagedRunRecoveryScan, Error>>;
   revoke(scope: ManagedRunOwnerScope, input: ManagedRunRevokeInput): Promise<Result<ManagedRunTransitionClaimOutcome, Error>>;

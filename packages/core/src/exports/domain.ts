@@ -266,6 +266,7 @@ export type {
   ExecutionSideEffectSummary,
   AgentTurnExecutionOutcome,
   ManagedRunStatus,
+  ManagedRunStatusReason,
   ManagedRunInitiationSource,
   ManagedRunRecord,
   ManagedRunActivationDescriptor,
