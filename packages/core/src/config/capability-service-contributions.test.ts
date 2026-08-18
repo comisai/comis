@@ -103,7 +103,15 @@ describe("capability-service contribution planning", () => {
       }],
     });
 
-    expect(buildCapabilityServiceActivationPlan([contribution], [makeInstance()]).ok).toBe(true);
+    // An instance holding the executor scopes must also name the roots they are
+    // the only consumers of; declaring them with no root would publish a
+    // capability that fails on first use.
+    const instance = makeInstance({
+      allowedWorkspaceRoots: ["/approved/workspaces/analysis-local"],
+      allowedRuntimeRoots: ["/private/runtime/analysis-local"],
+    });
+
+    expect(buildCapabilityServiceActivationPlan([contribution], [instance]).ok).toBe(true);
   });
 
   it("builds one deterministic inactive plan without granting runtime authority", () => {

@@ -208,7 +208,13 @@ export type CapabilityServicePlanError =
   | { readonly kind: "invalid_service_instance"; readonly index: number }
   | { readonly kind: "duplicate_service_instance"; readonly serviceInstanceId: string }
   | { readonly kind: "unknown_service_definition"; readonly serviceDefinitionId: string }
-  | { readonly kind: "mcp_owner_mismatch"; readonly serviceInstanceId: string };
+  | { readonly kind: "mcp_owner_mismatch"; readonly serviceInstanceId: string }
+  | {
+    readonly kind: "scope_root_mismatch";
+    readonly serviceInstanceId: string;
+    readonly scope: CapabilityServiceScope;
+    readonly reason: "root_without_scope" | "scope_without_root";
+  };
 
 function freezeDefinition(
   contributionId: string,
@@ -278,6 +284,15 @@ function definitionOrder(
 }
 
 /** Validate and stage a complete inactive contribution topology without publishing runtime state. */
+/** Each executor scope and the approved roots it is the only consumer of. */
+const SCOPE_ROOT_PAIRINGS: ReadonlyArray<{
+  readonly scope: CapabilityServiceScope;
+  readonly roots: (instance: CapabilityServiceInstanceConfig) => readonly string[];
+}> = [
+  { scope: "workspace_lease", roots: (instance) => instance.allowedWorkspaceRoots },
+  { scope: "execution_attachment", roots: (instance) => instance.allowedRuntimeRoots },
+];
+
 export function buildCapabilityServiceActivationPlan(
   contributions: readonly CapabilityServiceContributionRegistration[],
   instanceInputs: readonly CapabilityServiceInstanceConfig[],
@@ -347,6 +362,21 @@ export function buildCapabilityServiceActivationPlan(
     }
     if (definition.mcpServerName !== parsed.data.mcpServerName) {
       return err({ kind: "mcp_owner_mismatch", serviceInstanceId: parsed.data.serviceInstanceId });
+    }
+    // An approved root and the scope that consumes it must agree in both
+    // directions. A root without its scope is authority nothing can use and
+    // nothing revokes; a scope without its root is a capability that fails on
+    // first use instead of at configuration time.
+    for (const pairing of SCOPE_ROOT_PAIRINGS) {
+      const declared = definition.requestedScopes.includes(pairing.scope);
+      const configured = pairing.roots(parsed.data).length > 0;
+      if (declared === configured) continue;
+      return err({
+        kind: "scope_root_mismatch",
+        serviceInstanceId: parsed.data.serviceInstanceId,
+        scope: pairing.scope,
+        reason: configured ? "root_without_scope" : "scope_without_root",
+      });
     }
     configuredInstances.push(freezeInstance(definition.contributionId, parsed.data));
   }

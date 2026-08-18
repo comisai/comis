@@ -2319,8 +2319,15 @@ Each instance requires these fields:
 | `mcpServerName` | `string` | MCP server owned by the linked definition |
 | `control` | `object` | Unix socket and secret-backed bearer credential |
 | `allowedAgents` | `string[]` | Non-empty set of agents allowed to use the instance |
-| `allowedWorkspaceRoots` | `string[]` | Workspace-lease authority roots; at most 64 |
-| `allowedRuntimeRoots` | `string[]` | Execution-attachment authority roots; at most 64 |
+| `allowedWorkspaceRoots` | `string[]` | Workspace-lease authority roots; at most 64. Required when — and only when — the definition requests `workspace_lease` |
+| `allowedRuntimeRoots` | `string[]` | Execution-attachment authority roots; at most 64. Required when — and only when — the definition requests `execution_attachment` |
+
+Each executor root and the scope that consumes it must agree in both directions,
+and a mismatch fails startup rather than activating. A root configured for a
+scope the service never requested is authority nothing can use and nothing
+revokes, while a scope with no approved root publishes a capability that fails
+on first use instead of at configuration time. A service that requests neither
+scope — a tool-only or record-only integration — leaves both lists empty.
 
 ## tooling
 
