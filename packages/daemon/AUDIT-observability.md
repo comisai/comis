@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:421–456`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 20 (5 required + 15 optional + 0 stale-fallback)
+**Field count:** 21 (5 required + 16 optional + 0 stale-fallback)
 **Location:** Co-located with the `@comis/daemon` package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes this audit from the npm tarball.
 
 ## Field Classification
@@ -34,6 +34,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | exportTrajectoryBundle | optional | obs.trace.export throws "exportTrajectoryBundle DI not configured" — the export RPC is unavailable until production wiring injects the bundle pipeline | packages/daemon/src/api/types.ts:477 |
 | spendSnapshot | optional | obs.spend.snapshot returns `enabled:false` (no live daemon-wide spend reader wired); the live-spend headroom (ceiling − spend) is unavailable and the UI shows spend governance as off | packages/daemon/src/api/types.ts:714 |
 | durableRuns | optional | the obs.system.health autonomy block is OMITTED (orphaned/resumed/revoked/killed counts, breaker/budget breaches, and the worst-run `comis explain <rootRunId>` pointer are unavailable); absent on offline-CLI and non-durability boots — honest degradation, byte-identical with the durability-off path | packages/daemon/src/api/types.ts:751 |
+| managedRunReads | optional | the durable managed-run store the observability surface reads (`countByStatus` for the system-health `capabilityServices` block, `listByTraceIds` for the obs.explain session→managed-run linkage); absent ⇒ those surfaces are omitted (offline CLI) | packages/daemon/src/api/types.ts:811 |
 
 ## Removed Fields (stale-fallback — deleted)
 
@@ -42,7 +43,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 14
-- **Final count:** 20 (5 required + 15 optional)
+- **Final count:** 21 (5 required + 16 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 
