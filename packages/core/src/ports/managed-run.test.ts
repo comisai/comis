@@ -42,6 +42,7 @@ describe("Managed-run store and private-content port contracts", () => {
       | "listAttentionForAdministration"
       | "countByStatus"
       | "countActiveByService"
+      | "countReportsSince"
       | "listByTraceIds"
       | "listRecoverable"
       | "revoke"

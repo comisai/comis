@@ -235,6 +235,56 @@ describe("managed-run active concurrency counts", () => {
   });
 });
 
+describe("managed-run report rate counts", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    ensureManagedRunTables(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("counts a run's reports received within a rolling window, scoped to its service", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const created = await store.create(makeRun({
+      managedRunId: "run_rate",
+      serviceInstanceId: "service_x",
+      status: "active",
+      statusReason: "activation_acknowledged",
+      updatedAtMs: NOW_MS,
+    }));
+    expect(created.ok && created.value.kind).toBe("created");
+    const serviceScope = { kind: "service" as const, serviceInstanceId: "service_x" };
+
+    for (const [index, receivedAtMs] of [NOW_MS, NOW_MS + 10_000, NOW_MS + 20_000].entries()) {
+      const appended = await store.appendReportAndAdvanceAcceptedCursor(serviceScope, {
+        managedRunId: "run_rate",
+        serviceReportId: `service-report_${index}`,
+        kind: "progress",
+        contentRef: `report-content_${index}`,
+        contentHash: `${index}`.repeat(64).slice(0, 64),
+        receivedAtMs,
+        retainedUntilMs: receivedAtMs + 1_000_000,
+      });
+      expect(appended.ok && appended.value.kind).toBe("accepted");
+    }
+
+    expect((await store.countReportsSince(serviceScope, "run_rate", NOW_MS)).ok).toBe(true);
+    expect(await store.countReportsSince(serviceScope, "run_rate", NOW_MS)).toEqual({ ok: true, value: 3 });
+    expect(await store.countReportsSince(serviceScope, "run_rate", NOW_MS + 10_000)).toEqual({ ok: true, value: 2 });
+    expect(await store.countReportsSince(serviceScope, "run_rate", NOW_MS + 20_001)).toEqual({ ok: true, value: 0 });
+    // Another service never sees this run's reports.
+    expect(await store.countReportsSince(
+      { kind: "service", serviceInstanceId: "service_y" },
+      "run_rate",
+      NOW_MS,
+    )).toEqual({ ok: true, value: 0 });
+  });
+});
+
 describe("managed-run administration trace linkage", () => {
   let db: Database.Database;
 
