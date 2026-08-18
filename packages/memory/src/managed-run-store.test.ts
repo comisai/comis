@@ -438,6 +438,38 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     })).ok).toBe(false);
   });
 
+  it("surfaces an error when the run backing a report range fails record reconstruction", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    // A stored run whose serialized turn scope is not valid JSON passes the DB
+    // column schema but cannot be reconstructed into a run record.
+    db.prepare("UPDATE managed_runs SET turn_scope = ? WHERE managed_run_id = ?").run("{", "managed-run_a");
+
+    const range = await store.listReportRange(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      afterSequence: 0,
+      throughSequence: 2,
+    });
+    expect(range.ok).toBe(false);
+  });
+
+  it("surfaces an error when a stored report row violates the report column schema", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(true);
+    // A non-integer receipt time is rejected by the report row mapper.
+    db.prepare("UPDATE managed_run_reports SET received_at_ms = 1.5 WHERE managed_run_id = ?").run("managed-run_a");
+
+    const range = await store.listReportRange(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      afterSequence: 0,
+      throughSequence: 2,
+    });
+    expect(range.ok).toBe(false);
+  });
+
   it("creates delivers and resolves durable attention without equating delivery to resolution", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);

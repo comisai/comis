@@ -188,6 +188,22 @@ describe("managed-run administration health counts", () => {
     expect(counts.value.degradedServiceInstances).toBe(0);
     expect(counts.value.worstManagedRunId).toBeUndefined();
   });
+
+  it("rejects a negative update-time window instead of running the aggregate read", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const counts = await store.countByStatus({ kind: "administration", updatedSinceMs: -1 });
+    expect(counts.ok).toBe(false);
+    if (counts.ok) return;
+    expect(counts.error.message).toBe("managed-run health count window is invalid");
+  });
+
+  it("rejects a fractional update-time window as a non-integer boundary", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const counts = await store.countByStatus({ kind: "administration", updatedSinceMs: NOW_MS + 0.5 });
+    expect(counts.ok).toBe(false);
+    if (counts.ok) return;
+    expect(counts.error.message).toBe("managed-run health count window is invalid");
+  });
 });
 
 describe("managed-run active concurrency counts", () => {
@@ -232,6 +248,14 @@ describe("managed-run active concurrency counts", () => {
     expect(other.ok && other.value).toBe(1);
     const none = await store.countActiveByService("service_absent");
     expect(none.ok && none.value).toBe(0);
+  });
+
+  it("rejects an empty service instance id instead of counting across every service", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const counted = await store.countActiveByService("");
+    expect(counted.ok).toBe(false);
+    if (counted.ok) return;
+    expect(counted.error.message).toBe("managed-run active-count service instance id is invalid");
   });
 });
 
@@ -282,6 +306,30 @@ describe("managed-run report rate counts", () => {
       "run_rate",
       NOW_MS,
     )).toEqual({ ok: true, value: 0 });
+  });
+
+  it("rejects an empty managed-run id instead of counting reports for it", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const rejected = await store.countReportsSince(
+      { kind: "service", serviceInstanceId: "service_x" },
+      "",
+      NOW_MS,
+    );
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) return;
+    expect(rejected.error.message).toBe("managed-run report-rate count input is invalid");
+  });
+
+  it("rejects a fractional rolling-window boundary as a non-integer time", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const rejected = await store.countReportsSince(
+      { kind: "service", serviceInstanceId: "service_x" },
+      "run_rate",
+      NOW_MS + 0.25,
+    );
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) return;
+    expect(rejected.error.message).toBe("managed-run report-rate count input is invalid");
   });
 });
 
@@ -373,5 +421,96 @@ describe("managed-run administration trace linkage", () => {
     }
     const linked = await store.listByTraceIds({ kind: "administration", traceIds: [trace], limit: 3 });
     expect(linked.ok && linked.value.length).toBe(3);
+  });
+
+  it("rejects a non-positive limit before it inspects the trace set", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const linked = await store.listByTraceIds({
+      kind: "administration",
+      traceIds: ["10000000-0000-4000-8000-00000000000a"],
+      limit: 0,
+    });
+    expect(linked.ok).toBe(false);
+    if (linked.ok) return;
+    expect(linked.error.message).toBe("managed-run linkage limit is invalid");
+  });
+
+  it("rejects a limit past the hard ceiling", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const linked = await store.listByTraceIds({
+      kind: "administration",
+      traceIds: ["10000000-0000-4000-8000-00000000000a"],
+      limit: 10_001,
+    });
+    expect(linked.ok).toBe(false);
+    if (linked.ok) return;
+    expect(linked.error.message).toBe("managed-run linkage limit is invalid");
+  });
+});
+
+describe("managed-run administration single-run and stored-row robustness", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    ensureManagedRunTables(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("reads one run by id for administration and reports a missing id as undefined", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const created = await store.create(makeRun({
+      managedRunId: "run_admin",
+      serviceInstanceId: "service_x",
+      status: "active",
+      statusReason: "activation_acknowledged",
+      updatedAtMs: NOW_MS,
+    }));
+    expect(created.ok && created.value.kind).toBe("created");
+
+    const present = await store.getForAdministration({ kind: "administration", managedRunId: "run_admin" });
+    expect(present.ok).toBe(true);
+    if (!present.ok) return;
+    expect(present.value?.managedRunId).toBe("run_admin");
+
+    const absent = await store.getForAdministration({ kind: "administration", managedRunId: "run_absent" });
+    expect(absent.ok && absent.value).toBeUndefined();
+  });
+
+  it("surfaces an error when an administration list row fails record reconstruction", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRun({
+      managedRunId: "run_admin",
+      serviceInstanceId: "service_x",
+      status: "active",
+      statusReason: "activation_acknowledged",
+      updatedAtMs: NOW_MS,
+    }))).ok).toBe(true);
+    // A stored row whose serialized turn scope is not valid JSON passes the DB
+    // column schema but cannot be reconstructed into a run record.
+    db.prepare("UPDATE managed_runs SET turn_scope = ? WHERE managed_run_id = ?").run("{", "run_admin");
+
+    const listed = await store.listForAdministration({ kind: "administration", limit: 32 });
+    expect(listed.ok).toBe(false);
+  });
+
+  it("surfaces an error when an administration list row violates the column schema", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRun({
+      managedRunId: "run_admin",
+      serviceInstanceId: "service_x",
+      status: "active",
+      statusReason: "activation_acknowledged",
+      updatedAtMs: NOW_MS,
+    }))).ok).toBe(true);
+    // A non-integer update time is rejected by the row mapper before any record
+    // reconstruction is attempted.
+    db.prepare("UPDATE managed_runs SET updated_at_ms = 1.5 WHERE managed_run_id = ?").run("run_admin");
+
+    const listed = await store.listForAdministration({ kind: "administration", limit: 32 });
+    expect(listed.ok).toBe(false);
   });
 });
