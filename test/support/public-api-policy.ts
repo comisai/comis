@@ -797,6 +797,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── capability-service self-declared limits ──
+      // The limits schema and its inferred type are reached through the instance
+      // and definition config schemas that embed `limits:
+      // CapabilityServiceLimitsSchema`, and through
+      // resolveEffectiveCapabilityServiceLimits (which IS consumed by the daemon
+      // capability-service setup) — never by a direct named import. They are the
+      // documented config contract for the `limits` block in
+      // docs/reference/config-yaml.mdx.
+      "CapabilityServiceLimitsSchema",
+      "CapabilityServiceLimits",
       // ── tool.invoke surface + ResultRef (interface-first) ──
       // TOOL_CAPABILITY_MAP/TOOL_ROUTE_MAP are the single source of truth for
       // the tool.invoke surface; ResultRef + its pure threshold/GC math are the
