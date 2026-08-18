@@ -9,11 +9,13 @@ import {
 } from "./section-registry.js";
 import {
   CapabilityServiceInstanceConfigSchema,
+  CapabilityServiceLimitsSchema,
   type CapabilityServiceInstanceConfig,
+  type CapabilityServiceLimits,
 } from "./capability-service-instance-schema.js";
 
-export { CapabilityServiceInstanceConfigSchema } from "./capability-service-instance-schema.js";
-export type { CapabilityServiceInstanceConfig } from "./capability-service-instance-schema.js";
+export { CapabilityServiceInstanceConfigSchema, CapabilityServiceLimitsSchema } from "./capability-service-instance-schema.js";
+export type { CapabilityServiceInstanceConfig, CapabilityServiceLimits } from "./capability-service-instance-schema.js";
 
 export const CAPABILITY_SERVICE_CONTROL_PROTOCOL = "comis.capability-service/1" as const;
 
@@ -93,6 +95,7 @@ export const CapabilityServiceDefinitionSchema = z.strictObject({
   requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(7),
   evidencePolicies: z.array(CapabilityServiceEvidencePolicySchema).max(32),
   dependsOn: z.array(z.string().refine(isContributionId)).max(32),
+  limits: CapabilityServiceLimitsSchema.optional(),
 }).superRefine((value, ctx) => {
   if (new Set(value.requestedScopes).size !== value.requestedScopes.length) {
     ctx.addIssue({
@@ -153,6 +156,24 @@ export type PlannedManagedToolBinding = Omit<ManagedToolBinding, "invocationSide
   readonly invocationSideEffects: readonly string[];
 };
 export type CapabilityServiceDefinition = z.infer<typeof CapabilityServiceDefinitionSchema>;
+
+/**
+ * The effective self-declared bounds for one instance: each field is the
+ * instance override if present, else the definition's value, else undefined
+ * (fall back to the global protocol ceiling at the enforcement site). Never
+ * loosens a bound — the schema already caps each field at the protocol ceiling.
+ */
+export function resolveEffectiveCapabilityServiceLimits(
+  definitionLimits: CapabilityServiceLimits | undefined,
+  instanceLimits: CapabilityServiceLimits | undefined,
+): CapabilityServiceLimits {
+  const maxReportBytes = instanceLimits?.maxReportBytes ?? definitionLimits?.maxReportBytes;
+  const maxEvidenceBytes = instanceLimits?.maxEvidenceBytes ?? definitionLimits?.maxEvidenceBytes;
+  return Object.freeze({
+    ...(maxReportBytes === undefined ? {} : { maxReportBytes }),
+    ...(maxEvidenceBytes === undefined ? {} : { maxEvidenceBytes }),
+  });
+}
 
 export interface CapabilityServiceContributionSection {
   readonly namespace: string;

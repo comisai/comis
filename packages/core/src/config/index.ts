@@ -9,15 +9,18 @@ export {
   CapabilityServiceEvidencePolicySchema,
   CapabilityServiceDefinitionSchema,
   CapabilityServiceInstanceConfigSchema,
+  CapabilityServiceLimitsSchema,
   ManagedToolActionClassificationSchema,
   ManagedToolBehaviorSchema,
   ManagedToolBindingSchema,
   buildCapabilityServiceActivationPlan,
+  resolveEffectiveCapabilityServiceLimits,
 } from "./capability-service-contributions.js";
 export type {
   CapabilityServiceScope,
   CapabilityServiceEvidencePolicy,
   CapabilityServiceDefinition,
+  CapabilityServiceLimits,
   ManagedToolActionClassification,
   ManagedToolBehavior,
   ManagedToolBinding,

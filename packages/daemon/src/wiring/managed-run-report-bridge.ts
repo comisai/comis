@@ -17,6 +17,9 @@ import { managedRunAttentionId } from "./managed-run-attention-identity.js";
 
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$/;
 const REPORTABLE_STATUSES = new Set(["active", "waiting", "paused", "candidate_complete", "unknown"]);
+/** The protocol ceiling for combined report content bytes (summary + details);
+ *  the wire schema already enforces it. A per-definition cap only tightens it. */
+const PROTOCOL_MAX_REPORT_BYTES = 16_384;
 
 const ManagedRunReportIngressSchema = z.strictObject({
   serviceInstanceId: z.string().regex(OPAQUE_ID_PATTERN),
@@ -54,6 +57,9 @@ export interface ManagedRunReportBridgeDeps {
   readonly nowMs: () => number;
   readonly retentionMs: number;
   readonly maxObservedClockSkewMs: number;
+  /** The service's self-declared max report content bytes (tighter than the
+   *  protocol ceiling), or undefined to fall back to that ceiling. */
+  readonly resolveMaxReportBytes?: (serviceInstanceId: string) => number | undefined;
   readonly eventBus: TypedEventBus;
   readonly logger: ComisLogger;
 }
@@ -153,6 +159,19 @@ export function createManagedRunReportBridge(deps: ManagedRunReportBridgeDeps): 
         serviceInstanceId: parsed.data.serviceInstanceId,
         managedRunId: parsed.data.managedRunId,
       };
+      // The service's self-declared cap tightens the protocol ceiling that the
+      // wire schema already enforces; an absent declaration falls back to it. The
+      // report content is the summary plus the optional details, matching the
+      // combined-byte bound the report body schema pins.
+      const maxReportBytes = Math.min(
+        deps.resolveMaxReportBytes?.(identity.serviceInstanceId) ?? PROTOCOL_MAX_REPORT_BYTES,
+        PROTOCOL_MAX_REPORT_BYTES,
+      );
+      const reportContentBytes = Buffer.byteLength(parsed.data.report.summary, "utf8")
+        + (parsed.data.report.details === undefined
+          ? 0
+          : Buffer.byteLength(parsed.data.report.details, "utf8"));
+      if (reportContentBytes > maxReportBytes) return rejectReport("invalid_report", identity);
       const receivedAtMs = deps.nowMs();
       const retainedUntilMs = receivedAtMs + deps.retentionMs;
       if (!Number.isSafeInteger(retainedUntilMs) || retainedUntilMs < receivedAtMs) {

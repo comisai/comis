@@ -4,6 +4,8 @@
 export {
   CAPABILITY_SERVICE_CONTROL_PROTOCOL,
   buildCapabilityServiceActivationPlan,
+  resolveEffectiveCapabilityServiceLimits,
+  CapabilityServiceLimitsSchema,
   AppConfigSchema,
   AgentConfigSchema,
   AgentsMapSchema,
@@ -181,6 +183,7 @@ export {
 export type {
   CapabilityServiceScope,
   CapabilityServiceEvidencePolicy,
+  CapabilityServiceLimits,
   PlannedManagedToolBinding,
   CapabilityServicesConfig,
   CapabilityServiceContributionRegistration,

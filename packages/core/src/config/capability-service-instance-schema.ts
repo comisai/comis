@@ -44,6 +44,24 @@ const RuntimeRootSchema = z.string().min(1).max(4_096).superRefine((path, ctx) =
   }
 });
 
+/**
+ * Per-definition (and per-instance override) bounds a service may declare for
+ * itself, each strictly tighter than the protocol ceiling. A definition that
+ * only ever produces small reports or evidence can pin a smaller cap, so a bug
+ * or a compromised service that suddenly sends large payloads is refused early
+ * rather than at the global limit. Every field is optional; an absent field
+ * falls back to the definition's value, then to the global protocol ceiling.
+ * Only the bounds with an active enforcement site are declarable — no dormant
+ * config. (The report/evidence byte caps are `16384` and `1048576`, the protocol
+ * `maxReportBytes` / `maxEvidenceBytes`.)
+ */
+export const CapabilityServiceLimitsSchema = z.strictObject({
+  maxReportBytes: z.number().int().positive().max(16_384).optional(),
+  maxEvidenceBytes: z.number().int().positive().max(1_048_576).optional(),
+});
+
+export type CapabilityServiceLimits = z.infer<typeof CapabilityServiceLimitsSchema>;
+
 export const CapabilityServiceInstanceConfigSchema = z.strictObject({
   serviceInstanceId: z.string().regex(OPAQUE_ID_PATTERN),
   serviceDefinitionId: z.string().refine(isContributionId),
@@ -53,6 +71,7 @@ export const CapabilityServiceInstanceConfigSchema = z.strictObject({
   allowedAgents: z.array(z.string().regex(OPAQUE_ID_PATTERN)).min(1).max(256),
   allowedWorkspaceRoots: z.array(WorkspaceRootSchema).max(64),
   allowedRuntimeRoots: z.array(RuntimeRootSchema).max(64),
+  limits: CapabilityServiceLimitsSchema.optional(),
 }).superRefine((value, ctx) => {
   if (new Set(value.allowedAgents).size !== value.allowedAgents.length) {
     ctx.addIssue({

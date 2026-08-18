@@ -6,6 +6,7 @@ import type Database from "better-sqlite3";
 import { CAPABILITY_SERVICE_BUNDLE_DIGEST } from "@comis/capability-service-sdk";
 import {
   buildCapabilityServiceActivationPlan,
+  resolveEffectiveCapabilityServiceLimits,
   safePath,
   type CapabilityServiceActivationPlan,
   type CapabilityServiceContributionRegistration,
@@ -321,25 +322,36 @@ export async function setupCapabilityServices(
   const workspaceLeases = stores.value.workspaceLeases;
   const attachments = stores.value.attachments;
   const contentStore = stores.value.contentStore.value;
+  const definitionByInstance = new Map(plan.value.orderedInstances.map((instance) => [
+    instance.serviceInstanceId,
+    definitionForInstance(plan.value, instance.serviceInstanceId),
+  ]));
+  // Effective self-declared bounds per instance: the instance override, then the
+  // definition, then the global protocol ceiling at the bridge. Resolved once.
+  const limitsByInstance = new Map(plan.value.orderedInstances.map((instance) => [
+    instance.serviceInstanceId,
+    resolveEffectiveCapabilityServiceLimits(
+      definitionByInstance.get(instance.serviceInstanceId)?.limits,
+      instance.limits,
+    ),
+  ]));
   const reportBridge = createManagedRunReportBridge({
     store,
     contentStore,
     nowMs: () => deps.clock.now(),
     retentionMs: deps.config.reportRetentionMs,
     maxObservedClockSkewMs: deps.config.maxObservedClockSkewMs,
+    resolveMaxReportBytes: (serviceInstanceId) => limitsByInstance.get(serviceInstanceId)?.maxReportBytes,
     eventBus: deps.eventBus,
     logger: deps.logger,
   });
-  const definitionByInstance = new Map(plan.value.orderedInstances.map((instance) => [
-    instance.serviceInstanceId,
-    definitionForInstance(plan.value, instance.serviceInstanceId),
-  ]));
   const evidenceBridge = createManagedRunEvidenceBridge({
     store,
     contentStore,
     nowMs: () => deps.clock.now(),
     maxObservedClockSkewMs: deps.config.maxObservedClockSkewMs,
     resolveEvidencePolicies: (serviceInstanceId) => definitionByInstance.get(serviceInstanceId)?.evidencePolicies,
+    resolveMaxEvidenceBytes: (serviceInstanceId) => limitsByInstance.get(serviceInstanceId)?.maxEvidenceBytes,
     logger: deps.logger,
   });
   const attentionResponseBridge = createManagedAttentionResponseBridge({

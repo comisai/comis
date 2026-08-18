@@ -85,6 +85,9 @@ export interface ManagedRunEvidenceBridgeDeps {
   readonly resolveEvidencePolicies: (
     serviceInstanceId: string,
   ) => readonly CapabilityServiceEvidencePolicy[] | undefined;
+  /** The service's self-declared max evidence bytes (tighter than the protocol
+   *  ceiling), or undefined to fall back to that ceiling. */
+  readonly resolveMaxEvidenceBytes?: (serviceInstanceId: string) => number | undefined;
   readonly logger: ComisLogger;
 }
 
@@ -197,11 +200,18 @@ export function createManagedRunEvidenceBridge(
         serviceInstanceId: parsed.data.serviceInstanceId,
         managedRunId: parsed.data.managedRunId,
       };
+      // The service's self-declared cap tightens the protocol ceiling; an absent
+      // declaration falls back to it. A cap larger than the ceiling can never be
+      // configured (the config schema bounds it), so min() is defence-in-depth.
+      const maxEvidenceBytes = Math.min(
+        deps.resolveMaxEvidenceBytes?.(identity.serviceInstanceId) ?? MAX_MANAGED_EVIDENCE_BYTES,
+        MAX_MANAGED_EVIDENCE_BYTES,
+      );
       const decoded = tryCatch(() => Buffer.from(parsed.data.bodyBase64, "base64"));
       if (
         !decoded.ok
         || decoded.value.byteLength === 0
-        || decoded.value.byteLength > MAX_MANAGED_EVIDENCE_BYTES
+        || decoded.value.byteLength > maxEvidenceBytes
         || decoded.value.toString("base64") !== parsed.data.bodyBase64
         || createHash("sha256").update(decoded.value).digest("hex") !== parsed.data.contentHash
       ) return rejectEvidence("invalid_evidence", identity);
