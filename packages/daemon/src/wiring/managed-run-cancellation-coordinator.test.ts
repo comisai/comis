@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "@comis/shared";
-import type { ManagedRunOwnerScope, ManagedRunRecord } from "@comis/core";
+import { TypedEventBus, type ManagedRunOwnerScope, type ManagedRunRecord } from "@comis/core";
 import { createManagedRunCancellationCoordinator } from "./managed-run-cancellation-coordinator.js";
 
 const NOW_MS = 1_800_000_000_000;
@@ -41,12 +41,14 @@ function makeCoordinator(overrides: {
     state: "cancelling" as const,
     acknowledgedAtMs: NOW_MS,
   }));
+  const eventBus = new TypedEventBus();
   const coordinator = createManagedRunCancellationCoordinator({
     store: { get, claimTransition } as never,
     control: { cancel } as never,
+    eventBus,
     nowMs: () => NOW_MS,
   });
-  return { coordinator, claimTransition, cancel, get };
+  return { coordinator, claimTransition, cancel, get, eventBus };
 }
 
 describe("managed-run cancellation", () => {
@@ -70,6 +72,41 @@ describe("managed-run cancellation", () => {
 
     expect(result.ok && result.value.kind).toBe("cancelled");
     expect(order).toEqual(["claim", "cancel"]);
+  });
+
+  it("emits a content-free managed-run revoked event on the host decision", async () => {
+    const revoked = vi.fn();
+    const setup = makeCoordinator();
+    setup.eventBus.on("managed_run:revoked", revoked);
+
+    const result = await setup.coordinator.cancel(ownerScope(), {
+      operationId: "operation-cancel-a",
+      managedRunId: "managed-run-a",
+      reason: "authority_revoked",
+    });
+
+    expect(result.ok && result.value.kind).toBe("cancelled");
+    expect(revoked).toHaveBeenCalledWith(expect.objectContaining({
+      managedRunId: "managed-run-a",
+      serviceInstanceId: "service-instance-a",
+      reasonCode: "authority_revoked",
+    }));
+  });
+
+  it("does not emit a revoked event for an already-terminal run", async () => {
+    const revoked = vi.fn();
+    const claimTransition = vi.fn(async () => ok({ kind: "status_mismatch" as const }));
+    const get = vi.fn(async () => ok(record({ status: "succeeded", statusReason: "outcome_verified" })));
+    const setup = makeCoordinator({ claim: claimTransition, get });
+    setup.eventBus.on("managed_run:revoked", revoked);
+
+    await setup.coordinator.cancel(ownerScope(), {
+      operationId: "operation-cancel-a",
+      managedRunId: "managed-run-a",
+      reason: "owner_cancelled",
+    });
+
+    expect(revoked).not.toHaveBeenCalled();
   });
 
   it("keeps the run cancelled when the service cannot be reached", async () => {
