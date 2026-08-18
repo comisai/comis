@@ -185,6 +185,48 @@ describe("managed-run report bridge", () => {
     expect(withinCap).toMatchObject({ ok: true, value: { kind: "accepted" } });
   });
 
+  it("rejects a report once the run exceeds its declared per-minute rate", async () => {
+    // A service that pins a per-run rate of two reports/minute has its third
+    // report inside the window refused, and no private body is written for it.
+    const rejected = vi.fn();
+    eventBus.on("managed_run:report_rejected", rejected);
+    const bridge = makeBridge({ resolveMaxReportsPerMinute: () => 2 });
+
+    const first = await bridge.ingestReport({
+      ...makeInput(),
+      report: { ...makeInput().report, serviceReportId: "service-report_1" },
+    });
+    const second = await bridge.ingestReport({
+      ...makeInput(),
+      report: { ...makeInput().report, serviceReportId: "service-report_2" },
+    });
+    const third = await bridge.ingestReport({
+      ...makeInput(),
+      report: { ...makeInput().report, serviceReportId: "service-report_3" },
+    });
+
+    expect(first).toMatchObject({ ok: true, value: { kind: "accepted" } });
+    expect(second).toMatchObject({ ok: true, value: { kind: "accepted" } });
+    expect(third).toMatchObject({ ok: true, value: { kind: "rejected", reasonCode: "rate_limited" } });
+    expect(rejected).toHaveBeenCalledWith(expect.objectContaining({ reasonCode: "rate_limited" }));
+    expect(db.prepare("SELECT COUNT(*) AS c FROM managed_run_reports").get()).toEqual({ c: 2 });
+  });
+
+  it("accepts reports below the declared per-minute rate", async () => {
+    const bridge = makeBridge({ resolveMaxReportsPerMinute: () => 5 });
+    const first = await bridge.ingestReport({
+      ...makeInput(),
+      report: { ...makeInput().report, serviceReportId: "service-report_1" },
+    });
+    const second = await bridge.ingestReport({
+      ...makeInput(),
+      report: { ...makeInput().report, serviceReportId: "service-report_2" },
+    });
+
+    expect(first).toMatchObject({ ok: true, value: { kind: "accepted" } });
+    expect(second).toMatchObject({ ok: true, value: { kind: "accepted" } });
+  });
+
   it("commits a private report body and content-free sequence before emitting", async () => {
     const emitted = vi.fn();
     eventBus.on("managed_run:report_accepted", emitted);
