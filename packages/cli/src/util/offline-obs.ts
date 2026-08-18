@@ -58,9 +58,11 @@ import { resolveDoctorConfig } from "../doctor/config-resolve.js";
 import {
   createObservabilityStore,
   createLcdBrowseStore,
+  createSqliteManagedRunStore,
   openSqliteDatabase,
   type ObservabilityStore,
 } from "./offline-secrets-store.js";
+import type { ManagedRunStorePort } from "@comis/core";
 
 /**
  * Resolve the CLI's offline data dir with the same precedence as bootstrap:
@@ -120,11 +122,12 @@ const systemClock: ClockPort = { now: () => systemNowMs(), nowDate: () => system
 function openObsStoreIfPresent(dataDir: string): {
   store: ObservabilityStore | undefined;
   contextBrowse: ContextBrowsePort | undefined;
+  managedRunReads: Pick<ManagedRunStorePort, "countByStatus" | "listByTraceIds"> | undefined;
   close: () => void;
 } {
   const dbPath = safePath(dataDir, "memory.db");
   if (!fs.existsSync(dbPath)) {
-    return { store: undefined, contextBrowse: undefined, close: () => undefined };
+    return { store: undefined, contextBrowse: undefined, managedRunReads: undefined, close: () => undefined };
   }
   // No-op initSchema: the offline path only ever opens an EXISTING db; the
   // daemon owns schema creation. A db whose obs tables are missing (observed
@@ -146,10 +149,19 @@ function openObsStoreIfPresent(dataDir: string): {
     } catch {
       contextBrowse = undefined;
     }
+    let managedRunReads: Pick<ManagedRunStorePort, "countByStatus" | "listByTraceIds"> | undefined;
+    try {
+      // A db from before the managed-run tables existed throws at the eager
+      // statement-prepare — degrade to no linkage (the section is presence-conditional).
+      managedRunReads = createSqliteManagedRunStore(db);
+    } catch {
+      managedRunReads = undefined;
+    }
     const opened = db;
     return {
       store,
       contextBrowse,
+      managedRunReads,
       close: () => {
         try {
           opened.close();
@@ -164,7 +176,7 @@ function openObsStoreIfPresent(dataDir: string): {
     } catch {
       // The open itself failed — nothing to release.
     }
-    return { store: undefined, contextBrowse: undefined, close: () => undefined };
+    return { store: undefined, contextBrowse: undefined, managedRunReads: undefined, close: () => undefined };
   }
 }
 
@@ -191,10 +203,10 @@ export async function assembleIncidentReportOffline(
   },
 ): Promise<IncidentReport> {
   const { assembleIncidentReportFromSources, makeRealReader } = await loadDaemonAssemblers();
-  const { store, contextBrowse, close } = openObsStoreIfPresent(dataDir);
+  const { store, contextBrowse, managedRunReads, close } = openObsStoreIfPresent(dataDir);
   try {
     return await assembleIncidentReportFromSources(
-      makeRealReader(dataDir, store, undefined, contextBrowse),
+      makeRealReader(dataDir, store, undefined, contextBrowse, managedRunReads),
       dataDir,
       params,
     );

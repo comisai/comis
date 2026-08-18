@@ -150,6 +150,21 @@ export function registerSystemHealthCommand(program: Command): void {
             info(`  → worst run: comis explain ${a.worstRootRunId}`);
           }
         }
+        // The capability-service / managed-run health block — content-free
+        // (counts + closed reason codes + one opaque run id). The
+        // worstManagedRunId line is a copy-pasteable `comis managed-runs explain`
+        // so the operator drills into the worst run next. --format json emits the
+        // whole block automatically; this is the human-readable render only.
+        if (report.capabilityServices) {
+          const cs = report.capabilityServices;
+          const reasons = cs.topReasonCodes.map((r) => `${r.code}=${r.count}`).join(" ");
+          info(
+            `Capability: ${cs.runs.total} managed run(s) (${cs.runs.degraded} degraded, ${(cs.runs.degradedRate * 100).toFixed(0)}%) · services=${cs.services.total} (${cs.services.degraded} degraded)${reasons ? ` · ${reasons}` : ""}`,
+          );
+          if (cs.worstManagedRunId) {
+            info(`  → worst run: comis managed-runs explain ${cs.worstManagedRunId}`);
+          }
+        }
         // Cost, tokens, and calls share the corrected provider-billing ledger.
         // Session-index tokens remain a separate activity metric.
         const offSession = report.cost.offSessionUsd ?? 0;
