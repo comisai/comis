@@ -190,6 +190,51 @@ describe("managed-run administration health counts", () => {
   });
 });
 
+describe("managed-run active concurrency counts", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    ensureManagedRunTables(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  async function seed(store: ReturnType<typeof createSqliteManagedRunStore>, shapes: readonly RunShape[]) {
+    for (const shape of shapes) {
+      const created = await store.create(makeRun(shape));
+      expect(created.ok && created.value.kind).toBe("created");
+    }
+  }
+
+  it("counts only a service's non-terminal runs, ignoring terminal ones and other services", async () => {
+    const store = createSqliteManagedRunStore(db);
+    await seed(store, [
+      { managedRunId: "run_x_preparing", serviceInstanceId: "service_x", status: "preparing", statusReason: "awaiting_activation", updatedAtMs: NOW_MS + 1 },
+      { managedRunId: "run_x_active", serviceInstanceId: "service_x", status: "active", statusReason: "activation_acknowledged", updatedAtMs: NOW_MS + 2 },
+      { managedRunId: "run_x_unknown", serviceInstanceId: "service_x", status: "unknown", statusReason: "service_state_unavailable", updatedAtMs: NOW_MS + 3 },
+      // Terminal runs never count against the concurrency ceiling.
+      { managedRunId: "run_x_succeeded", serviceInstanceId: "service_x", status: "succeeded", statusReason: "outcome_verified", updatedAtMs: NOW_MS + 4 },
+      { managedRunId: "run_x_failed", serviceInstanceId: "service_x", status: "failed", statusReason: "failure_verified", updatedAtMs: NOW_MS + 5 },
+      { managedRunId: "run_x_cancelled", serviceInstanceId: "service_x", status: "cancelled", statusReason: "owner_cancelled", updatedAtMs: NOW_MS + 6 },
+      // A different service is out of scope for service_x's count.
+      { managedRunId: "run_y_active", serviceInstanceId: "service_y", status: "active", statusReason: "activation_acknowledged", updatedAtMs: NOW_MS + 7 },
+    ]);
+
+    const counted = await store.countActiveByService("service_x");
+    expect(counted.ok).toBe(true);
+    if (!counted.ok) return;
+    expect(counted.value).toBe(3);
+
+    const other = await store.countActiveByService("service_y");
+    expect(other.ok && other.value).toBe(1);
+    const none = await store.countActiveByService("service_absent");
+    expect(none.ok && none.value).toBe(0);
+  });
+});
+
 describe("managed-run administration trace linkage", () => {
   let db: Database.Database;
 
