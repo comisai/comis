@@ -6,6 +6,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  TypedEventBus,
   createConversationRef,
   MAX_MANAGED_EVIDENCE_BYTES,
   type CapabilityServiceEvidencePolicy,
@@ -138,6 +139,7 @@ describe("managed-run evidence bridge", () => {
   let store: ManagedRunStorePort;
   let contentStore: ManagedRunContentPort;
   let logger: ComisLogger;
+  let eventBus: TypedEventBus;
 
   beforeEach(async () => {
     db = new Database(":memory:");
@@ -154,6 +156,7 @@ describe("managed-run evidence bridge", () => {
     if (!content.ok) throw content.error;
     contentStore = content.value;
     logger = makeLogger();
+    eventBus = new TypedEventBus();
   });
 
   afterEach(() => {
@@ -171,10 +174,37 @@ describe("managed-run evidence bridge", () => {
       resolveEvidencePolicies: (serviceInstanceId) => serviceInstanceId === "service-instance_a"
         ? policies
         : undefined,
+      eventBus,
       logger,
       ...overrides,
     });
   }
+
+  it("emits content-free evidence accept and reject lifecycle events", async () => {
+    const accepted = vi.fn();
+    const rejected = vi.fn();
+    eventBus.on("managed_run:evidence_accepted", accepted);
+    eventBus.on("managed_run:evidence_rejected", rejected);
+
+    expect((await makeBridge().putEvidence(makeInput())).ok).toBe(true);
+    expect(accepted).toHaveBeenCalledWith(expect.objectContaining({
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      evidenceRef: "evidence_a",
+      verificationLevel: "adapter_verified",
+      deliveryKind: "reference",
+    }));
+    // Content-free: the evidence body never rides the event.
+    expect(JSON.stringify(accepted.mock.calls)).not.toContain(BODY.toString("base64"));
+
+    const refused = await makeBridge({ resolveMaxEvidenceBytes: () => 4 }).putEvidence(makeInput());
+    expect(refused).toMatchObject({ ok: true, value: { kind: "rejected", reasonCode: "invalid_evidence" } });
+    expect(rejected).toHaveBeenCalledWith(expect.objectContaining({
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-run_a",
+      reasonCode: "invalid_evidence",
+    }));
+  });
 
   it("rejects evidence whose decoded body exceeds the service's self-declared maxEvidenceBytes", async () => {
     // A definition that pins a tiny evidence cap has an oversized body refused as
