@@ -89,6 +89,7 @@ export type ManagedRunActivationRejectionReason =
   | "activation_rejected"
   | "agent_not_allowed"
   | "attachment_not_allowed"
+  | "capacity_exceeded"
   | "invalid_preparation"
   | "preparation_expired"
   | "replay_conflict"
@@ -148,6 +149,9 @@ export interface ManagedRunActivationCoordinatorDeps {
     requestedPath: string,
     allowedWorkspaceRoots: readonly string[],
   ) => Result<ValidatedWorkspaceLeasePath, Error>;
+  /** The service's self-declared max concurrent (non-terminal) runs, or undefined
+   *  for no admission ceiling. Read once per activation before durable binding. */
+  readonly resolveMaxConcurrentRuns?: (serviceInstanceId: string) => number | undefined;
   readonly ids: {
     forOperation(operationId: string): Pick<ManagedRunActivationIds, "managedRunId" | "activationDescriptorRef">;
     forManagedRun(managedRunId: string): ManagedRunActivationControlIds;
@@ -630,6 +634,21 @@ export function createManagedRunActivationCoordinator(
       await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
       emitRejected(input, "agent_not_allowed");
       return ok({ kind: "rejected", reasonCode: "agent_not_allowed" });
+    }
+    // Concurrency admission: a service that declares a ceiling is refused a new
+    // run once its non-terminal runs already fill it, before any durable binding.
+    const maxConcurrentRuns = deps.resolveMaxConcurrentRuns?.(input.serviceInstanceId);
+    if (maxConcurrentRuns !== undefined) {
+      const activeCount = await invokeStore(() => deps.store.countActiveByService(input.serviceInstanceId));
+      if (!activeCount.ok) {
+        await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
+        return activeCount;
+      }
+      if (activeCount.value >= maxConcurrentRuns) {
+        await abandonPrepared(input, ids, "service_unavailable", "reap_safe");
+        emitRejected(input, "capacity_exceeded");
+        return ok({ kind: "rejected", reasonCode: "capacity_exceeded" });
+      }
     }
     const validatedBindings = validatePreparedBindingRequests(bindingDeps, input);
     if (!validatedBindings.ok) {

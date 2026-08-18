@@ -466,6 +466,7 @@ export async function setupCapabilityServices(
     activeView: runtime,
     validateWorkspacePath: (requestedPath, allowedWorkspaceRoots) =>
       validateWorkspaceLeasePath({ requestedPath, allowedWorkspaceRoots, dataDir: deps.dataDir }),
+    resolveMaxConcurrentRuns: (serviceInstanceId) => limitsByInstance.get(serviceInstanceId)?.maxConcurrentRuns,
     ids: { forOperation: operationIds, forManagedRun: controlIds },
     nowMs: () => deps.clock.now(),
     eventBus: deps.eventBus,

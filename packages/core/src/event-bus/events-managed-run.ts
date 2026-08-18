@@ -21,7 +21,7 @@ export interface ManagedRunEvents {
     managedRunId?: string;
     serviceInstanceId: string;
     agentId: string;
-    reasonCode: "activation_rejected" | "agent_not_allowed" | "attachment_not_allowed" | "invalid_preparation" | "preparation_expired" | "replay_conflict" | "service_unavailable" | "workspace_not_allowed";
+    reasonCode: "activation_rejected" | "agent_not_allowed" | "attachment_not_allowed" | "capacity_exceeded" | "invalid_preparation" | "preparation_expired" | "replay_conflict" | "service_unavailable" | "workspace_not_allowed";
     timestamp: number;
   };
   "managed_run:activation_unknown": {
