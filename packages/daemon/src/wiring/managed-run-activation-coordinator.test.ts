@@ -729,6 +729,51 @@ describe("managed-run two-phase activation", () => {
     }));
   });
 
+  it("admits a run below the concurrency cap and refuses one at the cap", async () => {
+    const rejectedEvent = vi.fn();
+    eventBus.on("managed_run:activation_rejected", rejectedEvent);
+    const coordinator = makeCoordinator({
+      resolveMaxConcurrentRuns: () => 1,
+    } as never);
+
+    const first = await coordinator.activatePrepared(makeInput({ operationId: "operation_cap_first" }));
+    expect(first).toMatchObject({ ok: true, value: { kind: "activated", record: { status: "active" } } });
+    activate.mockClear();
+    abandon.mockClear();
+
+    const second = await coordinator.activatePrepared(makeInput({
+      operationId: "operation_cap_second",
+      prepared: makePrepared({ externalRunRef: "external-run_b", registrationNonce: "registration-nonce_b" }),
+    }));
+
+    expect(second).toMatchObject({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "capacity_exceeded" },
+    });
+    // The at-cap run is refused before any external activation is attempted, and
+    // its unbound preparation is reaped safely.
+    expect(activate).not.toHaveBeenCalled();
+    expect(abandon).toHaveBeenCalledWith(expect.objectContaining({ disposition: "reap_safe" }));
+    expect(rejectedEvent).toHaveBeenCalledWith(expect.objectContaining({
+      serviceInstanceId: "service-instance_a",
+      reasonCode: "capacity_exceeded",
+    }));
+    // No durable run was created for the refused activation.
+    expect(await store.get(OWNER_SCOPE, "managed-operation_cap_second")).toEqual({ ok: true, value: undefined });
+  });
+
+  it("admits every run when no concurrency cap is declared", async () => {
+    const coordinator = makeCoordinator();
+    const first = await coordinator.activatePrepared(makeInput({ operationId: "operation_uncapped_first" }));
+    const second = await coordinator.activatePrepared(makeInput({
+      operationId: "operation_uncapped_second",
+      prepared: makePrepared({ externalRunRef: "external-run_c", registrationNonce: "registration-nonce_c" }),
+    }));
+
+    expect(first).toMatchObject({ ok: true, value: { kind: "activated" } });
+    expect(second).toMatchObject({ ok: true, value: { kind: "activated" } });
+  });
+
   it("returns the durable original without repeating service activation", async () => {
     const coordinator = makeCoordinator();
     expect((await coordinator.activatePrepared(makeInput())).ok).toBe(true);
