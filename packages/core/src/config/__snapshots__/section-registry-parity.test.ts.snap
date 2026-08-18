@@ -20930,6 +20930,32 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cap
           "enabled": {
             "type": "boolean"
           },
+          "limits": {
+            "additionalProperties": false,
+            "properties": {
+              "maxConcurrentRuns": {
+                "exclusiveMinimum": 0,
+                "maximum": 10000,
+                "type": "integer"
+              },
+              "maxEvidenceBytes": {
+                "exclusiveMinimum": 0,
+                "maximum": 1048576,
+                "type": "integer"
+              },
+              "maxReportBytes": {
+                "exclusiveMinimum": 0,
+                "maximum": 16384,
+                "type": "integer"
+              },
+              "maxReportsPerMinute": {
+                "exclusiveMinimum": 0,
+                "maximum": 10000,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
           "mcpServerName": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$",
             "type": "string"
@@ -32764,6 +32790,32 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               },
               "enabled": {
                 "type": "boolean"
+              },
+              "limits": {
+                "additionalProperties": false,
+                "properties": {
+                  "maxConcurrentRuns": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "maxEvidenceBytes": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 1048576,
+                    "type": "integer"
+                  },
+                  "maxReportBytes": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 16384,
+                    "type": "integer"
+                  },
+                  "maxReportsPerMinute": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 10000,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
               },
               "mcpServerName": {
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$",
