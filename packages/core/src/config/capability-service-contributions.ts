@@ -170,10 +170,12 @@ export function resolveEffectiveCapabilityServiceLimits(
   const maxReportBytes = instanceLimits?.maxReportBytes ?? definitionLimits?.maxReportBytes;
   const maxEvidenceBytes = instanceLimits?.maxEvidenceBytes ?? definitionLimits?.maxEvidenceBytes;
   const maxConcurrentRuns = instanceLimits?.maxConcurrentRuns ?? definitionLimits?.maxConcurrentRuns;
+  const maxReportsPerMinute = instanceLimits?.maxReportsPerMinute ?? definitionLimits?.maxReportsPerMinute;
   return Object.freeze({
     ...(maxReportBytes === undefined ? {} : { maxReportBytes }),
     ...(maxEvidenceBytes === undefined ? {} : { maxEvidenceBytes }),
     ...(maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns }),
+    ...(maxReportsPerMinute === undefined ? {} : { maxReportsPerMinute }),
   });
 }
 
