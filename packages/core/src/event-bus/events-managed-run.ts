@@ -54,6 +54,18 @@ export interface ManagedRunEvents {
     durationMs: number;
     timestamp: number;
   };
+  "managed_run:attention_opened": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    attentionId: string;
+    timestamp: number;
+  };
+  "managed_run:attention_resolved": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    attentionId: string;
+    timestamp: number;
+  };
   "managed_run:attention_response_bound": {
     managedRunId: string;
     attentionId: string;

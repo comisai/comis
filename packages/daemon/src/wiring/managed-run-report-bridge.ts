@@ -326,6 +326,22 @@ export function createManagedRunReportBridge(deps: ManagedRunReportBridgeDeps): 
           timestamp: deps.nowMs(),
         },
       );
+      // Content-free attention-lifecycle signals derived from the accepted
+      // report kind: an attention/blocked report opens an attention, a
+      // resolution report closes the attention its external key names.
+      if (body.kind === "attention" || body.kind === "blocked") {
+        emitObservationalEventSafely(
+          { eventBus: deps.eventBus, logger: deps.logger },
+          "managed_run:attention_opened",
+          { ...identity, attentionId: attentionId(identity, body), timestamp: deps.nowMs() },
+        );
+      } else if (body.kind === "resolution") {
+        emitObservationalEventSafely(
+          { eventBus: deps.eventBus, logger: deps.logger },
+          "managed_run:attention_resolved",
+          { ...identity, attentionId: attentionId(identity, body), timestamp: deps.nowMs() },
+        );
+      }
       return ok(appended.value);
     },
   });
