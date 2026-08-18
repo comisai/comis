@@ -601,6 +601,36 @@ export async function assembleIncidentReportFromSources(
   }
   if (taskCheck !== null) report.taskCheck = taskCheckReportSection(taskCheck);
   if (graph !== null) report.graph = graph;
+  // Session→managed-run linkage: the managed (capability-service) runs this
+  // session prepared, resolved from the durable store by the trace ids the
+  // session's trajectory ran. Content-free + presence-conditional (a session
+  // that prepared none carries no block); skipped on an unresolved ref (no
+  // session to attribute runs to). A missing reader method (a fixture reader, or
+  // a boot with no managed-run store) simply produces no block.
+  if (reader.readLinkedManagedRuns !== undefined && (records.length > 0 || sessionKey.length > 0)) {
+    const linkageTraceIds = new Set<string>();
+    for (const record of records) {
+      const traceValue = (record as { traceId?: unknown }).traceId;
+      if (typeof traceValue === "string" && traceValue.length > 0) linkageTraceIds.add(traceValue);
+    }
+    if (selectedTraceId !== undefined) linkageTraceIds.add(selectedTraceId);
+    if (fallbackTraceId !== undefined) linkageTraceIds.add(fallbackTraceId);
+    const linkedRuns = await reader.readLinkedManagedRuns([...linkageTraceIds]);
+    if (linkedRuns.length > 0) {
+      report.managedRuns = {
+        total: linkedRuns.length,
+        degraded: linkedRuns.filter(
+          (run) => run.status === "failed" || run.status === "unknown",
+        ).length,
+        runs: linkedRuns.map((run) => ({
+          managedRunId: run.managedRunId,
+          serviceInstanceId: run.serviceInstanceId,
+          status: run.status,
+          statusReason: run.statusReason,
+        })),
+      };
+    }
+  }
   // The report is genuinely empty only when NO source surfaced any activity.
   const reportIsEmpty =
     report.failures.length === 0 &&
@@ -933,7 +963,7 @@ export function bindObsExplainHandlers(
 ): Record<string, RpcHandler> {
   const dataDir = deps.dataDir ?? defaultDataDir();
   const reader = deps.incidentReader ??
-    makeRealReader(dataDir, deps.obsStore, deps.workspaceDirs, deps.contextBrowse);
+    makeRealReader(dataDir, deps.obsStore, deps.workspaceDirs, deps.contextBrowse, deps.managedRunReads);
 
   return {
     [ObsExplainContract.method]: async (rawParams) => {

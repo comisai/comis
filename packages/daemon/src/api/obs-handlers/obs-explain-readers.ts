@@ -59,6 +59,8 @@ import {
   type ContextBrowsePort,
   type EventMap,
   type IncidentGraphRun,
+  type ManagedRunLinkage,
+  type ManagedRunStorePort,
 } from "@comis/core";
 import {
   resolveTrajectoryPointerFilePath,
@@ -97,6 +99,12 @@ const MAX_RECORDS = 5_000;
  * scope here — it lives in @comis/memory); until then this is the bound.
  */
 const DIAGNOSTICS_QUERY_LIMIT = 1000;
+
+/** Bounds on the session→managed-run linkage read: how many distinct trajectory
+ *  trace ids to query, and how many linked runs to return. Both keep the
+ *  incident report a bounded digest. */
+const MANAGED_RUN_LINKAGE_TRACE_CAP = 128;
+const MANAGED_RUN_LINKAGE_CAP = 64;
 
 /** Task lifecycle identifiers are opaque but must stay small enough for the
  * report-level structural bound. Invalid/oversized rows are ignored rather
@@ -218,6 +226,15 @@ export interface IncidentSourceReader {
    * audit events). Existing audit-less fixture readers therefore need no change.
    */
   readAuditEvents?(sessionKey: string): Promise<Array<Record<string, unknown>>>;
+  /**
+   * The managed (capability-service) runs this session prepared, resolved from
+   * the durable managed-run store by the trace ids the session's trajectory ran.
+   * Content-free (ids + closed enums). OPTIONAL: the production `makeRealReader`
+   * implements it when a managed-run store is wired; a fixture reader that omits
+   * it (or a boot with no store) simply produces no `managedRuns` section
+   * (additive + presence-conditional). Soft-fails to `[]`.
+   */
+  readLinkedManagedRuns?(traceIds: readonly string[]): Promise<ManagedRunLinkage[]>;
   /**
    * The closest REAL session keys to `requestedKey`, for the "did you mean …?"
    * breadcrumb the assembler attaches when the request resolved ZERO records (a
@@ -760,11 +777,24 @@ export function makeRealReader(
   obsStore?: ObservabilityStore,
   workspaceDirs?: ReadonlyMap<string, string>,
   contextBrowse?: ContextBrowsePort,
+  managedRunReader?: Pick<ManagedRunStorePort, "listByTraceIds">,
 ): IncidentSourceReader {
   const base = dataDir.length > 0 ? dataDir : defaultDataDir();
   const logsDir = safePath(base, "logs");
 
   return {
+    async readLinkedManagedRuns(traceIds: readonly string[]): Promise<ManagedRunLinkage[]> {
+      if (managedRunReader === undefined || traceIds.length === 0) return [];
+      // Bound the trace set and the result so a huge session cannot inflate the
+      // linkage read; the store applies the same LIMIT.
+      const bounded = [...new Set(traceIds)].slice(0, MANAGED_RUN_LINKAGE_TRACE_CAP);
+      const linked = await managedRunReader.listByTraceIds({
+        kind: "administration",
+        traceIds: bounded,
+        limit: MANAGED_RUN_LINKAGE_CAP,
+      });
+      return linked.ok ? linked.value : [];
+    },
     async readGraphRun(graphId: string): Promise<IncidentGraphRun | null> {
       const result = readIncidentGraphRun(base, graphId);
       return result.ok ? result.value : null;
