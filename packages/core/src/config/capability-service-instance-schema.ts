@@ -53,11 +53,13 @@ const RuntimeRootSchema = z.string().min(1).max(4_096).superRefine((path, ctx) =
  * falls back to the definition's value, then to the global protocol ceiling.
  * Only the bounds with an active enforcement site are declarable — no dormant
  * config. (The report/evidence byte caps are `16384` and `1048576`, the protocol
- * `maxReportBytes` / `maxEvidenceBytes`.)
+ * `maxReportBytes` / `maxEvidenceBytes`; `maxConcurrentRuns` caps how many of a
+ * service's runs may be non-terminal at once, refused at activation admission.)
  */
 export const CapabilityServiceLimitsSchema = z.strictObject({
   maxReportBytes: z.number().int().positive().max(16_384).optional(),
   maxEvidenceBytes: z.number().int().positive().max(1_048_576).optional(),
+  maxConcurrentRuns: z.number().int().positive().max(10_000).optional(),
 });
 
 export type CapabilityServiceLimits = z.infer<typeof CapabilityServiceLimitsSchema>;
