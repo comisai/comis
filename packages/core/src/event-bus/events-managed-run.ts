@@ -103,6 +103,12 @@ export interface ManagedRunEvents {
     reasonCode: "delivery_policy_mismatch" | "evidence_stale" | "invalid_evidence" | "managed_run_not_found" | "replay_conflict" | "state_mismatch" | "verification_not_allowed";
     timestamp: number;
   };
+  "managed_run:revoked": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    reasonCode: "authority_revoked" | "budget_exhausted" | "owner_cancelled";
+    timestamp: number;
+  };
   "managed_run:recovery_quarantined": {
     managedRunId: string;
     serviceInstanceId: string;

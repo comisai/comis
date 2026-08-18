@@ -520,6 +520,7 @@ export async function setupCapabilityServices(
   const cancellationCoordinator = createManagedRunCancellationCoordinator({
     store,
     control: host.value.control,
+    eventBus: deps.eventBus,
     nowMs: () => deps.clock.now(),
   });
 

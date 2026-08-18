@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import type {
-  CapabilityServiceControlPort,
-  ManagedRunOwnerScope,
-  ManagedRunStatus,
-  ManagedRunStorePort,
+import {
+  emitObservationalEventSafely,
+  type CapabilityServiceControlPort,
+  type ManagedRunOwnerScope,
+  type ManagedRunStatus,
+  type ManagedRunStorePort,
+  type TypedEventBus,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
@@ -40,6 +42,7 @@ export interface ManagedRunCancellationCoordinator {
 export interface ManagedRunCancellationCoordinatorDeps {
   readonly store: Pick<ManagedRunStorePort, "claimTransition" | "get">;
   readonly control: Pick<CapabilityServiceControlPort, "cancel">;
+  readonly eventBus: TypedEventBus;
   readonly nowMs: () => number;
 }
 
@@ -93,6 +96,20 @@ export function createManagedRunCancellationCoordinator(
         return ok(settled.value === undefined
           ? { kind: "not_found" }
           : { kind: "already_terminal", status: settled.value.status });
+      }
+      // The host's cancellation stands the moment it is durably claimed; the
+      // content-free revoked signal rides that commit, not the later service ack.
+      if (claimed.value.kind === "claimed") {
+        emitObservationalEventSafely(
+          { eventBus: deps.eventBus },
+          "managed_run:revoked",
+          {
+            managedRunId: input.managedRunId,
+            serviceInstanceId: record.serviceInstanceId,
+            reasonCode: input.reason,
+            timestamp: cancelledAtMs,
+          },
+        );
       }
 
       const notified = await invoke(async () => ok(await deps.control.cancel({
