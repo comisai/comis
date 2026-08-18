@@ -48,7 +48,7 @@ const RELEASE_WORKFLOW = ".github/workflows/dockerhub-release.yml";
  */
 const ASSET_PREFIX = "comis-capability-service-protocol";
 const DESIGN_REF =
-  "COMIS-CAPABILITY-SERVICE-PLATFORM-DESIGN.md §13.1 + ratification item 13 — SDK distribution is pinned GitHub release artifacts, npm publication deferred";
+  "AGENTS.md — Release and Worktree Hygiene: the capability-service protocol bundle ships as pinned release assets, and the private SDK is never published to npm";
 
 const temporaryDirectories: string[] = [];
 
