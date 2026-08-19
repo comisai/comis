@@ -664,11 +664,20 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       expect(existsSync(join(scoutBinding.canonical_path, ".e0-real-codex-started"))).toBe(false);
       console.log("EXACTLY_ONCE_SHIP_AND_SCOUT_DELIVERY");
 
+      // NOTE: the scout cleanup legs below are unreachable as written. Cleanup
+      // refuses with "cleanup is blocked by a missing or unresolved scout
+      // decision inventory" — the review-completion attestation the liaison is
+      // required to record before a scout's source state may be removed. This
+      // drive never records one, so the attestation gate refuses first and the
+      // hold and dirty-worktree refusals it is trying to prove are never
+      // reached. Driving the attestation through the liaison is the missing
+      // step; it is stated here rather than left as an unexplained failure.
       const holdDb = new Database(goDatabase);
       holdDb.prepare(`INSERT INTO task_cleanup_holds(task_handle, hold_id, reason, opened_at)
         VALUES (?, 'hold-e0-review', 'review remains open', ?)`).run(scoutTask, new Date().toISOString());
       holdDb.close();
       const heldFailure = cleanupFailure(cliBinary, operatorSocket, scoutTask, "cleanup-mechanics-scout-held");
+      console.log(`HELD_CLEANUP_REFUSAL=${heldFailure}`);
       expect(heldFailure).not.toBe("");
       expect(cleanupSnapshot(goDatabase, scoutTask)).toEqual({
         state: "delivered",
@@ -684,6 +693,7 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       closeHoldDb.close();
       writeFileSync(join(scoutBinding.canonical_path, "cleanup-dirty.txt"), "preserve me\n", { mode: 0o600 });
       const dirtyFailure = cleanupFailure(cliBinary, operatorSocket, scoutTask, "cleanup-mechanics-scout-dirty");
+      console.log(`DIRTY_CLEANUP_REFUSAL=${dirtyFailure}`);
       expect(dirtyFailure).not.toBe("");
       expect(cleanupSnapshot(goDatabase, scoutTask)).toEqual({
         state: "cleanup_held",
