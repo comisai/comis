@@ -534,7 +534,36 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
           ok: false as const,
           cause,
         }));
-        await waitForUnixSocket(controlSocket);
+        // Surface a daemon boot failure as itself. The boot promise is captured
+        // rather than awaited so the service can start alongside it, but if the
+        // daemon never boots, the control socket it owns never appears — and
+        // waiting on the socket alone reports a fifteen-second timeout naming a
+        // path, discarding the boot cause until long after it would have
+        // explained the failure.
+        await Promise.race([
+          // The control socket appears only once the daemon has finished booting,
+          // and boot cost is host-dependent — loading the embedding model alone
+          // can outrun a bound tuned to a warm container. The bound still exists
+          // so a daemon that never boots fails rather than hangs; it is simply
+          // wide enough that a slower host is not mistaken for a broken one.
+          waitForUnixSocket(controlSocket, 180_000).catch(async (cause: unknown) => {
+            // The socket is owned by the capability-service instance, so its
+            // absence is a statement about that instance, not about a path. Ask
+            // the daemon which state it reached and why before reporting a
+            // timeout that names neither.
+            const outcome = await daemonOutcome;
+            if (!outcome.ok) throw outcome.cause;
+            const view = outcome.handle.daemon.capabilityServices.runtime.getActiveView();
+            throw new Error(
+              `${String(cause)}; capability-service instances: ${JSON.stringify(view.instances)}`,
+            );
+          }),
+          daemonOutcome.then(async (outcome) => {
+            if (!outcome.ok) throw outcome.cause;
+            // The daemon booted: leave the socket wait to decide.
+            return new Promise<never>(() => {});
+          }),
+        ]);
         const runningService = startService();
         service = runningService;
         await waitForInstalledService(runningService, operatorSocket, mcpSocket);
@@ -605,7 +634,10 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
           && comisEvidenceCounts(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id])
             .every((count) => count === 2)
           && managedRunContinuationsSettled(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]),
-        90_000,
+        // The recovery leg re-boots the daemon, so this budget has to cover a
+        // cold boot on the host as well as the delivery it is actually waiting
+        // for. It bounds a stall, not the machine.
+        300_000,
         () => `deterministic delivery recovery; ship=${taskState(goDatabase, shipTask)} scout=${taskState(goDatabase, scoutTask)} stderr=${service?.stderr() ?? ""}`,
       );
       const deliveryMessages = telegram.outbound(TELEGRAM_CHAT);
