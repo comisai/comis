@@ -136,3 +136,35 @@ describe("release preflight rejects a tag that disagrees with any workspace pack
     expect(result.stderr).toMatch(/does not match/i);
   });
 });
+
+/**
+ * The capability-service bundle states which generator produced it. That claim
+ * is provenance a non-TypeScript consumer pins against, so it must name a
+ * version that actually ships.
+ *
+ * `capability-protocol:check` cannot catch a drift here: it regenerates the
+ * bundle from the same constant it is comparing against, so a constant that
+ * disagrees with the shipping package version reproduces perfectly and passes.
+ * Nothing tied the constant to the manifest that gives it meaning, and the two
+ * silently diverged — the bundle claimed provenance from 1.0.64 while every
+ * workspace package, including the SDK itself, shipped 1.0.63.
+ */
+describe("capability-service generator provenance", () => {
+  const sdkRoot = resolve(PACKAGES_ROOT, "capability-service-sdk");
+
+  it("declares the version of the package that actually produces the bundle", () => {
+    const declared = readFileSync(resolve(sdkRoot, "src/constants.ts"), "utf8");
+    const match = declared.match(/CAPABILITY_SERVICE_GENERATOR_VERSION\s*=\s*"([^"]+)"/);
+    expect(match, "generator version constant is declared").not.toBeNull();
+
+    const sdkVersion = JSON.parse(readFileSync(resolve(sdkRoot, "package.json"), "utf8")).version;
+    expect(match?.[1]).toBe(sdkVersion);
+  });
+
+  it("ships a manifest whose generator identity matches that package", () => {
+    const manifest = JSON.parse(readFileSync(resolve(sdkRoot, "protocol/manifest.json"), "utf8"));
+    const sdkVersion = JSON.parse(readFileSync(resolve(sdkRoot, "package.json"), "utf8")).version;
+    expect(manifest.generator?.package).toBe("@comis/capability-service-sdk");
+    expect(manifest.generator?.version).toBe(sdkVersion);
+  });
+});
