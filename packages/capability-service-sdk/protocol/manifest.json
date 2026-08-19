@@ -219,7 +219,7 @@
   "generator": {
     "command": "pnpm capability-protocol:generate",
     "package": "@comis/capability-service-sdk",
-    "version": "1.0.64"
+    "version": "1.0.63"
   },
   "limits": {
     "maxEvidenceBytes": 1048576,

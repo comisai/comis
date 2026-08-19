@@ -4,7 +4,7 @@
 export const CAPABILITY_SERVICE_PROTOCOL_ID = "comis.capability-service/1" as const;
 /** Exact digest of the generated protocol artifacts shipped with this SDK release. */
 export const CAPABILITY_SERVICE_BUNDLE_DIGEST = "86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33" as const;
-export const CAPABILITY_SERVICE_GENERATOR_VERSION = "1.0.64" as const;
+export const CAPABILITY_SERVICE_GENERATOR_VERSION = "1.0.63" as const;
 
 /** Placeholder resolved from manifest.json before a generated fixture is sent. */
 export const BUNDLE_DIGEST_FIXTURE_TOKEN = "__BUNDLE_DIGEST__" as const;
