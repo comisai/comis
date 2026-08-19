@@ -18,6 +18,7 @@
  */
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import chalk from "chalk";
 import {
   createTestProgram,
   createConsoleSpy,
@@ -121,6 +122,12 @@ describe("comis messages", () => {
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
   beforeEach(() => {
+    // The human-readable renderer colors its own output through chalk, whose
+    // level is decided from the ambient terminal. Pinning it off keeps the
+    // control-sequence assertions about the message content — the only part an
+    // attacker influences — instead of about whether the run happened to have a
+    // TTY attached, which is what made them pass in CI and fail on a terminal.
+    chalk.level = 0;
     vi.mocked(extractSessionMessagesOffline).mockReset();
     vi.mocked(extractSessionMessagesOffline).mockResolvedValue({
       messages: FIXTURE_MESSAGES,
