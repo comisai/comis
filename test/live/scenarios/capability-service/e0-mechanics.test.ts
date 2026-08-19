@@ -185,7 +185,13 @@ class DeterministicForgeServer {
       this.checkRequestObservedValue = true;
       await this.checkGate;
       if (response.destroyed) return;
+      // The real check-runs envelope always carries total_count beside the runs,
+      // and the reader requires both before it will trust the page. Omitting it
+      // here made every read decode as invalid, which fails closed to an unknown
+      // conclusion — so a released check looked exactly like a check that never
+      // arrived, and the candidate could never leave validating.
       this.json(response, {
+        total_count: 1,
         check_runs: [{
           id: 1,
           name: "ci/e0",
@@ -637,7 +643,7 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
         // The recovery leg re-boots the daemon, so this budget has to cover a
         // cold boot on the host as well as the delivery it is actually waiting
         // for. It bounds a stall, not the machine.
-        300_000,
+        240_000,
         () => `deterministic delivery recovery; ship=${taskState(goDatabase, shipTask)} scout=${taskState(goDatabase, scoutTask)} stderr=${service?.stderr() ?? ""}`,
       );
       const deliveryMessages = telegram.outbound(TELEGRAM_CHAT);
@@ -756,5 +762,8 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       else process.env[PROVIDER_SECRET_NAME] = previousProvider;
       rmSync(scratch, { recursive: true, force: true });
     }
-  }, 300_000);
+  // The whole case boots the daemon twice and drives two tasks end to end, so
+  // its budget is the sum of what it contains on the slowest host it runs on,
+  // not the fastest.
+  }, 900_000);
 });
