@@ -664,14 +664,20 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       expect(existsSync(join(scoutBinding.canonical_path, ".e0-real-codex-started"))).toBe(false);
       console.log("EXACTLY_ONCE_SHIP_AND_SCOUT_DELIVERY");
 
-      // NOTE: the scout cleanup legs below are unreachable as written. Cleanup
-      // refuses with "cleanup is blocked by a missing or unresolved scout
-      // decision inventory" — the review-completion attestation the liaison is
-      // required to record before a scout's source state may be removed. This
-      // drive never records one, so the attestation gate refuses first and the
-      // hold and dirty-worktree refusals it is trying to prove are never
-      // reached. Driving the attestation through the liaison is the missing
-      // step; it is stated here rather than left as an unexplained failure.
+      // Cleanup will not remove a scout's source state until its review surface
+      // has been inventoried and that inventory recorded: absence of open
+      // questions is never inferred from silence, so a buried one cannot be
+      // erased along with the worktree. Nothing else in this drive records it,
+      // so without this the scout is permanently uncleanable and both cleanup
+      // refusals below are unreachable behind that one.
+      execFileSync(cliBinary, [
+        "--socket", operatorSocket, "task", "attest", scoutTask,
+        "--finding", "no_open_decisions",
+        "--operation", "attest-mechanics-scout",
+        "--format", "json",
+      ], { encoding: "utf8" });
+      console.log("SCOUT_DECISION_INVENTORY_ATTESTED");
+
       const holdDb = new Database(goDatabase);
       holdDb.prepare(`INSERT INTO task_cleanup_holds(task_handle, hold_id, reason, opened_at)
         VALUES (?, 'hold-e0-review', 'review remains open', ?)`).run(scoutTask, new Date().toISOString());
