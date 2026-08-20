@@ -58,6 +58,7 @@ export interface CapabilityServiceGroupActivateCommand {
   readonly operationId: string;
   readonly serviceInstanceId: string;
   readonly managedRunGroupId: string;
+  readonly registrationNonce: string;
   readonly members: readonly CapabilityServiceGroupMemberActivation[];
 }
 
@@ -81,6 +82,7 @@ export interface CapabilityServiceGroupAbandonCommand {
   readonly operationId: string;
   readonly serviceInstanceId: string;
   readonly managedRunGroupId: string;
+  readonly registrationNonce: string;
   readonly reason: "activation_rejected" | "owner_cancelled" | "registration_expired" | "service_unavailable";
   readonly disposition: "reap_safe" | "preserve";
 }

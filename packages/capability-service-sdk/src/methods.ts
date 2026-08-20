@@ -345,6 +345,7 @@ export const CapabilityGroupActivateRequestSchema = z.strictObject({
   params: z.strictObject({
     operationId: OperationIdSchema,
     managedRunGroupId: ManagedRunGroupIdSchema,
+    registrationNonce: RegistrationNonceSchema,
     members: z.array(GroupMemberActivationSchema).min(1).max(CAPABILITY_SERVICE_LIMITS.maxGroupMembers),
   }),
 });
@@ -366,6 +367,7 @@ export const CapabilityGroupAbandonRequestSchema = z.strictObject({
   params: z.strictObject({
     operationId: OperationIdSchema,
     managedRunGroupId: ManagedRunGroupIdSchema,
+    registrationNonce: RegistrationNonceSchema,
     reason: z.enum([
       "activation_rejected",
       "owner_cancelled",

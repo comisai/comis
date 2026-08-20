@@ -37,6 +37,31 @@
     {
       "expectation": "accept",
       "payload": {
+        "expiresAt": "2030-01-01T00:00:00.000Z",
+        "members": [
+          {
+            "expiresAt": "2030-01-01T00:00:00.000Z",
+            "externalRunRef": "external-run_group-member-a",
+            "registrationNonce": "registration-nonce_group-member-a",
+            "requestedAttachment": {
+              "kind": "unix_socket",
+              "sourcePath": "/approved/runtime/group-task-a/service.sock"
+            },
+            "requestedWorkspace": {
+              "rootHint": "/approved/workspaces/group-task-a"
+            },
+            "state": "prepared"
+          }
+        ],
+        "registrationNonce": "group-registration-nonce_a",
+        "state": "prepared"
+      },
+      "schemaExpectation": "accept",
+      "target": "mcp-managed-run-group-result"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
         "id": "operation_handshake",
         "jsonrpc": "2.0",
         "method": "capabilityServices.handshake",

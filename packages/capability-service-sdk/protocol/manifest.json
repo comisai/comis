@@ -22,7 +22,7 @@
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "1f9331f48936efbc47b02679f28dd7b4e25e8e5054607d30b7fe120bdccccf64"
+      "sha256": "99cdd83aab8bc4b02935c76fc307dd37bb4595e2e94aa6656264e6ac02b0e049"
     },
     {
       "path": "fixtures/version-mismatch.json",
@@ -62,7 +62,7 @@
     },
     {
       "path": "schemas/groupAbandon.request.schema.json",
-      "sha256": "f742d0743507ec491510925c31761340ba6b47365e757a64e7c918555e6b92a4"
+      "sha256": "65411733d6c86e62239b91842eaf9c7c9a851036d3ad4d8abc911870fda7765c"
     },
     {
       "path": "schemas/groupAbandon.response.schema.json",
@@ -70,7 +70,7 @@
     },
     {
       "path": "schemas/groupActivate.request.schema.json",
-      "sha256": "b5bb381a141fc71212292746b61e94ff5de911a79bf6a5342f6f7bf07d163e1c"
+      "sha256": "db226c6d11d520ff017ceb2c5a59f7c4cf6b35055aeb079d0c754dc62fe270bd"
     },
     {
       "path": "schemas/groupActivate.response.schema.json",
@@ -111,6 +111,10 @@
     {
       "path": "schemas/mcp-call-context.schema.json",
       "sha256": "8a50e1da6cf1ddbfd77c3f23e9517390aa2f6e081438a2e4d11d583b8dc2351c"
+    },
+    {
+      "path": "schemas/mcp-managed-run-group-result.schema.json",
+      "sha256": "3165cac3c3fcc3f41c7c6402f805498ea855191d2fa3fd0559986dc0c10cb12c"
     },
     {
       "path": "schemas/mcp-managed-run-result.schema.json",
@@ -161,7 +165,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "22625ed8237b2e9277688aa42c33b28a068cdc5ae4090b59f25e139152875204",
+  "bundleDigest": "93470b8b70f8c11fcc87940c5c5b686b0eb958f9453d09ec05b4b91049acab86",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",

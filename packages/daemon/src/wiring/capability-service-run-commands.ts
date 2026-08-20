@@ -117,6 +117,7 @@ export async function sendGroupActivate(
     params: {
       operationId: command.operationId,
       managedRunGroupId: command.managedRunGroupId,
+      registrationNonce: command.registrationNonce,
       members: command.members.map((member) => ({
         managedRunId: member.managedRunId,
         externalRunRef: member.externalRunRef,
@@ -149,6 +150,7 @@ export async function sendGroupAbandon(
     params: {
       operationId: command.operationId,
       managedRunGroupId: command.managedRunGroupId,
+      registrationNonce: command.registrationNonce,
       reason: command.reason,
       disposition: command.disposition,
     },

@@ -31,6 +31,7 @@ export const ProtocolFixtureTargetSchema = z.enum([
   "report-response",
   "terminal-event-response",
   "mcp-call-context",
+  "mcp-managed-run-group-result",
   "mcp-managed-run-result",
 ]);
 
@@ -117,6 +118,29 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
             kind: "unix_socket",
             sourcePath: "/approved/runtime/task-a/service.sock",
           },
+        },
+      },
+      {
+        target: "mcp-managed-run-group-result",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: {
+          state: "prepared",
+          registrationNonce: "group-registration-nonce_a",
+          expiresAt: "2030-01-01T00:00:00.000Z",
+          members: [
+            {
+              state: "prepared",
+              externalRunRef: "external-run_group-member-a",
+              registrationNonce: "registration-nonce_group-member-a",
+              expiresAt: "2030-01-01T00:00:00.000Z",
+              requestedWorkspace: { rootHint: "/approved/workspaces/group-task-a" },
+              requestedAttachment: {
+                kind: "unix_socket",
+                sourcePath: "/approved/runtime/group-task-a/service.sock",
+              },
+            },
+          ],
         },
       },
       {

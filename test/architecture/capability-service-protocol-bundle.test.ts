@@ -388,6 +388,7 @@ describe("capability-service protocol bundle contract", () => {
     expect(artifactPaths).toContain("schemas/error-response.schema.json");
     expect(artifactPaths).toContain("schemas/external-run-ref.schema.json");
     expect(artifactPaths).toContain("schemas/mcp-call-context.schema.json");
+    expect(artifactPaths).toContain("schemas/mcp-managed-run-group-result.schema.json");
     expect(artifactPaths).toContain("schemas/mcp-managed-run-result.schema.json");
     expect(artifactPaths).toContain("schemas/service-instance-id.schema.json");
   });
@@ -397,6 +398,9 @@ describe("capability-service protocol bundle contract", () => {
       steps: Array<{ target: string; payload: Record<string, unknown> }>;
     }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
     const prepared = valid.steps.find((step) => step.target === "mcp-managed-run-result");
+    const preparedGroup = valid.steps.find(
+      (step) => step.target === "mcp-managed-run-group-result",
+    );
     const context = valid.steps.find((step) => step.target === "mcp-call-context");
     const report = valid.steps.find(
       (step) => step.target === "request" && step.payload["method"] === "managedRuns.report",
@@ -411,6 +415,21 @@ describe("capability-service protocol bundle contract", () => {
       "requestedWorkspace",
       "state",
     ]);
+    expect(preparedGroup?.payload).toMatchObject({
+      state: "prepared",
+      registrationNonce: expect.any(String),
+      members: [
+        {
+          externalRunRef: expect.any(String),
+          registrationNonce: expect.any(String),
+          requestedAttachment: {
+            kind: "unix_socket",
+            sourcePath: expect.stringMatching(/^\//u),
+          },
+          requestedWorkspace: { rootHint: expect.stringMatching(/^\//u) },
+        },
+      ],
+    });
     expect(Object.keys(context?.payload ?? {}).sort()).toEqual([
       "agentId",
       "conversationRef",
@@ -460,6 +479,7 @@ describe("capability-service protocol bundle contract", () => {
       "handshake-response": "schemas/handshake.response.schema.json",
       "health-response": "schemas/health.response.schema.json",
       "mcp-call-context": "schemas/mcp-call-context.schema.json",
+      "mcp-managed-run-group-result": "schemas/mcp-managed-run-group-result.schema.json",
       "mcp-managed-run-result": "schemas/mcp-managed-run-result.schema.json",
       "put-evidence-response": "schemas/putEvidence.response.schema.json",
       "receive-attention-response": "schemas/receiveAttentionResponse.response.schema.json",
