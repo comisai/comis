@@ -115,6 +115,21 @@ describe("Log Validator", () => {
       expect(report.clean).toBe(true);
     });
 
+    it("filters the expected Docker restart-policy warning from containerized test daemons", () => {
+      const entries: LogEntry[] = [
+        makeEntry({
+          level: "warn",
+          msg: "Running in Docker — restart policy required for config-reload operations",
+          module: "daemon",
+        }),
+      ];
+
+      const report = validateLogs(entries);
+
+      expect(report.clean).toBe(true);
+      expect(report.issues).toHaveLength(0);
+    });
+
     it("categorizes by subsystem correctly", () => {
       const entries: LogEntry[] = [
         makeEntry({ level: "error", msg: "Auth failed", module: "auth" }),
