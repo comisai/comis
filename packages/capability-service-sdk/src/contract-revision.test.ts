@@ -10,6 +10,7 @@ import {
   CapabilityHeartbeatRequestSchema,
   CapabilityHeartbeatResponseSchema,
   CapabilityServiceRequestSchema,
+  McpManagedRunGroupResultSchema,
   McpManagedRunResultSchema,
 } from "./index.js";
 
@@ -84,6 +85,25 @@ describe("capability-service execution-attachment contract", () => {
         },
       }).success).toBe(true);
     }
+  });
+
+  it("accepts a bounded prepared group with one private group nonce", () => {
+    expect(McpManagedRunGroupResultSchema.safeParse({
+      state: "prepared",
+      registrationNonce: "group-registration-nonce_aaaa",
+      expiresAt: "2030-01-01T00:00:00.000Z",
+      members: [{
+        state: "prepared",
+        externalRunRef: "external-run_a",
+        registrationNonce: "registration-nonce_a",
+        expiresAt: "2030-01-01T00:00:00.000Z",
+        requestedWorkspace: { rootHint: "/approved/workspaces/task-a" },
+        requestedAttachment: {
+          kind: "unix_socket",
+          sourcePath: "/approved/runtime/task-a/service.sock",
+        },
+      }],
+    }).success).toBe(true);
   });
 
   it("requires both activation attachment handles or neither", () => {
