@@ -171,9 +171,8 @@ export class ConversationDriver {
 
     // Create isolated temp data dir — never pollutes ~/.comis
     this._dataDir = mkdtempSync(join(tmpdir(), "comis-live-loop-"));
-    // Reuse the developer's cached local models (hard link, zero extra disk)
-    // so the daemon skips the ~139 MB embedding download. No-op on CI / fresh
-    // machines. See test/support/model-cache.ts for the rationale.
+    // Reuse the developer's cached local models so the daemon skips the large
+    // embedding download. See model-cache.ts for link/copy behavior.
     seedModelCache(this._dataDir);
 
     // Store prior COMIS_DATA_DIR for restore in close()

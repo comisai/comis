@@ -10,8 +10,8 @@ import {
   assertLogContains,
   assertLogSequence,
   filterLogs,
-  type LogEntry,
 } from "../support/log-verifier.js";
+import { validateLogs } from "../support/log-validator.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -128,73 +128,31 @@ describe("Daemon Lifecycle", () => {
     it("all startup logs are debug or info level", () => {
       const entries = logCapture.getEntries();
 
-      // Filter out expected warnings (TTS/image service warnings when no API key)
-      const unexpectedErrors = entries.filter((entry: LogEntry) => {
-        const level = entry.level;
-        if (level !== "error" && level !== "warn") return false;
-        // Exclude expected TTS/image warnings
-        const msg = entry.msg ?? "";
-        if (msg.includes("TTS") || msg.includes("tts")) return false;
-        if (msg.includes("image analysis") || msg.includes("Image analysis")) return false;
-        if (msg.includes("API key")) return false;
-        // Exclude expected dev-mode gateway TLS warning
-        if (msg.includes("TLS not configured") || msg.includes("dev mode")) return false;
-        // Exclude canary secret warning (test envs don't set COMIS_CANARY_SECRET)
-        if (msg.includes("Canary secret not configured")) return false;
-        // Exclude gateway TLS production warning (test configs use plain HTTP)
-        if (msg.includes("Gateway running without TLS")) return false;
-        // Exclude capability-override drift warning (PROVIDER_OVERRIDES contains
-        // entries for providers not in pi-ai's live catalog — informational signal)
-        if (msg.includes("Capability override has no matching pi-ai provider")) return false;
-        // Exclude bwrap smoke-test-failed warning (CI runners install bubblewrap
-        // but cannot run it because unprivileged user-namespace cloning is
-        // restricted at the kernel level — informational on test runners)
-        if (msg.includes("bwrap installed but smoke test failed")) return false;
-        // Same userns-restriction root cause as the bwrap warning above: when
-        // the namespace preflight fails, the jail cannot be built and agent
-        // autonomy downshifts to the 'assistant' profile. INVARIANT: fires only
-        // where userns is unavailable (macOS, or a userns-restricted CI host);
-        // on a userns-enabled host this WARN must not appear, and the functional
-        // Linux jail tests are the regression guard. Exact message match.
-        if (msg.includes("Agent autonomy downshifted to the 'assistant' profile: the namespace preflight failed")) return false;
-        // Exclude OAuth hot-reload notice (oauth.storage defaults to
-        // "encrypted"; the daemon emits a one-shot operator notice that
-        // hot-reload is unsupported on encrypted SQLite WAL — fires
-        // whenever the test config omits the oauth block).
-        if (msg.includes("OAuth hot-reload disabled in encrypted-store mode")) return false;
-        // Exclude the cost-bearing memory features notice (memory.costFeatures.enabled
-        // defaults to true — opt-out posture; the daemon emits one startup
-        // WARN naming the budget impact). Intentional operator notice, not a regression.
-        if (msg.includes("cost-bearing memory features are ACTIVE")) return false;
-        // Exclude the correction-detector default-deferred notice
-        // (learningOutcome.correction.enabled defaults to true — opt-out; when no
-        // cheap-model API key resolves the daemon emits one startup WARN that the
-        // correction signal is a no-op until a key is set). The "API key" text lives
-        // in the `hint` field (not `msg`), so the "API key" filter above misses it.
-        if (msg.includes("correction detector unavailable")) return false;
-        // Exclude the outcome-judge default-deferred notice (the sibling of the
-        // correction detector above — learningOutcome.judge.enabled defaults to
-        // true; with no cheap-model API key the daemon emits one startup WARN that
-        // the conversational-turn fallback is a no-op until a key is set).
-        if (msg.includes("outcome judge unavailable")) return false;
-        // Exclude the benign control-plane guard that fires non-deterministically
-        // when a heartbeat/continuation injection races channel-adapter registration
-        // at startup (channel-manager.injectMessage warns + skips when no adapter is
-        // registered for the channel type — "continuation skipped", not data loss).
-        if (msg.includes("Cannot inject message: adapter not found")) return false;
-        // Exclude the last-known-good snapshot skip: this config carries a LITERAL
-        // `gateway.tokens[].secret` (the harness needs the value to authenticate), and the
-        // daemon correctly refuses to copy a config holding a live bearer token into
-        // config.last-good.yaml — a restore would re-introduce the credential. One startup
-        // WARN names the skip so the operator knows the snapshot is stale. A production
-        // config using a `${VAR}` token reference snapshots cleanly and never emits it.
-        if (msg.includes("LKG snapshot skipped: source config contains a plaintext secret")) return false;
-        return true;
+      const unexpectedErrors = validateLogs(entries).issues.filter((issue) => {
+        // These feature adapters are optional in the lifecycle fixture, so a
+        // missing API key is an expected fixture constraint rather than a
+        // daemon-startup regression. Shared daemon warnings are classified by
+        // log-validator.ts so every integration log oracle uses one policy.
+        const msg = issue.message;
+        return !(
+          msg.includes("TTS") ||
+          msg.includes("tts") ||
+          msg.includes("image analysis") ||
+          msg.includes("Image analysis") ||
+          msg.includes("API key")
+        );
       });
 
       expect(
         unexpectedErrors,
-        `Unexpected error/warn logs during startup: ${JSON.stringify(unexpectedErrors.map((e: LogEntry) => ({ level: e.level, msg: e.msg })), null, 2)}`,
+        `Unexpected error/warn logs during startup: ${JSON.stringify(
+          unexpectedErrors.map((issue) => ({
+            level: issue.severity,
+            msg: issue.message,
+          })),
+          null,
+          2,
+        )}`,
       ).toHaveLength(0);
     });
   });
