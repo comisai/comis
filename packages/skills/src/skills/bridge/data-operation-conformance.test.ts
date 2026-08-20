@@ -21,10 +21,35 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { ok } from "@comis/shared";
-import type { ComisLogger } from "@comis/core";
+import { runWithContext } from "@comis/core";
+import type { ApprovalGate, ComisLogger, RequestContext } from "@comis/core";
+import type {
+  McpClientManager,
+  McpToolDefinition,
+} from "../integrations/mcp-client/index.js";
+import {
+  mcpToolsToAgentTools,
+  type McpPrivateMetadataBridge,
+} from "./mcp-tool-bridge.js";
 import { createManagedMcpPrivateMetadataBridge } from "./managed-mcp-private-metadata.js";
 
 const NOW_MS = 1_800_000_000_000;
+const POLICY_HASH = "d".repeat(64);
+
+const TURN_SCOPE = {
+  conversation: {
+    tenantId: "tenant_a",
+    agentId: "agent_a",
+    partition: { kind: "agent" as const },
+  },
+  principal: { principalId: "user_a" },
+  endpoint: {
+    channelType: "telegram",
+    channelInstanceId: "channel-instance_a",
+    conversationId: "conversation_a",
+    conversationKind: "direct" as const,
+  },
+};
 
 function makeLogger(): ComisLogger {
   return {
@@ -50,14 +75,14 @@ function dataOperationView(scopes: readonly string[] = ["health", "report", "att
       managedToolBindings: [
         {
           toolName: "inspect_records",
-          behavior: "prepare_run" as const,
+          behavior: "read_only" as const,
           actionClassification: "read" as const,
           invocationSideEffects: [] as readonly string[],
         },
         {
           toolName: "apply_change",
-          behavior: "prepare_run" as const,
-          actionClassification: "mutate" as const,
+          behavior: "read_only" as const,
+          actionClassification: "destructive" as const,
           invocationSideEffects: ["external_write"] as readonly string[],
         },
       ],
@@ -76,6 +101,91 @@ function dataOperationView(scopes: readonly string[] = ["health", "report", "att
       activeScopes: scopes,
     }],
   };
+}
+
+function makeContext(): RequestContext {
+  return {
+    tenantId: "tenant_a",
+    userId: "user_a",
+    sessionKey: "tenant_a:user_a:telegram:conversation_a",
+    agentId: "agent_a",
+    rootRunId: "root-run_a",
+    turnScope: TURN_SCOPE,
+    traceId: "10000000-0000-4000-8000-000000000001",
+    startedAt: NOW_MS,
+    trustLevel: "user",
+    channelType: "telegram",
+    deliveryOrigin: Object.freeze({
+      channelType: "telegram",
+      channelId: "conversation_a",
+      userId: "user_a",
+      tenantId: "tenant_a",
+    }),
+    workspacePolicyHash: POLICY_HASH,
+    responseLocalePolicy: {
+      locale: "en",
+      source: "request",
+      enforceLocale: true,
+    },
+  };
+}
+
+function makeTool(name: "inspect_records" | "apply_change"): McpToolDefinition {
+  return {
+    name,
+    qualifiedName: `mcp:data-fixture/${name}`,
+    description: name === "inspect_records"
+      ? "Inspect synthetic records"
+      : "Apply one synthetic external change",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordId: { type: "string" },
+        attentionResponse: { type: "string" },
+      },
+      required: ["recordId"],
+    },
+  };
+}
+
+function makeCallTool(): McpClientManager["callTool"] {
+  return vi.fn(async () => ok({
+    content: [{ type: "text" as const, text: "synthetic operation complete" }],
+    isError: false,
+  }));
+}
+
+function makeApprovalGate(approved: boolean): ApprovalGate {
+  return {
+    requestApproval: vi.fn(async () => ({
+      requestId: "10000000-0000-4000-8000-000000000002",
+      approved,
+      approvedBy: approved ? "user_a" : "system:test-denial",
+      reason: approved ? "Approved for conformance" : "Denied for conformance",
+      resolvedAt: NOW_MS,
+    })),
+  } as unknown as ApprovalGate;
+}
+
+function makeAgentTools(
+  callTool: McpClientManager["callTool"],
+  privateMetadataBridge: McpPrivateMetadataBridge,
+  approvalGate: ApprovalGate | undefined,
+) {
+  // Reflect keeps the RED test executable before the approval dependency is
+  // added to the production signature. The pre-change bridge ignores the
+  // ninth argument and therefore reaches the mutation without approval.
+  return Reflect.apply(mcpToolsToAgentTools, undefined, [
+    [makeTool("inspect_records"), makeTool("apply_change")],
+    callTool,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    privateMetadataBridge,
+    approvalGate,
+  ]) as ReturnType<typeof mcpToolsToAgentTools>;
 }
 
 function dataOperationDeps(overrides: Record<string, unknown> = {}) {
@@ -115,7 +225,7 @@ describe("data-operation fixture conformance", () => {
     // changed the world, and an agent would learn to route around the gate.
     expect(inspection?.invocationSideEffects).toEqual([]);
 
-    expect(mutation?.actionClassification).toBe("mutate");
+    expect(mutation?.actionClassification).toBe("destructive");
     expect(mutation?.invocationSideEffects).toEqual(["external_write"]);
   });
 
@@ -132,6 +242,73 @@ describe("data-operation fixture conformance", () => {
     expect(withAttention).toEqual(withoutAttention);
     expect(withAttention?.invocationSideEffects).toEqual(["external_write"]);
     expect(withAttention?.actionClassification).not.toBe("read");
+  });
+
+  it("executes inspection without approval but gates the external mutation", async () => {
+    const callTool = makeCallTool();
+    const approvalGate = makeApprovalGate(false);
+    const privateMetadataBridge = createManagedMcpPrivateMetadataBridge(dataOperationDeps());
+    const [inspection, mutation] = makeAgentTools(
+      callTool,
+      privateMetadataBridge,
+      approvalGate,
+    );
+
+    await runWithContext(makeContext(), () =>
+      inspection!.execute("tool-call_inspect", { recordId: "record_a" }),
+    );
+    expect(approvalGate.requestApproval).not.toHaveBeenCalled();
+    expect(callTool).toHaveBeenCalledTimes(1);
+
+    await expect(runWithContext(makeContext(), () =>
+      mutation!.execute("tool-call_mutate", {
+        recordId: "record_a",
+        attentionResponse: "yes",
+      }),
+    )).rejects.toThrow(/not approved|denied/iu);
+
+    expect(approvalGate.requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: "mcp__data-fixture--apply_change",
+      action: "mcp.data-fixture.apply_change",
+      params: {
+        serverName: "data-fixture",
+        toolName: "apply_change",
+      },
+      fingerprintParams: {
+        serverName: "data-fixture",
+        toolName: "apply_change",
+        arguments: {
+          recordId: "record_a",
+          attentionResponse: "yes",
+        },
+      },
+    }));
+    expect(callTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails a destructive data operation closed when approvals are unavailable", async () => {
+    const callTool = makeCallTool();
+    const privateMetadataBridge = createManagedMcpPrivateMetadataBridge(dataOperationDeps());
+    const [, mutation] = makeAgentTools(callTool, privateMetadataBridge, undefined);
+
+    await expect(runWithContext(makeContext(), () =>
+      mutation!.execute("tool-call_without_gate", { recordId: "record_a" }),
+    )).rejects.toThrow(/approval gate is unavailable/iu);
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("reaches the data service only after explicit approval", async () => {
+    const callTool = makeCallTool();
+    const approvalGate = makeApprovalGate(true);
+    const privateMetadataBridge = createManagedMcpPrivateMetadataBridge(dataOperationDeps());
+    const [, mutation] = makeAgentTools(callTool, privateMetadataBridge, approvalGate);
+
+    await expect(runWithContext(makeContext(), () =>
+      mutation!.execute("tool-call_approved", { recordId: "record_a" }),
+    )).resolves.toBeDefined();
+
+    expect(approvalGate.requestApproval).toHaveBeenCalledTimes(1);
+    expect(callTool).toHaveBeenCalledTimes(1);
   });
 
   it("fails an unresolvable binding closed to destructive rather than open to read", () => {

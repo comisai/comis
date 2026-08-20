@@ -908,7 +908,7 @@ describe("setupTools", () => {
     expect(mockMcpToolsToAgentTools).toHaveBeenCalled();
   });
 
-  it("wires one frozen capability view and final tool ceiling into managed MCP calls", async () => {
+  it("wires the frozen capability view, tool ceiling, and approval gate into managed MCP calls", async () => {
     const activeView = {
       viewHash: "c".repeat(64),
       definitions: [],
@@ -933,10 +933,12 @@ describe("setupTools", () => {
       getConnection: vi.fn(),
       getAllConnections: vi.fn(),
     };
+    const approvalGate = { requestApproval: vi.fn() };
     mockAssembleToolPipeline.mockImplementationOnce(async (input) => input.platformTools());
     const deps = createMinimalDeps({
       mcpClientManager: mcpClientManager as any,
       capabilityServices,
+      approvalGate: approvalGate as any,
       clock: { now: () => 1_800_000_000_000 },
     } as unknown as Partial<ToolsDeps>);
     const setupTools = await getSetupTools();
@@ -956,6 +958,7 @@ describe("setupTools", () => {
     );
     const mcpBridgeCall = mockMcpToolsToAgentTools.mock.calls.at(-1)!;
     expect(mcpBridgeCall[7]).toBe(mockManagedMcpBridge);
+    expect(mcpBridgeCall[8]).toBe(approvalGate);
   });
 
   // -------------------------------------------------------------------------
