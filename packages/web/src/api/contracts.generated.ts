@@ -1696,7 +1696,8 @@ export const CONTRACTS = {
                   "workspace_lease",
                   "terminal_events",
                   "execution_attachment",
-                  "managed_run_group"
+                  "managed_run_group",
+                  "approval_receipt"
                 ]
               }
             },
@@ -1831,7 +1832,8 @@ export const CONTRACTS = {
                     "workspace_lease",
                     "terminal_events",
                     "execution_attachment",
-                    "managed_run_group"
+                    "managed_run_group",
+                    "approval_receipt"
                   ]
                 }
               },

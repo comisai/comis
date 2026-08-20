@@ -6,6 +6,7 @@ import type Database from "better-sqlite3";
 import { CAPABILITY_SERVICE_BUNDLE_DIGEST } from "@comis/capability-service-sdk";
 import {
   buildCapabilityServiceActivationPlan,
+  createManagedApprovalGrantRegistry,
   resolveEffectiveCapabilityServiceLimits,
   safePath,
   type CapabilityServiceActivationPlan,
@@ -17,6 +18,7 @@ import {
   type ExecutionAttachmentPort,
   type ManagedRunContentPort,
   type ManagedRunStorePort,
+  type ManagedApprovalGrantRegistry,
   type PlannedCapabilityServiceDefinition,
   type SecretManager,
   type TimerPort,
@@ -155,6 +157,7 @@ export interface CapabilityServicePlatform {
   readonly plan: CapabilityServiceActivationPlan;
   readonly runtime: CapabilityServiceRuntime;
   readonly store: ManagedRunStorePort;
+  readonly approvalGrants: ManagedApprovalGrantRegistry;
   readonly contentStore: ManagedRunContentPort;
   readonly workspaceLeases: WorkspaceLeasePort;
   readonly attachments: ExecutionAttachmentPort;
@@ -347,6 +350,7 @@ export async function setupCapabilityServices(
     return err(stores.value.contentStore.error);
   }
   const store = stores.value.store;
+  const approvalGrants = createManagedApprovalGrantRegistry({ clock: deps.clock });
   const groupStore = stores.value.groupStore;
   const workspaceLeases = stores.value.workspaceLeases;
   const attachments = stores.value.attachments;
@@ -436,6 +440,8 @@ export async function setupCapabilityServices(
     livenessBridge,
     releaseCoordinator,
     groupStore,
+    runStore: store,
+    approvalGrants,
     requestDeadlineMs: deps.config.requestDeadlineMs,
     clock: deps.clock,
     timers: deps.timers,
@@ -594,6 +600,7 @@ export async function setupCapabilityServices(
     plan: plan.value,
     runtime,
     store,
+    approvalGrants,
     contentStore,
     workspaceLeases,
     attachments,
@@ -612,6 +619,7 @@ export async function setupCapabilityServices(
     shutdown: async () => {
       if (stopped) return ok(undefined);
       stopped = true;
+      approvalGrants.clear();
       const result = await runtime.shutdown();
       return result.ok
         ? ok(undefined)

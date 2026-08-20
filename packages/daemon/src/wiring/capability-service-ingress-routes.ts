@@ -2,6 +2,7 @@
 import type { z } from "zod";
 import {
   CapabilityGroupGetHostRollupRequestSchema,
+  CapabilityConsumeApprovalRequestSchema,
   CapabilityHeartbeatRequestSchema,
   CapabilityPutEvidenceRequestSchema,
   CapabilityReceiveAttentionResponseRequestSchema,
@@ -13,6 +14,8 @@ import type {
   ClockPort,
   ComisLogger,
   ManagedRunGroupStorePort,
+  ManagedApprovalGrantRegistry,
+  ManagedRunStorePort,
   TimerPort,
 } from "@comis/core";
 import { err, fromPromise, tryCatch, type Result } from "@comis/shared";
@@ -29,6 +32,8 @@ export interface CapabilityServiceIngressRouteDeps {
   readonly livenessBridge: ManagedRunLivenessBridge;
   readonly releaseCoordinator: ManagedRunReleaseCoordinator;
   readonly groupStore: Pick<ManagedRunGroupStorePort, "getGroup">;
+  readonly runStore: Pick<ManagedRunStorePort, "get">;
+  readonly approvalGrants: ManagedApprovalGrantRegistry;
   readonly requestDeadlineMs: number;
   readonly clock: ClockPort;
   readonly timers: TimerPort;
@@ -198,6 +203,50 @@ export interface CapabilityServiceIngressRouteResult {
   readonly response: unknown;
   readonly errorKind?: CapabilityServiceErrorKind;
   readonly settlement: Promise<void>;
+}
+
+/** Consume one host-bound destructive-operation approval for an owned run. */
+export async function routeManagedApprovalGrantIngress(
+  serviceInstanceId: string,
+  request: z.infer<typeof CapabilityConsumeApprovalRequestSchema>,
+  deps: CapabilityServiceIngressRouteDeps,
+): Promise<CapabilityServiceIngressRouteResult> {
+  const startedAtMs = deps.clock.now();
+  deps.logger.debug({
+    serviceInstanceId,
+    managedRunId: request.params.managedRunId,
+    step: "capability-service-approval-receipt-ingress",
+  }, "Routing capability-service approval receipt consumption");
+  const invoked = tryCatch(() => deps.runStore.get(
+    { kind: "service", serviceInstanceId },
+    request.params.managedRunId,
+  ));
+  const deadline = invoked.ok
+    ? await awaitResultDeadline(invoked.value, deps.timers, deps.requestDeadlineMs)
+    : { result: err(invoked.error), settlement: Promise.resolve() };
+  const settled = deadline.result;
+  let result: CapabilityServiceIngressRouteResult;
+  if (settled === undefined) {
+    result = responseError("deadline_exceeded", deadline.settlement);
+  } else if (!settled.ok) {
+    result = responseError("internal_error", deadline.settlement);
+  } else if (settled.value === undefined) {
+    result = responseError("precondition_failed", deadline.settlement);
+  } else {
+    const consumed = deps.approvalGrants.consume({
+      serviceInstanceId,
+      ...request.params,
+    });
+    result = consumed.ok
+      ? { response: consumed.value, settlement: deadline.settlement }
+      : responseError("precondition_failed", deadline.settlement);
+  }
+  deps.logger.info({
+    serviceInstanceId,
+    managedRunId: request.params.managedRunId,
+    durationMs: Math.max(0, deps.clock.now() - startedAtMs),
+  }, "Capability-service approval receipt request completed");
+  return result;
 }
 
 async function awaitResultDeadline<T>(

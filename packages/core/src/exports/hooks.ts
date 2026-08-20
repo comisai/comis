@@ -19,8 +19,16 @@ export type {
 } from "../hooks/index.js";
 
 // Approval gate (pending request lifecycle with timeout auto-deny)
-export { createApprovalGate } from "../approval/index.js";
-export type { ApprovalGate, ApprovalGateDeps } from "../approval/index.js";
+export {
+  createApprovalGate,
+  createManagedApprovalGrantRegistry,
+} from "../approval/index.js";
+export type {
+  ApprovalGate,
+  ApprovalGateDeps,
+  ManagedApprovalGrantBindingInput,
+  ManagedApprovalGrantRegistry,
+} from "../approval/index.js";
 
 // Tool metadata registry
 export {

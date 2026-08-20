@@ -6,6 +6,7 @@
       "expectation": "accept",
       "payload": {
         "agentId": "agent_a",
+        "approvalRequestId": "10000000-0000-4000-8000-000000000001",
         "conversationRef": "conversation_a",
         "operationId": "operation_prepare",
         "rootRunId": "root-run_a",
@@ -77,7 +78,8 @@
             "workspace_lease",
             "terminal_events",
             "execution_attachment",
-            "managed_run_group"
+            "managed_run_group",
+            "approval_receipt"
           ],
           "serviceInstanceId": "service-instance_a"
         }
@@ -99,7 +101,8 @@
             "workspace_lease",
             "terminal_events",
             "execution_attachment",
-            "managed_run_group"
+            "managed_run_group",
+            "approval_receipt"
           ],
           "bundleDigest": "__BUNDLE_DIGEST__",
           "limits": {
@@ -118,6 +121,42 @@
       },
       "schemaExpectation": "accept",
       "target": "handshake-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "consume-approval_a",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.consumeApproval",
+        "params": {
+          "approvalRequestId": "10000000-0000-4000-8000-000000000001",
+          "managedRunId": "managed-run_a",
+          "mcpOperationId": "operation_prepare",
+          "operationId": "consume-approval_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "consume-approval_a",
+        "jsonrpc": "2.0",
+        "result": {
+          "approvalRequestId": "10000000-0000-4000-8000-000000000001",
+          "approvedAtMs": 1800000000000,
+          "consumedAtMs": 1800000000100,
+          "expiresAtMs": 1800000900000,
+          "managedRunId": "managed-run_a",
+          "mcpOperationId": "operation_prepare",
+          "operationFingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+          "resolvingPrincipalId": "user_a",
+          "state": "consumed"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "consume-approval-response"
     },
     {
       "expectation": "accept",

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
 import {
+  ApprovalRequestIdSchema,
   ExternalRunRefSchema,
   ManagedRunIdSchema,
   OperationIdSchema,
@@ -18,6 +19,7 @@ export const McpCapabilityCallContextSchema = z.strictObject({
   workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/),
   rootRunId: ManagedRunIdSchema,
   traceId: z.string().min(1).max(128),
+  approvalRequestId: ApprovalRequestIdSchema.optional(),
   managedRunGroupId: ManagedRunIdSchema.optional(),
   managedRunId: ManagedRunIdSchema.optional(),
 });

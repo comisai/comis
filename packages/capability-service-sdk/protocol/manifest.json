@@ -10,7 +10,7 @@
     },
     {
       "path": "fixtures/digest-mismatch.json",
-      "sha256": "9427ee26324bf46944c80b7a81373e7f49f69aa3fd4a628482f78087edea55f5"
+      "sha256": "f6b39663e222594f4a976dc7607c3a5076902b277ed587c74b384d4bb0a418d2"
     },
     {
       "path": "fixtures/invalid.json",
@@ -18,15 +18,15 @@
     },
     {
       "path": "fixtures/unknown-field.json",
-      "sha256": "83fd7f319a2e1ae68670f459ff997387af95bf7e0fd2de4960936e528b5e68f9"
+      "sha256": "06eacdfe1645a28362d9e9175d33eca520b2523d2918cda34eaa889b307ef129"
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "83924e5a9a5872c41fd617d1cbc81f9085f4fa6aaf73e0e3cd32529ec2d6e411"
+      "sha256": "0ffdd93cd1dcb71fe8bd231697875843b6ad85ceb29077c29160b87b901a7b88"
     },
     {
       "path": "fixtures/version-mismatch.json",
-      "sha256": "ba559e861d44011c2cad4a6f330db78b8d2373b21dc060f12f6707916764c38b"
+      "sha256": "541abec8bf811a8e4c1641e84ffbe2ac9062cc3cbeface1120667e433641ec50"
     },
     {
       "path": "schemas/abandon.request.schema.json",
@@ -51,6 +51,14 @@
     {
       "path": "schemas/cancel.response.schema.json",
       "sha256": "48fb5349a94df39e9774ba1fde1322e674f5a13a5b4690b68e1608dc4644ad6b"
+    },
+    {
+      "path": "schemas/consumeApproval.request.schema.json",
+      "sha256": "a0b3dfd5d14ea6833508d4a6dd4acf5177d7c4237fa1e02d1bce2b6a3c2b4d1f"
+    },
+    {
+      "path": "schemas/consumeApproval.response.schema.json",
+      "sha256": "0b74d5cf5cbfd4f95f051a899b548009691246d6f7d63215edee0e30eab5d6fd"
     },
     {
       "path": "schemas/error-response.schema.json",
@@ -86,11 +94,11 @@
     },
     {
       "path": "schemas/handshake.request.schema.json",
-      "sha256": "5d8231fd3c9beda8bedb2600f98e8f5d42f9658287ad2324d73b029b536b4d21"
+      "sha256": "d6a09973cd4409546938e00e3dc457a99623e3c47373e32025cf759ce92d7416"
     },
     {
       "path": "schemas/handshake.response.schema.json",
-      "sha256": "ac2d0de3ccd43c4f00fdfaeea6c79c8edb7154b5d57ecadfa5a09f9b1d9c91c9"
+      "sha256": "2f916b6b4acc5915e00b5f00edc0a51b4d5b7dfe7474c9522c45a0bbb34c833a"
     },
     {
       "path": "schemas/health.request.schema.json",
@@ -110,7 +118,7 @@
     },
     {
       "path": "schemas/mcp-call-context.schema.json",
-      "sha256": "8a50e1da6cf1ddbfd77c3f23e9517390aa2f6e081438a2e4d11d583b8dc2351c"
+      "sha256": "29182a032f4c166b8cfab1a94c4759d5c4659cf44c9a6f3d12572e6fd4d70df3"
     },
     {
       "path": "schemas/mcp-managed-run-group-result.schema.json",
@@ -165,7 +173,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "b42ab7a7662f3b02ede4d12d55e1ae7d50855990897fc4d24164b3a35f3c711d",
+  "bundleDigest": "9dcf3e3120a42f671c615a60e1ff149401da7b5380543d37b71efca4eec5548f",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -418,6 +426,26 @@
       "direction": "service-to-comis",
       "maxRequestBytes": 1441792,
       "maxResponseBytes": 65536,
+      "method": "managedRuns.consumeApproval",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/consumeApproval.request.schema.json",
+      "requiredServiceScope": "approval_receipt",
+      "responseSchema": "schemas/consumeApproval.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "owning-service-instance-and-managed-run-only",
+        "approval-request-and-mcp-operation-must-match-host-binding",
+        "grant-must-be-unexpired-and-approved",
+        "identical-consume-replay-returns-the-original-receipt",
+        "altered-or-second-consume-is-rejected"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
       "method": "managedRuns.heartbeat",
       "operationIdRequired": true,
       "requestSchema": "schemas/heartbeat.request.schema.json",
@@ -539,6 +567,7 @@
     "managedRuns.abandon",
     "managedRuns.activate",
     "managedRuns.cancel",
+    "managedRuns.consumeApproval",
     "managedRuns.heartbeat",
     "managedRuns.putEvidence",
     "managedRuns.receiveAttentionResponse",

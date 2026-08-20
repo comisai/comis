@@ -7,13 +7,14 @@ import { dirname, join } from "node:path";
 import { setImmediate as waitForTurn } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createManagedApprovalGrantRegistry,
   type ComisLogger,
   type PlannedCapabilityServiceDefinition,
   type PlannedCapabilityServiceInstance,
 } from "@comis/core";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
-import { err, ok } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
 import type { ManagedAttentionResponseBridge } from "./managed-attention-response-bridge.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
@@ -42,6 +43,7 @@ function makeLogger(): ComisLogger {
 function makeDefinition(
   release = false,
   attentionResponse = false,
+  approvalReceipt = false,
 ): PlannedCapabilityServiceDefinition {
   return {
     contributionId: "example.service",
@@ -55,6 +57,7 @@ function makeDefinition(
       "evidence",
       "report",
       ...(release ? ["workspace_lease" as const] : []),
+      ...(approvalReceipt ? ["approval_receipt" as const] : []),
     ],
     evidencePolicies: [{
       kind: "delivery_reference",
@@ -122,7 +125,12 @@ async function connectPeer(socketPath: string): Promise<LinePeer> {
   };
 }
 
-function handshake(bearer: string, release = false, attentionResponse = false): unknown {
+function handshake(
+  bearer: string,
+  release = false,
+  attentionResponse = false,
+  approvalReceipt = false,
+): unknown {
   return {
     bearer,
     jsonrpc: "2.0",
@@ -139,6 +147,7 @@ function handshake(bearer: string, release = false, attentionResponse = false): 
         "evidence",
         "report",
         ...(release ? ["workspace_lease"] : []),
+        ...(approvalReceipt ? ["approval_receipt"] : []),
       ],
     },
   };
@@ -168,6 +177,7 @@ describe("daemon-owned capability-service Unix host", () => {
     readonly releaseCoordinator?: ManagedRunReleaseCoordinator;
     readonly attentionResponseBridge?: ManagedAttentionResponseBridge;
     readonly livenessBridge?: ManagedRunLivenessBridge;
+    readonly approvalReceipt?: boolean;
     readonly onAuthenticatedSession?: () => Promise<Result<void, Error>>;
   }
 
@@ -180,6 +190,7 @@ describe("daemon-owned capability-service Unix host", () => {
       releaseCoordinator,
       attentionResponseBridge,
       livenessBridge,
+      approvalReceipt = false,
       onAuthenticatedSession = vi.fn(async () => ok(undefined)),
     } = overrides;
     const clock = createFakeClock(NOW_MS);
@@ -188,6 +199,7 @@ describe("daemon-owned capability-service Unix host", () => {
       definitions: [makeDefinition(
         releaseCoordinator !== undefined,
         attentionResponseBridge !== undefined,
+        approvalReceipt,
       )],
       instances: [makeInstance(socketPath)],
       credentials: new Map([["service-instance_a", () => BEARER]]),
@@ -249,6 +261,9 @@ describe("daemon-owned capability-service Unix host", () => {
       releaseCoordinator: releaseCoordinator ?? {
         release: vi.fn(async () => ok({ kind: "rejected" as const, reasonCode: "state_mismatch" as const })),
       },
+      groupStore: { getGroup: vi.fn(async () => ok(undefined)) },
+      runStore: { get: vi.fn(async () => ok({} as never)) },
+      approvalGrants: createManagedApprovalGrantRegistry({ clock }),
       requestDeadlineMs: 5_000,
       clock,
       timers,
@@ -258,9 +273,68 @@ describe("daemon-owned capability-service Unix host", () => {
     return {
       clock,
       timers,
+      approvalGrants: hostDeps.approvalGrants,
       created: createUnixCapabilityServiceHostRuntime(hostDeps),
     };
   }
+
+  it("consumes an exact approval grant only through the scoped authenticated session", async () => {
+    const root = makeRoot();
+    const host = makeHost(root.socketPath, { approvalReceipt: true });
+    const bound = host.approvalGrants.bind({
+      approval: {
+        requestId: "10000000-0000-4000-8000-000000000001",
+        approved: true,
+        approvedBy: "user_a",
+        resolvedAt: NOW_MS,
+      },
+      toolName: "mcp__example-service--merge",
+      action: "mcp.example-service.merge",
+      fingerprintParams: { arguments: { expectedHead: "a".repeat(40) } },
+      owner: {
+        kind: "owner",
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        principalId: "user_a",
+        conversationRef: "conversation-ref_a" as never,
+      },
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-run_a",
+      mcpOperationId: "mcp-operation_a",
+    });
+    expect(bound.ok).toBe(true);
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const peer = await connectPeer(root.socketPath);
+    peers.push(peer);
+    peer.send(handshake(BEARER, false, false, true));
+    await peer.next();
+    if (!(await started).ok) return;
+
+    peer.send({
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "consume-operation_a",
+      method: "managedRuns.consumeApproval",
+      params: {
+        operationId: "consume-operation_a",
+        managedRunId: "managed-run_a",
+        approvalRequestId: "10000000-0000-4000-8000-000000000001",
+        mcpOperationId: "mcp-operation_a",
+      },
+    });
+
+    expect(await peer.next()).toMatchObject({
+      id: "consume-operation_a",
+      result: {
+        state: "consumed",
+        resolvingPrincipalId: "user_a",
+      },
+    });
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
 
   it("delivers owner-private attention responses to the authenticated service", async () => {
     const root = makeRoot();

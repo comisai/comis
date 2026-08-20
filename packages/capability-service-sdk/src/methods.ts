@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { CAPABILITY_SERVICE_LIMITS, CAPABILITY_SERVICE_PROTOCOL_ID } from "./constants.js";
 import {
+  ApprovalRequestIdSchema,
   AttachmentTargetNameSchema,
   BundleDigestSchema,
   CapabilityServiceLimitsSchema,
@@ -50,7 +51,7 @@ const HandshakeParamsSchema = z.strictObject({
   bundleDigest: BundleDigestSchema,
   operationId: OperationIdSchema,
   serviceInstanceId: ServiceInstanceIdSchema,
-  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(8),
+  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(9),
 });
 
 export const CapabilityHandshakeRequestSchema = z.strictObject({
@@ -67,7 +68,7 @@ export const CapabilityHandshakeResponseSchema = z.strictObject({
     protocolId: ProtocolIdSchema,
     bundleDigest: BundleDigestSchema,
     serviceInstanceId: ServiceInstanceIdSchema,
-    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(8),
+    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(9),
     limits: CapabilityServiceLimitsSchema,
   }),
 });
@@ -160,6 +161,35 @@ export const CapabilityCancelResponseSchema = z.strictObject({
     managedRunId: ManagedRunIdSchema,
     state: z.enum(["cancelling", "cancelled", "already_terminal"]),
     acknowledgedAtMs: TimestampMsSchema,
+  }),
+});
+
+/** Atomically consumes the exact approval grant bound to this managed MCP call. */
+export const CapabilityConsumeApprovalRequestSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  method: z.literal("managedRuns.consumeApproval"),
+  params: z.strictObject({
+    operationId: OperationIdSchema,
+    managedRunId: ManagedRunIdSchema,
+    approvalRequestId: ApprovalRequestIdSchema,
+    mcpOperationId: OperationIdSchema,
+  }),
+});
+
+export const CapabilityConsumeApprovalResponseSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  result: z.strictObject({
+    state: z.enum(["consumed", "identical_replay"]),
+    approvalRequestId: ApprovalRequestIdSchema,
+    managedRunId: ManagedRunIdSchema,
+    mcpOperationId: OperationIdSchema,
+    resolvingPrincipalId: z.string().min(1).max(256),
+    operationFingerprint: ContentDigestSchema,
+    approvedAtMs: TimestampMsSchema,
+    expiresAtMs: TimestampMsSchema,
+    consumedAtMs: TimestampMsSchema,
   }),
 });
 
@@ -526,6 +556,7 @@ export const CapabilityServiceRequestSchema = z.discriminatedUnion("method", [
   CapabilityAbandonRequestSchema,
   CapabilityActivateRequestSchema,
   CapabilityCancelRequestSchema,
+  CapabilityConsumeApprovalRequestSchema,
   CapabilityHandshakeRequestSchema,
   CapabilityHeartbeatRequestSchema,
   CapabilityHealthRequestSchema,
@@ -542,6 +573,8 @@ export type CapabilityHandshakeRequest = z.infer<typeof CapabilityHandshakeReque
 export type CapabilityActivateRequest = z.infer<typeof CapabilityActivateRequestSchema>;
 export type CapabilityAbandonRequest = z.infer<typeof CapabilityAbandonRequestSchema>;
 export type CapabilityCancelRequest = z.infer<typeof CapabilityCancelRequestSchema>;
+export type CapabilityConsumeApprovalRequest = z.infer<typeof CapabilityConsumeApprovalRequestSchema>;
+export type CapabilityConsumeApprovalResponse = z.infer<typeof CapabilityConsumeApprovalResponseSchema>;
 export type CapabilityReportRequest = z.infer<typeof CapabilityReportRequestSchema>;
 export type CapabilityTerminalEventRequest = z.infer<typeof CapabilityTerminalEventRequestSchema>;
 export type CapabilityHealthRequest = z.infer<typeof CapabilityHealthRequestSchema>;

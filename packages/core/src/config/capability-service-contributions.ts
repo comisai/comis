@@ -40,6 +40,9 @@ export const CapabilityServiceScopeSchema = z.enum([
   // does not appear in the root allowlist table below: a group is a projection
   // of member runs, so it needs no filesystem authority of its own.
   "managed_run_group",
+  // A service may consume only the exact destructive-operation approval the
+  // host bound to one of its already-owned managed runs.
+  "approval_receipt",
 ]);
 
 export const CapabilityServiceEvidencePolicySchema = z.strictObject({
@@ -96,7 +99,7 @@ export const CapabilityServiceDefinitionSchema = z.strictObject({
   protocolId: z.literal(CAPABILITY_SERVICE_CONTROL_PROTOCOL),
   mcpServerName: z.string().regex(OPAQUE_ID_PATTERN),
   managedToolBindings: z.array(ManagedToolBindingSchema).max(128),
-  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(7),
+  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(9),
   evidencePolicies: z.array(CapabilityServiceEvidencePolicySchema).max(32),
   dependsOn: z.array(z.string().refine(isContributionId)).max(32),
   limits: CapabilityServiceLimitsSchema.optional(),

@@ -2329,6 +2329,7 @@ evidence, or attention never inherits workspace, terminal, or grouping authority
 | `terminal_events` | Receiving content-free terminal transitions |
 | `execution_attachment` | A run-scoped attachment beneath an approved runtime root |
 | `managed_run_group` | Reading the host roll-up for a group of runs it already owns |
+| `approval_receipt` | Consuming a one-shot receipt for the exact destructive managed MCP operation Comis approved |
 
 `managed_run_group` needs no filesystem roots. A group is a projection of member
 runs the instance can already read, so it adds a view, never new reach. The
@@ -2336,6 +2337,16 @@ roll-up reports member state counts and how many members await a human; it holds
 no component names, dependency edges, integration order, or acceptance rules,
 because Comis is not a workflow engine and a group that carried those would make
 it one.
+
+`approval_receipt` grants no general approval lookup and cannot create or
+resolve an approval. After a destructive managed MCP tool is approved, Comis
+binds a short-lived grant to the service instance, owned managed run, MCP
+operation, exact tool arguments, and resolving principal. The authenticated
+service may consume that grant once with `managedRuns.consumeApproval`; an
+identical operation replay returns the original receipt, while an altered,
+expired, cross-run, or cross-instance request is refused. Grants live only in
+daemon memory for 15 minutes. A restart before consumption requires a new
+approval and never restores authority from private MCP metadata.
 
 Linked contributions also declare the managed MCP tool bindings enforced by the
 host. Run commands resolve their model-visible handle only within the active

@@ -104,6 +104,8 @@ function makeServer(directoryPath: string, requestDeadlineMs = 2_000) {
       "workspace_lease",
       "terminal_events",
       "execution_attachment",
+      "managed_run_group",
+      "approval_receipt",
     ],
     attachmentPreparationRefs: ["external-run_a"],
     bundleDigest: BUNDLE_DIGEST,
@@ -117,7 +119,7 @@ function makeServer(directoryPath: string, requestDeadlineMs = 2_000) {
 }
 
 describe("standalone capability-service protocol fixture server", () => {
-  it("binds a 0600 Unix socket and strictly dispatches all nine pinned methods", async () => {
+  it("binds a 0600 Unix socket and strictly dispatches the closed pinned methods", async () => {
     const directory = temporaryDirectory();
     const server = makeServer(directory);
     const started = await server.start();
@@ -154,6 +156,8 @@ describe("standalone capability-service protocol fixture server", () => {
             "workspace_lease",
             "terminal_events",
             "execution_attachment",
+            "managed_run_group",
+            "approval_receipt",
           ],
           limits: CAPABILITY_SERVICE_LIMITS,
         },

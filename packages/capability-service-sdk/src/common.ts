@@ -40,6 +40,7 @@ export const TerminalSessionIdSchema = z.string().min(1).max(256).regex(OPAQUE_R
 
 /** Stable idempotency identity for a single protocol operation. */
 export const OperationIdSchema = z.string().min(1).max(128).regex(OPAQUE_REF_PATTERN);
+export const ApprovalRequestIdSchema = z.uuid();
 export const ServiceReportIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 export const EvidenceRefSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 export const EvidenceKindSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
@@ -60,6 +61,7 @@ export const CapabilityServiceScopeSchema = z.enum([
   "terminal_events",
   "execution_attachment",
   "managed_run_group",
+  "approval_receipt",
 ]);
 
 export const CapabilityServiceLimitsSchema = z.strictObject({
@@ -112,6 +114,7 @@ export type ExecutionAttachmentId = z.infer<typeof ExecutionAttachmentIdSchema>;
 export type AttachmentTargetName = z.infer<typeof AttachmentTargetNameSchema>;
 export type TerminalSessionId = z.infer<typeof TerminalSessionIdSchema>;
 export type OperationId = z.infer<typeof OperationIdSchema>;
+export type ApprovalRequestId = z.infer<typeof ApprovalRequestIdSchema>;
 export type ServiceReportId = z.infer<typeof ServiceReportIdSchema>;
 export type CapabilityServiceError = z.infer<typeof CapabilityServiceErrorSchema>;
 export type CapabilityServiceErrorResponse = z.infer<

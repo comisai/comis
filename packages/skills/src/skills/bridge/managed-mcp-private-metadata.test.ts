@@ -459,6 +459,106 @@ describe("managed MCP private metadata boundary", () => {
     }, "service-instance_a", "external-run_a");
   });
 
+  it("binds an exact approval grant before exposing a destructive managed operation", async () => {
+    const record = {
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationRef.value,
+      status: "active",
+    } as ManagedRunRecord;
+    const view = makeView("run_command", "destructive");
+    const bindApprovalGrant = vi.fn(() => ok(undefined));
+    const bridge = createManagedMcpPrivateMetadataBridge(makeDeps({
+      activeView: {
+        ...view,
+        definitions: view.definitions.map((definition) => ({
+          ...definition,
+          requestedScopes: [...definition.requestedScopes, "approval_receipt"],
+        })),
+        instances: view.instances.map((instance) => ({
+          ...instance,
+          activeScopes: [...instance.activeScopes, "approval_receipt"],
+        })),
+      },
+      getManagedRunByExternalRef: vi.fn(async () => ok(record)),
+      getCapturedToolIds: () => ["mcp:fixture-service/send_command"],
+      bindApprovalGrant,
+    }));
+    const call = {
+      ...makeCall("send_command", { run_handle: "external-run_a", command: "merge" }),
+      approvalGrant: {
+        resolution: {
+          requestId: "10000000-0000-4000-8000-000000000002",
+          approved: true,
+          approvedBy: "principal_a",
+          resolvedAt: NOW_MS,
+        },
+        toolName: "mcp__fixture-service--send_command",
+        action: "mcp.fixture-service.send_command",
+        fingerprintParams: {
+          serverName: "fixture-service",
+          toolName: "send_command",
+          arguments: { run_handle: "external-run_a", command: "merge" },
+        },
+      },
+    };
+
+    const request = await runWithContext(makeContext(), () => bridge.createRequestMeta(call));
+
+    expect(request.ok).toBe(true);
+    if (!request.ok) return;
+    expect(request.value?.[MCP_CAPABILITY_CALL_CONTEXT_KEY]).toMatchObject({
+      approvalRequestId: "10000000-0000-4000-8000-000000000002",
+      managedRunId: "managed-run_a",
+    });
+    expect(bindApprovalGrant).toHaveBeenCalledWith(expect.objectContaining({
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-run_a",
+      approval: expect.objectContaining({
+        requestId: "10000000-0000-4000-8000-000000000002",
+        approved: true,
+      }),
+    }));
+  });
+
+  it("rejects approval-receipt operations without an approved exact binding", async () => {
+    const record = {
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationRef.value,
+      status: "active",
+    } as ManagedRunRecord;
+    const view = makeView("run_command", "destructive");
+    const bridge = createManagedMcpPrivateMetadataBridge(makeDeps({
+      activeView: {
+        ...view,
+        definitions: view.definitions.map((definition) => ({
+          ...definition,
+          requestedScopes: [...definition.requestedScopes, "approval_receipt"],
+        })),
+        instances: view.instances.map((instance) => ({
+          ...instance,
+          activeScopes: [...instance.activeScopes, "approval_receipt"],
+        })),
+      },
+      getManagedRunByExternalRef: vi.fn(async () => ok(record)),
+      getCapturedToolIds: () => ["mcp:fixture-service/send_command"],
+      bindApprovalGrant: vi.fn(() => ok(undefined)),
+    }));
+
+    const request = await runWithContext(makeContext(), () => bridge.createRequestMeta(
+      makeCall("send_command", { run_handle: "external-run_a", command: "merge" }),
+    ));
+
+    expect(request.ok).toBe(false);
+  });
+
   it("rejects run commands for terminal managed-run records", async () => {
     const terminalRecord = {
       managedRunId: "managed-run_a",

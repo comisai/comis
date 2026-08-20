@@ -1,6 +1,6 @@
 {
-  "totalMinified": 218617,
-  "totalGzipped": 22945,
+  "totalMinified": 218655,
+  "totalGzipped": 22956,
   "budget": {
     "minified": 218800,
     "gzipped": 38912
@@ -39,8 +39,8 @@
     "browser.stop": 302,
     "browser.tabs": 500,
     "capabilities.introspect": 808,
-    "capabilityServices.get": 1756,
-    "capabilityServices.list": 1524,
+    "capabilityServices.get": 1775,
+    "capabilityServices.list": 1543,
     "channels.capabilities": 456,
     "channels.disable": 448,
     "channels.enable": 448,

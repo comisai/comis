@@ -32,6 +32,7 @@ const EXPECTED_METHODS = [
   "managedRuns.abandon",
   "managedRuns.activate",
   "managedRuns.cancel",
+  "managedRuns.consumeApproval",
   "managedRuns.heartbeat",
   "managedRuns.putEvidence",
   "managedRuns.receiveAttentionResponse",
@@ -432,6 +433,7 @@ describe("capability-service protocol bundle contract", () => {
     });
     expect(Object.keys(context?.payload ?? {}).sort()).toEqual([
       "agentId",
+      "approvalRequestId",
       "conversationRef",
       "operationId",
       "rootRunId",
@@ -497,6 +499,7 @@ describe("capability-service protocol bundle contract", () => {
       "mcp-managed-run-group-result": "schemas/mcp-managed-run-group-result.schema.json",
       "mcp-managed-run-result": "schemas/mcp-managed-run-result.schema.json",
       "put-evidence-response": "schemas/putEvidence.response.schema.json",
+      "consume-approval-response": "schemas/consumeApproval.response.schema.json",
       "receive-attention-response": "schemas/receiveAttentionResponse.response.schema.json",
       "release-response": "schemas/release.response.schema.json",
       "report-response": "schemas/report.response.schema.json",

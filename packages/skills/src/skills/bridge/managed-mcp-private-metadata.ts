@@ -10,6 +10,7 @@ import {
   type CapabilityServiceScope,
   type ComisLogger,
   type ManagedRunOwnerScope,
+  type ManagedApprovalGrantBindingInput,
   type ManagedRunPreparedGroupStart,
   type ManagedRunPreparedStart,
   type ManagedRunRecord,
@@ -118,6 +119,9 @@ export interface ManagedMcpPrivateMetadataDeps {
   readonly activatePreparedGroup: (
     input: ManagedMcpGroupActivationInput,
   ) => Promise<Result<ManagedMcpActivationOutcome, Error>>;
+  readonly bindApprovalGrant?: (
+    input: ManagedApprovalGrantBindingInput,
+  ) => Result<void, Error>;
   readonly logger: ComisLogger;
 }
 
@@ -453,6 +457,9 @@ export function createManagedMcpPrivateMetadataBridge(
       contextAuthority.value.scope,
     );
     if (!managedRunId.ok) return rejectCall(deps, input, managedRunId.error.message);
+    const approvalGrant = bound.value.binding.actionClassification === "destructive"
+      ? input.approvalGrant
+      : undefined;
     const parsedCallContext = McpCapabilityCallContextSchema.safeParse({
       operationId: operationId(input, context.traceId),
       serviceInstanceId: bound.value.serviceInstanceId,
@@ -461,10 +468,34 @@ export function createManagedMcpPrivateMetadataBridge(
       workspacePolicyHash: context.workspacePolicyHash,
       rootRunId,
       traceId: context.traceId,
+      ...(approvalGrant === undefined
+        ? {}
+        : { approvalRequestId: approvalGrant.resolution.requestId }),
       ...(managedRunId.value === undefined ? {} : { managedRunId: managedRunId.value }),
     });
     if (!parsedCallContext.success) {
       return rejectCall(deps, input, "host call context failed strict validation");
+    }
+    if (
+      bound.value.activeScopes.includes("approval_receipt")
+      && bound.value.binding.actionClassification === "destructive"
+    ) {
+      if (
+        approvalGrant === undefined
+        || managedRunId.value === undefined
+        || deps.bindApprovalGrant === undefined
+      ) return rejectCall(deps, input, "managed destructive operation lacks a consumable approval grant");
+      const boundGrant = deps.bindApprovalGrant({
+        approval: approvalGrant.resolution,
+        toolName: approvalGrant.toolName,
+        action: approvalGrant.action,
+        fingerprintParams: approvalGrant.fingerprintParams,
+        owner: contextAuthority.value.scope,
+        serviceInstanceId: bound.value.serviceInstanceId,
+        managedRunId: managedRunId.value,
+        mcpOperationId: parsedCallContext.data.operationId,
+      });
+      if (!boundGrant.ok) return rejectCall(deps, input, boundGrant.error.message);
     }
     const key = callKey(input);
     if (capturedCalls.has(key)) {

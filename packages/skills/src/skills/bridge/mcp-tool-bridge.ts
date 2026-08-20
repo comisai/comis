@@ -21,6 +21,7 @@ import {
   wrapExternalContent,
   tryGetContext,
   type ApprovalGate,
+  type ApprovalResolution,
   type WrapExternalContentOptions,
 } from "@comis/core";
 import { extractMcpServerName, type Result } from "@comis/shared";
@@ -52,6 +53,12 @@ export interface McpPrivateMetadataCall {
   readonly qualifiedName: string;
   readonly toolCallId: string;
   readonly params: Readonly<Record<string, unknown>>;
+  readonly approvalGrant?: {
+    readonly resolution: ApprovalResolution;
+    readonly toolName: string;
+    readonly action: string;
+    readonly fingerprintParams: Readonly<Record<string, unknown>>;
+  };
 }
 
 /**
@@ -419,13 +426,7 @@ export function mcpToolsToAgentTools(
         params: unknown,
         signal?: AbortSignal,
       ): Promise<AgentToolResult<{ success: boolean }>> {
-        const privateMetadataCall: McpPrivateMetadataCall = {
-          serverName,
-          toolName: tool.name,
-          qualifiedName: tool.qualifiedName,
-          toolCallId: _toolCallId,
-          params: params as Readonly<Record<string, unknown>>,
-        };
+        let approvalGrant: McpPrivateMetadataCall["approvalGrant"];
         if (managedMetadata?.actionClassification === "destructive") {
           if (approvalGate === undefined) {
             throw new Error(
@@ -454,7 +455,25 @@ export function mcpToolsToAgentTools(
               `Managed MCP destructive action was not approved: ${resolution.reason ?? "approval was denied"}`,
             );
           }
+          approvalGrant = Object.freeze({
+            resolution,
+            toolName: sanitizedName,
+            action: `mcp.${serverName}.${tool.name}`,
+            fingerprintParams: Object.freeze({
+              serverName,
+              toolName: tool.name,
+              arguments: params,
+            }),
+          });
         }
+        const privateMetadataCall: McpPrivateMetadataCall = {
+          serverName,
+          toolName: tool.name,
+          qualifiedName: tool.qualifiedName,
+          toolCallId: _toolCallId,
+          params: params as Readonly<Record<string, unknown>>,
+          ...(approvalGrant === undefined ? {} : { approvalGrant }),
+        };
         let result: Awaited<ReturnType<McpClientManager["callTool"]>>;
         try {
           const privateRequestMeta = privateMetadataBridge === undefined

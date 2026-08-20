@@ -6,6 +6,8 @@ import {
   CapabilityActivateRequestSchema,
   CapabilityCancelRequestSchema,
   CapabilityCancelResponseSchema,
+  CapabilityConsumeApprovalRequestSchema,
+  CapabilityConsumeApprovalResponseSchema,
   CapabilityHandshakeRequestSchema,
   CapabilityHeartbeatRequestSchema,
   CapabilityHeartbeatResponseSchema,
@@ -146,9 +148,57 @@ describe("capability-service execution-attachment contract", () => {
           "terminal_events",
           "execution_attachment",
           "managed_run_group",
+          "approval_receipt",
         ],
       },
     }).success).toBe(true);
+  });
+});
+
+describe("capability-service approval receipt contract", () => {
+  it("accepts an exact approval consume request and content-free receipt", () => {
+    expect(CAPABILITY_SERVICE_METHODS).toContain("managedRuns.consumeApproval");
+    expect(CapabilityConsumeApprovalRequestSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "consume-approval_a",
+      method: "managedRuns.consumeApproval",
+      params: {
+        operationId: "consume-approval_a",
+        managedRunId: "managed-run_a",
+        approvalRequestId: "10000000-0000-4000-8000-000000000001",
+        mcpOperationId: "mcp-operation_a",
+      },
+    }).success).toBe(true);
+    expect(CapabilityConsumeApprovalResponseSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "consume-approval_a",
+      result: {
+        state: "consumed",
+        approvalRequestId: "10000000-0000-4000-8000-000000000001",
+        managedRunId: "managed-run_a",
+        mcpOperationId: "mcp-operation_a",
+        resolvingPrincipalId: "user_a",
+        operationFingerprint: "f".repeat(64),
+        approvedAtMs: 1_800_000_000_000,
+        expiresAtMs: 1_800_000_900_000,
+        consumedAtMs: 1_800_000_000_100,
+      },
+    }).success).toBe(true);
+  });
+
+  it("rejects an approval consume request with an unknown receipt field", () => {
+    expect(CapabilityConsumeApprovalRequestSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "consume-approval_a",
+      method: "managedRuns.consumeApproval",
+      params: {
+        operationId: "consume-approval_a",
+        managedRunId: "managed-run_a",
+        approvalRequestId: "10000000-0000-4000-8000-000000000001",
+        mcpOperationId: "mcp-operation_a",
+        approved: true,
+      },
+    }).success).toBe(false);
   });
 });
 

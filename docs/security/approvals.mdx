@@ -26,8 +26,9 @@ The current runtime calls the approval gate from selected paths, including:
 - channel configuration;
 - pipeline execution and save;
 - the `orchestrate` capability-footprint pre-flight;
-- install-detour overrides in `exec` soft-stop mode; and
-- terminal session creation for allowlist entries with `approveOnCreate`.
+- install-detour overrides in `exec` soft-stop mode;
+- terminal session creation for allowlist entries with `approveOnCreate`; and
+- destructive managed MCP tools declared by an active capability service.
 
 Review the implementation of the exact tool path you expose. Other operations
 may use a model-facing confirmation handshake, a capability check, a trust
@@ -104,18 +105,38 @@ The approval gate maintains two short-lived caches:
 | Denial cache | `60000` ms | A repeated request after an explicit denial is denied without paging the operator again. |
 | Approval cache | `30000` ms | A repeated request after an explicit approval is approved without another prompt. Set the TTL to `0` to disable this cache. |
 
-Both cache matching and pending-request batching use `sessionKey` plus the
-action string. Parameters and target values are not part of that key.
+Both cache matching and pending-request batching bind the conversation,
+principal, tool, action, trust level, callback owner, and canonicalized exact
+parameters. Parameter values are represented by a keyed operation fingerprint
+in persisted and displayed approval state rather than written into cache keys.
 
 <Warning>
-Approving an action can therefore auto-approve the same action in the same
-session with different parameters during the approval-cache TTL. Keep the TTL
-short, or set `approvals.batchApprovalTtlMs: 0` when each target needs a
-separate operator decision.
+An approval-cache hit applies only to the same canonicalized operation. Keep
+the TTL short, or set `approvals.batchApprovalTtlMs: 0` when every retry must
+receive a separate operator decision.
 </Warning>
 
 Pending requests and unexpired approval-cache entries are serialized for a
 managed daemon restart and restored when the daemon starts again.
+
+## Capability-service approval receipts
+
+A destructive managed MCP call still pauses at the normal Comis approval gate.
+When its capability-service definition requests the narrow
+`approval_receipt` scope, the daemon additionally binds the approved decision
+to the exact service instance, managed run, MCP operation, tool arguments, and
+resolving principal. The service receives only the opaque approval request ID
+in private MCP metadata. It must use its separately authenticated control
+socket to call `managedRuns.consumeApproval` and obtain the typed receipt before
+performing the side effect.
+
+The grant expires 15 minutes after approval and is consumed once. Repeating the
+same consume operation is an idempotent replay; a different operation ID,
+service instance, run, MCP operation, approval ID, or an expired grant is
+refused. These grants are intentionally daemon-local and are cleared on
+restart. Pending approvals and approval-cache entries can be restored, but an
+unconsumed side-effect grant cannot: the operation must request approval again.
+Attention responses and private MCP metadata alone never satisfy this check.
 
 ## Classification and Approval Are Separate
 

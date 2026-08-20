@@ -97,10 +97,13 @@ describe("capability-service contribution planning", () => {
         requestedScopes: [
           "health",
           "attention_response",
+          "evidence",
           "report",
           "workspace_lease",
           "terminal_events",
           "execution_attachment",
+          "managed_run_group",
+          "approval_receipt",
         ],
       }],
     });

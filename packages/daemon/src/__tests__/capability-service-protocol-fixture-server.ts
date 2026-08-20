@@ -10,6 +10,7 @@ import {
   CAPABILITY_SERVICE_PROTOCOL_ID,
   CapabilityAbandonResponseSchema,
   CapabilityActivateResponseSchema,
+  CapabilityConsumeApprovalResponseSchema,
   CapabilityHandshakeResponseSchema,
   CapabilityHealthResponseSchema,
   CapabilityPutEvidenceResponseSchema,
@@ -128,6 +129,8 @@ function validateResponse(method: CapabilityServiceRequest["method"], response: 
       return CapabilityAbandonResponseSchema.safeParse(response).success;
     case "managedRuns.activate":
       return CapabilityActivateResponseSchema.safeParse(response).success;
+    case "managedRuns.consumeApproval":
+      return CapabilityConsumeApprovalResponseSchema.safeParse(response).success;
     case "managedRuns.putEvidence":
       return CapabilityPutEvidenceResponseSchema.safeParse(response).success;
     case "managedRuns.receiveAttentionResponse":
@@ -204,6 +207,20 @@ export function createCapabilityServiceProtocolFixtureServer(
             externalRunRef: request.params.externalRunRef,
             state: "active",
             activatedAtMs: options.clock.now(),
+          },
+        };
+      case "managedRuns.consumeApproval":
+        return {
+          jsonrpc: "2.0", id: request.id, result: {
+            state: "consumed",
+            approvalRequestId: request.params.approvalRequestId,
+            managedRunId: request.params.managedRunId,
+            mcpOperationId: request.params.mcpOperationId,
+            resolvingPrincipalId: "user_a",
+            operationFingerprint: "0".repeat(64),
+            approvedAtMs: options.clock.now(),
+            expiresAtMs: options.clock.now() + 900_000,
+            consumedAtMs: options.clock.now(),
           },
         };
       case "managedRuns.putEvidence":
@@ -363,6 +380,12 @@ export function createCapabilityServiceProtocolFixtureServer(
     if (
       parsed.data.method === "managedRuns.release"
       && !options.activeScopes.includes("workspace_lease")
+    ) {
+      return errorResponse("precondition_failed", id);
+    }
+    if (
+      parsed.data.method === "managedRuns.consumeApproval"
+      && !options.activeScopes.includes("approval_receipt")
     ) {
       return errorResponse("precondition_failed", id);
     }

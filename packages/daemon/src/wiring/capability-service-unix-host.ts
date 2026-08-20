@@ -7,6 +7,7 @@ import {
   CAPABILITY_SERVICE_LIMITS,
   CAPABILITY_SERVICE_PROTOCOL_ID,
   CapabilityHandshakeRequestSchema,
+  CapabilityConsumeApprovalRequestSchema,
   CapabilityHealthRequestSchema,
   CapabilityHeartbeatRequestSchema,
   CapabilityPutEvidenceRequestSchema,
@@ -37,6 +38,8 @@ import {
   type ClockPort,
   type ComisLogger,
   type ManagedRunGroupStorePort,
+  type ManagedApprovalGrantRegistry,
+  type ManagedRunStorePort,
   type PlannedCapabilityServiceDefinition,
   type PlannedCapabilityServiceInstance,
   type TimerHandle,
@@ -55,6 +58,7 @@ import type { ManagedRunReleaseCoordinator } from "./managed-run-release-coordin
 import {
   routeManagedAttentionResponseIngress,
   routeManagedRunEvidenceIngress,
+  routeManagedApprovalGrantIngress,
   routeManagedRunHeartbeatIngress,
   routeManagedRunGroupRollupIngress,
   routeManagedRunReleaseIngress,
@@ -128,6 +132,8 @@ export interface UnixCapabilityServiceHostRuntimeDeps {
   readonly livenessBridge: ManagedRunLivenessBridge;
   readonly releaseCoordinator: ManagedRunReleaseCoordinator;
   readonly groupStore: Pick<ManagedRunGroupStorePort, "getGroup">;
+  readonly runStore: Pick<ManagedRunStorePort, "get">;
+  readonly approvalGrants: ManagedApprovalGrantRegistry;
   readonly requestDeadlineMs: number;
   readonly clock: ClockPort;
   readonly timers: TimerPort;
@@ -607,6 +613,10 @@ function createEndpoint(
       }
       if (frame["method"] === "managedRuns.heartbeat") {
         dispatchScopedIngress("health", CapabilityHeartbeatRequestSchema, routeManagedRunHeartbeatIngress);
+        return;
+      }
+      if (frame["method"] === "managedRuns.consumeApproval") {
+        dispatchScopedIngress("approval_receipt", CapabilityConsumeApprovalRequestSchema, routeManagedApprovalGrantIngress);
         return;
       }
       if (frame["method"] === "managedRuns.release") {
