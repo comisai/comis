@@ -70,7 +70,7 @@
     },
     {
       "path": "schemas/groupActivate.request.schema.json",
-      "sha256": "5dec0fe64645051a808bdad1e44cc474d732415766f3375b4bc787f674a74ed1"
+      "sha256": "b5bb381a141fc71212292746b61e94ff5de911a79bf6a5342f6f7bf07d163e1c"
     },
     {
       "path": "schemas/groupActivate.response.schema.json",
@@ -161,7 +161,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "47bdab9ef7697a296f0b37f48b0d57c4b7f4dfbc961a99b43b4426c1a4edc64a",
+  "bundleDigest": "22625ed8237b2e9277688aa42c33b28a068cdc5ae4090b59f25e139152875204",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",

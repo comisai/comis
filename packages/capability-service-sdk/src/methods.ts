@@ -322,12 +322,21 @@ const GroupMemberOutcomeSchema = z.strictObject({
   outcome: CapabilityGroupMemberOutcomeSchema,
 });
 
-const GroupMemberActivationSchema = z.strictObject({
+const groupMemberActivationShape = {
   managedRunId: ManagedRunIdSchema,
   externalRunRef: ExternalRunRefSchema,
   registrationNonce: RegistrationNonceSchema,
   workspaceLeaseId: WorkspaceLeaseIdSchema.optional(),
-});
+};
+
+const GroupMemberActivationSchema = z.union([
+  z.strictObject({
+    ...groupMemberActivationShape,
+    executionAttachmentId: ExecutionAttachmentIdSchema,
+    attachmentTargetName: AttachmentTargetNameSchema,
+  }),
+  z.strictObject(groupMemberActivationShape),
+]);
 
 export const CapabilityGroupActivateRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),

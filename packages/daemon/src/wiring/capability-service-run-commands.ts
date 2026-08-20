@@ -122,6 +122,12 @@ export async function sendGroupActivate(
         externalRunRef: member.externalRunRef,
         registrationNonce: member.registrationNonce,
         ...(member.workspaceLeaseId === undefined ? {} : { workspaceLeaseId: member.workspaceLeaseId }),
+        ...(member.executionAttachmentId === undefined
+          ? {}
+          : { executionAttachmentId: member.executionAttachmentId }),
+        ...(member.attachmentTargetName === undefined
+          ? {}
+          : { attachmentTargetName: member.attachmentTargetName }),
       })),
     },
   }, CapabilityGroupActivateRequestSchema, CapabilityGroupActivateResponseSchema));
