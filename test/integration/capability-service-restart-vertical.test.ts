@@ -63,6 +63,12 @@ const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
         invocationSideEffects: Object.freeze(["task.prepare"]),
       },
       {
+        toolName: "prepare_initiative",
+        behavior: "prepare_run_group",
+        actionClassification: "mutate",
+        invocationSideEffects: Object.freeze(["initiative.prepare"]),
+      },
+      {
         toolName: "reconcile_task",
         behavior: "run_command",
         runHandleArgument: "taskHandle",
@@ -212,7 +218,7 @@ function makeConfig(input: {
             enabled: true,
             allow: {
               [MCP_SERVER_NAME]: {
-                tools: ["prepare_task", "list_tasks", "get_task", "explain_task"],
+                tools: ["prepare_task", "prepare_initiative", "list_tasks", "get_task", "explain_task"],
                 classification: "safe",
               },
             },
@@ -265,6 +271,7 @@ function makeConfig(input: {
           ],
           toolAllowlist: [
             "prepare_task",
+            "prepare_initiative",
             "reconcile_task",
             "handback_task",
             "cleanup_task",
@@ -297,6 +304,184 @@ function makeConfig(input: {
 }
 
 describe("restart-injected capability-service vertical join", () => {
+  it("binds one full-stack initiative through the authenticated managed-run group wire", async () => {
+    const scratch = realpathSync(mkdtempSync(join(tmpdir(), "cg-")));
+    const dataDir = join(scratch, "data");
+    const runDir = join(scratch, "run");
+    const binDir = join(scratch, "bin");
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
+    mkdirSync(binDir, { recursive: true, mode: 0o700 });
+    const canonicalDataDir = realpathSync(dataDir);
+    const serviceBinary = buildGoFixtureBinary(GO_REPOSITORY, binDir, "devcrew-service");
+    const mcpBinary = buildGoFixtureBinary(GO_REPOSITORY, binDir, "devcrew-mcp");
+    const repository = createFixtureRepository(scratch);
+    const controlSocket = join(canonicalDataDir, "control.sock");
+    const controlProxySocket = join(runDir, "control-proxy.sock");
+    const directMcpSocket = join(runDir, "direct-mcp.sock");
+    const mcpProxySocket = join(runDir, "mcp-proxy.sock");
+    const operatorSocket = join(runDir, "operator.sock");
+    const credentialFile = join(runDir, "control.credential");
+    const launcherPidLog = join(runDir, "mcp-pids.jsonl");
+    const configPath = join(scratch, "config.yaml");
+    const goDatabase = join(scratch, "go-state", "fixture.db");
+    writeFileSync(credentialFile, CONTROL_SECRET, { mode: 0o600 });
+
+    const priorControlSecret = process.env[CONTROL_SECRET_NAME];
+    const priorProviderSecret = process.env[PROVIDER_SECRET_NAME];
+    const model = new FixtureModelServer();
+    const controlProxy = new RestartControlProxy(controlProxySocket, controlSocket);
+    const localProxy = new LocalDeadlineProxy(mcpProxySocket, directMcpSocket);
+    let service: RunningFixtureService | undefined;
+    let daemon: TestDaemonHandle | undefined;
+
+    try {
+      await model.start();
+      await controlProxy.start();
+      controlProxy.releaseReports();
+      service = startFixtureService({
+        binary: serviceBinary,
+        databasePath: goDatabase,
+        operatorSocket,
+        mcpSocket: directMcpSocket,
+        serviceInstanceId: SERVICE_INSTANCE_ID,
+        repository,
+        controlSocket: controlProxySocket,
+        credentialFile,
+      });
+      await waitForUnixSocket(directMcpSocket);
+      await waitForUnixSocket(operatorSocket);
+      await localProxy.start();
+
+      const gatewayPort = await getFreePort();
+      writeFileSync(configPath, stringify(makeConfig({
+        dataDir: canonicalDataDir,
+        gatewayPort,
+        modelBaseUrl: model.baseUrl,
+        launcherPidLog,
+        mcpBinary,
+        mcpProxySocket,
+        controlSocket,
+        workspaceRoot: repository.worktreeRoot,
+        runtimeRoot: service.runtimeRoot,
+      })), { mode: 0o600 });
+      process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET;
+      process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key";
+
+      daemon = await startTestDaemon({
+        configPath,
+        gatewayPort,
+        overrides: { capabilityServiceContributions: [CONTRIBUTION] } as Record<string, unknown>,
+      });
+      const echo = registerEcho(daemon);
+      const channelManager = daemon.daemon.channelManager;
+      expect(channelManager).toBeDefined();
+      await channelManager!.injectMessage("echo", normalizedMessage(
+        "conversation-initiative",
+        "user_a",
+        `START_INITIATIVE_FIXTURE BASE_REVISION=${repository.baseRevision}`,
+      ));
+
+      try {
+        await pollUntil(() => controlProxy.records.some((record) => (
+          record.method === "managedRunGroups.activate"
+        )), 30_000, "managed-run group activation callback");
+      } catch (cause) {
+        const companionDb = new Database(goDatabase, { readonly: true });
+        try {
+          const tables = companionDb.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+          ).all();
+          const taskIntents = companionDb.prepare(
+            "SELECT operation_id, task_handle FROM task_preparation_intents ORDER BY operation_id",
+          ).all();
+          const counts = companionDb.prepare(
+            `SELECT
+              (SELECT COUNT(*) FROM initiatives) AS initiatives,
+              (SELECT COUNT(*) FROM tasks) AS tasks,
+              (SELECT COUNT(*) FROM operations) AS operations`,
+          ).get();
+          throw new Error(
+            `group activation unavailable; tables=${JSON.stringify(tables)}; intents=${JSON.stringify(taskIntents)}; counts=${JSON.stringify(counts)}; local=${JSON.stringify(localProxy.records)}; control=${JSON.stringify(controlProxy.records)}; fixtureExit=${service.process.exitCode ?? "running"}; fixtureStderr=${service.stderr().trim() || "<empty>"}`,
+            { cause },
+          );
+        } finally {
+          companionDb.close();
+        }
+      }
+      await pollUntil(() => echo.getSentMessages().some((message) => (
+        message.channelId === "conversation-initiative"
+        && message.text.includes("Initiative fixture accepted")
+      )), 30_000, "initiative fixture delivery");
+
+      const hostDb = new Database(join(canonicalDataDir, "memory.db"), { readonly: true });
+      const companionDb = new Database(goDatabase, { readonly: true });
+      try {
+        const group = hostDb.prepare(
+          "SELECT managed_run_group_id, service_instance_id, conversation_ref FROM managed_run_groups",
+        ).get() as {
+          managed_run_group_id: string;
+          service_instance_id: string;
+          conversation_ref: string;
+        };
+        const hostMembers = hostDb.prepare(
+          `SELECT managed_run_id, managed_run_group_id, workspace_lease_id
+           FROM managed_runs WHERE managed_run_group_id = ? ORDER BY managed_run_id`,
+        ).all(group.managed_run_group_id) as Array<{
+          managed_run_id: string;
+          managed_run_group_id: string;
+          workspace_lease_id: string | null;
+        }>;
+        const initiative = companionDb.prepare(
+          "SELECT managed_run_group_id, state FROM initiatives",
+        ).get() as { managed_run_group_id: string; state: string };
+        const companionMembers = companionDb.prepare(
+          `SELECT managed_run_id, workspace_lease_id
+           FROM tasks ORDER BY managed_run_id`,
+        ).all() as Array<{ managed_run_id: string; workspace_lease_id: string }>;
+
+        expect(group).toMatchObject({
+          service_instance_id: SERVICE_INSTANCE_ID,
+          conversation_ref: "conversation-initiative",
+        });
+        expect(hostMembers).toHaveLength(5);
+        expect(hostMembers.every((member) => (
+          member.managed_run_group_id === group.managed_run_group_id
+          && member.workspace_lease_id !== null
+        ))).toBe(true);
+        expect(initiative.managed_run_group_id).toBe(group.managed_run_group_id);
+        expect(initiative.state).not.toBe("preparing");
+        expect(companionMembers).toHaveLength(5);
+        expect(companionMembers.map((member) => member.managed_run_id).sort()).toEqual(
+          hostMembers.map((member) => member.managed_run_id).sort(),
+        );
+        expect(companionMembers.map((member) => member.workspace_lease_id).sort()).toEqual(
+          hostMembers.flatMap((member) => (
+            member.workspace_lease_id === null ? [] : [member.workspace_lease_id]
+          )).sort(),
+        );
+        expect(hostDb.prepare("SELECT COUNT(*) AS count FROM managed_run_group_operations").get())
+          .toEqual({ count: 1 });
+      } finally {
+        companionDb.close();
+        hostDb.close();
+      }
+
+      expect(model.emittedToolCalls.some((call) => call.name.includes("prepare_initiative"))).toBe(true);
+    } finally {
+      await stopDaemon(daemon);
+      await service?.stop();
+      await localProxy.close();
+      await controlProxy.close();
+      await model.close();
+      if (priorControlSecret === undefined) delete process.env[CONTROL_SECRET_NAME];
+      else process.env[CONTROL_SECRET_NAME] = priorControlSecret;
+      if (priorProviderSecret === undefined) delete process.env[PROVIDER_SECRET_NAME];
+      else process.env[PROVIDER_SECRET_NAME] = priorProviderSecret;
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   it("preserves exact authority and delivers one coalesced continuation after facade replacement and daemon restart", async () => {
     const scratch = realpathSync(mkdtempSync(join(tmpdir(), "cv-")));
     const dataDir = join(scratch, "data");
@@ -495,6 +680,7 @@ describe("restart-injected capability-service vertical join", () => {
           return status.status === "connected"
             && [
               "prepare_task",
+              "prepare_initiative",
               "reconcile_task",
               "handback_task",
               "cleanup_task",

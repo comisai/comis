@@ -219,7 +219,7 @@ function createServiceCandidateConfig(root: string): string {
         timeout: "1m",
         required: true,
       }],
-      forgeChecks: [],
+      forgeChecks: [{ name: "ci/unit", required: true }],
       artifactRules: [{
         kind: "regular_file",
         relativePath: "report.md",
@@ -458,6 +458,67 @@ function responseChunk(model: string, delta: Record<string, unknown>, finishReas
   })}\n\n`;
 }
 
+function initiativeFixtureArguments(allText: string): Record<string, unknown> {
+  const baseRevision = allText.match(/BASE_REVISION=([0-9a-f]{40})/u)?.[1] ?? "";
+  const contractHash = "a".repeat(64);
+  const contract = (consumesContract: boolean): Record<string, unknown> => ({
+    shape: "ship",
+    acceptanceCriteria: ["Complete the assigned full-stack initiative lane."],
+    constraints: ["Preserve sibling worktrees and the integration owner boundary."],
+    ...(consumesContract ? {
+      consumedContracts: [{
+        artifactHandle: "artifact-api-v1",
+        kind: "api_schema",
+        contentHash: contractHash,
+      }],
+    } : {}),
+    validationProfile: "go-default",
+    deliveryMode: "pull_request",
+    workerProfileId: "fixture-worker",
+  });
+  const component = (
+    componentHandle: string,
+    taskRef: string,
+    consumesContract: boolean,
+  ): Record<string, unknown> => ({
+    componentHandle,
+    repositoryId: "fixture-repository",
+    responsibilityRef: `responsibility-${componentHandle}`,
+    tasks: [{ taskRef, contract: contract(consumesContract) }],
+  });
+  return {
+    titleRef: "full-stack-initiative-fixture",
+    baseRevisionSet: [{ repositoryId: "fixture-repository", revision: baseRevision }],
+    components: [
+      component("component-contract", "contract-ref", false),
+      component("component-backend", "backend-ref", true),
+      component("component-frontend", "frontend-ref", true),
+      component("component-integration", "integration-ref", false),
+      component("component-validation", "validation-ref", false),
+    ],
+    edges: [
+      {
+        fromTaskRef: "contract-ref",
+        toTaskRef: "backend-ref",
+        kind: "consumes_artifact",
+        requiredArtifactKind: "api_schema",
+      },
+      {
+        fromTaskRef: "contract-ref",
+        toTaskRef: "frontend-ref",
+        kind: "consumes_artifact",
+        requiredArtifactKind: "api_schema",
+      },
+      { fromTaskRef: "backend-ref", toTaskRef: "integration-ref", kind: "integrates_after" },
+      { fromTaskRef: "frontend-ref", toTaskRef: "integration-ref", kind: "integrates_after" },
+      { fromTaskRef: "integration-ref", toTaskRef: "validation-ref", kind: "blocks_start" },
+    ],
+    contractArtifacts: ["artifact-api-v1"],
+    integrationPolicyId: "integration-default",
+    integrationOwnerTask: "integration-ref",
+  };
+}
+
 /** Deterministic OpenAI-compatible stream that chooses only the real MCP tools exposed to it. */
 export class FixtureModelServer {
   readonly requests: ModelRequestRecord[] = [];
@@ -539,6 +600,16 @@ export class FixtureModelServer {
         response.end("continuation fixture did not choose an outcome");
         return;
       }
+    } else if (allText.includes("START_INITIATIVE_FIXTURE") && last?.role === "tool") {
+      text = "Initiative fixture accepted.";
+    } else if (allText.includes("START_INITIATIVE_FIXTURE")) {
+      const name = toolNames.find((candidate) => candidate.includes("prepare_initiative"));
+      if (name === undefined) {
+        response.statusCode = 500;
+        response.end("prepare initiative fixture tool is unavailable");
+        return;
+      }
+      toolCall = { name, arguments: initiativeFixtureArguments(allText) };
     } else if (allText.includes("START_MANAGED_FIXTURE") && last?.role === "tool") {
       text = "Managed fixture accepted.";
     } else if (allText.includes("START_MANAGED_FIXTURE")) {
