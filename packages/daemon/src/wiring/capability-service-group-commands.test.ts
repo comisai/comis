@@ -38,6 +38,8 @@ describe("managed-run group control commands", () => {
           externalRunRef: "external-run_b",
           registrationNonce: "registration-nonce_bbbb",
           workspaceLeaseId: "workspace-lease_b",
+          executionAttachmentId: "execution-attachment_b",
+          attachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
         },
       ],
     }, sendControl);
@@ -59,6 +61,8 @@ describe("managed-run group control commands", () => {
         externalRunRef: "external-run_b",
         registrationNonce: "registration-nonce_bbbb",
         workspaceLeaseId: "workspace-lease_b",
+        executionAttachmentId: "execution-attachment_b",
+        attachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
       },
     ]);
   });
