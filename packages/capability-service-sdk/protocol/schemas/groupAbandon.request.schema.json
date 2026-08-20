@@ -1,0 +1,68 @@
+{
+  "$id": "https://schemas.comis.ai/capability-service/groupAbandon.request.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+      "type": "string"
+    },
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "method": {
+      "const": "managedRunGroups.abandon",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "properties": {
+        "disposition": {
+          "enum": [
+            "reap_safe",
+            "preserve"
+          ],
+          "type": "string"
+        },
+        "managedRunGroupId": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        },
+        "operationId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "activation_rejected",
+            "owner_cancelled",
+            "registration_expired",
+            "service_unavailable"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "managedRunGroupId",
+        "reason",
+        "disposition"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "type": "object"
+}

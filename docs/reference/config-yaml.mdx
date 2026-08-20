@@ -2315,6 +2315,28 @@ absolute, beneath the daemon's canonical owner-only data directory, and at most
 Workspace and runtime roots must be unique, normalized absolute paths narrower
 than a filesystem root.
 
+A linked contribution declares the scopes its instances may request. Each scope
+grants one narrow authority and nothing else, so a service that needs records,
+evidence, or attention never inherits workspace, terminal, or grouping authority:
+
+| Scope | Grants |
+|-------|--------|
+| `health` | Bounded health handshake, diagnostic codes, and run liveness |
+| `report` | Appending bounded reports to a run the instance owns |
+| `evidence` | Storing typed immutable evidence |
+| `attention_response` | Collecting the human response to its own attention report |
+| `workspace_lease` | Holding and releasing an exclusive workspace directory |
+| `terminal_events` | Receiving content-free terminal transitions |
+| `execution_attachment` | A run-scoped attachment beneath an approved runtime root |
+| `managed_run_group` | Reading the host roll-up for a group of runs it already owns |
+
+`managed_run_group` needs no filesystem roots. A group is a projection of member
+runs the instance can already read, so it adds a view, never new reach. The
+roll-up reports member state counts and how many members await a human; it holds
+no component names, dependency edges, integration order, or acceptance rules,
+because Comis is not a workflow engine and a group that carried those would make
+it one.
+
 Linked contributions also declare the managed MCP tool bindings enforced by the
 host. Run commands resolve their model-visible handle only within the active
 owner scope. Read and mutate commands are unavailable after a managed run

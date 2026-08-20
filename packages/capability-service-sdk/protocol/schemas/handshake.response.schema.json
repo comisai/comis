@@ -25,11 +25,12 @@
               "report",
               "workspace_lease",
               "terminal_events",
-              "execution_attachment"
+              "execution_attachment",
+              "managed_run_group"
             ],
             "type": "string"
           },
-          "maxItems": 7,
+          "maxItems": 8,
           "minItems": 1,
           "type": "array"
         },
@@ -42,6 +43,10 @@
           "properties": {
             "maxEvidenceBytes": {
               "const": 1048576,
+              "type": "number"
+            },
+            "maxGroupMembers": {
+              "const": 16,
               "type": "number"
             },
             "maxInFlightRequests": {
@@ -71,6 +76,7 @@
           },
           "required": [
             "maxEvidenceBytes",
+            "maxGroupMembers",
             "maxInFlightRequests",
             "maxLineBytes",
             "maxReportBytes",

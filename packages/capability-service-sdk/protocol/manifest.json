@@ -22,7 +22,7 @@
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "3123f51e0464065bde0adc53fa535538a0f9593d898d316668b434a60f63f8f1"
+      "sha256": "1f9331f48936efbc47b02679f28dd7b4e25e8e5054607d30b7fe120bdccccf64"
     },
     {
       "path": "fixtures/version-mismatch.json",
@@ -61,12 +61,36 @@
       "sha256": "6ce7c2e98c72c234146c75606a1d2d02f2616d2bc71f03bac9098d055038e201"
     },
     {
+      "path": "schemas/groupAbandon.request.schema.json",
+      "sha256": "f742d0743507ec491510925c31761340ba6b47365e757a64e7c918555e6b92a4"
+    },
+    {
+      "path": "schemas/groupAbandon.response.schema.json",
+      "sha256": "3c03fde3774b7cc5b9226b5bb8208d2d2ec7823c5bee432bd128fb70cb555a87"
+    },
+    {
+      "path": "schemas/groupActivate.request.schema.json",
+      "sha256": "5dec0fe64645051a808bdad1e44cc474d732415766f3375b4bc787f674a74ed1"
+    },
+    {
+      "path": "schemas/groupActivate.response.schema.json",
+      "sha256": "4422378fd160161bb35b24b6de7dd2453007612d13e3afc7d61e118c54dc03f5"
+    },
+    {
+      "path": "schemas/groupGetHostRollup.request.schema.json",
+      "sha256": "b8263f842897b20436fe696454af26805aee7d2f11a7e32e42bb29236d5221c6"
+    },
+    {
+      "path": "schemas/groupGetHostRollup.response.schema.json",
+      "sha256": "776e551013c77e3ce528000975b88227f7792b8cddce3ec1a70edcdf24117493"
+    },
+    {
       "path": "schemas/handshake.request.schema.json",
-      "sha256": "488998331c6d4996c8f4213dab1f2f01f3857f39cf6d181cf3787d4d5abaef4a"
+      "sha256": "5d8231fd3c9beda8bedb2600f98e8f5d42f9658287ad2324d73b029b536b4d21"
     },
     {
       "path": "schemas/handshake.response.schema.json",
-      "sha256": "af23e33fa0a91065f20a66874fdb34828199a1556db93c305e13a5aa84a6975b"
+      "sha256": "ac2d0de3ccd43c4f00fdfaeea6c79c8edb7154b5d57ecadfa5a09f9b1d9c91c9"
     },
     {
       "path": "schemas/health.request.schema.json",
@@ -137,7 +161,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33",
+  "bundleDigest": "47bdab9ef7697a296f0b37f48b0d57c4b7f4dfbc961a99b43b4426c1a4edc64a",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -223,6 +247,7 @@
   },
   "limits": {
     "maxEvidenceBytes": 1048576,
+    "maxGroupMembers": 16,
     "maxInFlightRequests": 32,
     "maxLineBytes": 1441792,
     "maxReportBytes": 16384,
@@ -266,6 +291,63 @@
       "semanticInvariants": [
         "exact-protocol-identifier",
         "exact-bundle-digest"
+      ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRunGroups.abandon",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/groupAbandon.request.schema.json",
+      "requiredServiceScope": "managed_run_group",
+      "responseSchema": "schemas/groupAbandon.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "response-names-every-member-exactly-once",
+        "partial-reap-reports-per-member-outcomes-not-one-group-result"
+      ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRunGroups.activate",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/groupActivate.request.schema.json",
+      "requiredServiceScope": "managed_run_group",
+      "responseSchema": "schemas/groupActivate.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "response-names-every-member-exactly-once",
+        "partial-activation-reports-per-member-outcomes-not-one-group-result",
+        "members-share-one-host-scope"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "read",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRunGroups.getHostRollup",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/groupGetHostRollup.request.schema.json",
+      "requiredServiceScope": "managed_run_group",
+      "responseSchema": "schemas/groupGetHostRollup.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "owning-service-instance-only",
+        "counts-are-derived-from-member-run-facts",
+        "roll-up-carries-no-domain-workflow-vocabulary"
       ]
     },
     {
@@ -446,6 +528,9 @@
   "methods": [
     "capabilityServices.handshake",
     "capabilityServices.health",
+    "managedRunGroups.abandon",
+    "managedRunGroups.activate",
+    "managedRunGroups.getHostRollup",
     "managedRuns.abandon",
     "managedRuns.activate",
     "managedRuns.cancel",

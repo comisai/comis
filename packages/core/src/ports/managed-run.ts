@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { ConversationRef } from "../domain/conversation-scope.js";
+import type { ManagedRunGroupRecord } from "../domain/managed-run-group.js";
 import type {
   ManagedRunRecord,
   ManagedRunStatus,
@@ -421,6 +422,50 @@ export interface ManagedRunRevokeInput {
 }
 
 /** Content-free durable state and report-index boundary. */
+/**
+ * One grouped preparation. The host mints the group and its members together;
+ * the service never asserts membership after the fact.
+ */
+export interface ManagedRunGroupPrepareInput {
+  readonly operationId: string;
+  readonly managedRunGroupId: string;
+  readonly serviceInstanceId: string;
+  readonly rootRunId: string;
+  readonly createdAtMs: number;
+  readonly members: readonly ManagedRunRecord[];
+}
+
+/**
+ * Every refusal names the member that caused it where one did, so a caller can
+ * fix the offending run instead of re-sending the whole preparation blind.
+ */
+export type ManagedRunGroupPrepareOutcome =
+  | { readonly kind: "created"; readonly record: ManagedRunGroupRecord }
+  | { readonly kind: "identical_replay"; readonly record: ManagedRunGroupRecord }
+  | { readonly kind: "replay_conflict" }
+  | { readonly kind: "membership_exceeds_ceiling" }
+  | { readonly kind: "scope_mismatch"; readonly managedRunId?: string }
+  | { readonly kind: "member_conflict"; readonly managedRunId: string };
+
+export interface ManagedRunGroupStorePort {
+  /**
+   * Persists the group and all of its members, or nothing at all. A partially
+   * written preparation would present some members as host-bound and leave the
+   * rest invisible, which is indistinguishable from a group that was never
+   * prepared — so the transaction is the contract, not an optimization.
+   */
+  prepareGroup(input: ManagedRunGroupPrepareInput): Promise<Result<ManagedRunGroupPrepareOutcome, Error>>;
+  /**
+   * Derives the roll-up from member run facts at read time. Membership lives on
+   * the member rows alone, so there is exactly one source of truth and a group
+   * can never disagree with the runs it contains.
+   */
+  getGroup(
+    scope: ManagedRunLookupScope,
+    managedRunGroupId: string,
+  ): Promise<Result<ManagedRunGroupRecord | undefined, Error>>;
+}
+
 export interface ManagedRunStorePort {
   create(record: ManagedRunRecord): Promise<Result<ManagedRunCreateOutcome, Error>>;
   get(scope: ManagedRunLookupScope, managedRunId: string): Promise<Result<ManagedRunRecord | undefined, Error>>;

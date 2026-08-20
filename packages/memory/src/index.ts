@@ -5,6 +5,7 @@
 // Schema and initialization
 export { initSchema, isVecAvailable } from "./schema.js";
 export { createSqliteManagedRunStore } from "./managed-run-store.js";
+export { createSqliteManagedRunGroupStore } from "./managed-run-group-store.js";
 export { createSqliteWorkspaceLeaseStore } from "./workspace-lease-store.js";
 export { createSqliteExecutionAttachmentStore } from "./execution-attachment-store.js";
 export { createSqliteManagedRunContentStore } from "./managed-run-content-store.js";

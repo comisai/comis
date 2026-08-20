@@ -11,6 +11,7 @@ import {
   CapabilityHeartbeatRequestSchema,
   CapabilityPutEvidenceRequestSchema,
   CapabilityReceiveAttentionResponseRequestSchema,
+  CapabilityGroupGetHostRollupRequestSchema,
   CapabilityReleaseRequestSchema,
   CapabilityReportRequestSchema,
   CapabilityServiceErrorResponseSchema,
@@ -31,6 +32,7 @@ import {
   type CapabilityServiceTerminalEventCommand,
   type ClockPort,
   type ComisLogger,
+  type ManagedRunGroupStorePort,
   type PlannedCapabilityServiceDefinition,
   type PlannedCapabilityServiceInstance,
   type TimerHandle,
@@ -50,7 +52,9 @@ import {
   routeManagedAttentionResponseIngress,
   routeManagedRunEvidenceIngress,
   routeManagedRunHeartbeatIngress,
+  routeManagedRunGroupRollupIngress,
   routeManagedRunReleaseIngress,
+  type CapabilityServiceIngressRouteResult,
   routeManagedRunReportIngress,
 } from "./capability-service-ingress-routes.js";
 import { parseStrictJson } from "./capability-service-strict-json.js";
@@ -116,6 +120,7 @@ export interface UnixCapabilityServiceHostRuntimeDeps {
   readonly attentionResponseBridge: ManagedAttentionResponseBridge;
   readonly livenessBridge: ManagedRunLivenessBridge;
   readonly releaseCoordinator: ManagedRunReleaseCoordinator;
+  readonly groupStore: Pick<ManagedRunGroupStorePort, "getGroup">;
   readonly requestDeadlineMs: number;
   readonly clock: ClockPort;
   readonly timers: TimerPort;
@@ -523,6 +528,38 @@ function createEndpoint(
         method: frame["method"],
         params: frame["params"],
       };
+      /**
+       * Every scoped inbound method runs the same three checks in the same
+       * order: the caller must be the bound, authenticated socket holding the
+       * scope; the frame must parse; and the envelope id must equal the
+       * operation id, so one operation cannot be replayed under another
+       * envelope. Six copies of that sequence were six chances for one to drift
+       * out of step with the rest.
+       */
+      function dispatchScopedIngress<T extends { id: string; params: { operationId: string } }>(
+        scope: CapabilityServiceScope,
+        schema: { safeParse: (value: unknown) => { success: true; data: T } | { success: false } },
+        route: (
+          serviceInstanceId: string,
+          parsed: T,
+          routeDeps: typeof deps,
+        ) => Promise<CapabilityServiceIngressRouteResult>,
+      ): void {
+        if (boundSocket !== socket || !configured.definition.requestedScopes.includes(scope)) {
+          rejectRequest(socket, "precondition_failed", id);
+          return;
+        }
+        const parsed = schema.safeParse(request);
+        if (!parsed.success || parsed.data.id !== parsed.data.params.operationId) {
+          rejectRequest(socket, "invalid_params", id);
+          return;
+        }
+        trackInbound(routeIngress(socket, parsed.data, () => route(
+          configured.instance.serviceInstanceId,
+          parsed.data,
+          deps,
+        )));
+      }
       if (frame["method"] === "capabilityServices.handshake") {
         const parsed = CapabilityHandshakeRequestSchema.safeParse(request);
         if (!parsed.success || parsed.data.id !== parsed.data.params.operationId) {
@@ -542,94 +579,38 @@ function createEndpoint(
         return;
       }
       if (frame["method"] === "managedRuns.report") {
-        if (boundSocket !== socket || !configured.definition.requestedScopes.includes("report")) {
-          rejectRequest(socket, "precondition_failed", id);
-          return;
-        }
-        const parsed = CapabilityReportRequestSchema.safeParse(request);
-        if (!parsed.success || parsed.data.id !== parsed.data.params.operationId) {
-          rejectRequest(socket, "invalid_params", id);
-          return;
-        }
-        trackInbound(routeIngress(socket, parsed.data, () => routeManagedRunReportIngress(
-          configured.instance.serviceInstanceId,
-          parsed.data,
-          deps,
-        )));
+        dispatchScopedIngress("report", CapabilityReportRequestSchema, routeManagedRunReportIngress);
         return;
       }
       if (frame["method"] === "managedRuns.putEvidence") {
-        if (boundSocket !== socket || !configured.definition.requestedScopes.includes("evidence")) {
-          rejectRequest(socket, "precondition_failed", id);
-          return;
-        }
-        const parsed = CapabilityPutEvidenceRequestSchema.safeParse(request);
-        if (!parsed.success || parsed.data.id !== parsed.data.params.operationId) {
-          rejectRequest(socket, "invalid_params", id);
-          return;
-        }
-        trackInbound(routeIngress(socket, parsed.data, () => routeManagedRunEvidenceIngress(
-          configured.instance.serviceInstanceId,
-          parsed.data,
-          deps,
-        )));
+        dispatchScopedIngress("evidence", CapabilityPutEvidenceRequestSchema, routeManagedRunEvidenceIngress);
         return;
       }
       if (frame["method"] === "managedRuns.receiveAttentionResponse") {
-        if (
-          boundSocket !== socket
-          || !configured.definition.requestedScopes.includes("attention_response")
-        ) {
-          rejectRequest(socket, "precondition_failed", id);
-          return;
-        }
-        const parsed = CapabilityReceiveAttentionResponseRequestSchema.safeParse(request);
-        if (!parsed.success || parsed.data.id !== parsed.data.params.operationId) {
-          rejectRequest(socket, "invalid_params", id);
-          return;
-        }
-        trackInbound(routeIngress(socket, parsed.data, () => routeManagedAttentionResponseIngress(
-          configured.instance.serviceInstanceId,
-          parsed.data,
-          deps,
-        )));
+        dispatchScopedIngress("attention_response", CapabilityReceiveAttentionResponseRequestSchema, routeManagedAttentionResponseIngress);
         return;
       }
       if (frame["method"] === "managedRuns.heartbeat") {
-        if (boundSocket !== socket || !configured.definition.requestedScopes.includes("health")) {
-          rejectRequest(socket, "precondition_failed", id);
-          return;
-        }
-        const parsed = CapabilityHeartbeatRequestSchema.safeParse(request);
-        if (!parsed.success || parsed.data.id !== parsed.data.params.operationId) {
-          rejectRequest(socket, "invalid_params", id);
-          return;
-        }
-        trackInbound(routeIngress(socket, parsed.data, () => routeManagedRunHeartbeatIngress(
-          configured.instance.serviceInstanceId,
-          parsed.data,
-          deps,
-        )));
+        dispatchScopedIngress("health", CapabilityHeartbeatRequestSchema, routeManagedRunHeartbeatIngress);
         return;
       }
       if (frame["method"] === "managedRuns.release") {
-        if (boundSocket !== socket || !configured.definition.requestedScopes.includes("workspace_lease")) {
-          rejectRequest(socket, "precondition_failed", id);
-          return;
-        }
-        const parsed = CapabilityReleaseRequestSchema.safeParse(request);
-        if (!parsed.success || parsed.data.id !== parsed.data.params.operationId) {
-          rejectRequest(socket, "invalid_params", id);
-          return;
-        }
-        trackInbound(routeIngress(socket, parsed.data, () => routeManagedRunReleaseIngress(
-          configured.instance.serviceInstanceId,
-          parsed.data,
-          deps,
-        )));
+        dispatchScopedIngress("workspace_lease", CapabilityReleaseRequestSchema, routeManagedRunReleaseIngress);
         return;
       }
-      if (frame["method"] === "managedRuns.activate" || frame["method"] === "managedRuns.abandon") {
+      if (frame["method"] === "managedRunGroups.getHostRollup") {
+        dispatchScopedIngress("managed_run_group", CapabilityGroupGetHostRollupRequestSchema, routeManagedRunGroupRollupIngress);
+        return;
+      }
+      // Host-initiated methods are refused on the inbound socket. A service that
+      // could activate or abandon its own group would be minting the very
+      // authority the two-phase flow exists to keep on the host side.
+      if (
+        frame["method"] === "managedRuns.activate"
+        || frame["method"] === "managedRuns.abandon"
+        || frame["method"] === "managedRunGroups.activate"
+        || frame["method"] === "managedRunGroups.abandon"
+      ) {
         rejectRequest(socket, "method_not_found", id);
         return;
       }

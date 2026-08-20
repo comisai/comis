@@ -11,6 +11,7 @@ import {
   EvidenceRefSchema,
   ExecutionAttachmentIdSchema,
   ExternalRunRefSchema,
+  ManagedRunGroupIdSchema,
   ManagedRunIdSchema,
   OperationIdSchema,
   RegistrationNonceSchema,
@@ -49,7 +50,7 @@ const HandshakeParamsSchema = z.strictObject({
   bundleDigest: BundleDigestSchema,
   operationId: OperationIdSchema,
   serviceInstanceId: ServiceInstanceIdSchema,
-  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(7),
+  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(8),
 });
 
 export const CapabilityHandshakeRequestSchema = z.strictObject({
@@ -66,7 +67,7 @@ export const CapabilityHandshakeResponseSchema = z.strictObject({
     protocolId: ProtocolIdSchema,
     bundleDigest: BundleDigestSchema,
     serviceInstanceId: ServiceInstanceIdSchema,
-    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(7),
+    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(8),
     limits: CapabilityServiceLimitsSchema,
   }),
 });
@@ -303,6 +304,121 @@ export const CapabilityReleaseResponseSchema = z.strictObject({
   }),
 });
 
+/**
+ * A group operation reports one outcome per member and is never advertised as
+ * atomic. `not_attempted` is the load-bearing member of this set: a caller that
+ * stopped partway must be able to say so, rather than pick between claiming a
+ * success it did not get and a rejection that never happened.
+ */
+export const CapabilityGroupMemberOutcomeSchema = z.enum([
+  "completed",
+  "rejected",
+  "unknown",
+  "not_attempted",
+]);
+
+const GroupMemberOutcomeSchema = z.strictObject({
+  managedRunId: ManagedRunIdSchema,
+  outcome: CapabilityGroupMemberOutcomeSchema,
+});
+
+const GroupMemberActivationSchema = z.strictObject({
+  managedRunId: ManagedRunIdSchema,
+  externalRunRef: ExternalRunRefSchema,
+  registrationNonce: RegistrationNonceSchema,
+  workspaceLeaseId: WorkspaceLeaseIdSchema.optional(),
+});
+
+export const CapabilityGroupActivateRequestSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  method: z.literal("managedRunGroups.activate"),
+  params: z.strictObject({
+    operationId: OperationIdSchema,
+    managedRunGroupId: ManagedRunGroupIdSchema,
+    members: z.array(GroupMemberActivationSchema).min(1).max(CAPABILITY_SERVICE_LIMITS.maxGroupMembers),
+  }),
+});
+
+export const CapabilityGroupActivateResponseSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  result: z.strictObject({
+    managedRunGroupId: ManagedRunGroupIdSchema,
+    members: z.array(GroupMemberOutcomeSchema).min(1).max(CAPABILITY_SERVICE_LIMITS.maxGroupMembers),
+    activatedAtMs: TimestampMsSchema,
+  }),
+});
+
+export const CapabilityGroupAbandonRequestSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  method: z.literal("managedRunGroups.abandon"),
+  params: z.strictObject({
+    operationId: OperationIdSchema,
+    managedRunGroupId: ManagedRunGroupIdSchema,
+    reason: z.enum([
+      "activation_rejected",
+      "owner_cancelled",
+      "registration_expired",
+      "service_unavailable",
+    ]),
+    disposition: z.enum(["reap_safe", "preserve"]),
+  }),
+});
+
+export const CapabilityGroupAbandonResponseSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  result: z.strictObject({
+    managedRunGroupId: ManagedRunGroupIdSchema,
+    members: z.array(GroupMemberOutcomeSchema).min(1).max(CAPABILITY_SERVICE_LIMITS.maxGroupMembers),
+    state: z.literal("abandoned"),
+    disposition: z.enum(["reap_safe", "preserve"]),
+  }),
+});
+
+/**
+ * Member state counts, spelled out field by field rather than as a keyed map.
+ * A map keyed by an enum has no honest JSON Schema representation that also
+ * pins the key set, and the external contract must not be weaker than the host
+ * it describes.
+ */
+const GroupStateCountsSchema = z.strictObject({
+  preparing: z.number().int().nonnegative().optional(),
+  active: z.number().int().nonnegative().optional(),
+  waiting: z.number().int().nonnegative().optional(),
+  paused: z.number().int().nonnegative().optional(),
+  candidate_complete: z.number().int().nonnegative().optional(),
+  succeeded: z.number().int().nonnegative().optional(),
+  failed: z.number().int().nonnegative().optional(),
+  cancelled: z.number().int().nonnegative().optional(),
+  unknown: z.number().int().nonnegative().optional(),
+});
+
+export const CapabilityGroupGetHostRollupRequestSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  method: z.literal("managedRunGroups.getHostRollup"),
+  params: z.strictObject({
+    operationId: OperationIdSchema,
+    managedRunGroupId: ManagedRunGroupIdSchema,
+  }),
+});
+
+export const CapabilityGroupGetHostRollupResponseSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  result: z.strictObject({
+    managedRunGroupId: ManagedRunGroupIdSchema,
+    memberManagedRunIds: z.array(ManagedRunIdSchema).min(1).max(CAPABILITY_SERVICE_LIMITS.maxGroupMembers),
+    stateCounts: GroupStateCountsSchema,
+    attentionCount: z.number().int().nonnegative(),
+    activeCustodyCount: z.number().int().nonnegative(),
+    updatedAtMs: TimestampMsSchema,
+  }),
+});
+
 export const CapabilityTerminalTransitionSchema = z.enum([
   "created",
   "running",
@@ -396,6 +512,7 @@ export const CapabilityServiceRequestSchema = z.discriminatedUnion("method", [
   CapabilityHeartbeatRequestSchema,
   CapabilityHealthRequestSchema,
   CapabilityPutEvidenceRequestSchema,
+  CapabilityGroupGetHostRollupRequestSchema,
   CapabilityReceiveAttentionResponseRequestSchema,
   CapabilityReleaseRequestSchema,
   CapabilityReportRequestSchema,
@@ -414,3 +531,7 @@ export type CapabilityHeartbeatRequest = z.infer<typeof CapabilityHeartbeatReque
 export type CapabilityPutEvidenceRequest = z.infer<typeof CapabilityPutEvidenceRequestSchema>;
 export type CapabilityReceiveAttentionResponseRequest = z.infer<typeof CapabilityReceiveAttentionResponseRequestSchema>;
 export type CapabilityReleaseRequest = z.infer<typeof CapabilityReleaseRequestSchema>;
+export type CapabilityGroupActivateRequest = z.infer<typeof CapabilityGroupActivateRequestSchema>;
+export type CapabilityGroupAbandonRequest = z.infer<typeof CapabilityGroupAbandonRequestSchema>;
+export type CapabilityGroupGetHostRollupRequest = z.infer<typeof CapabilityGroupGetHostRollupRequestSchema>;
+export type CapabilityGroupMemberOutcome = z.infer<typeof CapabilityGroupMemberOutcomeSchema>;

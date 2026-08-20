@@ -23,6 +23,10 @@ import {
   CapabilityActivateRequestSchema,
   CapabilityActivateResponseSchema,
   CapabilityCancelRequestSchema,
+  CapabilityGroupAbandonRequestSchema,
+  CapabilityGroupAbandonResponseSchema,
+  CapabilityGroupActivateRequestSchema,
+  CapabilityGroupActivateResponseSchema,
   CapabilityCancelResponseSchema,
 } from "@comis/capability-service-sdk";
 import type {
@@ -33,6 +37,10 @@ import type {
   CapabilityServiceCancelAcknowledgement,
   CapabilityServiceCancelCommand,
   CapabilityServiceControlFailure,
+  CapabilityServiceGroupAbandonAcknowledgement,
+  CapabilityServiceGroupAbandonCommand,
+  CapabilityServiceGroupActivateAcknowledgement,
+  CapabilityServiceGroupActivateCommand,
 } from "@comis/core";
 import { err, type Result } from "@comis/shared";
 
@@ -90,6 +98,55 @@ export async function sendEndpointAbandon(
       disposition: command.disposition,
     },
   }, CapabilityAbandonRequestSchema, CapabilityAbandonResponseSchema));
+}
+
+/**
+ * Commit a prepared group. The host sends every member in one frame and the
+ * service answers per member, so a service that reached only some of them says
+ * exactly that instead of choosing between a success it did not achieve and a
+ * failure that did not happen.
+ */
+export async function sendGroupActivate(
+  command: CapabilityServiceGroupActivateCommand,
+  sendControl: SendControl,
+): Promise<Result<CapabilityServiceGroupActivateAcknowledgement, CapabilityServiceControlFailure>> {
+  return narrow(await sendControl<CapabilityServiceGroupActivateAcknowledgement>({
+    jsonrpc: "2.0",
+    id: command.operationId,
+    method: "managedRunGroups.activate",
+    params: {
+      operationId: command.operationId,
+      managedRunGroupId: command.managedRunGroupId,
+      members: command.members.map((member) => ({
+        managedRunId: member.managedRunId,
+        externalRunRef: member.externalRunRef,
+        registrationNonce: member.registrationNonce,
+        ...(member.workspaceLeaseId === undefined ? {} : { workspaceLeaseId: member.workspaceLeaseId }),
+      })),
+    },
+  }, CapabilityGroupActivateRequestSchema, CapabilityGroupActivateResponseSchema));
+}
+
+/**
+ * Reap a group preparation the host could not bind. It names no member: the
+ * whole preparation is unbound, and listing members would imply the host knows
+ * which of them the service had already reached.
+ */
+export async function sendGroupAbandon(
+  command: CapabilityServiceGroupAbandonCommand,
+  sendControl: SendControl,
+): Promise<Result<CapabilityServiceGroupAbandonAcknowledgement, CapabilityServiceControlFailure>> {
+  return narrow(await sendControl<CapabilityServiceGroupAbandonAcknowledgement>({
+    jsonrpc: "2.0",
+    id: command.operationId,
+    method: "managedRunGroups.abandon",
+    params: {
+      operationId: command.operationId,
+      managedRunGroupId: command.managedRunGroupId,
+      reason: command.reason,
+      disposition: command.disposition,
+    },
+  }, CapabilityGroupAbandonRequestSchema, CapabilityGroupAbandonResponseSchema));
 }
 
 /** Ask a running service to stop one bound run; idempotent by operation ID. */

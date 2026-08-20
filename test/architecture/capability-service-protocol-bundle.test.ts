@@ -15,6 +15,7 @@ import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import { describe, expect, it } from "vitest";
 import { MAX_MANAGED_RUN_REPORT_BYTES } from "../../packages/core/src/domain/managed-run-content.js";
+import { MANAGED_RUN_GROUP_MAX_MEMBERS } from "../../packages/core/src/domain/managed-run-group.js";
 import { CAPABILITY_SERVICE_BUNDLE_DIGEST } from "../../packages/capability-service-sdk/src/constants.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -25,6 +26,9 @@ const PROTOCOL_ROOT = resolve(SDK_ROOT, "protocol");
 const EXPECTED_METHODS = [
   "capabilityServices.handshake",
   "capabilityServices.health",
+  "managedRunGroups.abandon",
+  "managedRunGroups.activate",
+  "managedRunGroups.getHostRollup",
   "managedRuns.abandon",
   "managedRuns.activate",
   "managedRuns.cancel",
@@ -139,6 +143,16 @@ describe("capability-service protocol bundle contract", () => {
     expect(root.scripts?.["validate"]).toContain("pnpm capability-protocol:check");
   });
 
+  it("states one ratified group ceiling on the wire and in the domain", () => {
+    // The wire limit and the domain ceiling are the SAME ratified number held in
+    // two packages that cannot import each other: the protocol bundle is
+    // dependency-light by design and must not reach into core. Nothing else
+    // makes them agree, and a drift would let the host accept a membership its
+    // own record refuses — or the reverse.
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    expect(manifest.limits.maxGroupMembers).toBe(MANAGED_RUN_GROUP_MAX_MEMBERS);
+  });
+
   it("pins the protocol identity, method catalog, errors, and limits", () => {
     const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
 
@@ -161,6 +175,7 @@ describe("capability-service protocol bundle contract", () => {
     ]);
     expect(manifest.limits).toEqual({
       maxEvidenceBytes: 1_048_576,
+      maxGroupMembers: 16,
       maxInFlightRequests: 32,
       maxLineBytes: 1_441_792,
       maxReportBytes: 16_384,
@@ -357,10 +372,18 @@ describe("capability-service protocol bundle contract", () => {
     const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
     const artifactPaths = new Set(manifest.artifacts.map((artifact) => artifact.path));
 
+    // Follow the manifest's OWN pointers rather than rebuilding a filename
+    // convention beside it. Deriving `schemas/<segment-after-the-dot>` was a
+    // second copy of that knowledge, and it collided the moment a second
+    // namespace reused a verb — managedRunGroups.activate and
+    // managedRuns.activate both wanted "activate.request.schema.json". The
+    // pointers are also what a consumer actually resolves, so checking them
+    // proves more than checking a name we invented.
     for (const method of EXPECTED_METHODS) {
-      const basename = method.split(".")[1];
-      expect(artifactPaths).toContain(`schemas/${basename}.request.schema.json`);
-      expect(artifactPaths).toContain(`schemas/${basename}.response.schema.json`);
+      const entry = manifest.methodCatalog.find((candidate) => candidate.method === method);
+      expect(entry, `${method} has a catalog entry`).toBeDefined();
+      expect(artifactPaths, `${method} request schema`).toContain(entry?.requestSchema);
+      expect(artifactPaths, `${method} response schema`).toContain(entry?.responseSchema);
     }
     expect(artifactPaths).toContain("schemas/error-response.schema.json");
     expect(artifactPaths).toContain("schemas/external-run-ref.schema.json");

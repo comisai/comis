@@ -21,6 +21,16 @@ const REQUIRED_MANAGED_RUN_COLUMNS = [
 const REQUIRED_WORKSPACE_LEASE_COLUMNS = ["filesystem_birthtime_ns"] as const;
 const REQUIRED_EXECUTION_ATTACHMENT_COLUMNS = ["source_filesystem_birthtime_ns"] as const;
 const REQUIRED_CONTINUATION_CLAIM_COLUMNS = ["reduction_outcome"] as const;
+const REQUIRED_MANAGED_RUN_GROUP_COLUMNS = [
+  "managed_run_group_id",
+  "service_instance_id",
+  "tenant_id",
+  "agent_id",
+  "principal_id",
+  "conversation_ref",
+  "root_run_id",
+] as const;
+
 const REQUIRED_ATTENTION_OPERATION_COLUMNS = [
   "tenant_id",
   "agent_id",
@@ -110,6 +120,22 @@ export function ensureManagedRunTables(db: Database.Database): void {
     }
   }
 
+  const existingGroups = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'managed_run_groups'",
+  ).get() !== undefined;
+  if (existingGroups) {
+    const columns = new Set(requireTableInfoRows(
+      db.prepare("PRAGMA table_info(managed_run_groups)").all(),
+      "managed_run_groups",
+    ).map((row) => row.name));
+    const missing = REQUIRED_MANAGED_RUN_GROUP_COLUMNS.filter((column) => !columns.has(column));
+    if (missing.length > 0) {
+      throw new Error(
+        `managed_run_groups database schema is incompatible: missing ${missing.join(", ")}. Back up the database, then recreate it with the current Comis schema.`,
+      );
+    }
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS managed_runs (
       schema_version INTEGER NOT NULL CHECK(schema_version = 1),
@@ -163,6 +189,35 @@ export function ensureManagedRunTables(db: Database.Database): void {
       );
     CREATE INDEX IF NOT EXISTS idx_managed_runs_recovery
       ON managed_runs (status, updated_at_ms);
+    CREATE INDEX IF NOT EXISTS idx_managed_runs_group
+      ON managed_runs (managed_run_group_id, managed_run_id);
+
+    CREATE TABLE IF NOT EXISTS managed_run_groups (
+      schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+      managed_run_group_id TEXT PRIMARY KEY NOT NULL,
+      service_instance_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      principal_id TEXT NOT NULL,
+      conversation_ref TEXT NOT NULL,
+      root_run_id TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_managed_run_groups_owner
+      ON managed_run_groups (tenant_id, agent_id, principal_id, conversation_ref, updated_at_ms);
+    CREATE INDEX IF NOT EXISTS idx_managed_run_groups_service
+      ON managed_run_groups (service_instance_id, updated_at_ms);
+
+    CREATE TABLE IF NOT EXISTS managed_run_group_operations (
+      managed_run_group_id TEXT NOT NULL,
+      operation_id TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      recorded_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (managed_run_group_id, operation_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_managed_run_group_operation_lookup
+      ON managed_run_group_operations (operation_id);
 
     CREATE TABLE IF NOT EXISTS workspace_leases (
       schema_version INTEGER NOT NULL CHECK(schema_version = 1),

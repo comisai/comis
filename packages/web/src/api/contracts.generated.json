@@ -1519,7 +1519,8 @@
                   "report",
                   "workspace_lease",
                   "terminal_events",
-                  "execution_attachment"
+                  "execution_attachment",
+                  "managed_run_group"
                 ]
               }
             },
@@ -1653,7 +1654,8 @@
                     "report",
                     "workspace_lease",
                     "terminal_events",
-                    "execution_attachment"
+                    "execution_attachment",
+                    "managed_run_group"
                   ]
                 }
               },

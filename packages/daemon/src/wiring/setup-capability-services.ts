@@ -27,6 +27,7 @@ import {
   createSqliteExecutionAttachmentStore,
   createSqliteManagedRunContentStore,
   createSqliteManagedRunStore,
+  createSqliteManagedRunGroupStore,
   createSqliteWorkspaceLeaseStore,
 } from "@comis/memory";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
@@ -302,13 +303,14 @@ export async function setupCapabilityServices(
 
   const stores = tryCatch(() => {
     const store = createSqliteManagedRunStore(deps.db);
+    const groupStore = createSqliteManagedRunGroupStore(deps.db);
     const workspaceLeases = createSqliteWorkspaceLeaseStore(deps.db);
     const attachments = createSqliteExecutionAttachmentStore(deps.db);
     const contentStore = createSqliteManagedRunContentStore(deps.db, {
       directoryPath: directories.value,
       nowMs: () => deps.clock.now(),
     });
-    return { store, workspaceLeases, attachments, contentStore };
+    return { store, groupStore, workspaceLeases, attachments, contentStore };
   });
   if (!stores.ok) {
     logSetupFailure(deps, "capability-service-stores", "internal");
@@ -319,6 +321,7 @@ export async function setupCapabilityServices(
     return err(stores.value.contentStore.error);
   }
   const store = stores.value.store;
+  const groupStore = stores.value.groupStore;
   const workspaceLeases = stores.value.workspaceLeases;
   const attachments = stores.value.attachments;
   const contentStore = stores.value.contentStore.value;
@@ -406,6 +409,7 @@ export async function setupCapabilityServices(
     attentionResponseBridge,
     livenessBridge,
     releaseCoordinator,
+    groupStore,
     requestDeadlineMs: deps.config.requestDeadlineMs,
     clock: deps.clock,
     timers: deps.timers,

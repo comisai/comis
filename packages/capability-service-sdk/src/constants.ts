@@ -3,7 +3,7 @@
 /** Exact lockstep identifier carried by every protocol handshake. */
 export const CAPABILITY_SERVICE_PROTOCOL_ID = "comis.capability-service/1" as const;
 /** Exact digest of the generated protocol artifacts shipped with this SDK release. */
-export const CAPABILITY_SERVICE_BUNDLE_DIGEST = "86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33" as const;
+export const CAPABILITY_SERVICE_BUNDLE_DIGEST = "47bdab9ef7697a296f0b37f48b0d57c4b7f4dfbc961a99b43b4426c1a4edc64a" as const;
 export const CAPABILITY_SERVICE_GENERATOR_VERSION = "1.0.64" as const;
 
 /** Placeholder resolved from manifest.json before a generated fixture is sent. */
@@ -12,6 +12,9 @@ export const BUNDLE_DIGEST_FIXTURE_TOKEN = "__BUNDLE_DIGEST__" as const;
 export const CAPABILITY_SERVICE_METHODS = [
   "capabilityServices.handshake",
   "capabilityServices.health",
+  "managedRunGroups.abandon",
+  "managedRunGroups.activate",
+  "managedRunGroups.getHostRollup",
   "managedRuns.abandon",
   "managedRuns.activate",
   "managedRuns.cancel",
@@ -47,6 +50,8 @@ export type CapabilityServiceErrorKind = (typeof CAPABILITY_SERVICE_ERROR_KINDS)
 
 export const CAPABILITY_SERVICE_LIMITS = Object.freeze({
   maxEvidenceBytes: 1_048_576,
+  // Ratified ceiling for one prepared group (platform §22 item 8).
+  maxGroupMembers: 16,
   maxInFlightRequests: 32,
   maxLineBytes: 1_441_792,
   maxReportBytes: 16_384,

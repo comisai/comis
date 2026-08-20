@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { z } from "zod";
 import {
+  CapabilityGroupGetHostRollupRequestSchema,
   CapabilityHeartbeatRequestSchema,
   CapabilityPutEvidenceRequestSchema,
   CapabilityReceiveAttentionResponseRequestSchema,
@@ -8,7 +9,12 @@ import {
   CapabilityReportRequestSchema,
   type CapabilityServiceErrorKind,
 } from "@comis/capability-service-sdk";
-import type { ClockPort, ComisLogger, TimerPort } from "@comis/core";
+import type {
+  ClockPort,
+  ComisLogger,
+  ManagedRunGroupStorePort,
+  TimerPort,
+} from "@comis/core";
 import { err, fromPromise, tryCatch, type Result } from "@comis/shared";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
 import type { ManagedAttentionResponseBridge } from "./managed-attention-response-bridge.js";
@@ -22,6 +28,7 @@ export interface CapabilityServiceIngressRouteDeps {
   readonly attentionResponseBridge: ManagedAttentionResponseBridge;
   readonly livenessBridge: ManagedRunLivenessBridge;
   readonly releaseCoordinator: ManagedRunReleaseCoordinator;
+  readonly groupStore: Pick<ManagedRunGroupStorePort, "getGroup">;
   readonly requestDeadlineMs: number;
   readonly clock: ClockPort;
   readonly timers: TimerPort;
@@ -336,5 +343,76 @@ export async function routeManagedRunEvidenceIngress(
     managedRunId: request.params.managedRunId,
     durationMs: Math.max(0, deps.clock.now() - startedAtMs),
   }, "Capability-service evidence request completed");
+  return result;
+}
+
+/**
+ * Read one group's roll-up for the service that owns it.
+ *
+ * The response carries counts and member identities only. It repeats none of
+ * the host's scope back — the caller authenticated as the owning service and
+ * learns nothing from tenant, agent, principal or conversation except that the
+ * host holds them. A group the caller does not own is reported exactly like one
+ * that does not exist, so the read cannot be used to probe for groups belonging
+ * to another service instance.
+ */
+export async function routeManagedRunGroupRollupIngress(
+  serviceInstanceId: string,
+  request: z.infer<typeof CapabilityGroupGetHostRollupRequestSchema>,
+  deps: CapabilityServiceIngressRouteDeps,
+): Promise<CapabilityServiceIngressRouteResult> {
+  const startedAtMs = deps.clock.now();
+  deps.logger.debug({
+    serviceInstanceId,
+    managedRunGroupId: request.params.managedRunGroupId,
+    step: "capability-service-group-rollup-ingress",
+  }, "Routing capability-service managed-run group roll-up read");
+
+  const invoked = tryCatch(() => deps.groupStore.getGroup(
+    { kind: "service", serviceInstanceId },
+    request.params.managedRunGroupId,
+  ));
+  const deadline = invoked.ok
+    ? await awaitResultDeadline(invoked.value, deps.timers, deps.requestDeadlineMs)
+    : { result: err(invoked.error), settlement: Promise.resolve() };
+  const settled = deadline.result;
+
+  let result: CapabilityServiceIngressRouteResult;
+  if (settled === undefined) {
+    result = responseError("deadline_exceeded", deadline.settlement);
+  } else if (!settled.ok) {
+    // A store that could not answer must not be reported as an empty group: a
+    // caller cannot tell "no members" from "no answer", and would act on the
+    // wrong one.
+    deps.logger.error({
+      serviceInstanceId,
+      managedRunGroupId: request.params.managedRunGroupId,
+      err: settled.error,
+      errorKind: "internal" as const,
+      hint: "the managed-run group roll-up could not be read; the group state is unknown, not empty",
+    }, "Capability-service group roll-up read failed");
+    result = responseError("internal_error", deadline.settlement);
+  } else if (settled.value === undefined) {
+    result = responseError("precondition_failed", deadline.settlement);
+  } else {
+    const group = settled.value;
+    result = {
+      response: {
+        managedRunGroupId: group.managedRunGroupId,
+        memberManagedRunIds: [...group.memberManagedRunIds],
+        stateCounts: { ...group.stateCounts },
+        attentionCount: group.attentionCount,
+        activeCustodyCount: group.activeCustodyCount,
+        updatedAtMs: group.updatedAtMs,
+      },
+      settlement: deadline.settlement,
+    };
+  }
+
+  deps.logger.info({
+    serviceInstanceId,
+    managedRunGroupId: request.params.managedRunGroupId,
+    durationMs: Math.max(0, deps.clock.now() - startedAtMs),
+  }, "Capability-service group roll-up request completed");
   return result;
 }

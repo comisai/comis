@@ -36,6 +36,10 @@ export const CapabilityServiceScopeSchema = z.enum([
   "workspace_lease",
   "terminal_events",
   "execution_attachment",
+  // Grouping grants a read over runs the instance already owns. It deliberately
+  // does not appear in the root allowlist table below: a group is a projection
+  // of member runs, so it needs no filesystem authority of its own.
+  "managed_run_group",
 ]);
 
 export const CapabilityServiceEvidencePolicySchema = z.strictObject({

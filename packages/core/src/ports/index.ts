@@ -19,6 +19,10 @@ export type {
 export type { PrincipalResolverPort } from "./principal-resolver.js";
 export type {
   CapabilityServiceActivateCommand,
+  CapabilityServiceGroupActivateCommand,
+  CapabilityServiceGroupActivateAcknowledgement,
+  CapabilityServiceGroupAbandonCommand,
+  CapabilityServiceGroupAbandonAcknowledgement,
   CapabilityServiceActivateAcknowledgement,
   CapabilityServiceControlFailure,
   CapabilityServiceAbandonCommand,
@@ -78,6 +82,9 @@ export type {
   ManagedRunRecoveryScan,
   ManagedRunRevokeInput,
   ManagedRunStorePort,
+  ManagedRunGroupStorePort,
+  ManagedRunGroupPrepareInput,
+  ManagedRunGroupPrepareOutcome,
   ManagedRunPrivateContentReceipt,
   ManagedRunRawPrivateContentInput,
   ManagedRunContentRecoveryInput,

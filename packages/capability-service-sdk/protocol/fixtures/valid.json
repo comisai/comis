@@ -77,6 +77,7 @@
           "bundleDigest": "__BUNDLE_DIGEST__",
           "limits": {
             "maxEvidenceBytes": 1048576,
+            "maxGroupMembers": 16,
             "maxInFlightRequests": 32,
             "maxLineBytes": 1441792,
             "maxReportBytes": 16384,

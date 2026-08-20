@@ -21,6 +21,9 @@ export const ExternalRunRefSchema = z.string().min(1).max(256).regex(OPAQUE_REF_
 /** Comis-minted managed-run identity. Consumers compare it but never parse it. */
 export const ManagedRunIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 
+/** Comis-minted managed-run group identity. Consumers compare it but never parse it. */
+export const ManagedRunGroupIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
+
 /** Comis-minted exclusive workspace authority. */
 export const WorkspaceLeaseIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 
@@ -56,10 +59,12 @@ export const CapabilityServiceScopeSchema = z.enum([
   "workspace_lease",
   "terminal_events",
   "execution_attachment",
+  "managed_run_group",
 ]);
 
 export const CapabilityServiceLimitsSchema = z.strictObject({
   maxEvidenceBytes: z.literal(CAPABILITY_SERVICE_LIMITS.maxEvidenceBytes),
+  maxGroupMembers: z.literal(CAPABILITY_SERVICE_LIMITS.maxGroupMembers),
   maxInFlightRequests: z.literal(CAPABILITY_SERVICE_LIMITS.maxInFlightRequests),
   maxLineBytes: z.literal(CAPABILITY_SERVICE_LIMITS.maxLineBytes),
   maxReportBytes: z.literal(CAPABILITY_SERVICE_LIMITS.maxReportBytes),
