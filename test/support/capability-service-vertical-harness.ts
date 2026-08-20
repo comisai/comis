@@ -228,6 +228,7 @@ function createServiceCandidateConfig(root: string): string {
       }],
       evidenceTtl: "24h",
     }],
+    integrationPolicies: [{ id: "integration-default", strategy: "merge" }],
     maxOutputBytes: 65_536,
     pollInterval: "25ms",
     forge: {
@@ -642,6 +643,8 @@ export function startFixtureService(input: {
     "--codex-terminal-allow-entry", "codex-confined",
     "--codex-network", "restricted",
     "--codex-concurrency", "1",
+    "--max-concurrent-tasks", "1",
+    "--max-concurrent-tasks-per-repository", "1",
     "--candidate-config", candidateConfig,
     "--fixture-worker",
     "--fixture-decision", "use the bounded fixture choice",

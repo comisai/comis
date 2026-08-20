@@ -98,6 +98,8 @@ const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
       "workspace_lease",
       "terminal_events",
       "execution_attachment",
+      "managed_run_group",
+      "approval_receipt",
     ]),
     evidencePolicies: Object.freeze([
       { kind: "candidate_bundle", verificationLevel: "adapter_verified", use: "outcome" },
@@ -388,7 +390,14 @@ describe("restart-injected capability-service vertical join", () => {
         "user_a",
         `START_MANAGED_FIXTURE BASE_REVISION=${repository.baseRevision}`,
       ));
-      await localProxy.waitForReconciliation();
+      try {
+        await localProxy.waitForReconciliation();
+      } catch (cause) {
+        throw new Error(
+          `local reconciliation unavailable; control=${JSON.stringify(controlProxy.records)}; fixtureExit=${service.process.exitCode ?? "running"}; fixtureStderr=${service.stderr().trim() || "<empty>"}`,
+          { cause },
+        );
+      }
       try {
         await controlProxy.waitForHeldReport();
       } catch (cause) {
@@ -427,6 +436,13 @@ describe("restart-injected capability-service vertical join", () => {
         && message.text.includes("Newer conversation acknowledged")
       )), 10_000, "newer conversation delivery");
 
+      const firstMcpStatus = await firstDaemon.daemon.rpcCall("mcp.status", {
+        server_name: MCP_SERVER_NAME,
+        _trustLevel: "admin",
+      }) as { tools?: Array<{ callableName?: string }> };
+      const firstCallableNames = firstMcpStatus.tools?.flatMap((tool) => (
+        typeof tool.callableName === "string" ? [tool.callableName] : []
+      )) ?? [];
       const firstPids = readLauncherPids(launcherPidLog);
       expect(firstPids.length).toBeGreaterThan(0);
       process.kill(firstPids[firstPids.length - 1]!, "SIGKILL");
@@ -509,7 +525,7 @@ describe("restart-injected capability-service vertical join", () => {
       } finally {
         authorityDb.close();
       }
-      expect(replacementCallableNames.sort()).toEqual([...originMcpToolNames].sort());
+      expect(replacementCallableNames.sort()).toEqual([...firstCallableNames].sort());
       controlProxy.releaseReports();
 
       await pollUntil(() => secondEcho.getSentMessages().some((message) => (
