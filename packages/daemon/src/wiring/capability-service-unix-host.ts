@@ -26,6 +26,10 @@ import {
   type CapabilityServiceControlFailure,
   type CapabilityServiceControlPort,
   type CapabilityServiceScope,
+  type CapabilityServiceGroupAbandonAcknowledgement,
+  type CapabilityServiceGroupAbandonCommand,
+  type CapabilityServiceGroupActivateAcknowledgement,
+  type CapabilityServiceGroupActivateCommand,
   type CapabilityServiceTerminalEventAcknowledgement,
   type CapabilityServiceCancelAcknowledgement,
   type CapabilityServiceCancelCommand,
@@ -62,8 +66,11 @@ import {
   sendEndpointAbandon,
   sendEndpointActivate,
   sendEndpointCancel,
+  sendGroupAbandon,
+  sendGroupActivate,
 } from "./capability-service-run-commands.js";
 import { forwardTerminalEvent, sendEndpointTerminalEvent } from "./capability-service-terminal-event.js";
+import { forwardGroupAbandon, forwardGroupActivate } from "./capability-service-group-control.js";
 import {
   capabilityServiceErrorResponse,
   classifyCapabilityServiceWireFailure,
@@ -136,6 +143,14 @@ interface Endpoint {
   >>;
   abandon(command: CapabilityServiceAbandonCommand): Promise<Result<
     CapabilityServiceAbandonAcknowledgement,
+    CapabilityServiceControlFailure
+  >>;
+  activateGroup(command: CapabilityServiceGroupActivateCommand): Promise<Result<
+    CapabilityServiceGroupActivateAcknowledgement,
+    CapabilityServiceControlFailure
+  >>;
+  abandonGroup(command: CapabilityServiceGroupAbandonCommand): Promise<Result<
+    CapabilityServiceGroupAbandonAcknowledgement,
     CapabilityServiceControlFailure
   >>;
   cancel(command: CapabilityServiceCancelCommand): Promise<Result<
@@ -823,6 +838,8 @@ function createEndpoint(
       handle,
       activate: (command: CapabilityServiceActivateCommand) => sendEndpointActivate(command, sendControl),
       abandon: (command: CapabilityServiceAbandonCommand) => sendEndpointAbandon(command, sendControl),
+      activateGroup: (command: CapabilityServiceGroupActivateCommand) => sendGroupActivate(command, sendControl),
+      abandonGroup: (command: CapabilityServiceGroupAbandonCommand) => sendGroupAbandon(command, sendControl),
       cancel: (command: CapabilityServiceCancelCommand) => sendEndpointCancel(command, sendControl),
       terminalEvent: async (command: CapabilityServiceTerminalEventCommand) => {
         return sendEndpointTerminalEvent(command, sendControl);
@@ -882,7 +899,7 @@ export function createUnixCapabilityServiceHostRuntime(
 
   function reportControlFailure(
     serviceInstanceId: string,
-    operation: "abandon" | "activate" | "cancel" | "terminal_event",
+    operation: "abandon" | "activate" | "cancel" | "group_abandon" | "group_activate" | "terminal_event",
     failure: CapabilityServiceControlFailure,
   ): void {
     deps.logger.warn({
@@ -914,6 +931,9 @@ export function createUnixCapabilityServiceHostRuntime(
         durationMs: Math.max(0, deps.clock.now() - startedAtMs),
       }, "Capability-service activation call completed");
       return result;
+    },
+    activateGroup: async (command) => {
+      return forwardGroupActivate({ command, endpoint: endpoints.get(command.serviceInstanceId), clock: deps.clock, logger: deps.logger, onFailure: (failure) => reportControlFailure(command.serviceInstanceId, "group_activate", failure) });
     },
     cancel: async (command) => {
       const endpoint = endpoints.get(command.serviceInstanceId);
@@ -952,6 +972,9 @@ export function createUnixCapabilityServiceHostRuntime(
         durationMs: Math.max(0, deps.clock.now() - startedAtMs),
       }, "Capability-service abandon call completed");
       return result;
+    },
+    abandonGroup: async (command) => {
+      return forwardGroupAbandon({ command, endpoint: endpoints.get(command.serviceInstanceId), clock: deps.clock, logger: deps.logger, onFailure: (failure) => reportControlFailure(command.serviceInstanceId, "group_abandon", failure) });
     },
     terminalEvent: async (command) => {
       return forwardTerminalEvent({ command, endpoint: endpoints.get(command.serviceInstanceId), clock: deps.clock, logger: deps.logger, onFailure: (failure) => reportControlFailure(command.serviceInstanceId, "terminal_event", failure) });

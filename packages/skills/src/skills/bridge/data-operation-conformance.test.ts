@@ -198,6 +198,7 @@ function dataOperationDeps(overrides: Record<string, unknown> = {}) {
     resolveRootRunId: () => ok("root-run_a"),
     getManagedRunByExternalRef: vi.fn(async () => ok(undefined)),
     activatePrepared: vi.fn(async () => ok({ kind: "activated" as const })),
+    activatePreparedGroup: vi.fn(async () => ok({ kind: "activated" as const })),
     logger: makeLogger(),
     ...overrides,
   };

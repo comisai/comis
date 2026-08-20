@@ -10,6 +10,7 @@ import {
   type CapabilityServiceScope,
   type ComisLogger,
   type ManagedRunOwnerScope,
+  type ManagedRunPreparedGroupStart,
   type ManagedRunPreparedStart,
   type ManagedRunRecord,
   type PlannedManagedToolBinding,
@@ -22,8 +23,10 @@ import {
   MCP_CAPABILITY_CALL_CONTEXT_KEY,
   MCP_MANAGED_RUN_RESULT_KEY,
   McpCapabilityCallContextSchema,
+  McpManagedRunGroupResultSchema,
   McpManagedRunResultSchema,
   type McpCapabilityCallContext,
+  type McpManagedRunResult,
 } from "@comis/capability-service-sdk";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import type { McpPrivateMeta } from "../integrations/mcp-client/index.js";
@@ -79,6 +82,13 @@ export interface ManagedMcpActivationInput {
   readonly authority: ManagedMcpActivationAuthority;
 }
 
+export interface ManagedMcpGroupActivationInput {
+  readonly operationId: string;
+  readonly serviceInstanceId: string;
+  readonly prepared: ManagedRunPreparedGroupStart;
+  readonly authority: ManagedMcpActivationAuthority;
+}
+
 export type ManagedMcpActivationOutcome =
   | { readonly kind: "activated" }
   | { readonly kind: "identical_replay" }
@@ -104,6 +114,9 @@ export interface ManagedMcpPrivateMetadataDeps {
   ) => Promise<Result<ManagedRunRecord | undefined, Error>>;
   readonly activatePrepared: (
     input: ManagedMcpActivationInput,
+  ) => Promise<Result<ManagedMcpActivationOutcome, Error>>;
+  readonly activatePreparedGroup: (
+    input: ManagedMcpGroupActivationInput,
   ) => Promise<Result<ManagedMcpActivationOutcome, Error>>;
   readonly logger: ComisLogger;
 }
@@ -242,6 +255,40 @@ async function invoke<T>(
   return settled.ok ? settled.value : err(settled.error);
 }
 
+function preparedMember(
+  input: McpManagedRunResult,
+  expiresAtMs: number,
+): ManagedRunPreparedStart {
+  return {
+    state: input.state,
+    externalRunRef: input.externalRunRef,
+    registrationNonce: input.registrationNonce,
+    expiresAtMs,
+    ...(input.displayLabel === undefined ? {} : { displayLabel: input.displayLabel }),
+    ...(input.requestedWorkspace === undefined
+      ? {}
+      : { requestedWorkspace: input.requestedWorkspace }),
+    ...(input.requestedAttachment === undefined
+      ? {}
+      : { requestedAttachment: input.requestedAttachment }),
+  };
+}
+
+function preparationScopesAllowed(
+  activeScopes: readonly CapabilityServiceScope[],
+  members: readonly McpManagedRunResult[],
+): Result<void, Error> {
+  if (
+    members.some((member) => member.requestedWorkspace !== undefined)
+    && !activeScopes.includes("workspace_lease")
+  ) return err(new Error("managed-run workspace request lacks workspace lease scope"));
+  if (
+    members.some((member) => member.requestedAttachment !== undefined)
+    && !activeScopes.includes("execution_attachment")
+  ) return err(new Error("managed-run attachment request lacks execution attachment scope"));
+  return ok(undefined);
+}
+
 async function resolveRunHandle(
   deps: ManagedMcpPrivateMetadataDeps,
   input: McpPrivateMetadataCall,
@@ -374,8 +421,11 @@ export function createManagedMcpPrivateMetadataBridge(
     const bound = exactBinding(deps, input);
     if (!bound.ok) return rejectCall(deps, input, bound.error.message);
     if (bound.value === undefined) return ok(undefined);
-    if (bound.value.binding.behavior === "prepare_run_group") {
-      return rejectCall(deps, input, "managed-run group preparation is not available");
+    if (
+      bound.value.binding.behavior === "prepare_run_group"
+      && !bound.value.activeScopes.includes("managed_run_group")
+    ) {
+      return rejectCall(deps, input, "managed-run group preparation lacks managed run group scope");
     }
     const context = tryGetContext();
     if (context === undefined) {
@@ -460,7 +510,10 @@ export function createManagedMcpPrivateMetadataBridge(
     ) {
       return rejectCall(deps, input, "managed MCP result no longer owns the active turn policy");
     }
-    if (captured.binding.behavior !== "prepare_run") {
+    if (
+      captured.binding.behavior !== "prepare_run"
+      && captured.binding.behavior !== "prepare_run_group"
+    ) {
       return hasPreparedExtension
         ? rejectCall(deps, input, "non-starter MCP tool returned managed-run metadata")
         : ok(undefined);
@@ -472,22 +525,43 @@ export function createManagedMcpPrivateMetadataBridge(
     if (!preparedResult.ok) {
       return rejectCall(deps, input, "managed-run prepared result could not be read safely");
     }
+    if (captured.binding.behavior === "prepare_run_group") {
+      const parsedGroup = McpManagedRunGroupResultSchema.safeParse(preparedResult.value);
+      if (!parsedGroup.success) {
+        return rejectCall(deps, input, "managed-run group prepared result failed strict validation");
+      }
+      const scopes = preparationScopesAllowed(captured.activeScopes, parsedGroup.data.members);
+      if (!scopes.ok) return rejectCall(deps, input, scopes.error.message);
+      const expiresAtMs = Date.parse(parsedGroup.data.expiresAt);
+      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= deps.nowMs()) {
+        return rejectCall(deps, input, "managed-run group preparation is expired");
+      }
+      const activated = await invoke(() => deps.activatePreparedGroup({
+        operationId: captured.callContext.operationId,
+        serviceInstanceId: captured.callContext.serviceInstanceId,
+        prepared: {
+          state: parsedGroup.data.state,
+          registrationNonce: parsedGroup.data.registrationNonce,
+          expiresAtMs,
+          ...(parsedGroup.data.displayLabel === undefined
+            ? {}
+            : { displayLabel: parsedGroup.data.displayLabel }),
+          members: parsedGroup.data.members.map((member) => preparedMember(member, expiresAtMs)),
+        },
+        authority: captured.authority,
+      }));
+      if (!activated.ok) return rejectCall(deps, input, activated.error.message);
+      return activated.value.kind === "activated" || activated.value.kind === "identical_replay"
+        ? ok(undefined)
+        : rejectCall(deps, input, `managed-run group activation did not complete: ${activated.value.kind}`);
+    }
+
     const parsed = McpManagedRunResultSchema.safeParse(preparedResult.value);
     if (!parsed.success) {
       return rejectCall(deps, input, "managed-run prepared result failed strict validation");
     }
-    if (
-      parsed.data.requestedWorkspace !== undefined
-      && !captured.activeScopes.includes("workspace_lease")
-    ) {
-      return rejectCall(deps, input, "managed-run workspace request lacks workspace lease scope");
-    }
-    if (
-      parsed.data.requestedAttachment !== undefined
-      && !captured.activeScopes.includes("execution_attachment")
-    ) {
-      return rejectCall(deps, input, "managed-run attachment request lacks execution attachment scope");
-    }
+    const scopes = preparationScopesAllowed(captured.activeScopes, [parsed.data]);
+    if (!scopes.ok) return rejectCall(deps, input, scopes.error.message);
     const expiresAtMs = Date.parse(parsed.data.expiresAt);
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= deps.nowMs()) {
       return rejectCall(deps, input, "managed-run preparation is expired");
@@ -495,21 +569,7 @@ export function createManagedMcpPrivateMetadataBridge(
     const activated = await invoke(() => deps.activatePrepared({
       operationId: captured.callContext.operationId,
       serviceInstanceId: captured.callContext.serviceInstanceId,
-      prepared: {
-        state: parsed.data.state,
-        externalRunRef: parsed.data.externalRunRef,
-        registrationNonce: parsed.data.registrationNonce,
-        expiresAtMs,
-        ...(parsed.data.displayLabel === undefined
-          ? {}
-          : { displayLabel: parsed.data.displayLabel }),
-        ...(parsed.data.requestedWorkspace === undefined
-          ? {}
-          : { requestedWorkspace: parsed.data.requestedWorkspace }),
-        ...(parsed.data.requestedAttachment === undefined
-          ? {}
-          : { requestedAttachment: parsed.data.requestedAttachment }),
-      },
+      prepared: preparedMember(parsed.data, expiresAtMs),
       authority: captured.authority,
     }));
     if (!activated.ok) return rejectCall(deps, input, activated.error.message);

@@ -43,6 +43,11 @@ import {
   type ManagedRunActivationRecoverySummary,
 } from "./managed-run-activation-coordinator.js";
 import {
+  createManagedRunGroupActivationCoordinator,
+  type ManagedRunGroupActivationCoordinator,
+  type ManagedRunGroupActivationRecoverySummary,
+} from "./managed-run-group-activation-coordinator.js";
+import {
   createManagedRunEvidenceBridge,
   type ManagedRunEvidenceBridge,
 } from "./managed-run-evidence-bridge.js";
@@ -70,6 +75,7 @@ const EMPTY_RECOVERY_SUMMARY: ManagedRunActivationRecoverySummary = {
   activated: [],
   cancelled: [],
   unknown: [],
+  deferredGroupIds: [],
   invalid: [],
   failed: [],
 };
@@ -82,6 +88,7 @@ function mergeRecoverySummary(
     activated: [...aggregate.activated, ...page.activated],
     cancelled: [...aggregate.cancelled, ...page.cancelled],
     unknown: [...aggregate.unknown, ...page.unknown],
+    deferredGroupIds: [...new Set([...aggregate.deferredGroupIds, ...page.deferredGroupIds])],
     invalid: [...aggregate.invalid, ...page.invalid],
     failed: [...aggregate.failed, ...page.failed],
   };
@@ -154,10 +161,12 @@ export interface CapabilityServicePlatform {
   readonly attachmentAuthority: ExecutionAttachmentAuthority;
   readonly control: CapabilityServiceControlPort;
   readonly activationCoordinator: ManagedRunActivationCoordinator;
+  readonly groupActivationCoordinator: ManagedRunGroupActivationCoordinator;
   readonly cancellationCoordinator: ManagedRunCancellationCoordinator;
   readonly reportBridge: ManagedRunReportBridge;
   readonly evidenceBridge: ManagedRunEvidenceBridge;
   readonly recoverySummary: ManagedRunActivationRecoverySummary;
+  readonly groupRecoverySummary: ManagedRunGroupActivationRecoverySummary;
   readonly attachmentRecoverySummary: ExecutionAttachmentRecoverySummary;
   readonly purgedContentCount: number;
   bindTerminalRevoker(revoker: ManagedTerminalRevoker): void;
@@ -204,6 +213,23 @@ function operationIds(operationId: string): Pick<
     managedRunId: `managed-run-${digest("managed-run", operationId).slice(0, 48)}`,
     activationDescriptorRef: `activation-${digest("activation", operationId).slice(0, 48)}`,
   });
+}
+
+function groupControlIds(managedRunGroupId: string) {
+  return Object.freeze({
+    managedRunGroupId,
+    activationDescriptorRef: `activation-group-${digest("activation-group", managedRunGroupId).slice(0, 48)}`,
+    activationOperationId: `activate-group-${digest("activate-group", managedRunGroupId).slice(0, 48)}`,
+    abandonOperationId: `abandon-group-${digest("abandon-group", managedRunGroupId).slice(0, 48)}`,
+  });
+}
+
+function groupOperationIds(operationId: string) {
+  return groupControlIds(`managed-run-group-${digest("managed-run-group", operationId).slice(0, 48)}`);
+}
+
+function groupMemberIds(operationId: string, index: number) {
+  return operationIds(`${operationId}-member-${String(index)}`);
 }
 
 function validateOwnerOnlyDirectory(path: string, label: string): Result<void, Error> {
@@ -478,7 +504,39 @@ export async function setupCapabilityServices(
     eventBus: deps.eventBus,
     logger: deps.logger,
   });
+  const groupActivationCoordinator = createManagedRunGroupActivationCoordinator({
+    store,
+    groupStore,
+    contentStore,
+    workspaceLeases,
+    attachments,
+    attachmentAuthority,
+    revokeManagedTerminals,
+    control: host.value.control,
+    activeView: runtime,
+    validateWorkspacePath: (requestedPath, allowedWorkspaceRoots) =>
+      validateWorkspaceLeasePath({ requestedPath, allowedWorkspaceRoots, dataDir: deps.dataDir }),
+    resolveMaxConcurrentRuns: (serviceInstanceId) => limitsByInstance.get(serviceInstanceId)?.maxConcurrentRuns,
+    ids: {
+      groupForOperation: groupOperationIds,
+      forManagedRunGroup: groupControlIds,
+      memberForOperation: groupMemberIds,
+      forManagedRun: controlIds,
+    },
+    nowMs: () => deps.clock.now(),
+    eventBus: deps.eventBus,
+    logger: deps.logger,
+  });
   const recoverySnapshotMs = deps.clock.now();
+  const groupRecovered = await groupActivationCoordinator.recoverPreparations({
+    updatedBeforeMs: recoverySnapshotMs,
+    limit: deps.config.recoveryBatchSize,
+  });
+  if (!groupRecovered.ok) {
+    await runtime.shutdown();
+    logSetupFailure(deps, "managed-run-group-recovery", "internal");
+    return groupRecovered;
+  }
   const recovered = await recoverAllPreparations(
     activationCoordinator,
     recoverySnapshotMs,
@@ -515,6 +573,9 @@ export async function setupCapabilityServices(
     recoveredCount: recovered.value.activated.length,
     cancelledCount: recovered.value.cancelled.length,
     unknownCount: recovered.value.unknown.length,
+    recoveredGroupCount: groupRecovered.value.activated.length,
+    unknownGroupCount: groupRecovered.value.unknown.length,
+    failedGroupCount: groupRecovered.value.failed.length,
     recoveredAttachmentCount: attachmentRecovered.value.recovered.length,
     preservedAttachmentCount: attachmentRecovered.value.preserved.length,
     purgedContentCount: purged.value,
@@ -539,10 +600,12 @@ export async function setupCapabilityServices(
     attachmentAuthority,
     control: host.value.control,
     activationCoordinator,
+    groupActivationCoordinator,
     cancellationCoordinator,
     reportBridge,
     evidenceBridge,
     recoverySummary: recovered.value,
+    groupRecoverySummary: groupRecovered.value,
     attachmentRecoverySummary: attachmentRecovered.value,
     purgedContentCount: purged.value,
     bindTerminalRevoker: (revoker: ManagedTerminalRevoker) => { terminalRevoker = revoker; },

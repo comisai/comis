@@ -140,6 +140,12 @@ export interface CapabilityServiceControlPort {
   abandon(
     command: CapabilityServiceAbandonCommand,
   ): Promise<Result<CapabilityServiceAbandonAcknowledgement, CapabilityServiceControlFailure>>;
+  activateGroup(
+    command: CapabilityServiceGroupActivateCommand,
+  ): Promise<Result<CapabilityServiceGroupActivateAcknowledgement, CapabilityServiceControlFailure>>;
+  abandonGroup(
+    command: CapabilityServiceGroupAbandonCommand,
+  ): Promise<Result<CapabilityServiceGroupAbandonAcknowledgement, CapabilityServiceControlFailure>>;
   cancel(
     command: CapabilityServiceCancelCommand,
   ): Promise<Result<CapabilityServiceCancelAcknowledgement, CapabilityServiceControlFailure>>;

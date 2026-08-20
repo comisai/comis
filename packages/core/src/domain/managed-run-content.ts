@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
+import { MANAGED_RUN_GROUP_MAX_MEMBERS } from "./managed-run-group.js";
 
 const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 const OpaqueRefSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
@@ -79,13 +80,61 @@ export const ManagedRunActivationDescriptorSchema = z.strictObject({
     kind: z.enum(["unix_socket", "inherited_descriptor"]),
     sourcePath: z.string().min(1).max(4_096),
   }).optional(),
+  managedRunGroup: z.strictObject({
+    managedRunGroupId: OpaqueRefSchema,
+    registrationNonce: z.string().min(16).max(256).regex(OPAQUE_REF_PATTERN),
+  }).optional(),
 });
 
 /** Strict private MCP result extension supplied by a prepared service command. */
 export const ManagedRunPreparedStartSchema = ManagedRunActivationDescriptorSchema.extend({
   state: z.literal("prepared"),
   displayLabel: z.string().trim().min(1).max(256).optional(),
-}).omit({ schemaVersion: true });
+}).omit({ schemaVersion: true, managedRunGroup: true });
+
+/** Strict private host input for one same-scope prepared run group. */
+export const ManagedRunPreparedGroupStartSchema = z.strictObject({
+  state: z.literal("prepared"),
+  registrationNonce: z.string().min(16).max(256).regex(OPAQUE_REF_PATTERN),
+  expiresAtMs: TimestampMsSchema,
+  displayLabel: z.string().trim().min(1).max(256).optional(),
+  members: z.array(ManagedRunPreparedStartSchema).min(1).max(MANAGED_RUN_GROUP_MAX_MEMBERS),
+}).superRefine((group, context) => {
+  const externalRunRefs = new Set<string>();
+  const registrationNonces = new Set<string>([group.registrationNonce]);
+  for (let index = 0; index < group.members.length; index += 1) {
+    const member = group.members[index];
+    if (member === undefined) continue;
+    if (member.expiresAtMs !== group.expiresAtMs) {
+      context.addIssue({
+        code: "custom",
+        path: ["members", index, "expiresAtMs"],
+        message: "group members must share the group expiry",
+      });
+    }
+    if (externalRunRefs.has(member.externalRunRef)) {
+      context.addIssue({
+        code: "custom",
+        path: ["members", index, "externalRunRef"],
+        message: "group member external references must be unique",
+      });
+    }
+    externalRunRefs.add(member.externalRunRef);
+    if (registrationNonces.has(member.registrationNonce)) {
+      context.addIssue({
+        code: "custom",
+        path: ["members", index, "registrationNonce"],
+        message: "group and member registration nonces must be unique",
+      });
+    }
+    registrationNonces.add(member.registrationNonce);
+  }
+});
+
+/** Versioned private replay join for one prepared group. */
+export const ManagedRunGroupActivationDescriptorSchema = ManagedRunPreparedGroupStartSchema.extend({
+  schemaVersion: z.literal(1),
+});
 
 /** Strict unversioned payload accepted from an authenticated service. */
 export const ManagedRunReportInputSchema = z.strictObject({
@@ -176,6 +225,8 @@ export const ManagedEvidenceIndexSchema = z.strictObject({
 export type ManagedRunReportKind = z.infer<typeof ManagedRunReportKindSchema>;
 export type ManagedRunActivationDescriptor = z.infer<typeof ManagedRunActivationDescriptorSchema>;
 export type ManagedRunPreparedStart = z.infer<typeof ManagedRunPreparedStartSchema>;
+export type ManagedRunPreparedGroupStart = z.infer<typeof ManagedRunPreparedGroupStartSchema>;
+export type ManagedRunGroupActivationDescriptor = z.infer<typeof ManagedRunGroupActivationDescriptorSchema>;
 export type ManagedRunReportInput = z.infer<typeof ManagedRunReportInputSchema>;
 export type ManagedRunReportBody = z.infer<typeof ManagedRunReportBodySchema>;
 export type ManagedRunReportIndex = z.infer<typeof ManagedRunReportIndexSchema>;

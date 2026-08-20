@@ -10,6 +10,7 @@ import type {
 } from "../domain/managed-run.js";
 import type {
   ManagedRunActivationDescriptor,
+  ManagedRunGroupActivationDescriptor,
   ManagedRunReportBody,
   ManagedRunReportIndex,
   ManagedRunReportKind,
@@ -546,6 +547,9 @@ export interface ManagedRunContentPort {
   getActivationDescriptor(scope: ManagedRunContentScope, descriptorRef: string): Promise<Result<ManagedRunActivationDescriptor | undefined, Error>>;
   getActivationDescriptorForRecovery(scope: ManagedRunContentScope, descriptorRef: string, input: { readonly kind: "recovery" }): Promise<Result<ManagedRunActivationDescriptor | undefined, Error>>;
   deleteActivationDescriptor(scope: ManagedRunContentScope, descriptorRef: string): Promise<Result<boolean, Error>>;
+  putGroupActivationDescriptor(scope: ManagedRunContentScope, descriptorRef: string, descriptor: ManagedRunGroupActivationDescriptor): Promise<Result<ManagedRunPrivateContentReceipt, Error>>;
+  getGroupActivationDescriptorForRecovery(scope: ManagedRunContentScope, descriptorRef: string, input: { readonly kind: "recovery" }): Promise<Result<ManagedRunGroupActivationDescriptor | undefined, Error>>;
+  deleteGroupActivationDescriptor(scope: ManagedRunContentScope, descriptorRef: string): Promise<Result<boolean, Error>>;
   putReportBody(scope: ManagedRunContentScope, body: ManagedRunReportBody, retainedUntilMs: number): Promise<Result<ManagedRunPrivateContentReceipt, Error>>;
   getReportBody(scope: ManagedRunContentScope, contentRef: string): Promise<Result<ManagedRunReportBody | undefined, Error>>;
   deleteReportBody(scope: ManagedRunContentScope, contentRef: string): Promise<Result<boolean, Error>>;

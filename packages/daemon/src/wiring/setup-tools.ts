@@ -129,7 +129,7 @@ export interface ToolsDeps {
    *  Both optional; absent ⇒ no index → the outward-send wrap is a pass-through. */
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
-  capabilityServices: Pick<CapabilityServicePlatform, "runtime" | "store" | "workspaceLeases" | "attachments" | "attachmentAuthority" | "control" | "activationCoordinator" | "bindTerminalRevoker">;
+  capabilityServices: Pick<CapabilityServicePlatform, "runtime" | "store" | "workspaceLeases" | "attachments" | "attachmentAuthority" | "control" | "activationCoordinator" | "groupActivationCoordinator" | "bindTerminalRevoker">;
   clock: ClockPort;
   /** Durable checkpoint store used by orchestrate resume. */
   durableRuns?: DurableRunPort;
@@ -495,13 +495,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       },
       getManagedRunByExternalRef: (scope, serviceInstanceId, externalRunRef) =>
         deps.capabilityServices.store.getByExternalRunRef(scope, serviceInstanceId, externalRunRef),
-      activatePrepared: (input) => deps.capabilityServices.activationCoordinator
-        .activatePrepared({
-          ...input,
-          authority: { ...input.authority,
-            capturedAgentCapabilities: [...input.authority.capturedAgentCapabilities],
-            capturedToolIds: [...input.authority.capturedToolIds] },
-        }),
+      activatePrepared: (input) => deps.capabilityServices.activationCoordinator.activatePrepared({ ...input, authority: { ...input.authority, capturedAgentCapabilities: [...input.authority.capturedAgentCapabilities], capturedToolIds: [...input.authority.capturedToolIds] } }),
+      activatePreparedGroup: (input) => deps.capabilityServices.groupActivationCoordinator
+        .activatePreparedGroup({ ...input, authority: { ...input.authority, capturedAgentCapabilities: [...input.authority.capturedAgentCapabilities], capturedToolIds: [...input.authority.capturedToolIds] } }),
       logger: skillsLogger,
     });
 

@@ -19,11 +19,13 @@ import { isAbsolute, normalize } from "node:path";
 import type Database from "better-sqlite3";
 import {
   ManagedRunActivationDescriptorSchema,
+  ManagedRunGroupActivationDescriptorSchema,
   ManagedRunReportBodySchema,
   MAX_MANAGED_EVIDENCE_PRIVATE_BYTES,
   safePath,
   systemNowMs,
   type ManagedRunActivationDescriptor,
+  type ManagedRunGroupActivationDescriptor,
   type ManagedRunContentPort,
   type ManagedRunContentScope,
   type ManagedRunPrivateContentReceipt,
@@ -407,6 +409,27 @@ export function createSqliteManagedRunContentStore(
       return parsed.success ? ok(parsed.data) : err(new Error("stored activation descriptor is invalid"));
     }),
     deleteActivationDescriptor: (scope, descriptorRef) => boundary(() => {
+      const row = selectRow(scope, descriptorRef);
+      if (!row.ok || row.value === undefined) return row.ok ? ok(false) : row;
+      return row.value.kind === "activation" ? removeRow(row.value) : ok(false);
+    }),
+    putGroupActivationDescriptor: (scope, descriptorRef, descriptor) => boundary(() => {
+      const parsed = ManagedRunGroupActivationDescriptorSchema.safeParse(descriptor);
+      return parsed.success
+        ? put(scope, descriptorRef, "activation", Buffer.from(JSON.stringify(parsed.data)), parsed.data.expiresAtMs)
+        : err(new Error(`managed-run group activation descriptor is invalid: ${parsed.error.message}`));
+    }),
+    getGroupActivationDescriptorForRecovery: (scope, descriptorRef) => boundary<ManagedRunGroupActivationDescriptor | undefined>(() => {
+      const body = read(scope, descriptorRef, "activation", true);
+      if (!body.ok) return body;
+      if (body.value === undefined) return ok(undefined);
+      const bytes = body.value;
+      const decoded = tryCatch(() => JSON.parse(Buffer.from(bytes).toString("utf8")) as unknown);
+      if (!decoded.ok) return err(fromCause(decoded.error));
+      const parsed = ManagedRunGroupActivationDescriptorSchema.safeParse(decoded.value);
+      return parsed.success ? ok(parsed.data) : err(new Error("stored group activation descriptor is invalid"));
+    }),
+    deleteGroupActivationDescriptor: (scope, descriptorRef) => boundary(() => {
       const row = selectRow(scope, descriptorRef);
       if (!row.ok || row.value === undefined) return row.ok ? ok(false) : row;
       return row.value.kind === "activation" ? removeRow(row.value) : ok(false);

@@ -185,8 +185,15 @@ describe("managed-run grouped two-phase activation", () => {
         ids: {
           groupForOperation: (operationId) => ({
             managedRunGroupId: `managed-run-group-${operationId}`,
+            activationDescriptorRef: `descriptor-group-${operationId}`,
             activationOperationId: `activate-group-${operationId}`,
             abandonOperationId: `abandon-group-${operationId}`,
+          }),
+          forManagedRunGroup: (managedRunGroupId) => ({
+            managedRunGroupId,
+            activationDescriptorRef: "descriptor-group-operation_group_prepare_a",
+            activationOperationId: "activate-group-operation_group_prepare_a",
+            abandonOperationId: "abandon-group-operation_group_prepare_a",
           }),
           memberForOperation: (operationId, index) => ({
             managedRunId: `managed-run-${operationId}-${String(index)}`,

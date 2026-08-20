@@ -131,6 +131,7 @@ export interface ManagedRunActivationRecoverySummary {
   readonly activated: readonly string[];
   readonly cancelled: readonly string[];
   readonly unknown: readonly string[];
+  readonly deferredGroupIds: readonly string[];
   readonly invalid: readonly InvalidManagedRunRecord[];
   readonly failed: readonly ManagedRunActivationRecoveryFailure[];
   readonly nextAfterManagedRunId?: string;
@@ -896,12 +897,14 @@ export function createManagedRunActivationCoordinator(
       activated: string[];
       cancelled: string[];
       unknown: string[];
+      deferredGroupIds: string[];
       invalid: InvalidManagedRunRecord[];
       failed: ManagedRunActivationRecoveryFailure[];
     } = {
       activated: [],
       cancelled: [],
       unknown: [],
+      deferredGroupIds: [],
       invalid: [...scanned.value.invalid],
       failed: [],
     };
@@ -919,6 +922,15 @@ export function createManagedRunActivationCoordinator(
       );
     }
     for (const record of scanned.value.records) {
+      if (record.managedRunGroupId !== undefined) {
+        if (!summary.deferredGroupIds.includes(record.managedRunGroupId)) {
+          summary.deferredGroupIds.push(record.managedRunGroupId);
+        }
+        deps.logger.debug({ managedRunId: record.managedRunId, managedRunGroupId: record.managedRunGroupId,
+          serviceInstanceId: record.serviceInstanceId, step: "managed-run-group-recovery-deferred" },
+        "Deferring grouped member to managed-run group recovery");
+        continue;
+      }
       deps.logger.debug({
         managedRunId: record.managedRunId,
         serviceInstanceId: record.serviceInstanceId,
@@ -956,6 +968,7 @@ export function createManagedRunActivationCoordinator(
       recoveredCount: summary.activated.length,
       cancelledCount: summary.cancelled.length,
       unknownCount: summary.unknown.length,
+      deferredGroupCount: summary.deferredGroupIds.length,
       invalidCount: summary.invalid.length,
       failedCount: summary.failed.length,
       durationMs,
