@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ok } from "@comis/shared";
@@ -167,6 +167,7 @@ describe("managed terminal binding authority", () => {
     mkdirSync(workspace, { mode: 0o700 });
     mkdirSync(sibling, { mode: 0o700 });
     const original = lstatSync(workspace, { bigint: true });
+    renameSync(workspace, join(scratch, "retained-original"));
     const record = {
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
@@ -179,9 +180,11 @@ describe("managed terminal binding authority", () => {
 
     try {
       for (const replacement of ["directory", "symlink"] as const) {
-        rmSync(workspace, { recursive: true });
         if (replacement === "directory") mkdirSync(workspace, { mode: 0o700 });
-        else symlinkSync(sibling, workspace);
+        else {
+          rmSync(workspace, { recursive: true });
+          symlinkSync(sibling, workspace);
+        }
         const workspaceLeases = {
           get: vi.fn(async () => ok({
             schemaVersion: 1,
