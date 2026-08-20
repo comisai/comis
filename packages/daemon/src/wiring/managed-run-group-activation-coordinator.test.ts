@@ -280,4 +280,45 @@ describe("managed-run grouped two-phase activation", () => {
       },
     });
   });
+
+  it("replays a retained partial group as one operation after restart", async () => {
+    const activateGroup = vi.fn(async (command) => ok({
+      managedRunGroupId: command.managedRunGroupId,
+      members: [
+        { managedRunId: command.members[0]!.managedRunId, outcome: "completed" as const },
+        { managedRunId: command.members[1]!.managedRunId, outcome: "unknown" as const },
+      ],
+      activatedAtMs: NOW_MS + 10,
+    }));
+    const first = makeCoordinator(activateGroup);
+    expect((await first.coordinator.activatePreparedGroup(makeInput())).ok).toBe(true);
+    activateGroup.mockImplementation(async (command) => ok({
+      managedRunGroupId: command.managedRunGroupId,
+      members: command.members.map((member) => ({
+        managedRunId: member.managedRunId,
+        outcome: "completed" as const,
+      })),
+      activatedAtMs: NOW_MS + 20,
+    }));
+
+    const recovered = await first.coordinator.recoverPreparations({
+      updatedBeforeMs: NOW_MS + 10,
+      limit: 10,
+    });
+
+    expect(recovered).toMatchObject({
+      ok: true,
+      value: {
+        activated: ["managed-run-group-operation_group_prepare_a"],
+        unknown: [],
+        failed: [],
+      },
+    });
+    expect(activateGroup).toHaveBeenCalledTimes(2);
+    const group = await first.groupStore.getGroup(
+      OWNER_SCOPE,
+      "managed-run-group-operation_group_prepare_a",
+    );
+    expect(group.ok && group.value?.stateCounts).toEqual({ active: 2 });
+  });
 });

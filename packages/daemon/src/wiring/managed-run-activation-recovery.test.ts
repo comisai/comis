@@ -172,6 +172,50 @@ describe("managed-run activation restart recovery", () => {
     }
   });
 
+  it("defers grouped members to the group recovery coordinator", async () => {
+    const grouped = makeRecord("managed-run_grouped", "service-instance_a", "descriptor_grouped", {
+      managedRunGroupId: "managed-run-group_a",
+    });
+    const activate = vi.fn();
+    const coordinator = createManagedRunActivationCoordinator({
+      store: {
+        listRecoverable: vi.fn(async () => ok({ records: [grouped], invalid: [] })),
+      } as unknown as ReturnType<typeof createSqliteManagedRunStore>,
+      contentStore: {} as never,
+      workspaceLeases: {} as never,
+      attachments: {} as never,
+      attachmentAuthority: { create: vi.fn() },
+      revokeManagedTerminals: async () => ok(undefined),
+      control: { activate } as unknown as CapabilityServiceControlPort,
+      activeView: { getActiveView: () => makeActiveView() },
+      validateWorkspacePath: () => { throw new Error("workspace validation was not expected"); },
+      ids: {
+        forOperation: (operationId) => ({
+          managedRunId: `managed-${operationId}`,
+          activationDescriptorRef: `descriptor-${operationId}`,
+        }),
+        forManagedRun: controlIds,
+      },
+      nowMs: () => NOW_MS,
+      eventBus: new TypedEventBus(),
+      logger: makeLogger(),
+    });
+
+    const recovered = await coordinator.recoverPreparations({ updatedBeforeMs: NOW_MS, limit: 10 });
+
+    expect(recovered).toMatchObject({
+      ok: true,
+      value: {
+        activated: [],
+        cancelled: [],
+        unknown: [],
+        deferredGroupIds: ["managed-run-group_a"],
+        failed: [],
+      },
+    });
+    expect(activate).not.toHaveBeenCalled();
+  });
+
   it("reconciles independent preparation outcomes after database reopen", async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "managed-run-recovery-")));
     temporaryDirectories.push(root);
