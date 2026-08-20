@@ -442,7 +442,7 @@ describe("restart-injected capability-service vertical join", () => {
 
         expect(group).toMatchObject({
           service_instance_id: SERVICE_INSTANCE_ID,
-          conversation_ref: "conversation-initiative",
+          conversation_ref: expect.stringMatching(/^cv_[A-Za-z0-9_-]{43}$/u),
         });
         expect(hostMembers).toHaveLength(5);
         expect(hostMembers.every((member) => (

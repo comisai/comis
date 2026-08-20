@@ -344,7 +344,13 @@ interface HeldReport {
 
 /** Transparent control relay that can retain the first durable report across a daemon restart. */
 export class RestartControlProxy {
-  readonly records: Array<{ method: string }> = [];
+  readonly records: Array<{
+    method: string;
+    direction: "service_to_host" | "host_to_service";
+    id: string;
+    errorCode?: string;
+    errorMessage?: string;
+  }> = [];
   private readonly server: NetServer;
   private readonly sockets = new Set<Socket>();
   private held: HeldReport | undefined;
@@ -407,6 +413,7 @@ export class RestartControlProxy {
     target.once("close", discard);
     target.once("connect", () => {
       let buffered = Buffer.alloc(0);
+      let hostBuffered = Buffer.alloc(0);
       source.on("data", (chunk: Buffer) => {
         buffered = Buffer.concat([buffered, chunk]);
         while (true) {
@@ -414,12 +421,11 @@ export class RestartControlProxy {
           if (newline < 0) break;
           const line = buffered.subarray(0, newline + 1);
           buffered = buffered.subarray(newline + 1);
-          const parsed = JSON.parse(line.toString("utf8")) as { method?: string };
-          const record = { method: parsed.method ?? "" };
+          const record = this.recordFrame(line, "service_to_host");
           this.records.push(record);
           if (
             this.holdReports
-            && parsed.method === "managedRuns.report"
+            && record.method === "managedRuns.report"
             && this.held === undefined
           ) {
             this.held = { source, target, line };
@@ -429,8 +435,42 @@ export class RestartControlProxy {
           target.write(line);
         }
       });
-      target.on("data", (chunk) => source.write(chunk));
+      target.on("data", (chunk: Buffer) => {
+        hostBuffered = Buffer.concat([hostBuffered, chunk]);
+        while (true) {
+          const newline = hostBuffered.indexOf(0x0a);
+          if (newline < 0) break;
+          const line = hostBuffered.subarray(0, newline + 1);
+          hostBuffered = hostBuffered.subarray(newline + 1);
+          this.records.push(this.recordFrame(line, "host_to_service"));
+        }
+        source.write(chunk);
+      });
     });
+  }
+
+  private recordFrame(
+    line: Buffer,
+    direction: "service_to_host" | "host_to_service",
+  ): {
+    method: string;
+    direction: "service_to_host" | "host_to_service";
+    id: string;
+    errorCode?: string;
+    errorMessage?: string;
+  } {
+    const parsed = JSON.parse(line.toString("utf8")) as {
+      id?: string | number;
+      method?: string;
+      error?: { code?: string | number; message?: string };
+    };
+    return {
+      method: parsed.method ?? "",
+      direction,
+      id: parsed.id === undefined ? "" : String(parsed.id),
+      ...(parsed.error?.code === undefined ? {} : { errorCode: String(parsed.error.code) }),
+      ...(parsed.error?.message === undefined ? {} : { errorMessage: parsed.error.message }),
+    };
   }
 }
 
