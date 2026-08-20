@@ -16,6 +16,7 @@ import {
   CapabilityServiceErrorResponseSchema,
   CapabilityServiceRequestSchema,
   McpCapabilityCallContextSchema,
+  McpManagedRunGroupResultSchema,
   McpManagedRunResultSchema,
   materializeProtocolFixtureDigest,
   type CapabilityServiceErrorKind,
@@ -53,6 +54,7 @@ const RESPONSE_SCHEMAS = {
   "report-response": CapabilityReportResponseSchema,
   "terminal-event-response": CapabilityTerminalEventResponseSchema,
   "mcp-call-context": McpCapabilityCallContextSchema,
+  "mcp-managed-run-group-result": McpManagedRunGroupResultSchema,
   "mcp-managed-run-result": McpManagedRunResultSchema,
 } as const satisfies Readonly<Record<Exclude<ProtocolFixtureStep["target"], "request">, ZodType>>;
 
@@ -75,7 +77,11 @@ function validateWireSize(
   target: ProtocolFixtureStep["target"],
   payload: unknown,
 ): Result<void, CapabilityServiceProtocolFixtureRejection> {
-  if (target === "mcp-call-context" || target === "mcp-managed-run-result") return ok(undefined);
+  if (
+    target === "mcp-call-context"
+    || target === "mcp-managed-run-group-result"
+    || target === "mcp-managed-run-result"
+  ) return ok(undefined);
   const bytes = serializedBytes(payload);
   const directionLimit =
     target === "request"
@@ -222,6 +228,24 @@ export function createCapabilityServiceProtocolFixtureHost(
           preparation.data.externalRunRef,
           preparation.data.requestedAttachment !== undefined,
         );
+      }
+      if (step.target === "mcp-managed-run-group-result") {
+        const preparation = McpManagedRunGroupResultSchema.safeParse(payload);
+        if (!preparation.success) return reject("invalid_params");
+        for (const member of preparation.data.members) {
+          preparationWorkspaceRequests.set(
+            member.externalRunRef,
+            member.requestedWorkspace !== undefined,
+          );
+          if (
+            member.requestedAttachment !== undefined
+            && !(options.activeScopes ?? ["execution_attachment"]).includes("execution_attachment")
+          ) return reject("precondition_failed");
+          preparationAttachmentRequests.set(
+            member.externalRunRef,
+            member.requestedAttachment !== undefined,
+          );
+        }
       }
       return ok(undefined);
     },
