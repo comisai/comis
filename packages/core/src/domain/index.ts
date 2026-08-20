@@ -320,6 +320,24 @@ export type {
   ManagedRunRecord,
 } from "./managed-run.js";
 export {
+  MANAGED_RUN_GROUP_MAX_MEMBERS,
+  MANAGED_RUN_GROUP_PARTIAL_RETENTION_MS,
+  ManagedRunGroupMemberOutcomeSchema,
+  ManagedRunGroupRecordSchema,
+  ManagedRunGroupOperationResultSchema,
+  deriveManagedRunGroupRollup,
+  parseManagedRunGroupRecord,
+  parseManagedRunGroupOperationResult,
+} from "./managed-run-group.js";
+export type {
+  ManagedRunGroupMemberOutcome,
+  ManagedRunGroupRecord,
+  ManagedRunGroupOperationResult,
+  ManagedRunGroupRollupInput,
+  ManagedRunGroupRollupError,
+  ManagedRunGroupRollupErrorKind,
+} from "./managed-run-group.js";
+export {
   MAX_MANAGED_RUN_REPORT_BYTES,
   MAX_MANAGED_EVIDENCE_BYTES,
   MAX_MANAGED_EVIDENCE_PRIVATE_BYTES,
