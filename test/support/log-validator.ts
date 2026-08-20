@@ -111,6 +111,15 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
   // test runner, not a regression.
   { level: "warn", msg: /bwrap installed but smoke test failed/ },
 
+  // Containerized test runners launch disposable daemon containers without a
+  // restart policy. The daemon correctly warns because config-reload restart
+  // actions would not recover there; the runner does not exercise those actions.
+  // Match the complete message so other Docker posture warnings remain visible.
+  {
+    level: "warn",
+    msg: /^Running in Docker — restart policy required for config-reload operations$/,
+  },
+
   // Same root cause as the bwrap smoke-test warning above: when the
   // unprivileged user-namespace preflight fails, the jail cannot be built, so
   // agent autonomy downshifts to the 'assistant' profile with a one-shot
