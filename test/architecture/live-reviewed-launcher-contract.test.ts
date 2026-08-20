@@ -13,10 +13,12 @@
  *  - `launcherHash()` READS the file to compute the terminal-allowlist pin, so
  *    an absent launcher kills the whole describe block in `beforeAll` with a
  *    bare ENOENT that names a path no test creates.
- *  - DevCrew probes `<launcher> --version` while composing the service and
- *    compares stdout to the exact pinned version. A launcher that answers
- *    anything else surfaces only as `Failure cause: codex_composition` from a
- *    socket timeout — several layers above the probe that actually refused.
+ *  - The companion probes `<launcher> --version` while composing the service
+ *    and compares stdout to the exact pinned version. A launcher that answers
+ *    anything else — including one that demands its reviewed token first,
+ *    because `--version` is not that token — surfaces only as
+ *    `Failure cause: codex_composition` from a socket timeout, several layers
+ *    above the probe that actually refused.
  *
  * So this pins the provisioning script to the gates it serves: every launcher
  * path a gate references must be installed, and every version a gate pins must
@@ -26,8 +28,10 @@
  * @module
  */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -72,11 +76,19 @@ function pinnedVersions(): string[] {
 }
 
 describe("reviewed launcher provisioning", () => {
-  it("installs every launcher path the live gates pin", () => {
+  it("installs every launcher the live gates pin, under the reviewed prefix", () => {
     const script = read(PROVISIONER);
     const paths = pinnedLauncherPaths();
     expect(paths.length, "gates pin at least one launcher").toBeGreaterThan(0);
-    for (const path of paths) expect(script, `${path} is provisioned`).toContain(path);
+    for (const path of paths) {
+      // The script installs by name under a prefix, so the NAME is what must
+      // appear; the prefix is asserted separately below.
+      expect(script, `${path} is provisioned`).toContain(path.split("/").pop()!);
+      expect(path.slice(0, path.lastIndexOf("/"))).toBe("/usr/local/bin");
+    }
+    // The reviewed prefix is the default. LAUNCHER_PREFIX exists for the
+    // hermetic gate below, not as a way to install somewhere unreviewed.
+    expect(script).toContain('PREFIX="${LAUNCHER_PREFIX:-/usr/local/bin}"');
   });
 
   it("reports every harness version the live gates require", () => {
@@ -86,11 +98,49 @@ describe("reviewed launcher provisioning", () => {
     for (const version of versions) expect(script, `${version} is provisioned`).toContain(version);
   });
 
+  it("provisions launchers that answer the probe with the pinned versions", () => {
+    // Executing the script is the point. A text-only check passed a provisioner
+    // that could not run at all: a `local` referencing a sibling assignment in
+    // the same statement, which `set -u` rejects. It then passed a second one
+    // whose stub check asked `command -v` while the launcher delegated to
+    // "$PREFIX/$tool" — so an ambient harness suppressed the stub and the
+    // launcher pointed at a path nothing created.
+    //
+    // The run is hermetic: a temp prefix and a minimal PATH, so an ambient
+    // harness on the developer's machine cannot change what is asserted.
+    const prefix = mkdtempSync(join(tmpdir(), "reviewed-launchers-"));
+    try {
+      const env = { PATH: "/usr/bin:/bin", LAUNCHER_PREFIX: prefix };
+      const provision = spawnSync("/bin/bash", [resolve(REPO_ROOT, PROVISIONER)], {
+        env, encoding: "utf8",
+      });
+      expect(provision.status, `provisioner failed: ${provision.stderr}`).toBe(0);
+
+      const versions = pinnedVersions();
+      const reported = pinnedLauncherPaths().map((path) => {
+        const probe = spawnSync(join(prefix, path.split("/").pop()!), ["--version"], {
+          env, encoding: "utf8",
+        });
+        expect(probe.status, `probe failed: ${probe.stderr}`).toBe(0);
+        return probe.stdout.trim();
+      });
+
+      // Every launcher answers a pinned version, and every pinned version is
+      // answered by some launcher — neither direction alone catches a swap.
+      for (const answer of reported) expect(versions).toContain(answer);
+      for (const version of versions) expect(reported).toContain(version);
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+    }
+  });
+
   it("gives the generated launchers an absolute interpreter", () => {
     const script = read(PROVISIONER);
-    // The version probe runs with a sanitized environment that can be empty, so
-    // `#!/usr/bin/env bash` cannot resolve `bash` and the probe reads as an
-    // unavailable executable rather than a bad shebang.
+    // The probe inherits the environment today only because no probe
+    // environment is configured. The adapter accepts one, and such an
+    // environment need not carry PATH — which `#!/usr/bin/env bash` requires to
+    // resolve `bash`. A failure there reads as an unavailable executable rather
+    // than a bad shebang, so an absolute interpreter is cheap insurance.
     expect(script).toContain("#!/bin/bash");
     const generated = script.slice(script.indexOf("<<LAUNCHER"));
     expect(generated, "generated launcher avoids env-based shebang").not.toContain("#!/usr/bin/env");

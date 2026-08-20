@@ -28,13 +28,20 @@ them, and skipping this step fails both far from the cause:
   launcher file. An absent launcher throws `ENOENT` in `beforeAll` naming a
   path nothing in the repository creates.
 - The companion **executes** `<launcher> --version` while composing its service
-  and compares stdout to the exact pinned version. Any other answer surfaces
-  only as `Failure cause: codex_composition` behind an operator-socket timeout,
-  several layers above the probe that actually refused.
+  and compares stdout to the exact pinned version. Any other answer — including
+  a launcher that demands its reviewed token first, since `--version` is not
+  that token — surfaces only as `Failure cause: codex_composition` behind an
+  operator-socket timeout, several layers above the probe that refused.
 
-The version probe runs with a sanitized environment that can be empty, so the
-launchers use an absolute interpreter and answer `--version` with builtins
-only. `test/architecture/live-reviewed-launcher-contract.test.ts` pins the
+The script provisions enough for the **deterministic** gate only. That gate
+drives an in-process fixture worker and asserts no real harness process
+participates, so where no harness is installed a probe stub answers the version
+question and refuses every other invocation loudly. The real-worker scenarios
+need the actual harness plus a launcher carrying role bootstraps, a
+concurrent-start barrier and sibling-confinement evidence; that launcher belongs
+with the scenario that drives it.
+
+`test/architecture/live-reviewed-launcher-contract.test.ts` pins the
 provisioner to the paths and versions these scenarios reference, so bumping
 `--codex-version` in a scenario without moving the provisioner fails a gate
 instead of a live run.
