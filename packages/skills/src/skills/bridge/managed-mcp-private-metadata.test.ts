@@ -90,7 +90,7 @@ function makeContext(overrides: Record<string, unknown> = {}): RequestContext {
 }
 
 function makeView(
-  behavior: "prepare_run" | "run_command" = "prepare_run",
+  behavior: "prepare_run" | "prepare_run_group" | "run_command" = "prepare_run",
   actionClassification: "read" | "mutate" | "destructive" = "mutate",
 ) {
   return {
@@ -100,7 +100,11 @@ function makeView(
       serviceDefinitionId: "example.service-definition",
       mcpServerName: "fixture-service",
       managedToolBindings: [{
-        toolName: behavior === "prepare_run" ? "prepare_work" : "send_command",
+        toolName: behavior === "prepare_run"
+          ? "prepare_work"
+          : behavior === "prepare_run_group"
+            ? "prepare_initiative"
+            : "send_command",
         behavior,
         ...(behavior === "run_command" ? { runHandleArgument: "run_handle" } : {}),
         actionClassification,
@@ -165,6 +169,7 @@ function makeDeps(
     resolveRootRunId: () => ok("root-run_a"),
     getManagedRunByExternalRef: vi.fn(async () => ok(undefined)),
     activatePrepared: vi.fn(async () => ok({ kind: "activated" as const })),
+    activatePreparedGroup: vi.fn(async () => ok({ kind: "activated" as const })),
     logger: makeLogger(),
     ...overrides,
   };
@@ -229,6 +234,61 @@ describe("managed MCP private metadata boundary", () => {
         capturedCapabilityViewHash: "c".repeat(64),
         capturedAgentCapabilities: ["orch:read", "orch:web"],
         capturedToolIds: ["mcp:fixture-service/prepare_work", "web_search"],
+      }),
+    }));
+  });
+
+  it("activates a complete prepared group through one private host binding", async () => {
+    const activeView = makeView("prepare_run_group");
+    const deps = makeDeps({
+      activeView: {
+        ...activeView,
+        instances: [{
+          ...activeView.instances[0]!,
+          activeScopes: ["health", "managed_run_group", "workspace_lease", "execution_attachment"],
+        }],
+      },
+      getCapturedToolIds: () => ["mcp:fixture-service/prepare_initiative"],
+    });
+    const bridge = createManagedMcpPrivateMetadataBridge(deps);
+    const call = makeCall("prepare_initiative");
+
+    const accepted = await runWithContext(makeContext(), async () => {
+      expect((await bridge.createRequestMeta(call)).ok).toBe(true);
+      return bridge.acceptResultMeta({
+        ...call,
+        meta: {
+          [MCP_MANAGED_RUN_RESULT_KEY]: {
+            state: "prepared",
+            registrationNonce: "group-registration-nonce_a",
+            expiresAt: new Date(NOW_MS + 60_000).toISOString(),
+            members: [{
+              state: "prepared",
+              externalRunRef: "external-run_group-member-a",
+              registrationNonce: "registration-nonce_group-member-a",
+              expiresAt: new Date(NOW_MS + 60_000).toISOString(),
+              requestedWorkspace: { rootHint: "/srv/comis-workspaces/group-task-a" },
+              requestedAttachment: {
+                kind: "unix_socket",
+                sourcePath: "/srv/comis-runtime/group-task-a/reporter.sock",
+              },
+            }],
+          },
+        },
+      });
+    });
+
+    expect(accepted.ok).toBe(true);
+    expect(deps.activatePrepared).not.toHaveBeenCalled();
+    expect(deps.activatePreparedGroup).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: expect.stringMatching(/^mcp-[a-f0-9]{48}$/),
+      serviceInstanceId: "service-instance_a",
+      prepared: expect.objectContaining({
+        registrationNonce: "group-registration-nonce_a",
+        members: [expect.objectContaining({
+          externalRunRef: "external-run_group-member-a",
+          requestedWorkspace: { rootHint: "/srv/comis-workspaces/group-task-a" },
+        })],
       }),
     }));
   });
