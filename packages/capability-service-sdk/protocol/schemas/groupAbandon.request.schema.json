@@ -33,6 +33,40 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
           "type": "string"
         },
+        "members": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "externalRunRef": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+                "type": "string"
+              },
+              "managedRunId": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+                "type": "string"
+              },
+              "registrationNonce": {
+                "maxLength": 256,
+                "minLength": 16,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "managedRunId",
+              "externalRunRef",
+              "registrationNonce"
+            ],
+            "type": "object"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array"
+        },
         "operationId": {
           "maxLength": 128,
           "minLength": 1,
@@ -59,6 +93,7 @@
         "operationId",
         "managedRunGroupId",
         "registrationNonce",
+        "members",
         "reason",
         "disposition"
       ],

@@ -250,6 +250,11 @@ export function createManagedRunGroupActivationCoordinator(
       serviceInstanceId: input.serviceInstanceId,
       managedRunGroupId: groupIds.managedRunGroupId,
       registrationNonce: input.prepared.registrationNonce,
+      members: input.prepared.members.map((member, index) => ({
+        managedRunId: deps.ids.memberForOperation(input.operationId, index).managedRunId,
+        externalRunRef: member.externalRunRef,
+        registrationNonce: member.registrationNonce,
+      })),
       reason,
       disposition: "reap_safe",
     }));

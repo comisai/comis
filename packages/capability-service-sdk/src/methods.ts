@@ -322,10 +322,16 @@ const GroupMemberOutcomeSchema = z.strictObject({
   outcome: CapabilityGroupMemberOutcomeSchema,
 });
 
-const groupMemberActivationShape = {
+const groupMemberIdentityShape = {
   managedRunId: ManagedRunIdSchema,
   externalRunRef: ExternalRunRefSchema,
   registrationNonce: RegistrationNonceSchema,
+};
+
+const GroupMemberIdentitySchema = z.strictObject(groupMemberIdentityShape);
+
+const groupMemberActivationShape = {
+  ...groupMemberIdentityShape,
   workspaceLeaseId: WorkspaceLeaseIdSchema.optional(),
 };
 
@@ -368,6 +374,7 @@ export const CapabilityGroupAbandonRequestSchema = z.strictObject({
     operationId: OperationIdSchema,
     managedRunGroupId: ManagedRunGroupIdSchema,
     registrationNonce: RegistrationNonceSchema,
+    members: z.array(GroupMemberIdentitySchema).min(1).max(CAPABILITY_SERVICE_LIMITS.maxGroupMembers),
     reason: z.enum([
       "activation_rejected",
       "owner_cancelled",

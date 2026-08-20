@@ -62,7 +62,7 @@
     },
     {
       "path": "schemas/groupAbandon.request.schema.json",
-      "sha256": "65411733d6c86e62239b91842eaf9c7c9a851036d3ad4d8abc911870fda7765c"
+      "sha256": "840fc4e67554b346900f0027d508cc91a2a6ed8e6dc2bc0fc03b09ef860e6b08"
     },
     {
       "path": "schemas/groupAbandon.response.schema.json",
@@ -165,7 +165,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "a718ad6b4dc34ab1efd34fbc29b15ed0f6a30a392e0c9571a443bb5574aaf020",
+  "bundleDigest": "b42ab7a7662f3b02ede4d12d55e1ae7d50855990897fc4d24164b3a35f3c711d",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -312,6 +312,7 @@
         "operation-id-must-match-envelope-id",
         "identical-replay-returns-original-result",
         "altered-replay-is-rejected",
+        "request-names-every-prepared-member-exactly-once",
         "response-names-every-member-exactly-once",
         "partial-reap-reports-per-member-outcomes-not-one-group-result"
       ]

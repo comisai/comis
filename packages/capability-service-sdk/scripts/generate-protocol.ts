@@ -116,6 +116,7 @@ const METHOD_CATALOG = [
       "operation-id-must-match-envelope-id",
       "identical-replay-returns-original-result",
       "altered-replay-is-rejected",
+      "request-names-every-prepared-member-exactly-once",
       "response-names-every-member-exactly-once",
       "partial-reap-reports-per-member-outcomes-not-one-group-result",
     ],

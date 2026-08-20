@@ -58,6 +58,11 @@ describe("capability-service group control forwarding", () => {
         serviceInstanceId: "service-instance_a",
         managedRunGroupId: "managed-run-group_a",
         registrationNonce: "group-registration-nonce_a",
+        members: [{
+          managedRunId: "managed-run_a",
+          externalRunRef: "external-run_a",
+          registrationNonce: "member-registration-nonce_a",
+        }],
         reason: "activation_rejected",
         disposition: "reap_safe",
       },

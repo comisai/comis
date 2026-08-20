@@ -134,11 +134,7 @@ export async function sendGroupActivate(
   }, CapabilityGroupActivateRequestSchema, CapabilityGroupActivateResponseSchema));
 }
 
-/**
- * Reap a group preparation the host could not bind. It names no member: the
- * whole preparation is unbound, and listing members would imply the host knows
- * which of them the service had already reached.
- */
+/** Reap a group preparation using the exact host-minted member identities. */
 export async function sendGroupAbandon(
   command: CapabilityServiceGroupAbandonCommand,
   sendControl: SendControl,
@@ -151,6 +147,11 @@ export async function sendGroupAbandon(
       operationId: command.operationId,
       managedRunGroupId: command.managedRunGroupId,
       registrationNonce: command.registrationNonce,
+      members: command.members.map((member) => ({
+        managedRunId: member.managedRunId,
+        externalRunRef: member.externalRunRef,
+        registrationNonce: member.registrationNonce,
+      })),
       reason: command.reason,
       disposition: command.disposition,
     },

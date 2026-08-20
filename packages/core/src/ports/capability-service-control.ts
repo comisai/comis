@@ -45,10 +45,13 @@ export interface CapabilityServiceAbandonAcknowledgement {
  * shape mirrors a single activation because a group is a batch of ordinary
  * preparations, not a new kind of run.
  */
-export interface CapabilityServiceGroupMemberActivation {
+export interface CapabilityServiceGroupMemberIdentity {
   readonly managedRunId: string;
   readonly externalRunRef: string;
   readonly registrationNonce: string;
+}
+
+export interface CapabilityServiceGroupMemberActivation extends CapabilityServiceGroupMemberIdentity {
   readonly workspaceLeaseId?: string;
   readonly executionAttachmentId?: string;
   readonly attachmentTargetName?: string;
@@ -83,6 +86,7 @@ export interface CapabilityServiceGroupAbandonCommand {
   readonly serviceInstanceId: string;
   readonly managedRunGroupId: string;
   readonly registrationNonce: string;
+  readonly members: readonly CapabilityServiceGroupMemberIdentity[];
   readonly reason: "activation_rejected" | "owner_cancelled" | "registration_expired" | "service_unavailable";
   readonly disposition: "reap_safe" | "preserve";
 }
