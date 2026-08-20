@@ -306,7 +306,16 @@ describe("data-operation fixture conformance", () => {
     )).resolves.toBeDefined();
 
     expect(approvalGate.requestApproval).toHaveBeenCalledTimes(1);
-    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(callTool).toHaveBeenCalledWith(
+      "mcp:data-fixture/apply_change",
+      { recordId: "record_a" },
+      undefined,
+      expect.objectContaining({
+        "comis.callContext": expect.objectContaining({
+          approvalRequestId: "10000000-0000-4000-8000-000000000002",
+        }),
+      }),
+    );
   });
 
   it("fails an unresolvable binding closed to destructive rather than open to read", () => {
