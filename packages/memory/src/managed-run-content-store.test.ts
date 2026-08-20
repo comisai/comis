@@ -117,6 +117,53 @@ describe("createSqliteManagedRunContentStore confined bodies", () => {
     });
   });
 
+  it("recovers and deletes a durable group activation descriptor", async () => {
+    const descriptor = {
+      schemaVersion: 1 as const,
+      state: "prepared" as const,
+      registrationNonce: "group-registration-nonce_a",
+      expiresAtMs: 1_800_000_060_000,
+      displayLabel: "Prepared group",
+      members: [
+        {
+          state: "prepared" as const,
+          externalRunRef: "external-run_member-a",
+          registrationNonce: "member-registration-nonce_a",
+          expiresAtMs: 1_800_000_060_000,
+          displayLabel: "Member A",
+        },
+        {
+          state: "prepared" as const,
+          externalRunRef: "external-run_member-b",
+          registrationNonce: "member-registration-nonce_b",
+          expiresAtMs: 1_800_000_060_000,
+        },
+      ],
+    };
+
+    expect(await store.putGroupActivationDescriptor(SCOPE, "group-activation_a", descriptor))
+      .toMatchObject({ ok: true, value: { contentRef: "group-activation_a" } });
+    expect(await store.getGroupActivationDescriptorForRecovery(
+      SCOPE,
+      "group-activation_a",
+      { kind: "recovery" },
+    )).toEqual({ ok: true, value: descriptor });
+    expect(await store.deleteGroupActivationDescriptor(SCOPE, "group-activation_a"))
+      .toEqual({ ok: true, value: true });
+    expect(await store.deleteGroupActivationDescriptor(SCOPE, "group-activation_a"))
+      .toEqual({ ok: true, value: false });
+    expect(await store.getGroupActivationDescriptorForRecovery(
+      SCOPE,
+      "group-activation_a",
+      { kind: "recovery" },
+    )).toEqual({ ok: true, value: undefined });
+
+    expect((await store.putGroupActivationDescriptor(SCOPE, "group-activation_invalid", {
+      ...descriptor,
+      members: [],
+    })).ok).toBe(false);
+  });
+
   it("stores evidence and attention bytes without placing bodies in SQLite", async () => {
     const evidenceBytes = new TextEncoder().encode("private evidence bytes");
     const attentionBytes = new TextEncoder().encode("private attention bytes");
