@@ -16,9 +16,16 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema } from "typebox";
-import { registerToolMetadata, wrapExternalContent, tryGetContext, type WrapExternalContentOptions } from "@comis/core";
+import {
+  registerToolMetadata,
+  wrapExternalContent,
+  tryGetContext,
+  type ApprovalGate,
+  type WrapExternalContentOptions,
+} from "@comis/core";
 import { extractMcpServerName, type Result } from "@comis/shared";
 export { extractMcpServerName };
+import { resolveApprovalRequestContext } from "../../platform-tools/approval-request-context.js";
 import { resolveSourceProfile, type ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
 import type {
   McpToolDefinition,
@@ -295,6 +302,9 @@ export function sanitizeMcpToolName(qualifiedName: string): string {
  *   filtered out). Filtering runs BEFORE the `.map()` below, so excluded tools
  *   never receive an AgentTool wrapper and never enter the agent's tool registry
  *   — the agent simply does not see them.
+ * @param approvalGate - Existing host approval subsystem. Operator-classified
+ *   destructive managed tools fail closed when the gate is unavailable and
+ *   reach the external service only after an affirmative resolution.
  * @returns AgentTool instances ready for the agent executor
  */
 export function mcpToolsToAgentTools(
@@ -315,6 +325,7 @@ export function mcpToolsToAgentTools(
     traceId: string;
   }) => void,
   privateMetadataBridge?: McpPrivateMetadataBridge,
+  approvalGate?: ApprovalGate,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   /** Log the content shape of an execute() return value for content-loss diagnosis. */
@@ -415,6 +426,35 @@ export function mcpToolsToAgentTools(
           toolCallId: _toolCallId,
           params: params as Readonly<Record<string, unknown>>,
         };
+        if (managedMetadata?.actionClassification === "destructive") {
+          if (approvalGate === undefined) {
+            throw new Error(
+              "Managed MCP destructive action refused because the approval gate is unavailable",
+            );
+          }
+          const approvalContext = resolveApprovalRequestContext();
+          if (!approvalContext.ok) {
+            throw new Error(
+              `Managed MCP destructive action refused: ${approvalContext.error.message}`,
+            );
+          }
+          const resolution = await approvalGate.requestApproval({
+            toolName: sanitizedName,
+            action: `mcp.${serverName}.${tool.name}`,
+            params: { serverName, toolName: tool.name },
+            fingerprintParams: {
+              serverName,
+              toolName: tool.name,
+              arguments: params,
+            },
+            ...approvalContext.value,
+          });
+          if (!resolution.approved) {
+            throw new Error(
+              `Managed MCP destructive action was not approved: ${resolution.reason ?? "approval was denied"}`,
+            );
+          }
+        }
         let result: Awaited<ReturnType<McpClientManager["callTool"]>>;
         try {
           const privateRequestMeta = privateMetadataBridge === undefined

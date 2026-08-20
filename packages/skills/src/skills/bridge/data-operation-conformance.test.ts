@@ -172,10 +172,7 @@ function makeAgentTools(
   privateMetadataBridge: McpPrivateMetadataBridge,
   approvalGate: ApprovalGate | undefined,
 ) {
-  // Reflect keeps the RED test executable before the approval dependency is
-  // added to the production signature. The pre-change bridge ignores the
-  // ninth argument and therefore reaches the mutation without approval.
-  return Reflect.apply(mcpToolsToAgentTools, undefined, [
+  return mcpToolsToAgentTools(
     [makeTool("inspect_records"), makeTool("apply_change")],
     callTool,
     undefined,
@@ -185,7 +182,7 @@ function makeAgentTools(
     undefined,
     privateMetadataBridge,
     approvalGate,
-  ]) as ReturnType<typeof mcpToolsToAgentTools>;
+  );
 }
 
 function dataOperationDeps(overrides: Record<string, unknown> = {}) {

@@ -415,7 +415,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // in scope — stamps the timestamp and does the emit. Payload carries only
       // sizes + identifiers, never the truncated content.
       (e) => eventBus.emit("mcp:server:result_truncated", { ...e, timestamp: systemNowMs() }),
-      privateMetadataBridge,
+      privateMetadataBridge, approvalGate,
     );
     return agentMcpTools;
   }
