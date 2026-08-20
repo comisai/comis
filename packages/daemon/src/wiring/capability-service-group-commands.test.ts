@@ -93,6 +93,18 @@ describe("managed-run group control commands", () => {
       serviceInstanceId: "service-instance_a",
       managedRunGroupId: "managed-run-group_a",
       registrationNonce: "group-registration-nonce_aaaa",
+      members: [
+        {
+          managedRunId: "managed-run_a",
+          externalRunRef: "external-run_a",
+          registrationNonce: "registration-nonce_aaaa",
+        },
+        {
+          managedRunId: "managed-run_b",
+          externalRunRef: "external-run_b",
+          registrationNonce: "registration-nonce_bbbb",
+        },
+      ],
       reason: "registration_expired",
       disposition: "reap_safe",
     }, sendControl);
@@ -101,8 +113,17 @@ describe("managed-run group control commands", () => {
     expect(frame.params["reason"]).toBe("registration_expired");
     expect(frame.params["disposition"]).toBe("reap_safe");
     expect(frame.params["registrationNonce"]).toBe("group-registration-nonce_aaaa");
-    // A group abandon names no member: the whole preparation is unbound, and
-    // naming members would imply the host knows which ones the service reached.
-    expect(Object.keys(frame.params)).not.toContain("members");
+    expect(frame.params["members"]).toEqual([
+      {
+        managedRunId: "managed-run_a",
+        externalRunRef: "external-run_a",
+        registrationNonce: "registration-nonce_aaaa",
+      },
+      {
+        managedRunId: "managed-run_b",
+        externalRunRef: "external-run_b",
+        registrationNonce: "registration-nonce_bbbb",
+      },
+    ]);
   });
 });
