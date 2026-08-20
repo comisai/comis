@@ -448,6 +448,21 @@ describe("capability-service protocol bundle contract", () => {
     expect(reportParams).not.toHaveProperty("state");
   });
 
+  it("advertises managed-run group authority in the canonical handshake", () => {
+    const valid = readJson<{
+      steps: Array<{ target: string; payload: Record<string, unknown> }>;
+    }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
+    const request = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "capabilityServices.handshake",
+    );
+    const response = valid.steps.find((step) => step.target === "handshake-response");
+    const params = request?.payload["params"] as Record<string, unknown> | undefined;
+    const result = response?.payload["result"] as Record<string, unknown> | undefined;
+
+    expect(params?.["requestedScopes"]).toContain("managed_run_group");
+    expect(result?.["activeScopes"]).toContain("managed_run_group");
+  });
+
   it("includes every required conformance fixture class", () => {
     const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
     const fixtureArtifacts = manifest.artifacts.filter((artifact) =>
