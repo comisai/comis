@@ -145,6 +145,7 @@ describe("capability-service execution-attachment contract", () => {
           "workspace_lease",
           "terminal_events",
           "execution_attachment",
+          "managed_run_group",
         ],
       },
     }).success).toBe(true);

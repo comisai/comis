@@ -10,7 +10,7 @@
     },
     {
       "path": "fixtures/digest-mismatch.json",
-      "sha256": "1df801bd800b13ff778bd0af957f39b71a537869c104ff308aeb9047d6e130cf"
+      "sha256": "9427ee26324bf46944c80b7a81373e7f49f69aa3fd4a628482f78087edea55f5"
     },
     {
       "path": "fixtures/invalid.json",
@@ -18,15 +18,15 @@
     },
     {
       "path": "fixtures/unknown-field.json",
-      "sha256": "0b6b2347b98f78d57e1839fbd1c2105b5dff91e0cb33d3798c4925c055a99b9d"
+      "sha256": "83fd7f319a2e1ae68670f459ff997387af95bf7e0fd2de4960936e528b5e68f9"
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "99cdd83aab8bc4b02935c76fc307dd37bb4595e2e94aa6656264e6ac02b0e049"
+      "sha256": "83924e5a9a5872c41fd617d1cbc81f9085f4fa6aaf73e0e3cd32529ec2d6e411"
     },
     {
       "path": "fixtures/version-mismatch.json",
-      "sha256": "16e4a426dbba0aa48c3f1be91d68dd5a588362f94d9c1c04ac6305723ad8ae3f"
+      "sha256": "ba559e861d44011c2cad4a6f330db78b8d2373b21dc060f12f6707916764c38b"
     },
     {
       "path": "schemas/abandon.request.schema.json",
@@ -165,7 +165,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "93470b8b70f8c11fcc87940c5c5b686b0eb958f9453d09ec05b4b91049acab86",
+  "bundleDigest": "a718ad6b4dc34ab1efd34fbc29b15ed0f6a30a392e0c9571a443bb5574aaf020",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",

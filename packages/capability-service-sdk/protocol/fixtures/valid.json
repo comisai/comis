@@ -76,7 +76,8 @@
             "report",
             "workspace_lease",
             "terminal_events",
-            "execution_attachment"
+            "execution_attachment",
+            "managed_run_group"
           ],
           "serviceInstanceId": "service-instance_a"
         }
@@ -97,7 +98,8 @@
             "report",
             "workspace_lease",
             "terminal_events",
-            "execution_attachment"
+            "execution_attachment",
+            "managed_run_group"
           ],
           "bundleDigest": "__BUNDLE_DIGEST__",
           "limits": {

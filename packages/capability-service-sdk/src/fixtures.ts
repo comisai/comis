@@ -82,6 +82,7 @@ const handshakeParams = {
     "workspace_lease",
     "terminal_events",
     "execution_attachment",
+    "managed_run_group",
   ],
 };
 
@@ -168,6 +169,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
               "workspace_lease",
               "terminal_events",
               "execution_attachment",
+              "managed_run_group",
             ],
             limits: CAPABILITY_SERVICE_LIMITS,
           },
