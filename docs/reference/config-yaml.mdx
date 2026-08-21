@@ -2354,6 +2354,10 @@ owner scope. Read and mutate commands are unavailable after a managed run
 reaches a terminal outcome; destructive commands remain available there so an
 authorized service can release retained workspaces, attachments, or other
 run-owned resources through the normal approval and security path.
+When the handle is missing from that owner scope, Comis refuses the call before
+MCP transport, returns the exact bounded authority reason to the agent, and
+records a `precondition` failure with the `managed_mcp_authority` rule and a
+hint naming `managedToolBindings[].runHandleArgument`.
 
 | Key | Type | Default | Validation |
 |-----|------|---------|------------|

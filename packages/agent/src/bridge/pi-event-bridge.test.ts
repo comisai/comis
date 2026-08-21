@@ -1735,6 +1735,52 @@ describe("createPiEventBridge", () => {
         expect(recordResult).not.toHaveBeenCalled();
       });
 
+      it("classifies managed MCP authority refusal as a breaker-neutral precondition", () => {
+        const recordResult = vi.fn();
+        deps = createMockDeps({
+          toolRetryBreaker: {
+            beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+            recordResult,
+            getBlockedTools: vi.fn().mockReturnValue([]),
+            reset: vi.fn(),
+          } as any,
+        });
+        const { listener } = createPiEventBridge(deps);
+        const result = {
+          content: [{
+            type: "text",
+            text:
+              'MCP tool "mcp:devcrew/reconcile_task" refused before transport: '
+              + "[managed_mcp_authority] managed-run handle is unavailable in the active owner scope",
+          }],
+          details: {},
+        };
+
+        listener(makeToolExecutionEndEvent(
+          "mcp__devcrew--reconcile_task",
+          "tc-managed-mcp-authority",
+          true,
+          result,
+        ) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("mcp__devcrew--reconcile_task");
+        expect(endEmit?.[1]).toMatchObject({
+          success: false,
+          errorKind: "precondition",
+          classifiedFailureBy: "runtime_guard",
+          matchedRule: "managed_mcp_authority",
+          failureCode: "managed_mcp_authority",
+          transportOk: false,
+        });
+        expect(warn?.[0]).toMatchObject({
+          errorKind: "precondition",
+          classifiedFailureBy: "runtime_guard",
+          matchedRule: "managed_mcp_authority",
+        });
+        expect(warn?.[0].hint).toContain("managedToolBindings[].runHandleArgument");
+        expect(recordResult).not.toHaveBeenCalled();
+      });
+
       it("classifies MCP queue contention as a breaker-neutral resource guard with timing evidence", () => {
         const recordResult = vi.fn();
         deps = createMockDeps({

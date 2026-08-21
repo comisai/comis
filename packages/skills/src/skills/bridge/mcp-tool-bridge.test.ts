@@ -447,6 +447,32 @@ describe("mcpToolsToAgentTools", () => {
     expect(privateMetadataBridge.discardCall).toHaveBeenCalledOnce();
   });
 
+  it("bounds managed authority refusal details before returning them to the model", async () => {
+    const privateMetadataBridge: McpPrivateMetadataBridge = {
+      createRequestMeta: vi.fn(async () => err(new Error("x".repeat(2_000)))),
+      acceptResultMeta: vi.fn(async () => ok(undefined)),
+      discardCall: vi.fn(),
+    };
+    const tools = mcpToolsToAgentTools(
+      [makeTool()],
+      makeCallTool(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      privateMetadataBridge,
+    );
+
+    const rejection = await tools[0].execute("call-authority-bounded", {}).catch(
+      (error: unknown) => error,
+    );
+
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message.length).toBeLessThan(700);
+    expect((rejection as Error).message).toMatch(/x{512}…$/);
+  });
+
   it("converts multiple tools", () => {
     const tools = mcpToolsToAgentTools(
       [

@@ -81,6 +81,20 @@ export interface McpPrivateMetadataBridge {
   discardCall(input: McpPrivateMetadataCall): void;
 }
 
+class ManagedMcpAuthorityRefusal extends Error {
+  constructor(readonly authorityError: Error) {
+    super(authorityError.message, { cause: authorityError });
+    this.name = "ManagedMcpAuthorityRefusal";
+  }
+}
+
+function boundedManagedAuthorityReason(error: Error): string {
+  const maxChars = 512;
+  return error.message.length <= maxChars
+    ? error.message
+    : `${error.message.slice(0, maxChars)}…`;
+}
+
 // ---------------------------------------------------------------------------
 // MCP error classification
 // ---------------------------------------------------------------------------
@@ -480,9 +494,7 @@ export function mcpToolsToAgentTools(
             ? undefined
             : await privateMetadataBridge.createRequestMeta(privateMetadataCall);
           if (privateRequestMeta && !privateRequestMeta.ok) {
-            throw new Error("MCP private request metadata could not be created", {
-              cause: privateRequestMeta.error,
-            });
+            throw new ManagedMcpAuthorityRefusal(privateRequestMeta.error);
           }
           if (privateRequestMeta?.value !== undefined) {
             result = await callTool(
@@ -505,14 +517,17 @@ export function mcpToolsToAgentTools(
           // Defense-in-depth: callTool returns Result and should never throw.
           // Throwing here is deliberate: pi-agent-core is the immediate boundary
           // that converts this exception into an isError=true tool result.
-          const message = error instanceof Error ? error.message : String(error);
-          const crashText = `MCP tool "${tool.qualifiedName}" crashed unexpectedly: ${message}`;
+          const failureText = error instanceof ManagedMcpAuthorityRefusal
+            ? `MCP tool "${tool.qualifiedName}" refused before transport: `
+              + `[managed_mcp_authority] ${boundedManagedAuthorityReason(error.authorityError)}`
+            : `MCP tool "${tool.qualifiedName}" crashed unexpectedly: `
+              + (error instanceof Error ? error.message : String(error));
           const crashResult = {
-            content: [{ type: "text" as const, text: crashText }],
+            content: [{ type: "text" as const, text: failureText }],
             details: { success: false },
           };
           logResult(crashResult, _toolCallId, sanitizedName, true);
-          throw new Error(crashText, { cause: error });
+          throw new Error(failureText, { cause: error });
         }
 
         if (!result.ok) {

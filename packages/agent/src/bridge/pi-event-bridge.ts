@@ -1358,7 +1358,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               transportOk = false;
             } else if (toolErrorKind === undefined) {
               if (runtimeToolGuard !== undefined) {
-                toolErrorKind = "resource";
+                toolErrorKind = runtimeToolGuard === "managed_mcp_authority"
+                  ? "precondition"
+                  : "resource";
                 classifiedFailureBy = "runtime_guard";
                 matchedRule = runtimeToolGuard;
                 // The runtime blocked the call before the tool or MCP transport

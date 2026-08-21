@@ -94,6 +94,17 @@ describe("toolFailureHint", () => {
     expect(hint).toContain("restart");
     expect(hint.toLowerCase()).not.toContain("wait for a running sub-agent");
   });
+
+  it("names the managed run owner scope for authority refusals", () => {
+    const hint = toolFailureHint(
+      "[managed_mcp_authority] managed-run handle is unavailable in the active owner scope",
+      "precondition",
+    );
+
+    expect(hint).toContain("managed-run owner scope");
+    expect(hint).toContain("managedToolBindings[].runHandleArgument");
+    expect(hint).not.toBe(GENERIC_TOOL_FAILURE_HINT);
+  });
 });
 
 // ---------------------------------------------------------------------------
