@@ -24,6 +24,7 @@ import { startTestDaemon, type TestDaemonHandle } from "../../../support/daemon-
 import { createFixtureRepository, waitForUnixSocket } from "../../../support/capability-service-vertical-harness.js";
 import { getFreePort } from "../../../support/free-port.js";
 import { stopManagedChild } from "../../../support/managed-child-process.js";
+import { createBoundedServiceStderr } from "./service-stderr-buffer.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../../..");
@@ -43,6 +44,7 @@ const REVIEWED_CLAUDE_TOKEN = "wave4-claude-reviewed";
 const MIXED_WORKER_JOIN = process.env["COMIS_WAVE4_MIXED_WORKERS"] === "1";
 const isLiveLinux = process.env["COMIS_LIVE"] === "1" && process.platform === "linux";
 const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;
+const SERVICE_STDERR_DIAGNOSTIC_LIMIT_BYTES = 64 * 1_024;
 const CANDIDATE_BARRIER_FILE = ".wave4-candidate-barrier";
 const CANDIDATE_RELEASE_FILE = ".wave4-candidate-release";
 
@@ -394,11 +396,11 @@ export function startInstalledService(input: {
   }
   arguments_.push(...(input.additionalArguments ?? []));
   const child = spawn(input.binary, arguments_, { stdio: ["ignore", "ignore", "pipe"] });
-  const stderr: Buffer[] = [];
-  child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+  const stderr = createBoundedServiceStderr(SERVICE_STDERR_DIAGNOSTIC_LIMIT_BYTES);
+  child.stderr?.on("data", (chunk: Buffer) => stderr.append(chunk));
   return {
     child,
-    stderr: () => Buffer.concat(stderr).toString("utf8"),
+    stderr: () => stderr.text(),
     stop: () => stopManagedChild(child),
   };
 }
