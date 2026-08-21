@@ -361,7 +361,7 @@ export function createPiExecutor(
   // Foreground failures belong to one execution. Background-task health must
   // outlive it because a promoted task can settle after execute() returns.
   const toolRetryBreakerLifecycle = createToolRetryBreakerLifecycle(
-    config.toolRetryBreaker,
+    { config: config.toolRetryBreaker },
   );
   const backgroundTaskSettlementReconciler =
     toolRetryBreakerLifecycle.backgroundBreaker === undefined

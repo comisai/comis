@@ -10,6 +10,10 @@ export interface ToolRetryBreakerLifecycle {
   createExecutionBreaker(): ToolRetryBreaker | undefined;
 }
 
+export interface ToolRetryBreakerLifecycleState {
+  readonly config: PerAgentConfig["toolRetryBreaker"];
+}
+
 function createConfiguredBreaker(
   config: PerAgentConfig["toolRetryBreaker"],
 ): ToolRetryBreaker {
@@ -60,8 +64,9 @@ function createExecutionView(
  * foreground results, but its guard also consults the background breaker.
  */
 export function createToolRetryBreakerLifecycle(
-  config: PerAgentConfig["toolRetryBreaker"],
+  state: Readonly<ToolRetryBreakerLifecycleState>,
 ): ToolRetryBreakerLifecycle {
+  const { config } = state;
   if (config?.enabled === false) {
     return {
       backgroundBreaker: undefined,

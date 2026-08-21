@@ -12,7 +12,7 @@ const config = {
 
 describe("tool retry breaker lifecycle", () => {
   it("keeps foreground failures inside their execution", () => {
-    const lifecycle = createToolRetryBreakerLifecycle(config);
+    const lifecycle = createToolRetryBreakerLifecycle({ config });
     const first = lifecycle.createExecutionBreaker();
     const args = { taskId: "task_a" };
 
@@ -30,7 +30,7 @@ describe("tool retry breaker lifecycle", () => {
   });
 
   it("carries durable background failures into later executions", () => {
-    const lifecycle = createToolRetryBreakerLifecycle(config);
+    const lifecycle = createToolRetryBreakerLifecycle({ config });
     const args = {};
 
     lifecycle.backgroundBreaker?.recordResult(
@@ -52,14 +52,16 @@ describe("tool retry breaker lifecycle", () => {
   });
 
   it("disables both breaker scopes from one configuration switch", () => {
-    const lifecycle = createToolRetryBreakerLifecycle({ ...config, enabled: false });
+    const lifecycle = createToolRetryBreakerLifecycle({
+      config: { ...config, enabled: false },
+    });
 
     expect(lifecycle.backgroundBreaker).toBeUndefined();
     expect(lifecycle.createExecutionBreaker()).toBeUndefined();
   });
 
   it("clears both scopes through the full reset contract", () => {
-    const lifecycle = createToolRetryBreakerLifecycle(config);
+    const lifecycle = createToolRetryBreakerLifecycle({ config });
     const execution = lifecycle.createExecutionBreaker();
 
     lifecycle.backgroundBreaker?.recordResult(
