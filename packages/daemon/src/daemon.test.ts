@@ -383,7 +383,7 @@ describe("daemon main()", () => {
   it("completes full startup sequence with gateway enabled", async () => {
     const { overrides, callOrder } = buildOverrides({
       enabled: true,
-      tokens: [{ id: "test", secret: "s3cret", scopes: ["rpc"] }],
+      tokens: [{ id: "test", secret: "t".repeat(32), scopes: ["rpc"] }],
     });
 
     instances.push(await main(overrides));
@@ -437,7 +437,7 @@ describe("daemon main()", () => {
   it("returns gatewayHandle when gateway is enabled", async () => {
     const { overrides, mocks } = buildOverrides({
       enabled: true,
-      tokens: [{ id: "test", secret: "s3cret", scopes: ["rpc"] }],
+      tokens: [{ id: "test", secret: "t".repeat(32), scopes: ["rpc"] }],
     });
 
     const instance = await main(overrides);

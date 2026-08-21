@@ -62,7 +62,7 @@ function gatewayTokenDeps(input: {
         ),
       },
     } as unknown as BootContext["container"],
-    daemonLogger: { warn: vi.fn() } as unknown as BootContext["daemonLogger"],
+    daemonLogger: { warn: vi.fn(), error: vi.fn() } as unknown as BootContext["daemonLogger"],
   };
 }
 
@@ -81,15 +81,18 @@ describe("resolveGatewayTokens post-resolution validation", () => {
 
   it("rejects a short configured SecretRef value without exposing it", () => {
     const secret = "short-secret";
-    const result = resolveGatewayTokens(
-      gatewayTokenDeps({ configuredSecret: secret }),
-    ) as unknown as { ok: boolean; error?: Error };
+    const deps = gatewayTokenDeps({ configuredSecret: secret });
+    const result = resolveGatewayTokens(deps) as unknown as { ok: boolean; error?: Error };
 
     expect(result.ok).toBe(false);
     expect(result.error?.message).toContain("gateway.tokens[0].secret");
     expect(result.error?.message).toContain("token 'default'");
     expect(result.error?.message).toContain(`${secret.length} characters`);
     expect(result.error?.message).not.toContain(secret);
+    expect(deps.daemonLogger.error).toHaveBeenCalledWith(
+      { hint: result.error?.message, errorKind: "config" },
+      "Gateway token resolution failed",
+    );
   });
 
   it("rejects a short token-id fallback without replacing it ephemerally", () => {
@@ -105,6 +108,10 @@ describe("resolveGatewayTokens post-resolution validation", () => {
     expect(result.error?.message).toContain(`${secret.length} characters`);
     expect(result.error?.message).not.toContain(secret);
     expect(deps.daemonLogger.warn).not.toHaveBeenCalled();
+    expect(deps.daemonLogger.error).toHaveBeenCalledWith(
+      { hint: result.error?.message, errorKind: "config" },
+      "Gateway token resolution failed",
+    );
   });
 
   it("generates an ephemeral token only when no value exists", () => {
