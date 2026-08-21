@@ -279,6 +279,18 @@ export interface ResolvedGatewayToken {
 
 const MINIMUM_GATEWAY_TOKEN_CHARACTERS = 32;
 
+function gatewayTokenResolutionError(
+  daemonLogger: BootContext["daemonLogger"],
+  message: string,
+): Result<never, Error> {
+  const failure = new Error(message);
+  daemonLogger.error(
+    { hint: failure.message, errorKind: "config" as const },
+    "Gateway token resolution failed",
+  );
+  return err(failure);
+}
+
 /**
  * Resolve gateway tokens from config (config -> env -> auto-generated).
  *
@@ -308,10 +320,9 @@ export function resolveGatewayTokens(deps: {
 
     if (typeof t.secret === "string") {
       if (t.secret.length < MINIMUM_GATEWAY_TOKEN_CHARACTERS) {
-        return err(
-          new Error(
-            `gateway.tokens[${tokenIndex}].secret for token '${tokenId}' resolved to ${t.secret.length} characters; provide at least ${MINIMUM_GATEWAY_TOKEN_CHARACTERS}`,
-          ),
+        return gatewayTokenResolutionError(
+          daemonLogger,
+          `gateway.tokens[${tokenIndex}].secret for token '${tokenId}' resolved to ${t.secret.length} characters; provide at least ${MINIMUM_GATEWAY_TOKEN_CHARACTERS}`,
         );
       }
       // Source: config (explicit literal, environment reference, or SecretRef).
@@ -326,10 +337,9 @@ export function resolveGatewayTokens(deps: {
       const envSecret = container.secretManager.get(envKey);
       if (envSecret !== undefined) {
         if (envSecret.length < MINIMUM_GATEWAY_TOKEN_CHARACTERS) {
-          return err(
-            new Error(
-              `${envKey} for gateway token '${tokenId}' resolved to ${envSecret.length} characters; provide at least ${MINIMUM_GATEWAY_TOKEN_CHARACTERS}`,
-            ),
+          return gatewayTokenResolutionError(
+            daemonLogger,
+            `${envKey} for gateway token '${tokenId}' resolved to ${envSecret.length} characters; provide at least ${MINIMUM_GATEWAY_TOKEN_CHARACTERS}`,
           );
         }
         // Source: env / SecretManager

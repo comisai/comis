@@ -2544,20 +2544,9 @@ async function bootGateway(
   const runtimeTokens: Array<{ id: string; secretBuf: Buffer; scopes: string[] }> = [];
   const removedTokenIds = new Set<string>();
 
-  // Resolve gateway token secrets at startup (config -> env -> auto-generate)
   const gatewayTokenResult = resolveGatewayTokens({ container, daemonLogger });
-  if (!gatewayTokenResult.ok) {
-    daemonLogger.error(
-      {
-        hint: gatewayTokenResult.error.message,
-        errorKind: "config" as const,
-      },
-      "Gateway token resolution failed",
-    );
-    throw gatewayTokenResult.error;
-  }
+  if (!gatewayTokenResult.ok) throw gatewayTokenResult.error;
   const resolvedGatewayTokens = gatewayTokenResult.value;
-
   // 6.7.0.5. Session store bridge (shared between RPC dispatch and DaemonInstance return)
   const sessionStoreBridge: SessionStoreBridge = sessionStore;
 
