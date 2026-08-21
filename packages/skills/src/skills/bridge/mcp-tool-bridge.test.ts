@@ -419,6 +419,34 @@ describe("mcpToolsToAgentTools", () => {
     );
   });
 
+  it("surfaces managed authority refusals without calling them transport crashes", async () => {
+    const callTool = makeCallTool();
+    const privateMetadataBridge: McpPrivateMetadataBridge = {
+      createRequestMeta: vi.fn(async () => err(
+        new Error("managed-run handle is unavailable in the active owner scope"),
+      )),
+      acceptResultMeta: vi.fn(async () => ok(undefined)),
+      discardCall: vi.fn(),
+    };
+    const tools = mcpToolsToAgentTools(
+      [makeTool()],
+      callTool,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      privateMetadataBridge,
+    );
+
+    await expect(tools[0].execute("call-authority", { query: "test" })).rejects.toThrow(
+      'MCP tool "mcp:db-server/search" refused before transport: '
+      + "[managed_mcp_authority] managed-run handle is unavailable in the active owner scope",
+    );
+    expect(callTool).not.toHaveBeenCalled();
+    expect(privateMetadataBridge.discardCall).toHaveBeenCalledOnce();
+  });
+
   it("converts multiple tools", () => {
     const tools = mcpToolsToAgentTools(
       [
