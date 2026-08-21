@@ -76,6 +76,14 @@ function pinnedVersions(): string[] {
 }
 
 describe("reviewed launcher provisioning", () => {
+  it("keeps service-backed live fixtures on a valid integration policy", () => {
+    for (const file of ["e0-journey.test.ts", "wave4-join.test.ts"]) {
+      expect(read(`${SCENARIOS}/${file}`), `${file} supplies an integration policy`).toContain(
+        'integrationPolicies: [{ id: "integration-default", strategy: "merge" }]',
+      );
+    }
+  });
+
   it("installs every launcher the live gates pin, under the reviewed prefix", () => {
     const script = read(PROVISIONER);
     const paths = pinnedLauncherPaths();
