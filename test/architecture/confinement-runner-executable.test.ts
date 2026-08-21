@@ -3,6 +3,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const REPORT_CAPTURE = fileURLToPath(new URL("../confinement-runner/wave4-report-capture.sh", import.meta.url));
+const RUNNER = fileURLToPath(new URL("../../scripts/run-confinement-runner.sh", import.meta.url));
+const LIVE_GATES = [
+  fileURLToPath(new URL("../confinement-runner/run-join-gate.sh", import.meta.url)),
+  fileURLToPath(new URL("../confinement-runner/run-e0-journey.sh", import.meta.url)),
+  fileURLToPath(new URL("../confinement-runner/run-e0-mechanics-gate.sh", import.meta.url)),
+];
 
 describe("confinement runner executable fixtures", () => {
   it("keeps the live reporter capture shim executable", () => {
@@ -14,5 +20,20 @@ describe("confinement runner executable fixtures", () => {
 
     expect(source).toContain('readonly CANDIDATE_BARRIER_FILE="${PWD}/.wave4-candidate-barrier"');
     expect(source).toContain('if [[ "${1:-}" == "candidate-complete" && -f "${CANDIDATE_BARRIER_FILE}" ]]; then');
+  });
+
+  it("passes the exact clean companion revision into the confinement container", () => {
+    const source = readFileSync(RUNNER, "utf8");
+
+    expect(source).toContain('--env "COMIS_DEV_CREW_COMMIT=${dev_crew_revision}"');
+  });
+
+  it("makes every live gate consume the mounted companion revision", () => {
+    for (const gate of LIVE_GATES) {
+      const source = readFileSync(gate, "utf8");
+
+      expect(source).toContain('readonly DEV_CREW_COMMIT="${COMIS_DEV_CREW_COMMIT:?');
+      expect(source).not.toMatch(/readonly DEV_CREW_COMMIT="[0-9a-f]{40}"/u);
+    }
   });
 });
