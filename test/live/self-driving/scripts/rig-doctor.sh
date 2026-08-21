@@ -51,11 +51,13 @@ cat >"$FACTS_SCRIPT" <<'FACTS'
 if [ "${RIG_MODE:-remote}" = local ]; then
   dpid="$(rig_daemon_pid)"
   echo "service=$([ -n "$dpid" ] && echo active || echo inactive)"
-  echo "unitexec=$(ps -o command= -p "${dpid:-0}" 2>/dev/null | grep -oE '[^ ]*daemon\.js' | head -1)"
+  unitexec="$(ps -o command= -p "${dpid:-0}" 2>/dev/null | grep -oE '[^ ;}]+\.m?js' | head -1)"
 else
   echo "service=$(systemctl is-active "$SERVICE" 2>/dev/null)"
-  echo "unitexec=$(systemctl show -p ExecStart "$SERVICE" 2>/dev/null | grep -oE '[^ ]*daemon\.js' | head -1)"
+  unitexec="$(systemctl show -p ExecStart "$SERVICE" 2>/dev/null | grep -oE '[^ ;}]+\.m?js' | head -1)"
 fi
+echo "unitexec=$unitexec"
+echo "unitwrapper=$(rig_entry_uses_daemon_dist "$unitexec" && echo ok || echo unrelated)"
 echo "pkg=$([ -f "$PKG/node_modules/@comis/daemon/dist/daemon.js" ] || [ -f "$PKG/packages/daemon/dist/daemon.js" ] && echo ok || echo missing)"
 echo "kit=$([ -f "$KIT_DIR/_rig.mjs" ] && [ -f "$KIT_DIR/revoke.mjs" ] && echo ok || echo missing)"
 echo "rigenv=$([ -f "$RIG_ENV" ] && echo ok || echo missing)"
@@ -73,10 +75,17 @@ if [ "$(get service)" = "active" ]; then
 else
   fail "service" "$(rig_is_local && echo "no daemon process — ./restart-daemon.sh" || echo "$SERVICE is '$(get service)'")"
 fi
-case "$(get unitexec)" in
+unitexec="$(get unitexec)"
+case "$unitexec" in
 "$PKG"/*) pass "pkg-path" "daemon entry is under \$PKG" ;;
 "") warn "pkg-path" "no daemon entry found for $SERVICE" ;;
-*) fail "pkg-path" "daemon runs $(get unitexec) — NOT under PKG=$PKG (.live-env points at the wrong install)" ;;
+*)
+  if [ "$(get unitwrapper)" = "ok" ]; then
+    pass "pkg-path" "service wrapper imports the daemon distribution under \$PKG"
+  else
+    fail "pkg-path" "daemon runs $unitexec — NOT under PKG=$PKG (.live-env points at the wrong install)"
+  fi
+  ;;
 esac
 [ "$(get pkg)" = "ok" ] && pass "install" "daemon dist present at \$PKG" || fail "install" "no daemon dist under $PKG — $(rig_is_local && echo 'run pnpm build' || echo 'run install-vps.sh')"
 [ "$(get kit)" = "ok" ] && pass "kit" "helpers present ($KIT_DIR/_rig.mjs, revoke.mjs)" || fail "kit" "kit helpers missing at $KIT_DIR — run deploy-scripts.sh"

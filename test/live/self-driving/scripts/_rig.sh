@@ -535,6 +535,18 @@ rig_daemon_entry() {
   fi
 }
 
+# A deployment may start a composition wrapper instead of the daemon entrypoint directly. Accept
+# that topology only when the wrapper is a readable file that names the selected package's daemon
+# distribution; an unrelated JavaScript entrypoint must still fail the package-coherence gate.
+rig_entry_uses_daemon_dist() {
+  local _entry="${1:-}" _daemon_entry="" _daemon_dist=""
+  [ -f "$_entry" ] || return 1
+  _daemon_entry="$(rig_daemon_entry)"
+  [ -n "$_daemon_entry" ] || return 1
+  _daemon_dist="${_daemon_entry%/*}/"
+  grep -F -- "$_daemon_dist" "$_entry" >/dev/null 2>&1
+}
+
 # Is pm2 supervising this service right now? Local mode only; decides restart transport.
 rig_pm2_has_service() {
   command -v pm2 >/dev/null 2>&1 || return 1
