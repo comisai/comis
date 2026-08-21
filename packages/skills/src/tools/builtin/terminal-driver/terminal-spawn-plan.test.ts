@@ -330,10 +330,12 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
 });
 
 describe("buildSpawnPlan — execution attachment confinement", () => {
+  const relayIdentity = "ab".repeat(32);
   const attachment = {
     executionAttachmentId: "execution-attachment_a",
     sourcePath: "/srv/runtime/worker.sock",
     targetName: `attachment-${"a".repeat(32)}.sock`,
+    relayIdentity,
   };
   const attachmentRelay = {
     attachments: [{ ...attachment, sourcePath: "/tmp/relays/worker.sock" }],
@@ -376,7 +378,16 @@ describe("buildSpawnPlan — execution attachment confinement", () => {
     expect(plan.env).toMatchObject({
       COMIS_EXECUTION_ATTACHMENT: `/run/comis/attachments/${attachment.targetName}`,
       COMIS_EXECUTION_ATTACHMENT_TARGET_NAME: attachment.targetName,
+      COMIS_EXECUTION_ATTACHMENT_IDENTITY: relayIdentity,
     });
+  });
+
+  it("removes caller-provided attachment identity without host attachment authority", async () => {
+    const plan = await buildSpawnPlan(makeInput({
+      env: { COMIS_EXECUTION_ATTACHMENT_IDENTITY: "cd".repeat(32) },
+    }), { bwrapPath: "/usr/bin/bwrap" });
+
+    expect(plan.env.COMIS_EXECUTION_ATTACHMENT_IDENTITY).toBeUndefined();
   });
 });
 
