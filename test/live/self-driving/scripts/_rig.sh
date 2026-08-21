@@ -42,6 +42,21 @@ rig_banner() {
   fi
 }
 
+# Return only actionable startup failures appended after the caller's console-log checkpoint. A Node
+# crash can print enough stack frames to push the useful FATAL line beyond a short tail, while an
+# unscoped grep can report a failure from an earlier launch of the same isolated rig.
+rig_actionable_boot_failure() {
+  local _console_log="${1:-}"
+  local _prior_lines="${2:-0}"
+  [ -f "$_console_log" ] || return 0
+  case "$_prior_lines" in
+  "" | *[!0-9]*) _prior_lines=0 ;;
+  esac
+  tail -n "+$((_prior_lines + 1))" "$_console_log" 2>/dev/null \
+    | grep -aE '(^FATAL:|"level":(50|60),)' \
+    | tail -3
+}
+
 # Discard only an obsolete remote-layout block after a caller has selected local mode. This runs
 # before the rendered rig env is sourced so its isolated DATA/GW_PORT values can fill the gap left
 # by the discarded block. Running the same cleanup only inside rig_defaults() is too late: defaults

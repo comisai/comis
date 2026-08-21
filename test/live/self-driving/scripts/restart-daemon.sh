@@ -41,6 +41,10 @@ if rig_is_local; then
 fi
 
 MARK="$(date +%s)"
+CONSOLE_START_LINES=0
+if rig_is_local && [ -f "$DATA/daemon.console.log" ]; then
+  CONSOLE_START_LINES="$(wc -l <"$DATA/daemon.console.log" | tr -d ' ')"
+fi
 
 if rig_is_local; then
   # ---- LOCAL: explicit stop → detached relaunch --------------------------------------------------
@@ -188,6 +192,12 @@ done
 if [ -z "$booted" ]; then
   echo "NO fresh 'Comis daemon started' within ${BOOT_WAIT_SECS}s — diagnostics:"
   if rig_is_local; then
+    actionable="$(rig_actionable_boot_failure "$DATA/daemon.console.log" "$CONSOLE_START_LINES")" || true
+    if [ -n "$actionable" ]; then
+      echo "Actionable startup failure:"
+      printf '%s\n' "$actionable"
+    fi
+    echo "Last console lines:"
     tail -12 "$DATA/daemon.console.log" 2>/dev/null
   else
     systemctl is-active "$SERVICE" || true
