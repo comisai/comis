@@ -60,6 +60,18 @@ export async function forwardTerminalEvent(deps: {
   return result;
 }
 
+function transitionFailureHint(
+  failure: CapabilityServiceControlFailure,
+  transition: CapabilityServiceTerminalEventCommand["transition"],
+): string {
+  if (failure.kind === "rejected") {
+    return "Inspect the owning capability service task state, initiative dependencies, and worker scheduling capacity before retrying this managed terminal transition";
+  }
+  return transition === "exited" || transition === "released"
+    ? "Check the capabilityServices socket and owning service instance; local durable retirement continues independently"
+    : "Check the capabilityServices socket and owning service instance; terminal, lease, and content were preserved";
+}
+
 /** Build the content-free lifecycle bridge. Failures are observed but never trigger cleanup. */
 export function createManagedTerminalEventBridge(deps: {
   readonly control: CapabilityServiceControlPort;
@@ -77,16 +89,18 @@ export function createManagedTerminalEventBridge(deps: {
       operationId: `operation-terminal-${operationDigest}`,
       ...input,
     }));
-    if (!called.ok || !called.value.ok) {
+    const failure: CapabilityServiceControlFailure | undefined = !called.ok
+      ? { kind: "uncertain", reasonCode: "control_invocation_failed" }
+      : called.value.ok ? undefined : called.value.error;
+    if (failure !== undefined) {
       deps.logger.warn({
         serviceInstanceId: input.serviceInstanceId,
         managedRunId: input.managedRunId,
         terminalSessionId: input.terminalSessionId,
         transition: input.transition,
-        errorKind: "dependency" as const,
-        hint: input.transition === "exited" || input.transition === "released"
-          ? "Check the capabilityServices socket and owning service instance; local durable retirement continues independently"
-          : "Check the capabilityServices socket and owning service instance; terminal, lease, and content were preserved",
+        reasonCode: failure.reasonCode,
+        errorKind: failure.kind === "rejected" ? "precondition" as const : "dependency" as const,
+        hint: transitionFailureHint(failure, input.transition),
       }, "Managed terminal transition delivery failed");
     }
   };
