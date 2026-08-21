@@ -447,6 +447,52 @@ describe("local rig mode", () => {
     expect(isolated).not.toContain("comis-does-not-exist-here");
   });
 
+  it("rebuilds local emulator paths after dropping a leaked remote layout", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-rig-emulator-layout-"));
+    temporaryDirectories.push(directory);
+    const isolatedData = resolve(directory, "isolated-data");
+    const liveEnv = resolve(directory, "live.env");
+    const rigEnv = resolve(directory, "rig.env");
+    const missingRemoteHome = "/home/comis-does-not-exist-here";
+    writeFileSync(
+      liveEnv,
+      [
+        `COMIS_HOME=${missingRemoteHome}`,
+        `DATA=${missingRemoteHome}/.comis`,
+        `PKG=${missingRemoteHome}/.npm-global/lib/node_modules/comisai`,
+        "EMU_DIR=/root/comis-emu",
+        "KIT_DIR=/root",
+        "EMU_JSON=/tmp/comis-emu.json",
+        "EMU_LOG=/root/comis-emu.log",
+        "EMU_TMUX_SESSION=emu",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    writeFileSync(rigEnv, "", { mode: 0o600 });
+
+    const output = runRigHelper(
+      `rig_load_env ${shellQuote(liveEnv)} ${shellQuote(rigEnv)} 2>/dev/null; printf '%s|%s|%s|%s|%s\n' "$EMU_DIR" "$KIT_DIR" "$EMU_JSON" "$EMU_LOG" "$EMU_TMUX_SESSION"`,
+      {
+        HOME: directory,
+        RIG_MODE: "local",
+        RIG_ENV: rigEnv,
+        DATA: isolatedData,
+        REPO: resolve(HERE, "../../../.."),
+        SERVICE: "comis-isolated-test",
+      },
+    );
+
+    expect(output.trim()).toBe(
+      [
+        resolve(HERE, "../../../.."),
+        HERE,
+        resolve(isolatedData, "emulator-wiring.json"),
+        resolve(isolatedData, "emulator.log"),
+        "emu-comis-isolated-test",
+      ].join("|"),
+    );
+  });
+
   it("keeps explicit local selections ahead of live and rendered rig files", () => {
     const directory = mkdtempSync(resolve(tmpdir(), "comis-local-rig-precedence-"));
     temporaryDirectories.push(directory);
