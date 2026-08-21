@@ -237,7 +237,9 @@ function createCandidateFixture(
     }],
     integrationPolicies: [{ id: "integration-default", strategy: "merge" }],
     maxOutputBytes: 65_536,
-    pollInterval: "1m",
+    // Keep test progress independent of the supervisor timer phase while still
+    // exercising the installed service's durable polling path.
+    pollInterval: "100ms",
     forge: {
       apiBaseUrl: "FORGE_BASE_URL",
       owner: "fixture-owner",
