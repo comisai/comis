@@ -19,11 +19,22 @@
  * @module
  */
 
-import { rmSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import { ensureSharedModelCache } from "./model-cache.js";
+import {
+  ensureSharedModelCache,
+  seedModelCache,
+  TEST_MODEL_CACHE_SOURCE_ENV,
+} from "./model-cache.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -44,6 +55,9 @@ const TEST_RESULTS_FILE = resolve(__dirname, "../.test-results.json");
  * runs, dirtying the outer working tree.
  */
 const TEST_CONFIG_DIR = resolve(__dirname, "../config");
+
+let suiteModelCacheRoot: string | undefined;
+let previousModelCacheSource: string | undefined;
 
 // ---------------------------------------------------------------------------
 // Shared cleanup logic
@@ -88,6 +102,38 @@ function cleanTestArtifacts(removeResultsFile: boolean): void {
   }
 }
 
+function stageSuiteModelCache(): void {
+  const stageRoot = mkdtempSync(join(tmpdir(), "comis-suite-model-cache-"));
+  try {
+    seedModelCache(stageRoot);
+    const sourceDir = join(stageRoot, "models");
+    const hasCompletedModel =
+      existsSync(sourceDir) && readdirSync(sourceDir).some((name) => name.endsWith(".gguf"));
+    if (!hasCompletedModel) {
+      rmSync(stageRoot, { recursive: true, force: true });
+      return;
+    }
+    previousModelCacheSource = process.env[TEST_MODEL_CACHE_SOURCE_ENV];
+    suiteModelCacheRoot = stageRoot;
+    process.env[TEST_MODEL_CACHE_SOURCE_ENV] = sourceDir;
+  } catch (error) {
+    rmSync(stageRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function cleanSuiteModelCache(): void {
+  if (suiteModelCacheRoot === undefined) return;
+  rmSync(suiteModelCacheRoot, { recursive: true, force: true });
+  suiteModelCacheRoot = undefined;
+  if (previousModelCacheSource === undefined) {
+    delete process.env[TEST_MODEL_CACHE_SOURCE_ENV];
+  } else {
+    process.env[TEST_MODEL_CACHE_SOURCE_ENV] = previousModelCacheSource;
+  }
+  previousModelCacheSource = undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Vitest globalSetup exports
 // ---------------------------------------------------------------------------
@@ -102,6 +148,10 @@ export async function setup(): Promise<void> {
   // reuse it (via seedModelCache) instead of each downloading the ~635 MB GGUF
   // in parallel — the cause of chronic integration hook timeouts.
   await ensureSharedModelCache();
+  // Put one model copy on the test filesystem before workers fork. Every
+  // worker can then hard-link from this source even when the operator cache
+  // lives on another mount, avoiding one full model copy per worker/data dir.
+  stageSuiteModelCache();
 }
 
 /**
@@ -109,5 +159,6 @@ export async function setup(): Promise<void> {
  * Removes artifacts generated during this test run.
  */
 export function teardown(): void {
+  cleanSuiteModelCache();
   cleanTestArtifacts(false);
 }
