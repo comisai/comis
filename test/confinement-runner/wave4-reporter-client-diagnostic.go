@@ -13,6 +13,7 @@ func main() {
 	client, err := reporter.NewMountedRuntimeClient(
 		os.Getenv("COMIS_EXECUTION_ATTACHMENT"),
 		os.Getenv("COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"),
+		os.Getenv("COMIS_EXECUTION_ATTACHMENT_IDENTITY"),
 		5*time.Second,
 	)
 	if err != nil {
