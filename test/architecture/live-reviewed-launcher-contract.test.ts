@@ -100,6 +100,9 @@ describe("reviewed launcher provisioning", () => {
     expect(deployment, "the deployment contribution binds the attestation tool").toContain(
       'toolName: "attest_scout_decisions"',
     );
+    expect(deployment, "attestation is a service-scoped mutation, not a live-run command").toContain(
+      'toolName: "attest_scout_decisions",\n    behavior: "read_only" as const,\n    actionClassification: "mutate" as const',
+    );
     expect(
       deployment.match(/"attest_scout_decisions"/gu),
       "the managed binding and both MCP allowlists agree",
