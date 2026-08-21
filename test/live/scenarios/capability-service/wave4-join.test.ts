@@ -576,7 +576,7 @@ export function makeConfig(input: {
         mcp: { enabled: true, allow: { [MCP_SERVER_NAME]: {
           tools: [
             "prepare_task",
-            "reconcile_task", "handback_task", "cleanup_task",
+            "reconcile_task", "handback_task", "attest_scout_decisions", "cleanup_task",
             "list_tasks", "get_task", "explain_task", "get_launch_plan",
           ],
           classification: "safe",
@@ -614,7 +614,7 @@ export function makeConfig(input: {
         args: ["--socket", input.mcpSocket, "--service-instance", SERVICE_INSTANCE_ID],
         toolAllowlist: [
           "prepare_task",
-          "reconcile_task", "handback_task", "cleanup_task",
+          "reconcile_task", "handback_task", "attest_scout_decisions", "cleanup_task",
           "list_tasks", "get_task", "explain_task", "get_launch_plan",
         ],
         keepaliveIntervalMs: 0,
