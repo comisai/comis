@@ -174,6 +174,19 @@ export function registerExplainCommand(program: Command): void {
             `Timing:     ${report.timing.durationMs} ms · ${report.timing.turnCount} turns`,
           );
           info(`Summary:    ${report.summary}`);
+          if (report.failures.length > 0) {
+            info("Failures:");
+            for (const failure of report.failures) {
+              const failureCode = failure.failureCode ?? failure.errorKind;
+              const classifier = failure.classifiedFailureBy || "unknown";
+              info(
+                `  #${failure.seq} ${failure.toolName} [${failureCode}] · `
+                + `errorKind=${failure.errorKind} · transportOk=${failure.transportOk} · by=${classifier}`,
+              );
+              const preview = failure.errorPreview.replace(/\s+/g, " ").trim();
+              if (preview !== "") info(`    ${preview}`);
+            }
+          }
           if (report.taskCheck !== undefined) {
             const task = report.taskCheck;
             const disposition = task.outcome ?? task.lifecycle;
