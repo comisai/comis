@@ -67,6 +67,21 @@ describe("test artifact cleanup safety", () => {
     }
   });
 
+  it("stages one shared model source in every complete test tier", () => {
+    const repoRoot = resolve(import.meta.dirname, "../..");
+    const configPaths = [
+      "vitest.config.ts",
+      "test/vitest.config.ts",
+      "test/e2e/vitest.config.ts",
+      "test/live/vitest.config.ts",
+    ];
+
+    for (const relativePath of configPaths) {
+      const source = readFileSync(resolve(repoRoot, relativePath), "utf8");
+      expect(source, relativePath).toContain("global-setup.ts");
+    }
+  });
+
   it("binds the daemon unit-test container to the worker sandbox", () => {
     const repoRoot = resolve(import.meta.dirname, "../..");
     const source = readFileSync(
