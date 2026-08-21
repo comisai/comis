@@ -142,6 +142,10 @@ function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
 
+function externalRunRefDigest(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
 function ownerScope(input: ManagedRunGroupActivationInput): ManagedRunOwnerScope {
   return {
     kind: "owner",
@@ -312,7 +316,7 @@ export function createManagedRunGroupActivationCoordinator(
       managedRunId: minted.managedRunId,
       managedRunGroupId: groupIds.managedRunGroupId,
       serviceInstanceId: input.serviceInstanceId,
-      externalRunRefDigest: digest(prepared.externalRunRef),
+      externalRunRefDigest: externalRunRefDigest(prepared.externalRunRef),
       activationDescriptorDigest: digest(descriptor),
       activationDescriptorRef: minted.activationDescriptorRef,
       ...(prepared.displayLabel === undefined ? {} : { displayLabel: prepared.displayLabel }),
@@ -859,7 +863,7 @@ export function createManagedRunGroupActivationCoordinator(
       };
       const record = records.find((candidate) =>
         !claimedRecords.has(candidate.managedRunId)
-        && candidate.externalRunRefDigest === digest(preparedMember.externalRunRef)
+        && candidate.externalRunRefDigest === externalRunRefDigest(preparedMember.externalRunRef)
         && candidate.activationDescriptorDigest === digest(expectedDescriptor));
       if (record === undefined) return err(new Error("group recovery member digest does not match its private join"));
       claimedRecords.add(record.managedRunId);
