@@ -38,6 +38,7 @@ const terminalWorkerDirSpy = vi.fn((dataDir: string) => `${dataDir}/terminal-wor
 const tmuxSocketPathForSessionSpy = vi.fn((dir: string, sessionId: string) => `${dir}/tmux-${sessionId}.sock`);
 
 vi.mock("@comis/skills/tools", () => ({
+  prepareManagedWorkspaceGit: vi.fn(),
   createTerminalSessionRegistry: vi.fn((deps: Record<string, unknown>) => {
     captured.registryDeps = deps;
     return {

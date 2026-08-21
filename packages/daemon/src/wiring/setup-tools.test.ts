@@ -130,6 +130,7 @@ vi.mock("@comis/skills", () => ({
 }));
 
 vi.mock("@comis/skills/tools", () => ({
+  prepareManagedWorkspaceGit: vi.fn(),
   createExecTool: mockCreateExecTool,
   createProcessTool: mockCreateProcessTool,
   createProcessRegistry: mockCreateProcessRegistry,

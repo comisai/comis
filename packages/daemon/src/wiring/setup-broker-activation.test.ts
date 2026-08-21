@@ -93,6 +93,7 @@ vi.mock("@comis/skills", () => ({
 }));
 
 vi.mock("@comis/skills/tools", () => ({
+  prepareManagedWorkspaceGit: vi.fn(),
   resolveHiddenReadAllowPaths: vi.fn(() => []),
   createExecTool: mockCreateExecTool,
   createSleepTool: vi.fn(() => ({ name: "sleep" })),
