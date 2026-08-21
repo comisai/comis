@@ -484,20 +484,35 @@ rig_daemon_pid() {
   # Production units commonly exec an absolute Node path (`/usr/bin/node …`),
   # so a `^node` process-name probe reports an active systemd daemon as absent.
   # Prefer the selected unit's authoritative MainPID and validate that it is a
-  # daemon process; retain a path-tolerant fallback for non-systemd rigs.
+  # daemon process. A campaign may use a small composition wrapper instead of
+  # invoking daemon.js directly; accept it only when the readable wrapper
+  # imports this rig's daemon distribution. Once systemd resolves the selected
+  # unit, fail closed instead of falling through to a sibling daemon's PID.
+  # Retain a path-tolerant fallback only for rigs without a resolvable unit.
   if command -v systemctl >/dev/null 2>&1 && [ -n "${SERVICE:-}" ]; then
-    local _systemd_pid
-    _systemd_pid="$(systemctl show -p MainPID --value "$SERVICE" 2>/dev/null)"
-    case "$_systemd_pid" in
-    '' | 0 | *[!0-9]*) ;;
-    *)
-      if kill -0 "$_systemd_pid" 2>/dev/null \
-        && ps -o command= -p "$_systemd_pid" 2>/dev/null | grep -E '(^|/)node .*daemon\.js' >/dev/null; then
-        printf '%s' "$_systemd_pid"
-        return 0
-      fi
-      ;;
-    esac
+    local _systemd_pid _systemd_command _systemd_entry
+    if ! _systemd_pid="$(systemctl show -p MainPID --value "$SERVICE" 2>/dev/null)"; then
+      _systemd_pid=""
+    else
+      case "$_systemd_pid" in
+      '' | 0 | *[!0-9]*) ;;
+      *)
+        if kill -0 "$_systemd_pid" 2>/dev/null; then
+          _systemd_command="$(ps -o command= -p "$_systemd_pid" 2>/dev/null)"
+          if printf '%s\n' "$_systemd_command" | grep -E '(^|/)node .*daemon\.js' >/dev/null; then
+            printf '%s' "$_systemd_pid"
+            return 0
+          fi
+          _systemd_entry="$(printf '%s\n' "$_systemd_command" | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /\.(mjs|cjs|js)$/) { print $i; exit } }')"
+          if [ -n "$_systemd_entry" ] && rig_entry_uses_daemon_dist "$_systemd_entry"; then
+            printf '%s' "$_systemd_pid"
+            return 0
+          fi
+        fi
+        ;;
+      esac
+      return 0
+    fi
   fi
   pgrep -f '(^|/)node .*daemon\.js' 2>/dev/null | head -1
 }
