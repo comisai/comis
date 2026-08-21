@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { createServer } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
@@ -660,6 +661,77 @@ describe("local rig mode", () => {
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain("operator's everyday");
     expect(() => statSync(selected)).toThrow();
+  });
+
+  it("refuses a relative first-run root before creating it", () => {
+    const directory = makeCanonicalTempDirectory("comis-local-init-relative-root-");
+    const marker = resolve(directory, "guard.txt");
+    writeFileSync(marker, "unchanged\n", { mode: 0o600 });
+
+    const result = spawnSync("bash", [INIT_LOCAL_CONFIG], {
+      cwd: directory,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: directory,
+        RIG_MODE: "local",
+        RIG_ENV: resolve(directory, "absent.rig-env"),
+        DATA: "relative-rig",
+        GW_PORT: "4881",
+        SERVICE: "comis-relative-root",
+        LOCAL_SUPERVISOR: "direct",
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "DATA must be an absolute path (got 'relative-rig')",
+    );
+    expect(readFileSync(marker, "utf8")).toBe("unchanged\n");
+    expect(existsSync(resolve(directory, "relative-rig"))).toBe(false);
+  });
+
+  it("refuses a busy first-run gateway port before creating the data root", async () => {
+    const directory = makeCanonicalTempDirectory("comis-local-init-busy-port-");
+    const data = resolve(directory, "isolated-data");
+    const marker = resolve(directory, "guard.txt");
+    writeFileSync(marker, "unchanged\n", { mode: 0o600 });
+    const listener = createServer();
+    await new Promise<void>((resolveListen, rejectListen) => {
+      listener.once("error", rejectListen);
+      listener.listen(0, "127.0.0.1", resolveListen);
+    });
+    const address = listener.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("test listener did not bind a TCP port");
+    }
+
+    try {
+      const result = spawnSync("bash", [INIT_LOCAL_CONFIG], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: directory,
+          RIG_MODE: "local",
+          RIG_ENV: resolve(directory, "absent.rig-env"),
+          DATA: data,
+          GW_PORT: String(address.port),
+          SERVICE: "comis-busy-port",
+          LOCAL_SUPERVISOR: "direct",
+        },
+      });
+
+      expect(result.status).toBe(2);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        `GW_PORT ${address.port} is already owned by another process`,
+      );
+      expect(readFileSync(marker, "utf8")).toBe("unchanged\n");
+      expect(existsSync(data)).toBe(false);
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => {
+        listener.close((error) => (error ? rejectClose(error) : resolveClose()));
+      });
+    }
   });
 
   it("initializes a pinned local config without exposing generated credentials", () => {
