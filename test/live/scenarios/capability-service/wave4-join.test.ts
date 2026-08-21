@@ -459,6 +459,7 @@ function createCandidateConfig(scratch: string): string {
       }],
       evidenceTtl: "24h",
     }],
+    integrationPolicies: [{ id: "integration-default", strategy: "merge" }],
     maxOutputBytes: 65_536,
     pollInterval: "1m",
     forge: {
