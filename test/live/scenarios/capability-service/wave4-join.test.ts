@@ -64,6 +64,13 @@ const CURRENT_MUTATION_BINDINGS = [
     invocationSideEffects: ["task.handback"],
   },
   {
+    toolName: "attest_scout_decisions",
+    behavior: "run_command" as const,
+    runHandleArgument: "taskHandle",
+    actionClassification: "mutate" as const,
+    invocationSideEffects: ["task.attest"],
+  },
+  {
     toolName: "cleanup_task",
     behavior: "run_command" as const,
     runHandleArgument: "taskHandle",
