@@ -5,7 +5,12 @@ import { lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, sy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ok } from "@comis/shared";
-import type { ComisLogger, ManagedRunStorePort, WorkspaceLeasePort } from "@comis/core";
+import type {
+  ComisLogger,
+  ExecutionAttachmentPort,
+  ManagedRunStorePort,
+  WorkspaceLeasePort,
+} from "@comis/core";
 
 import { createManagedTerminalBindingResolver } from "./managed-terminal-binding.js";
 
@@ -132,6 +137,73 @@ describe("managed terminal binding authority", () => {
         releasedAtMs: 1700,
       },
     );
+  });
+
+  it("carries the durable relay identity into the host-resolved terminal attachment", async () => {
+    const relayIdentity = "ab".repeat(32);
+    const store = {
+      get: vi.fn(async () => ok({
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        executionAttachmentIds: ["execution-attachment_a"],
+      })),
+    } as unknown as ManagedRunStorePort;
+    const workspaceLeases = {
+      get: vi.fn(async () => ok({
+        workspaceLeaseId: "workspace-lease_a",
+        managedRunId: "managed-run_a",
+        serviceInstanceId: "service-instance_a",
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        canonicalPath: "/srv/comis/workspaces/run-a",
+        state: "active",
+      })),
+    } as unknown as WorkspaceLeasePort;
+    const attachments = {
+      get: vi.fn(async () => ok({
+        schemaVersion: 1,
+        executionAttachmentId: "execution-attachment_a",
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        kind: "unix_socket",
+        sourcePath: "/srv/runtime/run-a.sock",
+        relayIdentity,
+        sourceFilesystemType: "socket",
+        sourceFilesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
+        targetName: `attachment-${"a".repeat(32)}.sock`,
+        access: "connect_only",
+        state: "active",
+        createdAtMs: 1_700,
+        updatedAtMs: 1_700,
+      })),
+    } as unknown as ExecutionAttachmentPort;
+    const resolver = createManagedTerminalBindingResolver({
+      store,
+      workspaceLeases,
+      attachments,
+      nowMs: () => 1_700,
+      validateLease: () => ok(undefined),
+      validateAttachment: () => ok(undefined),
+      resolveOwnerScope: () => SCOPE,
+    });
+
+    await expect(resolver.resolve({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      owner: OWNER,
+    })).resolves.toMatchObject({
+      kind: "resolved",
+      executionAttachments: [{
+        executionAttachmentId: "execution-attachment_a",
+        relayIdentity,
+      }],
+    });
   });
 
   it("rejects a lease that is not the run's exact active lease", async () => {
