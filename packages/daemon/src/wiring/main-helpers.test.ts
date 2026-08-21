@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve as resolvePath } from "node:path";
 import { AppConfigSchema } from "@comis/core";
 import {
+  resolveGatewayTokens,
   resolveModelHealthMultilingual,
   buildImageHandlerDeps,
   buildMediaVisionBundle,
@@ -25,6 +26,75 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // ---------------------------------------------------------------------------
 
 type Config = BootContext["container"]["config"];
+
+function gatewayTokenDeps(input: {
+  configuredSecret?: string;
+  fallbackSecret?: string;
+}): Parameters<typeof resolveGatewayTokens>[0] {
+  const config = AppConfigSchema.parse({
+    gateway: {
+      tokens: [
+        {
+          id: "default",
+          ...(input.configuredSecret === undefined
+            ? {}
+            : {
+                secret: {
+                  source: "env",
+                  provider: "comis",
+                  id: "COMIS_GATEWAY_TOKEN",
+                },
+              }),
+          scopes: ["rpc"],
+        },
+      ],
+    },
+  }) as unknown as Config;
+  if (input.configuredSecret !== undefined) {
+    (config.gateway.tokens[0] as { secret?: unknown }).secret = input.configuredSecret;
+  }
+  return {
+    container: {
+      config,
+      secretManager: {
+        get: vi.fn((name: string) =>
+          name === "GATEWAY_TOKEN_DEFAULT" ? input.fallbackSecret : undefined,
+        ),
+      },
+    } as unknown as BootContext["container"],
+    daemonLogger: { warn: vi.fn() } as unknown as BootContext["daemonLogger"],
+  };
+}
+
+describe("resolveGatewayTokens post-resolution validation", () => {
+  it("rejects a short configured SecretRef value without exposing it", () => {
+    const secret = "short-secret";
+    const result = resolveGatewayTokens(
+      gatewayTokenDeps({ configuredSecret: secret }),
+    ) as unknown as { ok: boolean; error?: Error };
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain("gateway.tokens[0].secret");
+    expect(result.error?.message).toContain("token 'default'");
+    expect(result.error?.message).toContain(`${secret.length} characters`);
+    expect(result.error?.message).not.toContain(secret);
+  });
+
+  it("rejects a short token-id fallback without replacing it ephemerally", () => {
+    const secret = "small-fallback";
+    const deps = gatewayTokenDeps({ fallbackSecret: secret });
+    const result = resolveGatewayTokens(deps) as unknown as {
+      ok: boolean;
+      error?: Error;
+    };
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain("GATEWAY_TOKEN_DEFAULT");
+    expect(result.error?.message).toContain(`${secret.length} characters`);
+    expect(result.error?.message).not.toContain(secret);
+    expect(deps.daemonLogger.warn).not.toHaveBeenCalled();
+  });
+});
 
 /** A fully-defaulted config, then the embedding/memory blocks overridden. */
 function configWith(overrides: {
