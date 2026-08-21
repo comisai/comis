@@ -1285,6 +1285,31 @@ describe("local rig mode", () => {
     expect(restart).not.toContain("status=\\$?");
   });
 
+  it("surfaces the actionable failure ahead of a local daemon crash stack", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-boot-diagnostic-"));
+    temporaryDirectories.push(directory);
+    const consoleLog = resolve(directory, "daemon.console.log");
+    writeFileSync(
+      consoleLog,
+      [
+        "FATAL: failure from an earlier launch",
+        "structured startup line",
+        "FATAL: gateway.tokens[0].secret resolved to 8 characters; provide at least 32",
+        ...Array.from({ length: 20 }, (_, index) => `stack frame ${index + 1}`),
+      ].join("\n"),
+    );
+
+    const output = runRigHelper(
+      `rig_actionable_boot_failure ${shellQuote(consoleLog)} 2`,
+      { RIG_MODE: "local" },
+    );
+
+    expect(output.trim()).toBe(
+      "FATAL: gateway.tokens[0].secret resolved to 8 characters; provide at least 32",
+    );
+    expect(output).not.toContain("earlier launch");
+  });
+
   it("binds local daemon boot and runtime storage to the isolated rig data directory", () => {
     const restart = readFileSync(RESTART_DAEMON, "utf8");
 
