@@ -232,6 +232,7 @@ function createCandidateFixture(
       }],
       evidenceTtl: "24h",
     }],
+    integrationPolicies: [{ id: "integration-default", strategy: "merge" }],
     maxOutputBytes: 65_536,
     pollInterval: "1m",
     forge: {
