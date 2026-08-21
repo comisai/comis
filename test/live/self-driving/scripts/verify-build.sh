@@ -120,14 +120,18 @@ if rig_is_local; then
     fi
   fi
 else
-  proc="$(remote_root '
-  rec=$(date -d "$(sed -E "s/.*deployed |.*dist-overlay //" /root/comis-deployed-build 2>/dev/null)" +%s 2>/dev/null || echo 0)
-  pid=$(pgrep -f "node.*daemon\.js" | head -1)
-  if [ -z "$pid" ]; then echo "NOPROC"; else
+  printf -v service_q '%q' "$SERVICE"
+  proc="$({
+    remote_root "SERVICE=$service_q bash -s" <<'REMOTE'
+  stamp=$(awk '{print $NF}' /root/comis-deployed-build 2>/dev/null)
+  rec=$(date -d "$stamp" +%s 2>/dev/null || echo 0)
+  pid=$(systemctl show "$SERVICE" --property MainPID --value 2>/dev/null)
+  if [ -z "$pid" ] || [ "$pid" = 0 ]; then echo "NOPROC"; else
     start=$(date -d "$(ps -o lstart= -p "$pid")" +%s 2>/dev/null || echo 0)
     echo "$rec $start $pid"
   fi
-')"
+REMOTE
+  })"
   if [ "$proc" = "NOPROC" ]; then
     fail "process" "no daemon process — bash /root/restart-daemon.sh"
   else
