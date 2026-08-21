@@ -3,6 +3,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const REPORT_CAPTURE = fileURLToPath(new URL("../confinement-runner/wave4-report-capture.sh", import.meta.url));
+const REPORTER_DIAGNOSTIC = fileURLToPath(
+  new URL("../confinement-runner/wave4-reporter-client-diagnostic.go", import.meta.url),
+);
 const RUNNER = fileURLToPath(new URL("../../scripts/run-confinement-runner.sh", import.meta.url));
 const LIVE_GATES = [
   fileURLToPath(new URL("../confinement-runner/run-join-gate.sh", import.meta.url)),
@@ -35,5 +38,11 @@ describe("confinement runner executable fixtures", () => {
       expect(source).toContain('readonly DEV_CREW_COMMIT="${COMIS_DEV_CREW_COMMIT:?');
       expect(source).not.toMatch(/readonly DEV_CREW_COMMIT="[0-9a-f]{40}"/u);
     }
+  });
+
+  it("binds the reporter diagnostic to the activated relay identity", () => {
+    const source = readFileSync(REPORTER_DIAGNOSTIC, "utf8");
+
+    expect(source).toContain('os.Getenv("COMIS_EXECUTION_ATTACHMENT_IDENTITY")');
   });
 });
