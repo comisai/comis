@@ -888,6 +888,9 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base", () => {
         message_id: 4242,
         text: "edited body",
         parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[{ text: "Approve", callback_data: "signed-approval" }]],
+        },
       });
       expect(env.ok).toBe(true);
       // grammy's editMessageText return type is Message-or-true; the emulator
@@ -901,6 +904,9 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base", () => {
       expect(editRecord).toBeDefined();
       expect(editRecord!.messageId).toBe(4242);
       expect(editRecord!.text).toBe("edited body");
+      expect(editRecord!.replyMarkup).toEqual({
+        inline_keyboard: [[{ text: "Approve", callback_data: "signed-approval" }]],
+      });
     });
 
     it("deleteMessage records a RecordedOutbound (method:deleteMessage) AND returns result:true (the EditPlace pill-cleanup lifecycle)", async () => {
