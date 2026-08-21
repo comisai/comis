@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import { stringify } from "yaml";
@@ -617,6 +618,11 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
     const serviceBinary = join(binaryRoot, "devcrew-service");
     const mcpBinary = join(binaryRoot, "devcrew-mcp");
     const cliBinary = join(binaryRoot, "devcrew");
+    const journeyStartedAt = performance.now();
+    const stageDurationsMs: Record<string, number> = {};
+    const finishStage = (stage: string, startedAt: number): void => {
+      stageDurationsMs[stage] = Math.round(performance.now() - startedAt);
+    };
     const scratch = realpathSync(mkdtempSync(join(tmpdir(), "e0-journey-")));
     const dataDir = join(scratch, "data");
     const runtimeRoot = join(scratch, "runtime");
@@ -721,9 +727,12 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
 
       let boot = await bootDaemon();
       daemon = boot.handle;
+      finishStage("startup", journeyStartedAt);
       const handles: string[] = [];
+      const taskPrepareStartedAt = performance.now();
       for (const [shape, deliveryMode] of [["ship", "pull_request"], ["scout", "report"]] as const) {
         let taskHandle = "";
+        const turnStartedAt = performance.now();
         await liaisonTurn(model, telegram, `PREPARE_E0_${shape.toUpperCase()}`, [{
           tool: "prepare_task",
           arguments: {
@@ -738,9 +747,11 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
           },
           capture: (text) => { taskHandle = /task-[a-f0-9]{24}/u.exec(text)?.[0] ?? ""; },
         }]);
+        if (shape === "ship") finishStage("initialTurn", turnStartedAt);
         expect(taskHandle).toMatch(/^task-[a-f0-9]{24}$/u);
         handles.push(taskHandle);
       }
+      finishStage("taskPrepare", taskPrepareStartedAt);
       const [shipTask, scoutTask] = handles as [string, string];
       const shipBinding = runBinding(canonicalDataDir, shipTask);
       const scoutBinding = runBinding(canonicalDataDir, scoutTask);
@@ -764,6 +775,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
 
       let shipSession = "";
       let scoutSession = "";
+      const workerLaunchStartedAt = performance.now();
       await liaisonTurn(model, telegram, "LAUNCH_E0_SHIP_AND_SCOUT", [
         { tool: "get_launch_plan", arguments: { taskHandle: shipTask } },
         { tool: "get_launch_plan", arguments: { taskHandle: scoutTask } },
@@ -805,6 +817,8 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
         scout: workerJoinDiagnostic(scoutBinding.canonical_path),
         service: service.stderr(),
       })}`);
+      finishStage("workerLaunch", workerLaunchStartedAt);
+      const candidateValidationStartedAt = performance.now();
       await pollUntil(
         () => reportKinds(goDatabase, shipTask).includes("decision") && reportKinds(goDatabase, scoutTask).includes("candidate_complete"),
         180_000,
@@ -846,6 +860,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       );
       expect(reportKinds(goDatabase, shipTask)).toEqual(expect.arrayContaining(["progress", "decision", "resolution", "paused"]));
       expect(reportKinds(goDatabase, scoutTask)).toEqual(expect.arrayContaining(["progress", "candidate_complete"]));
+      finishStage("candidateValidation", candidateValidationStartedAt);
 
       for (const binding of [shipBinding, scoutBinding]) {
         const evidence = JSON.parse(readFileSync(join(binding.canonical_path, ".e0-confinement.json"), "utf8")) as Record<string, boolean>;
@@ -868,6 +883,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       commitFile(repository, shipBinding.canonical_path, "ship.txt", `Delivered ship task ${shipTask}\n`, "complete ship task");
       let handback = "";
       let postHandbackSessions = "";
+      const interventionRevalidationStartedAt = performance.now();
       await liaisonTurn(model, telegram, "HAND_BACK_DEVELOPER_WORK", [
         {
           tool: "handback_task",
@@ -892,6 +908,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
           status: git(repository, shipBinding.canonical_path, ["status", "--porcelain=v2", "--untracked-files=all"]),
         })} diagnostic=${handbackDiagnostic(goDatabase, shipTask)} stderr=${service?.stderr() ?? ""}`,
       );
+      finishStage("interventionRevalidation", interventionRevalidationStartedAt);
       expect(candidate.forge.pullCreateCount).toBe(1);
       await liaisonTurn(model, telegram, "STOP_E0_SCOUT", [
         { tool: "terminal_session_kill", arguments: { sessionId: scoutSession } },
@@ -903,6 +920,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
         () => `scout terminal settlement; task=${taskState(goDatabase, scoutTask)} terminal=${terminalTransition(goDatabase, scoutTask)}`,
       );
       console.log("RESTART_DAEMON_AND_SERVICE_MID_FLIGHT");
+      const restartRecoveryStartedAt = performance.now();
       await stopDaemon(daemon);
       daemon = undefined;
       await service.stop();
@@ -911,6 +929,8 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       await waitForInstalledService(service, operatorSocket, mcpSocket);
       boot = await bootDaemon();
       daemon = boot.handle;
+      finishStage("restartRecovery", restartRecoveryStartedAt);
+      const deliveryStartedAt = performance.now();
       await pollUntil(
         () => taskState(goDatabase, shipTask) === "delivered"
           && taskState(goDatabase, scoutTask) === "delivered"
@@ -940,8 +960,10 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
         entry.method === "sendDocument" && entry.caption?.includes("LIAISON_TURN_DONE") === true
       )).toHaveLength(1);
       expect(service.child.exitCode).toBeNull();
+      finishStage("delivery", deliveryStartedAt);
 
       let reviewedScout = "";
+      const cleanupStartedAt = performance.now();
       await liaisonTurn(model, telegram, "REVIEW_E0_SCOUT_DECISIONS", [{
         tool: "attest_scout_decisions",
         arguments: { taskHandle: scoutTask, finding: "no_open_decisions", openDecisionKeys: [] },
@@ -999,8 +1021,10 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       expect(existsSync(shipBinding.canonical_path)).toBe(false);
       expect(existsSync(scoutBinding.canonical_path)).toBe(false);
       expect(releasedLeaseCount(canonicalDataDir, [shipBinding.workspace_lease_id, scoutBinding.workspace_lease_id])).toBe(2);
+      finishStage("cleanup", cleanupStartedAt);
 
       console.log("NETWORK_CONFINEMENT_NOT_PROVEN=outer Docker bridge is shared; filesystem and sibling worktree refusal are bubblewrap-enforced");
+      console.log(`E0_STAGE_DURATIONS_MS=${JSON.stringify(stageDurationsMs)}`);
       console.log(`E0_RESULT=${JSON.stringify({
         productionTelegramAdapter: true,
         telegramApiRootLoopback: telegramHandle.apiRoot.startsWith("http://127.0.0.1:"),
