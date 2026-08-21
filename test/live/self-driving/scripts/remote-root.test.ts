@@ -1079,6 +1079,52 @@ describe("local rig mode", () => {
     expect(source).not.toContain('pgrep -f "node.*daemon\\.js"');
   });
 
+  it("recognizes a service wrapper that imports the selected daemon distribution", () => {
+    const directory = makeCanonicalTempDirectory("comis-rig-wrapper-entry-");
+    const packageRoot = resolve(directory, "comisai");
+    const daemonDist = resolve(packageRoot, "node_modules/@comis/daemon/dist");
+    const wrapper = resolve(directory, "campaign-daemon.mjs");
+    const unrelated = resolve(directory, "unrelated-daemon.mjs");
+    mkdirSync(daemonDist, { recursive: true });
+    writeFileSync(resolve(daemonDist, "daemon.js"), "export const daemon = true;\n");
+    writeFileSync(
+      wrapper,
+      `import { main } from ${JSON.stringify(`${daemonDist}/index.js`)};\nvoid main;\n`,
+    );
+    writeFileSync(unrelated, 'import "./somewhere-else.js";\n');
+
+    const imported = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          `source ${shellQuote(RIG_HELPER)}`,
+          `PKG=${shellQuote(packageRoot)}`,
+          `rig_entry_uses_daemon_dist ${shellQuote(wrapper)}`,
+        ].join("\n"),
+      ],
+      { encoding: "utf8", env: NO_RIG_ENV },
+    );
+    const rejected = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          `source ${shellQuote(RIG_HELPER)}`,
+          `PKG=${shellQuote(packageRoot)}`,
+          `rig_entry_uses_daemon_dist ${shellQuote(unrelated)}`,
+        ].join("\n"),
+      ],
+      { encoding: "utf8", env: NO_RIG_ENV },
+    );
+
+    expect(imported.status, imported.stderr).toBe(0);
+    expect(rejected.status).not.toBe(0);
+    expect(readFileSync(RIG_DOCTOR, "utf8")).toContain(
+      'rig_entry_uses_daemon_dist "$unitexec"',
+    );
+  });
+
   it("parses every deployment record kind by its final timestamp", () => {
     const source = readFileSync(VERIFY_BUILD, "utf8");
 
