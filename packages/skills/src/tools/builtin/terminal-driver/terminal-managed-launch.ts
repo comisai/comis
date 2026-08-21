@@ -153,3 +153,44 @@ export async function admitManagedTerminalLaunch(input: {
   }
   return ok(undefined);
 }
+
+type ManagedTerminalLaunchFailure = {
+  readonly kind: "binding" | "admission";
+  readonly message: string;
+};
+
+/** Bind a spawned terminal and require service admission before exposing it. */
+export async function establishManagedTerminalLaunch(input: {
+  readonly registry: TerminalSessionRegistry;
+  readonly binding: ManagedTerminalBindingResolver;
+  readonly events?: ManagedTerminalEventSink;
+  readonly authority: ManagedTerminalLaunchAuthority;
+  readonly reservedTerminalSessionId: string;
+  readonly result: CreateResult;
+  readonly owner: SessionOwner;
+}): Promise<Result<void, ManagedTerminalLaunchFailure>> {
+  const bound = await confirmManagedTerminalLaunch(input);
+  if (bound.kind !== "bound") {
+    return err({ kind: "binding", message: `managed terminal binding failed: ${bound.reason}` });
+  }
+  if (input.events === undefined) {
+    const retired = await retireManagedTerminalLaunch({
+      ...input,
+      liveTerminalSessionId: input.result.sessionId,
+    });
+    return err({
+      kind: "admission",
+      message: retired.kind === "released"
+        ? "managed terminal admission failed: lifecycle bridge is unavailable"
+        : `managed terminal admission failed and retirement was not confirmed: ${retired.reason}`,
+    });
+  }
+  const admitted = await admitManagedTerminalLaunch({
+    ...input,
+    events: input.events,
+    liveTerminalSessionId: input.result.sessionId,
+  });
+  return admitted.ok
+    ? ok(undefined)
+    : err({ kind: "admission", message: admitted.error.message });
+}

@@ -53,11 +53,9 @@ import {
 import { withCompleteNote } from "./terminal-wait-reply.js";
 import { managedHandleSelectionError, narrowManagedTerminalScope, prepareManagedTerminalWorkspaceGit, selectManagedHandles } from "./terminal-managed-create.js";
 import {
-  admitManagedTerminalLaunch,
-  confirmManagedTerminalLaunch,
+  establishManagedTerminalLaunch,
   reserveManagedTerminalLaunch,
   retireFailedManagedTerminalLaunch,
-  retireManagedTerminalLaunch,
 } from "./terminal-managed-launch.js";
 import { managedTerminalAttachmentTargetPath, type ManagedTerminalBindingResolver, type ManagedTerminalEventSink, type ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 
@@ -599,46 +597,19 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         ) {
           throwToolError("conflict", "managed terminal binding failed: launch reservation is unavailable");
         }
-        const bound = await confirmManagedTerminalLaunch({
-          registry: deps.registry,
-          binding: deps.managedBinding,
-          authority: managedResolved,
-          reservedTerminalSessionId,
-          result,
-          owner,
-        });
-        if (bound.kind !== "bound") {
-          throwToolError("conflict", `managed terminal binding failed: ${bound.reason}`);
-        }
-        if (deps.managedTerminalEvents === undefined) {
-          const retired = await retireManagedTerminalLaunch({
-            registry: deps.registry,
-            binding: deps.managedBinding,
-            authority: managedResolved,
-            reservedTerminalSessionId,
-            liveTerminalSessionId: result.sessionId,
-            owner,
-          });
-          throwToolError(
-            "conflict",
-            retired.kind === "released"
-              ? "managed terminal admission failed: lifecycle bridge is unavailable"
-              : `managed terminal admission failed and retirement was not confirmed: ${retired.reason}`,
-          );
-        }
-        const admitted = await admitManagedTerminalLaunch({
+        const established = await establishManagedTerminalLaunch({
           registry: deps.registry,
           binding: deps.managedBinding,
           events: deps.managedTerminalEvents,
           authority: managedResolved,
           reservedTerminalSessionId,
-          liveTerminalSessionId: result.sessionId,
+          result,
           owner,
         });
-        if (!admitted.ok) {
-          throwToolError("conflict", admitted.error.message, {
+        if (!established.ok) {
+          throwToolError("conflict", established.error.message, established.error.kind === "admission" ? {
             hint: "inspect the capability service task state, dependency graph, and scheduling capacity before retrying",
-          });
+          } : undefined);
         }
       }
 
