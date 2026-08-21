@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import { createBoundedServiceStderr } from "./service-stderr-buffer.js";
 
 describe("bounded live-service stderr diagnostics", () => {
-  it("retains the newest complete diagnostic bytes within the configured limit", () => {
+  it("retains the newest diagnostic bytes within the configured limit", () => {
     const stderr = createBoundedServiceStderr(8);
 
     stderr.append(Buffer.from("older"));
     stderr.append(Buffer.from("newest"));
 
-    expect(stderr.text()).toBe("[5 earlier stderr bytes omitted]\nrestnewest");
+    expect(stderr.text()).toBe("[3 earlier stderr bytes omitted]\nernewest");
   });
 
   it("bounds one oversized chunk without retaining its discarded prefix", () => {
