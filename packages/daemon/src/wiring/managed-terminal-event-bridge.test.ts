@@ -130,7 +130,7 @@ describe("managed terminal event bridge", () => {
       nowMs: () => 1700,
     });
 
-    await bridge.publish({
+    const result = await bridge.publish({
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
       serviceInstanceId: "service-instance_a",
@@ -138,6 +138,10 @@ describe("managed terminal event bridge", () => {
       transition: "created",
     });
 
+    expect(result).toMatchObject({
+      ok: false,
+      error: { message: "managed terminal transition rejected: precondition_failed" },
+    });
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({
       reasonCode: "precondition_failed",
       errorKind: "precondition",

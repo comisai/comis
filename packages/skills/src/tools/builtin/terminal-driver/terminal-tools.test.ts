@@ -560,6 +560,58 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     ]);
   });
 
+  it("retires a managed terminal when service launch admission is rejected", async () => {
+    const rootProcessIdentity = { pid: 4123, startIdentity: "linux-proc-start-991" };
+    const registry = makeFakeRegistry({
+      createImpl: async (req) => ({
+        sessionId: req.sessionId!,
+        allowId: req.allowId,
+        cols: req.cols,
+        rows: req.rows,
+        rootProcessIdentity,
+      }),
+    });
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+      reserve: vi.fn(async () => ({ kind: "bound" as const })),
+      bind: vi.fn(async () => ({ kind: "bound" as const })),
+      release: vi.fn(async () => ({ kind: "released" as const })),
+    };
+    const managedTerminalEvents = {
+      publish: vi.fn(async () => ({
+        ok: false as const,
+        error: new Error("managed terminal transition rejected: precondition_failed"),
+      })),
+    };
+    const caps = makeCapsSpy(undefined, () => 1000);
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+      managedTerminalEvents,
+      caps,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-managed-admission-rejected", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/managed terminal admission failed.*precondition_failed/u);
+
+    expect(managedTerminalEvents.publish).toHaveBeenCalledOnce();
+    expect(registry.terminateCalls).toHaveLength(1);
+    expect(managedBinding.release).toHaveBeenCalledOnce();
+    expect(caps.startSessionSpy).not.toHaveBeenCalled();
+  });
+
   it("refuses a managed launch before reservation when private Git preparation fails", async () => {
     const registry = makeFakeRegistry();
     const managedBinding = {
