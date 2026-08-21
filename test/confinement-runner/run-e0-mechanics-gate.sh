@@ -8,7 +8,7 @@ readonly COMIS_COPY="${RUNNER_ROOT}/comis"
 readonly MECHANICS_ROOT="${RUNNER_ROOT}/e0-mechanics"
 readonly DEV_CREW_COPY="${MECHANICS_ROOT}/go-source"
 readonly DEV_CREW_BIN="${MECHANICS_ROOT}/bin"
-readonly DEV_CREW_COMMIT="fdc13b8f59d354368c1ed0ebfbf87419f708b7a8"
+readonly DEV_CREW_COMMIT="${COMIS_DEV_CREW_COMMIT:?the companion revision is required}"
 readonly LIVE_TEST=test/live/scenarios/capability-service/e0-mechanics.test.ts
 
 if [[ "$(id -u)" -eq 0 || "$(uname -s)" != "Linux" ]]; then
@@ -16,7 +16,7 @@ if [[ "$(id -u)" -eq 0 || "$(uname -s)" != "Linux" ]]; then
   exit 1
 fi
 if [[ "$(git -C "${DEV_CREW_SOURCE}" rev-parse HEAD)" != "${DEV_CREW_COMMIT}" ]]; then
-  echo "the companion checkout is not at the reviewed E0 mechanics commit" >&2
+  echo "the companion checkout does not match the selected E0 mechanics revision" >&2
   exit 1
 fi
 if [[ -n "$(git -C "${DEV_CREW_SOURCE}" status --porcelain)" ]]; then

@@ -8,7 +8,7 @@ readonly COMIS_COPY="${RUNNER_ROOT}/comis"
 readonly JOIN_ROOT="${RUNNER_ROOT}/wave4-join"
 readonly DEV_CREW_COPY="${JOIN_ROOT}/go-source"
 readonly DEV_CREW_BIN="${JOIN_ROOT}/bin"
-readonly DEV_CREW_COMMIT="34c6e5fd092635a32cf0676a11888af2471b73ac"
+readonly DEV_CREW_COMMIT="${COMIS_DEV_CREW_COMMIT:?the companion revision is required}"
 readonly LIVE_TEST=test/live/scenarios/capability-service/wave4-join.test.ts
 
 if [[ "$(id -u)" -eq 0 || "$(uname -s)" != "Linux" ]]; then
@@ -16,7 +16,7 @@ if [[ "$(id -u)" -eq 0 || "$(uname -s)" != "Linux" ]]; then
   exit 1
 fi
 if [[ "$(git -C "${DEV_CREW_SOURCE}" rev-parse HEAD)" != "${DEV_CREW_COMMIT}" ]]; then
-  echo "the companion checkout is not at the reviewed JOIN commit" >&2
+  echo "the companion checkout does not match the selected JOIN revision" >&2
   exit 1
 fi
 if [[ -n "$(git -C "${DEV_CREW_SOURCE}" status --porcelain)" ]]; then
@@ -31,7 +31,7 @@ fi
 rm -rf "${DEV_CREW_COPY}" "${DEV_CREW_BIN}"
 mkdir -p "${COMIS_COPY}" "${DEV_CREW_COPY}" "${DEV_CREW_BIN}" /home/comis/.wave4-tools
 
-# Build only from the reviewed commit object. The mounted checkout supplies the
+# Build only from the selected commit object. The mounted checkout supplies the
 # object database, but uncommitted files and later working-tree content cannot
 # enter the binaries.
 git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}" | tar -x -C "${DEV_CREW_COPY}"

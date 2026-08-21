@@ -74,6 +74,7 @@ docker_args=(
   --privileged
   --network bridge
   --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g
+  --env "COMIS_DEV_CREW_COMMIT=${dev_crew_revision}"
   --mount "type=bind,source=${comis_root},target=/workspace/comis"
   --mount "type=bind,source=${dev_crew_mount_root},target=/workspace/comis-dev-crew"
 )
