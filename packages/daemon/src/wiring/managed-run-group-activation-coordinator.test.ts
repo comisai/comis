@@ -254,6 +254,17 @@ describe("managed-run grouped two-phase activation", () => {
       "managed-run-group-operation_group_prepare_a",
     );
     expect(group.ok && group.value?.stateCounts).toEqual({ active: 2 });
+    expect(await harness.store.getByExternalRunRef(
+      OWNER_SCOPE,
+      "service-instance_a",
+      "external-run_member-a",
+    )).toMatchObject({
+      ok: true,
+      value: {
+        managedRunId: "managed-run-operation_group_prepare_a-0",
+        status: "active",
+      },
+    });
   });
 
   it("records a partial acknowledgement per member without claiming group success", async () => {
