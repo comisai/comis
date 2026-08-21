@@ -359,6 +359,17 @@ function reportKinds(databasePath: string, taskHandle: string): string[] {
   }
 }
 
+function scoutDecisionFinding(databasePath: string, taskHandle: string): string {
+  const db = new Database(databasePath, { readonly: true });
+  try {
+    const row = db.prepare("SELECT finding FROM scout_decision_attestations WHERE task_handle = ?")
+      .get(taskHandle) as { finding: string } | undefined;
+    return row?.finding ?? "missing";
+  } finally {
+    db.close();
+  }
+}
+
 function workerJoinDiagnostic(worktree: string): Record<string, string> {
   const read = (file: string): string => {
     try {
@@ -885,6 +896,15 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
         entry.method === "sendDocument" && entry.caption?.includes("LIAISON_TURN_DONE") === true
       )).toHaveLength(1);
       expect(service.child.exitCode).toBeNull();
+
+      let reviewedScout = "";
+      await liaisonTurn(model, telegram, "REVIEW_E0_SCOUT_DECISIONS", [{
+        tool: "attest_scout_decisions",
+        arguments: { taskHandle: scoutTask, finding: "no_open_decisions", openDecisionKeys: [] },
+        capture: (text) => { reviewedScout = text; },
+      }]);
+      expect(reviewedScout).toContain(scoutTask);
+      expect(scoutDecisionFinding(goDatabase, scoutTask)).toBe("no_open_decisions");
 
       const holdDb = new Database(goDatabase);
       holdDb.prepare(`INSERT INTO task_cleanup_holds(task_handle, hold_id, reason, opened_at)
