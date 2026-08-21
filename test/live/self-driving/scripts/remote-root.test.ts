@@ -1072,6 +1072,20 @@ describe("local rig mode", () => {
     expect(source).not.toContain("pid $(pgrep -f 'node.*daemon\\.js' | head -1)");
   });
 
+  it("selects the configured remote service for build freshness", () => {
+    const source = readFileSync(VERIFY_BUILD, "utf8");
+
+    expect(source).toContain('systemctl show "$SERVICE" --property MainPID --value');
+    expect(source).not.toContain('pgrep -f "node.*daemon\\.js"');
+  });
+
+  it("parses every deployment record kind by its final timestamp", () => {
+    const source = readFileSync(VERIFY_BUILD, "utf8");
+
+    expect(source).toContain("awk '{print $NF}' /root/comis-deployed-build");
+    expect(source).not.toContain('sed -E "s/.*deployed |.*dist-overlay //"');
+  });
+
   it("keeps the local rig shell entry points syntactically valid", () => {
     for (const script of [
       RIG_HELPER,
