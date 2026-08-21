@@ -477,11 +477,13 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     };
     const eventBus = makeCapturingBus();
     const managedTerminalEvents = { publish: vi.fn(async () => undefined) };
+    const prepareManagedWorkspaceGit = vi.fn(() => ({ ok: true as const, value: undefined }));
     const tool = createTerminalSessionCreateTool(baseDeps(registry, {
       eventBus,
       managedBinding,
       managedTerminalEvents,
       managedAttachmentSandboxAvailable: true,
+      prepareManagedWorkspaceGit,
     } as unknown as Partial<TerminalToolDeps>));
 
     const result = await tool.execute("call-managed", {
@@ -496,6 +498,9 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
       workspaceLeaseId: "workspace-lease_a",
       owner: { agentId: "agent-1", sessionKey: "" },
     });
+    expect(prepareManagedWorkspaceGit).toHaveBeenCalledWith("/approved/workspaces/run-a");
+    expect(prepareManagedWorkspaceGit.mock.invocationCallOrder[0])
+      .toBeLessThan(managedBinding.reserve.mock.invocationCallOrder[0]!);
     expect(registry.createCalls[0]).toMatchObject({
       workspace: "/approved/workspaces/run-a",
       cwd: "/approved/workspaces/run-a",
@@ -552,6 +557,60 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
         transition: "running",
       },
     ]);
+  });
+
+  it("refuses a managed launch before reservation when private Git preparation fails", async () => {
+    const registry = makeFakeRegistry();
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+      reserve: vi.fn(async () => ({ kind: "bound" as const })),
+      bind: vi.fn(async () => ({ kind: "bound" as const })),
+      release: vi.fn(async () => ({ kind: "released" as const })),
+    };
+    const logger = makeCapturingLogger();
+    const eventBus = makeCapturingBus();
+    const prepareManagedWorkspaceGit = vi.fn(() => ({
+      ok: false as const,
+      error: new Error("linked worktree administration is invalid"),
+    }));
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      logger,
+      eventBus,
+      managedBinding,
+      prepareManagedWorkspaceGit,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-managed-git-invalid", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(
+      /managed terminal workspace Git preparation failed: linked worktree administration is invalid/u,
+    );
+
+    expect(managedBinding.reserve).not.toHaveBeenCalled();
+    expect(registry.createCalls).toEqual([]);
+    expect(logger.logs).toContainEqual(expect.objectContaining({
+      level: "warn",
+      obj: expect.objectContaining({
+        errorKind: "precondition",
+        step: "managed-git-prepare",
+      }),
+    }));
+    expect(eventBus.events).toContainEqual(expect.objectContaining({
+      event: "terminal:spawn_failed",
+      payload: expect.objectContaining({ errorKind: "precondition" }),
+    }));
   });
 
   it("returns sandbox_unavailable before launch when approved attachments cannot be confined", async () => {
