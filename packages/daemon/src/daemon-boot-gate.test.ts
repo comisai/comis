@@ -26,6 +26,7 @@ import { resolve as pathResolve } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type GatewayConfig } from "@comis/core";
+import { selectSecretStore } from "@comis/memory";
 import { main, type DaemonOverrides } from "./daemon.js";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../test/support/mock-event-bus.js";
@@ -339,6 +340,31 @@ describe("daemon boot gate — writeMasterKeyIfAbsent call gate", () => {
     }
 
     expect(writeMasterKeySpy).not.toHaveBeenCalled();
+    expect(writeCanarySecretSpy).not.toHaveBeenCalled();
+  });
+
+  it("an encrypted-store canary is not duplicated into the environment file", async () => {
+    process.env["SECRETS_MASTER_KEY"] = "c".repeat(64);
+    delete process.env["CANARY_SECRET"];
+    const selected = selectSecretStore({
+      mode: "encrypted",
+      dataDir: tmpDir,
+      env: process.env as Record<string, string | undefined>,
+    });
+    expect(selected.ok).toBe(true);
+    if (!selected.ok) return;
+    const stored = selected.value.secretStore.set("CANARY_SECRET", "d".repeat(64));
+    expect(stored.ok).toBe(true);
+    selected.value.secretStore.close();
+
+    const { overrides, writeCanarySecretSpy } = buildBootGateOverrides("encrypted");
+    try {
+      const instance = await main(overrides);
+      instances.push(instance);
+    } catch {
+      // The bootstrap writer assertion remains valid if a later mocked boundary fails.
+    }
+
     expect(writeCanarySecretSpy).not.toHaveBeenCalled();
   });
 });
