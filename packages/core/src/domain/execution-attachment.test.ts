@@ -7,6 +7,7 @@ import {
 } from "./execution-attachment.js";
 
 const NOW_MS = 1_800_000_000_000;
+const RELAY_IDENTITY = "ab".repeat(32);
 
 function makeRecord(overrides: Partial<ExecutionAttachmentRecord> = {}): ExecutionAttachmentRecord {
   return {
@@ -31,6 +32,22 @@ function makeRecord(overrides: Partial<ExecutionAttachmentRecord> = {}): Executi
 }
 
 describe("ExecutionAttachmentRecord authority validation", () => {
+  it("requires one canonical nonzero relay identity", () => {
+    expect(ExecutionAttachmentRecordSchema.safeParse({
+      ...makeRecord(),
+      relayIdentity: RELAY_IDENTITY,
+    }).success).toBe(true);
+    expect(ExecutionAttachmentRecordSchema.safeParse(makeRecord()).success).toBe(false);
+    expect(ExecutionAttachmentRecordSchema.safeParse({
+      ...makeRecord(),
+      relayIdentity: "0".repeat(64),
+    }).success).toBe(false);
+    expect(ExecutionAttachmentRecordSchema.safeParse({
+      ...makeRecord(),
+      relayIdentity: RELAY_IDENTITY.toUpperCase(),
+    }).success).toBe(false);
+  });
+
   it("accepts one active Unix socket with immutable run and lease scope", () => {
     expect(parseExecutionAttachmentRecord(makeRecord())).toEqual({ ok: true, value: makeRecord() });
   });

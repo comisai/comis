@@ -18,6 +18,7 @@ import { initSchema } from "./schema.js";
 import { createSqliteWorkspaceLeaseStore } from "./workspace-lease-store.js";
 
 const NOW_MS = 1_800_000_000_000;
+const RELAY_IDENTITY = "ab".repeat(32);
 const conversationScope = {
   tenantId: "tenant_a",
   agentId: "agent_a",
@@ -120,6 +121,7 @@ function makeAttachment(overrides: Partial<ExecutionAttachmentRecord> = {}): Exe
     agentId: "agent_a",
     kind: "unix_socket",
     sourcePath: "/srv/capability-runtime/service-a/worker.sock",
+    relayIdentity: RELAY_IDENTITY,
     sourceFilesystemType: "socket",
     sourceFilesystemIdentity: { device: 30, inode: 40, birthtimeNs: "200" },
     targetName: `attachment-${"a".repeat(32)}.sock`,
@@ -128,7 +130,7 @@ function makeAttachment(overrides: Partial<ExecutionAttachmentRecord> = {}): Exe
     createdAtMs: NOW_MS,
     updatedAtMs: NOW_MS,
     ...overrides,
-  };
+  } as unknown as ExecutionAttachmentRecord;
 }
 
 async function seed(db: Database.Database): Promise<void> {

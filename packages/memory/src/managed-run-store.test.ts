@@ -194,6 +194,19 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     }
   });
 
+  it("rejects an execution attachment table without durable relay identity", () => {
+    const incompatibleDb = new Database(":memory:");
+    incompatibleDb.exec(`
+      CREATE TABLE execution_attachments (
+        source_filesystem_birthtime_ns TEXT
+      )
+    `);
+    expect(() => ensureManagedRunTables(incompatibleDb)).toThrow(
+      "execution_attachments database schema is incompatible: missing relay_identity",
+    );
+    incompatibleDb.close();
+  });
+
   it("appends immutable evidence and resolves only exact owner-scoped references", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);

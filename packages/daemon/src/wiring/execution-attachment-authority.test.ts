@@ -10,6 +10,7 @@ import type {
 import { createExecutionAttachmentAuthority } from "./execution-attachment-authority.js";
 
 const NOW_MS = 1_800_000_000_000;
+const RELAY_IDENTITY = "ab".repeat(32);
 
 const OWNER: ManagedRunOwnerScope = {
   kind: "owner",
@@ -29,6 +30,7 @@ const ATTACHMENT = {
   agentId: "agent_a",
   kind: "unix_socket" as const,
   sourcePath: "/srv/runtime/service-a/run-a.sock",
+  relayIdentity: RELAY_IDENTITY,
   sourceFilesystemType: "socket" as const,
   sourceFilesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
   targetName: `attachment-${"a".repeat(32)}.sock`,
@@ -120,8 +122,9 @@ describe("execution attachment authority coordinator", () => {
       workspaceLeaseId: "workspace-lease_a",
       kind: "unix_socket",
       sourcePath: "/srv/runtime/service-a/run-a.sock",
+      relayIdentity: RELAY_IDENTITY,
       owner: OWNER,
-    });
+    } as never);
 
     expect(created).toMatchObject({ ok: true, value: { kind: "created" } });
     const record = (created as Extract<typeof created, { ok: true }>).value.record;
@@ -129,6 +132,7 @@ describe("execution attachment authority coordinator", () => {
       executionAttachmentId: expect.stringMatching(/^execution-attachment-/u),
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
+      relayIdentity: RELAY_IDENTITY,
       targetName: expect.stringMatching(/^attachment-[a-f0-9]{32}\.sock$/u),
       access: "connect_only",
     });
@@ -241,14 +245,52 @@ describe("execution attachment authority coordinator", () => {
       workspaceLeaseId: "workspace-lease_a",
       kind: "unix_socket",
       sourcePath: ATTACHMENT.sourcePath,
+      relayIdentity: RELAY_IDENTITY,
       owner: OWNER,
-    });
+    } as never);
 
     expect(replayed).toEqual({ ok: true, value: { kind: "identical_replay", record: ATTACHMENT } });
     expect(bindExecutionAttachment).toHaveBeenCalledWith(OWNER, expect.objectContaining({
       executionAttachmentId: ATTACHMENT.executionAttachmentId,
       workspaceLeaseId: ATTACHMENT.workspaceLeaseId,
     }));
+  });
+
+  it("rejects an altered relay identity when the attachment path is unchanged", async () => {
+    const deps = makeDeps({
+      runs: {
+        ...(makeDeps().runs as unknown as object),
+        get: vi.fn(async () => ok({
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          tenantId: "tenant_a",
+          agentId: "agent_a",
+          executionAttachmentIds: ["execution-attachment_a"],
+        })),
+      } as unknown as ManagedRunStorePort,
+      attachments: {
+        ...(makeDeps().attachments as unknown as object),
+        get: vi.fn(async () => ok(ATTACHMENT)),
+      } as unknown as ExecutionAttachmentPort,
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    const replayed = await authority.create({
+      operationId: "operation_attachment_a",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      kind: "unix_socket",
+      sourcePath: ATTACHMENT.sourcePath,
+      relayIdentity: "cd".repeat(32),
+      owner: OWNER,
+    } as never);
+
+    expect(replayed).toEqual({
+      ok: true,
+      value: { kind: "rejected", reason: "replay_conflict" },
+    });
+    expect(deps.validateSource).not.toHaveBeenCalled();
   });
 
   it("rejects a socket replacement that reuses its device and inode", () => {
