@@ -408,7 +408,7 @@ Three circuit breakers run inside Comis, each with its own scope:
 | Breaker | Scope | File |
 |---|---|---|
 | **Provider health breaker** | Per LLM provider — opens after consecutive failures, blocks all calls during cooldown | `packages/agent/src/safety/circuit-breaker.ts` |
-| **Tool retry breaker** | Per tool — classifies tool errors and decides whether to retry, fall back, or surface the error | `packages/agent/src/safety/tool-retry-breaker.ts` |
+| **Tool retry breaker** | Per execution for foreground calls, with executor-scoped health for durable background settlements — classifies tool errors and decides whether to retry, fall back, or surface the error | `packages/agent/src/safety/tool-retry-breaker.ts` |
 | **Layer circuit breaker** | Per context-engine layer — disables a layer for the rest of the session after 3 consecutive failures | `packages/agent/src/context-engine/context-engine.ts` |
 | **Summarizer spend breaker** | Per tenant — bounds DAG summarization LLM spend with a rolling per-tenant token cap and opens after consecutive summarizer failures; degrades to truncation-only assembly (no LLM call) | `packages/agent/src/safety/summarizer-spend-breaker.ts` |
 
