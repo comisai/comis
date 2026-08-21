@@ -117,6 +117,34 @@ describe("managed terminal event bridge", () => {
     expect(Object.keys(bridge).sort()).toEqual(["publish", "retire"]);
   });
 
+  it("names the service precondition and scheduling posture when launch is rejected", async () => {
+    const terminalEvent = vi.fn(async () => err({
+      kind: "rejected" as const,
+      reasonCode: "precondition_failed",
+    }));
+    const log = logger();
+    const bridge = createManagedTerminalEventBridge({
+      control: { terminalEvent } as unknown as CapabilityServiceControlPort,
+      store: { releaseTerminal: vi.fn() } as never,
+      logger: log as never,
+      nowMs: () => 1700,
+    });
+
+    await bridge.publish({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      terminalSessionId: "terminal-session_a",
+      transition: "created",
+    });
+
+    expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({
+      reasonCode: "precondition_failed",
+      errorKind: "precondition",
+      hint: expect.stringMatching(/task state.*scheduling capacity/u),
+    }), "Managed terminal transition delivery failed");
+  });
+
   it("returns a failed retirement barrier when the local store is unavailable", async () => {
     const terminalEvent = vi.fn(async (command) => ok({
       managedRunId: command.managedRunId,
