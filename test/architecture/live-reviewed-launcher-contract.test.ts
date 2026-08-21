@@ -109,6 +109,19 @@ describe("reviewed launcher provisioning", () => {
     ).toHaveLength(3);
   });
 
+  it("approves destructive journey cleanup through Telegram", () => {
+    const source = read(`${SCENARIOS}/e0-journey.test.ts`);
+    expect(source, "the journey wires the host approval gate").toContain(
+      'daemonConfig["approvals"] = { enabled: true',
+    );
+    expect(source, "the journey resolves cleanup with the signed channel callback").toContain(
+      "telegram.injectCallback(",
+    );
+    expect(source, "the result distinguishes approved cleanup from direct cleanup").toContain(
+      "cleanupApprovalGranted: true",
+    );
+  });
+
   it("installs every launcher the live gates pin, under the reviewed prefix", () => {
     const script = read(PROVISIONER);
     const paths = pinnedLauncherPaths();
