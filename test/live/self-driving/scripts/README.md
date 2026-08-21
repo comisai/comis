@@ -49,6 +49,11 @@ rig-side `.sh` scripts source it and the `.mjs` helpers read it via **`_rig.mjs`
 `VPS` is mandatory. `local-up.sh` requires explicit absolute `DATA`, free `GW_PORT`, and dedicated
 non-`comis` `SERVICE` values so it cannot fall back to an everyday installation:
 
+When local mode encounters an older unguarded remote block, it discards the complete remote topology
+(service, data, package, emulator, RPC, and lifecycle paths) before restoring explicit one-run values.
+The local defaults are then rebuilt from the selected `DATA`, `SERVICE`, and checkout instead of mixing
+remote emulator paths into an otherwise isolated local rig.
+
 | Var | Default | Meaning |
 |---|---|---|
 | `RIG_MODE` | `remote` | `remote` = the VPS production install · `local` = this machine. An unknown value is a hard error, never a silent fallback to `remote` |

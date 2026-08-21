@@ -47,6 +47,7 @@ rig_banner() {
 # by the discarded block. Running the same cleanup only inside rig_defaults() is too late: defaults
 # would select ~/.comis and a bare local-up would repoint the operator's everyday install.
 rig_drop_leaked_remote_layout() {
+  local _drop_scope="${1:-paths}"
   if rig_is_local; then
     # A `.live-env` written before RIG_MODE existed assigns the REMOTE layout unconditionally, and
     # the default-assigns below would then KEEP it — silently pointing a "local" run at
@@ -58,8 +59,16 @@ rig_drop_leaked_remote_layout() {
     if [ -n "${COMIS_HOME:-}" ] && [ ! -d "${COMIS_HOME}" ]; then
       _leaked_comis_home="$COMIS_HOME"
       echo "rig: RIG_MODE=local but COMIS_HOME=$COMIS_HOME does not exist here — ignoring the" >&2
-      echo "     remote values from .live-env (COMIS_USER/COMIS_HOME/DATA/PKG/EMU_DIR/GW_PORT). Wrap that" >&2
+      echo "     remote topology from .live-env (service, data, package, emulator, and RPC paths). Wrap that" >&2
       echo "     block in 'if [ \"\${RIG_MODE:-remote}\" = remote ]; then … fi', or set them inline." >&2
+      if [ "$_drop_scope" = "all" ]; then
+        unset COMIS_USER COMIS_HOME COMIS_DATA_DIR COMIS_CONFIG_PATHS COMIS_TRAJECTORY_DIR
+        unset DATA PKG SERVICE GW_PORT KIT_DIR RIG_ENV GWTOKEN
+        unset EMU_DIR EMU_JSON EMU_LOG EMU_TMUX_SESSION
+        unset LOCAL_SUPERVISOR LOCAL_TMUX_SESSION LOCAL_DAEMON_PID_FILE
+        unset _leaked_comis_home
+        return 0
+      fi
       case "${DATA:-}" in
       "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset DATA ;;
       esac
@@ -69,6 +78,19 @@ rig_drop_leaked_remote_layout() {
       case "${EMU_DIR:-}" in
       /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset EMU_DIR ;;
       esac
+      case "${KIT_DIR:-}" in
+      /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset KIT_DIR ;;
+      esac
+      case "${RIG_ENV:-}" in
+      /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset RIG_ENV ;;
+      esac
+      case "${EMU_JSON:-}" in
+      /tmp/*-emu.json | /tmp/comis-emu.json | /root/* | "$_leaked_comis_home"/*) unset EMU_JSON ;;
+      esac
+      case "${EMU_LOG:-}" in
+      /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset EMU_LOG ;;
+      esac
+      [ "${EMU_TMUX_SESSION:-}" = "emu" ] && unset EMU_TMUX_SESSION
       # 4766 is the shared default carried by the obsolete remote block. A non-default value may
       # be an explicit local override and must survive just like an explicit isolated DATA path.
       [ "${GW_PORT:-}" = "4766" ] && unset GW_PORT
@@ -104,6 +126,7 @@ rig_load_persisted_env() {
   if [ -n "$_rig_env_file" ]; then
     # shellcheck disable=SC1090 # the rig env path is selected at run time
     . "$_rig_env_file"
+    rig_drop_leaked_remote_layout all
   fi
   [ "${RIG_LOAD_DEFER_DEFAULTS:-0}" = "1" ] || rig_defaults
 }
@@ -135,6 +158,9 @@ rig_load_env() {
   if [ -n "$_live_env" ] && [ -f "$_live_env" ]; then
     # shellcheck disable=SC1090 # the live env path is selected at run time
     . "$_live_env"
+    # This source is the only point where every value is known to come from the reusable live file.
+    # Drop the entire remote topology here; explicit one-run overrides are restored immediately below.
+    rig_drop_leaked_remote_layout all
   fi
   for ((_index = 0; _index < ${#_explicit_keys[@]}; _index++)); do
     export "${_explicit_keys[_index]}=${_explicit_values[_index]}"
