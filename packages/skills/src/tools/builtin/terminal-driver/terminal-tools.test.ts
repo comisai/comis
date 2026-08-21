@@ -688,6 +688,25 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(registry.createCalls).toHaveLength(0);
   });
 
+  it("rejects redaction sentinels before resolving managed terminal authority", async () => {
+    const registry = makeFakeRegistry();
+    const managedBinding = {
+      resolve: vi.fn(async () => ({ kind: "rejected" as const, reason: "managed_run_not_found" })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-redacted-managed-handles", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "[REDACTED]",
+      workspaceLeaseId: "[REDACTED]",
+    } as never)).rejects.toThrow(/managed terminal handles are invalid.*fresh launch plan/iu);
+    expect(managedBinding.resolve).not.toHaveBeenCalled();
+    expect(registry.createCalls).toHaveLength(0);
+  });
+
   it("kills a newly-created terminal when durable managed-run binding is refused without releasing its lease", async () => {
     const registry = makeFakeRegistry({
       createImpl: async (req) => ({
