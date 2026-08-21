@@ -96,6 +96,10 @@ describe("reviewed launcher provisioning", () => {
     expect(source, "the liaison records the reviewed scout inventory").toContain(
       'tool: "attest_scout_decisions"',
     );
+    expect(
+      read(`${SCENARIOS}/wave4-join.test.ts`),
+      "the deployment contribution makes the attestation tool callable",
+    ).toContain('toolName: "attest_scout_decisions"');
   });
 
   it("installs every launcher the live gates pin, under the reviewed prefix", () => {
