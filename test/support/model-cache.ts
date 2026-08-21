@@ -58,6 +58,9 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+/** Suite-local model source prepared by global setup on the test filesystem. */
+export const TEST_MODEL_CACHE_SOURCE_ENV = "COMIS_TEST_MODEL_CACHE_SOURCE";
+
 /**
  * Seed cached `*.gguf` models from `~/.comis/models` into `<dataDir>/models`
  * so a test daemon booted on `dataDir` reuses them instead of re-downloading.
@@ -67,7 +70,11 @@ import { join } from "node:path";
  * @param dataDir Absolute path to a test daemon's throwaway data dir.
  */
 export function seedModelCache(dataDir: string): void {
-  const cacheDir = join(homedir(), ".comis", "models");
+  const stagedCacheDir = process.env[TEST_MODEL_CACHE_SOURCE_ENV];
+  const cacheDir =
+    stagedCacheDir !== undefined && existsSync(stagedCacheDir)
+      ? stagedCacheDir
+      : join(homedir(), ".comis", "models");
   if (!existsSync(cacheDir)) return; // CI / fresh machine — download as normal.
 
   const destDir = join(dataDir, "models");
