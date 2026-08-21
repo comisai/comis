@@ -91,6 +91,13 @@ describe("reviewed launcher provisioning", () => {
     );
   });
 
+  it("reviews the scout decision inventory before cleanup", () => {
+    const source = read(`${SCENARIOS}/e0-journey.test.ts`);
+    expect(source, "the liaison records the reviewed scout inventory").toContain(
+      'tool: "attest_scout_decisions"',
+    );
+  });
+
   it("installs every launcher the live gates pin, under the reviewed prefix", () => {
     const script = read(PROVISIONER);
     const paths = pinnedLauncherPaths();
