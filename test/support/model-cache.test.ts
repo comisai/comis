@@ -22,6 +22,9 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...actual, homedir: () => "/shared-home" };
 });
 
+// Global setup imports this helper before project tests start. Reload it after
+// registering the filesystem mocks so this test never reaches the real disk.
+vi.resetModules();
 const { seedModelCache } = await import("./model-cache.js");
 
 describe("seedModelCache", () => {
