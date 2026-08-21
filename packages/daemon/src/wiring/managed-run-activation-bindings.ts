@@ -289,6 +289,7 @@ export async function ensurePreparedExecutionAttachment(
     workspaceLeaseId: record.workspaceLeaseId,
     kind: requested.kind,
     sourcePath: requested.sourcePath,
+    relayIdentity: requested.relayIdentity,
     owner: recordOwnerScope(record),
   });
   if (!created.ok) return created;

@@ -102,8 +102,9 @@ describe("execution attachment authority coordinator", () => {
       workspaceLeaseId: "workspace-lease_a",
       kind: "inherited_descriptor",
       sourcePath: "/srv/runtime/service-a/run-a.sock",
+      relayIdentity: RELAY_IDENTITY,
       owner: OWNER,
-    } as never);
+    });
 
     expect(result).toEqual({
       ok: true,
@@ -124,7 +125,7 @@ describe("execution attachment authority coordinator", () => {
       sourcePath: "/srv/runtime/service-a/run-a.sock",
       relayIdentity: RELAY_IDENTITY,
       owner: OWNER,
-    } as never);
+    });
 
     expect(created).toMatchObject({ ok: true, value: { kind: "created" } });
     const record = (created as Extract<typeof created, { ok: true }>).value.record;
@@ -151,6 +152,7 @@ describe("execution attachment authority coordinator", () => {
       workspaceLeaseId: "workspace-lease_b",
       kind: "unix_socket",
       sourcePath: "/srv/runtime/service-a/run-a.sock",
+      relayIdentity: RELAY_IDENTITY,
       owner: OWNER,
     });
     expect(result).toEqual({ ok: true, value: { kind: "rejected", reason: "authority_mismatch" } });
@@ -170,6 +172,7 @@ describe("execution attachment authority coordinator", () => {
       workspaceLeaseId: "workspace-lease_a",
       kind: "unix_socket",
       sourcePath: "/srv/runtime/service-a/run-a.sock",
+      relayIdentity: RELAY_IDENTITY,
       owner: OWNER,
     });
 
@@ -207,6 +210,7 @@ describe("execution attachment authority coordinator", () => {
       workspaceLeaseId: "workspace-lease_a",
       kind: "unix_socket",
       sourcePath: ATTACHMENT.sourcePath,
+      relayIdentity: RELAY_IDENTITY,
       owner: OWNER,
     });
 
@@ -247,7 +251,7 @@ describe("execution attachment authority coordinator", () => {
       sourcePath: ATTACHMENT.sourcePath,
       relayIdentity: RELAY_IDENTITY,
       owner: OWNER,
-    } as never);
+    });
 
     expect(replayed).toEqual({ ok: true, value: { kind: "identical_replay", record: ATTACHMENT } });
     expect(bindExecutionAttachment).toHaveBeenCalledWith(OWNER, expect.objectContaining({
@@ -284,7 +288,7 @@ describe("execution attachment authority coordinator", () => {
       sourcePath: ATTACHMENT.sourcePath,
       relayIdentity: "cd".repeat(32),
       owner: OWNER,
-    } as never);
+    });
 
     expect(replayed).toEqual({
       ok: true,
@@ -331,6 +335,7 @@ describe("execution attachment authority coordinator", () => {
       workspaceLeaseId: "workspace-lease_a",
       kind: "unix_socket",
       sourcePath: "/srv/runtime/service-a/run-a.sock",
+      relayIdentity: RELAY_IDENTITY,
       owner: OWNER,
     });
     expect(result).toEqual({ ok: true, value: { kind: "rejected", reason: "binding_refused" } });
@@ -353,6 +358,7 @@ describe("execution attachment authority coordinator", () => {
       workspaceLeaseId: "workspace-lease_a",
       kind: "unix_socket",
       sourcePath: "/srv/runtime/service-a/run-a.sock",
+      relayIdentity: RELAY_IDENTITY,
       owner: OWNER,
     });
 

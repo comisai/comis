@@ -48,6 +48,7 @@ function rowToRecord(row: ExecutionAttachmentDbRow): Result<ExecutionAttachmentR
     agentId: row.agent_id,
     kind: row.kind,
     sourcePath: row.source_path,
+    relayIdentity: row.relay_identity,
     sourceFilesystemType: row.source_filesystem_type,
     sourceFilesystemIdentity: {
       device: row.source_filesystem_device,
@@ -100,11 +101,12 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
     INSERT INTO execution_attachments (
       schema_version, execution_attachment_id, managed_run_id, workspace_lease_id,
       service_instance_id, tenant_id, agent_id, kind, source_path,
+      relay_identity,
       source_filesystem_type, source_filesystem_device, source_filesystem_inode,
       source_filesystem_birthtime_ns,
       target_name, access, state, created_at_ms, updated_at_ms,
       last_recovered_at_ms, revoked_at_ms, revocation_reason
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const updateAttachment = db.prepare(`
     UPDATE execution_attachments SET source_filesystem_device = ?,
@@ -215,6 +217,7 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
       parsed.value.agentId,
       parsed.value.kind,
       parsed.value.sourcePath,
+      parsed.value.relayIdentity,
       parsed.value.sourceFilesystemType,
       parsed.value.sourceFilesystemIdentity.device,
       parsed.value.sourceFilesystemIdentity.inode,

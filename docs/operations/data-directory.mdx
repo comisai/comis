@@ -137,7 +137,9 @@ The main SQLite database. It stores conversation sessions, long-term memory entr
 Capability-service managed runs also keep their durable state transitions,
 content-free report/evidence indexes, attention and operation records,
 continuation claims, workspace leases, execution attachments, and managed
-terminal bindings here. A continuation execution failure reduces its exact
+terminal bindings here. Each execution attachment retains its filesystem
+identity and public relay identity so restart recovery and terminal launch use
+the same run-bound authority. A continuation execution failure reduces its exact
 accepted report interval to `unknown` and settles that interval without immediate
 replay. The same SQLite transaction records whether that reduced interval must
 settle as `completed` or `failed`, so restart recovery cannot recompute or change

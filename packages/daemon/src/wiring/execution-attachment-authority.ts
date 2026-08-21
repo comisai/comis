@@ -42,6 +42,7 @@ export interface ExecutionAttachmentCreateInput {
   readonly workspaceLeaseId: string;
   readonly kind: "unix_socket" | "inherited_descriptor";
   readonly sourcePath: string;
+  readonly relayIdentity: string;
   readonly owner: ManagedRunOwnerScope;
 }
 
@@ -152,7 +153,10 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
     const existing = await invoke(deps.attachments.get(scope, executionAttachmentId));
     if (!existing.ok) return existing;
     if (existing.value !== undefined) {
-      if (existing.value.sourcePath !== input.sourcePath) {
+      if (
+        existing.value.sourcePath !== input.sourcePath
+        || existing.value.relayIdentity !== input.relayIdentity
+      ) {
         return ok({ kind: "rejected", reason: "replay_conflict" });
       }
       const active = validateActive(existing.value);
@@ -211,6 +215,7 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
       agentId: run.value.agentId,
       kind: "unix_socket",
       sourcePath: source.value.canonicalPath,
+      relayIdentity: input.relayIdentity,
       sourceFilesystemType: source.value.filesystemType,
       sourceFilesystemIdentity: source.value.filesystemIdentity,
       targetName: `attachment-${digest("execution-attachment-target", executionAttachmentId).slice(0, 32)}.sock`,

@@ -671,6 +671,7 @@ describe("managed-run two-phase activation", () => {
         agentId: record.value.agentId,
         kind: "unix_socket" as const,
         sourcePath: "/srv/runtime/release.sock",
+        relayIdentity: RELAY_IDENTITY,
         sourceFilesystemType: "socket" as const,
         sourceFilesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
         targetName: `attachment-${"a".repeat(32)}.sock`,

@@ -35,6 +35,7 @@ export const ExecutionAttachmentRecordSchema = z.strictObject({
     (path) => isAbsolute(path) && normalize(path) === path,
     "execution attachment source path must be absolute and normalized",
   ),
+  relayIdentity: z.string().length(64).regex(/^[a-f0-9]*[a-f1-9][a-f0-9]*$/u),
   sourceFilesystemType: z.literal("socket"),
   sourceFilesystemIdentity: ExecutionAttachmentFilesystemIdentitySchema,
   targetName: z.string().regex(TARGET_NAME_PATTERN),

@@ -20,6 +20,7 @@ function makeRecord(overrides: Partial<ExecutionAttachmentRecord> = {}): Executi
     agentId: "agent_a",
     kind: "unix_socket",
     sourcePath: "/srv/capability-runtime/service-a/worker.sock",
+    relayIdentity: RELAY_IDENTITY,
     sourceFilesystemType: "socket",
     sourceFilesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
     targetName: `attachment-${"a".repeat(32)}.sock`,
@@ -33,11 +34,9 @@ function makeRecord(overrides: Partial<ExecutionAttachmentRecord> = {}): Executi
 
 describe("ExecutionAttachmentRecord authority validation", () => {
   it("requires one canonical nonzero relay identity", () => {
-    expect(ExecutionAttachmentRecordSchema.safeParse({
-      ...makeRecord(),
-      relayIdentity: RELAY_IDENTITY,
-    }).success).toBe(true);
-    expect(ExecutionAttachmentRecordSchema.safeParse(makeRecord()).success).toBe(false);
+    const { relayIdentity: _relayIdentity, ...withoutRelayIdentity } = makeRecord();
+    expect(ExecutionAttachmentRecordSchema.safeParse(makeRecord()).success).toBe(true);
+    expect(ExecutionAttachmentRecordSchema.safeParse(withoutRelayIdentity).success).toBe(false);
     expect(ExecutionAttachmentRecordSchema.safeParse({
       ...makeRecord(),
       relayIdentity: "0".repeat(64),

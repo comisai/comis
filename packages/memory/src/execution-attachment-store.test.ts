@@ -130,7 +130,7 @@ function makeAttachment(overrides: Partial<ExecutionAttachmentRecord> = {}): Exe
     createdAtMs: NOW_MS,
     updatedAtMs: NOW_MS,
     ...overrides,
-  } as unknown as ExecutionAttachmentRecord;
+  };
 }
 
 async function seed(db: Database.Database): Promise<void> {

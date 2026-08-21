@@ -19,7 +19,10 @@ const REQUIRED_MANAGED_RUN_COLUMNS = [
 ] as const;
 
 const REQUIRED_WORKSPACE_LEASE_COLUMNS = ["filesystem_birthtime_ns"] as const;
-const REQUIRED_EXECUTION_ATTACHMENT_COLUMNS = ["source_filesystem_birthtime_ns"] as const;
+const REQUIRED_EXECUTION_ATTACHMENT_COLUMNS = [
+  "source_filesystem_birthtime_ns",
+  "relay_identity",
+] as const;
 const REQUIRED_CONTINUATION_CLAIM_COLUMNS = ["reduction_outcome"] as const;
 const REQUIRED_MANAGED_RUN_GROUP_COLUMNS = [
   "managed_run_group_id",
@@ -260,6 +263,11 @@ export function ensureManagedRunTables(db: Database.Database): void {
       agent_id TEXT NOT NULL,
       kind TEXT NOT NULL CHECK(kind = 'unix_socket'),
       source_path TEXT NOT NULL,
+      relay_identity TEXT NOT NULL CHECK(
+        length(relay_identity) = 64
+        AND relay_identity NOT GLOB '*[^0-9a-f]*'
+        AND relay_identity GLOB '*[1-9a-f]*'
+      ),
       source_filesystem_type TEXT NOT NULL CHECK(source_filesystem_type = 'socket'),
       source_filesystem_device INTEGER NOT NULL CHECK(source_filesystem_device >= 0),
       source_filesystem_inode INTEGER NOT NULL CHECK(source_filesystem_inode >= 0),

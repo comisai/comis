@@ -11,6 +11,7 @@ export const ExecutionAttachmentDbRowSchema = z.strictObject({
   agent_id: z.string(),
   kind: z.string(),
   source_path: z.string(),
+  relay_identity: z.string().length(64).regex(/^[a-f0-9]*[a-f1-9][a-f0-9]*$/u),
   source_filesystem_type: z.string(),
   source_filesystem_device: z.number().int(),
   source_filesystem_inode: z.number().int(),
