@@ -157,6 +157,11 @@ export function buildGoFixtureBinary(
   outputDirectory: string,
   name: "devcrew-service" | "devcrew-mcp",
 ): string {
+  if (!fixturePathExists(goRepository)) {
+    throw new Error(
+      `capability-service Go repository not found at ${goRepository}; set COMIS_DEV_CREW_SOURCE to the absolute comis-dev-crew checkout path`,
+    );
+  }
   const output = fixtureChildPath(outputDirectory, name);
   execFileSync("go", ["build", "-trimpath", "-o", output, `./cmd/${name}`], {
     cwd: goRepository,
