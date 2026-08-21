@@ -35,6 +35,12 @@ export const AttachmentTargetNameSchema = z
   .string()
   .regex(/^attachment-[a-f0-9]{32}\.sock$/);
 
+/** Service-owned public identity used to authenticate one attachment relay. */
+export const AttachmentRelayIdentitySchema = z
+  .string()
+  .length(64)
+  .regex(/^[a-f0-9]*[a-f1-9][a-f0-9]*$/);
+
 /** Comis-minted terminal session identity. */
 export const TerminalSessionIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 
@@ -112,6 +118,7 @@ export type ManagedRunId = z.infer<typeof ManagedRunIdSchema>;
 export type WorkspaceLeaseId = z.infer<typeof WorkspaceLeaseIdSchema>;
 export type ExecutionAttachmentId = z.infer<typeof ExecutionAttachmentIdSchema>;
 export type AttachmentTargetName = z.infer<typeof AttachmentTargetNameSchema>;
+export type AttachmentRelayIdentity = z.infer<typeof AttachmentRelayIdentitySchema>;
 export type TerminalSessionId = z.infer<typeof TerminalSessionIdSchema>;
 export type OperationId = z.infer<typeof OperationIdSchema>;
 export type ApprovalRequestId = z.infer<typeof ApprovalRequestIdSchema>;

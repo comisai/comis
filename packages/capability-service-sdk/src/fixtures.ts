@@ -61,6 +61,7 @@ const serviceReportId = "service-report_a";
 const terminalSessionId = "terminal-session_a";
 const emptyDigest = "0".repeat(64);
 const workspacePolicyHash = "c".repeat(64);
+const relayIdentity = "ab".repeat(32);
 
 function request(
   id: string,
@@ -121,6 +122,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           requestedAttachment: {
             kind: "unix_socket",
             sourcePath: "/approved/runtime/task-a/service.sock",
+            relayIdentity,
           },
         },
       },
@@ -142,6 +144,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
               requestedAttachment: {
                 kind: "unix_socket",
                 sourcePath: "/approved/runtime/group-task-a/service.sock",
+                relayIdentity,
               },
             },
           ],
@@ -493,6 +496,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           requestedAttachment: {
             kind: "unix_socket",
             sourcePath: "/approved/runtime/task-attachment/service.sock",
+            relayIdentity,
           },
         },
       },
@@ -664,6 +668,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           requestedAttachment: {
             kind: "unix_socket",
             sourcePath: "/approved/runtime/task-a/service.sock",
+            relayIdentity,
           },
         },
       },

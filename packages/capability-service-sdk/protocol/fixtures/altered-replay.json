@@ -10,6 +10,7 @@
         "registrationNonce": "registration-nonce_a",
         "requestedAttachment": {
           "kind": "unix_socket",
+          "relayIdentity": "abababababababababababababababababababababababababababababababab",
           "sourcePath": "/approved/runtime/task-a/service.sock"
         },
         "requestedWorkspace": {

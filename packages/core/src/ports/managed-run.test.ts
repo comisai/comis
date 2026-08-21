@@ -90,6 +90,7 @@ describe("Managed-run store and private-content port contracts", () => {
       requestedAttachment: {
         kind: "unix_socket",
         sourcePath: "/srv/comis-runtime/task-a/reporter.sock",
+        relayIdentity: "ab".repeat(32),
       },
     }).success).toBe(true);
     expect(ManagedRunActivationDescriptorSchema.safeParse({

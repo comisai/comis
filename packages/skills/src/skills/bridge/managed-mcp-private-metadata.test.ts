@@ -16,6 +16,7 @@ import { createManagedMcpPrivateMetadataBridge } from "./managed-mcp-private-met
 
 const NOW_MS = 1_800_000_000_000;
 const POLICY_HASH = "b".repeat(64);
+const RELAY_IDENTITY = "ab".repeat(32);
 
 const TURN_SCOPE = {
   conversation: {
@@ -271,6 +272,7 @@ describe("managed MCP private metadata boundary", () => {
               requestedAttachment: {
                 kind: "unix_socket",
                 sourcePath: "/srv/comis-runtime/group-task-a/reporter.sock",
+                relayIdentity: RELAY_IDENTITY,
               },
             }],
           },
@@ -336,6 +338,7 @@ describe("managed MCP private metadata boundary", () => {
           requestedAttachment: {
             kind: "unix_socket",
             sourcePath: "/srv/comis-runtime/task-a/reporter.sock",
+            relayIdentity: RELAY_IDENTITY,
           },
         }),
       });
@@ -348,6 +351,7 @@ describe("managed MCP private metadata boundary", () => {
         requestedAttachment: {
           kind: "unix_socket",
           sourcePath: "/srv/comis-runtime/task-a/reporter.sock",
+          relayIdentity: RELAY_IDENTITY,
         },
       }),
     }));
@@ -375,6 +379,7 @@ describe("managed MCP private metadata boundary", () => {
           requestedAttachment: {
             kind: "unix_socket",
             sourcePath: "/srv/comis-runtime/task-a/reporter.sock",
+            relayIdentity: RELAY_IDENTITY,
           },
         }),
       });

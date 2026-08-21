@@ -25,6 +25,7 @@
         "registrationNonce": "registration-nonce_a",
         "requestedAttachment": {
           "kind": "unix_socket",
+          "relayIdentity": "abababababababababababababababababababababababababababababababab",
           "sourcePath": "/approved/runtime/task-a/service.sock"
         },
         "requestedWorkspace": {
@@ -46,6 +47,7 @@
             "registrationNonce": "registration-nonce_group-member-a",
             "requestedAttachment": {
               "kind": "unix_socket",
+              "relayIdentity": "abababababababababababababababababababababababababababababababab",
               "sourcePath": "/approved/runtime/group-task-a/service.sock"
             },
             "requestedWorkspace": {

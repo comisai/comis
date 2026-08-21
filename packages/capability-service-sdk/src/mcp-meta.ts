@@ -2,6 +2,7 @@
 import { z } from "zod";
 import {
   ApprovalRequestIdSchema,
+  AttachmentRelayIdentitySchema,
   ExternalRunRefSchema,
   ManagedRunIdSchema,
   OperationIdSchema,
@@ -40,6 +41,7 @@ export const McpManagedRunResultSchema = z.strictObject({
     .strictObject({
       kind: z.enum(["unix_socket", "inherited_descriptor"]),
       sourcePath: z.string().min(1).max(4_096),
+      relayIdentity: AttachmentRelayIdentitySchema,
     })
     .optional(),
 });

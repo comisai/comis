@@ -37,6 +37,7 @@ import type { ActiveCapabilityServiceView } from "./capability-service-runtime.j
 import { validateWorkspaceLeasePath } from "./workspace-lease-path-validator.js";
 
 const NOW_MS = 1_800_000_000_000;
+const RELAY_IDENTITY = "ab".repeat(32);
 const CONVERSATION_SCOPE = {
   tenantId: "tenant_a",
   agentId: "agent_a",
@@ -459,7 +460,7 @@ describe("managed-run two-phase activation", () => {
       operationId: "operation_prepare_attachment",
       prepared: makePrepared({
         requestedWorkspace: { rootHint: workspaceDirectory },
-        requestedAttachment: { kind: "unix_socket", sourcePath },
+        requestedAttachment: { kind: "unix_socket", sourcePath, relayIdentity: RELAY_IDENTITY },
       }),
     }));
 
@@ -492,7 +493,7 @@ describe("managed-run two-phase activation", () => {
       operationId: "operation_attachment_outside",
       prepared: makePrepared({
         requestedWorkspace: { rootHint: workspaceDirectory },
-        requestedAttachment: { kind: "unix_socket", sourcePath },
+        requestedAttachment: { kind: "unix_socket", sourcePath, relayIdentity: RELAY_IDENTITY },
       }),
     }));
 
@@ -516,7 +517,11 @@ describe("managed-run two-phase activation", () => {
       operationId: "operation_attachment_symlink",
       prepared: makePrepared({
         requestedWorkspace: { rootHint: workspaceDirectory },
-        requestedAttachment: { kind: "unix_socket", sourcePath: linkedSource },
+        requestedAttachment: {
+          kind: "unix_socket",
+          sourcePath: linkedSource,
+          relayIdentity: RELAY_IDENTITY,
+        },
       }),
     }));
 
@@ -548,7 +553,7 @@ describe("managed-run two-phase activation", () => {
       operationId: "operation_attachment_unscoped",
       prepared: makePrepared({
         requestedWorkspace: { rootHint: workspaceDirectory },
-        requestedAttachment: { kind: "unix_socket", sourcePath },
+        requestedAttachment: { kind: "unix_socket", sourcePath, relayIdentity: RELAY_IDENTITY },
       }),
     }));
 
@@ -638,7 +643,7 @@ describe("managed-run two-phase activation", () => {
       operationId: "operation_rejected_attachment",
       prepared: makePrepared({
         requestedWorkspace: { rootHint: workspaceDirectory },
-        requestedAttachment: { kind: "unix_socket", sourcePath },
+        requestedAttachment: { kind: "unix_socket", sourcePath, relayIdentity: RELAY_IDENTITY },
       }),
     }));
 

@@ -2,7 +2,7 @@
   "artifacts": [
     {
       "path": "fixtures/altered-replay.json",
-      "sha256": "7228d702e545a6b1e7f53e37604746eaa765166e846a31a5fd6171daf67e0ca1"
+      "sha256": "beb75f5df4cd59939aa315a1b6ebac4abd3fca4fabb8cc0d1db629d9c61c19e8"
     },
     {
       "path": "fixtures/boundary-size.json",
@@ -14,7 +14,7 @@
     },
     {
       "path": "fixtures/invalid.json",
-      "sha256": "69d2c9b10fb77aa47d6eeac65d78ca30fdbabe037cc24de6536879c70937eb88"
+      "sha256": "fbd13bcac897c4bd6e36b1310b05610680516982d0e6472a1a31a32ed97e8bc7"
     },
     {
       "path": "fixtures/unknown-field.json",
@@ -22,7 +22,7 @@
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "0ffdd93cd1dcb71fe8bd231697875843b6ad85ceb29077c29160b87b901a7b88"
+      "sha256": "3fdf1d3854a1f7867c927e63fbd2043e65a14d6e26667300c3d28ae1f2525922"
     },
     {
       "path": "fixtures/version-mismatch.json",
@@ -122,11 +122,11 @@
     },
     {
       "path": "schemas/mcp-managed-run-group-result.schema.json",
-      "sha256": "3165cac3c3fcc3f41c7c6402f805498ea855191d2fa3fd0559986dc0c10cb12c"
+      "sha256": "bd75b01507b17e69cf024a53ce7ab5530836b0c5b7ef26f3e70cf3164eb375d1"
     },
     {
       "path": "schemas/mcp-managed-run-result.schema.json",
-      "sha256": "ffa905757bb1662480b80d8a2b7d7c569a6468a45d2aca9caae350cdcb109088"
+      "sha256": "723db95fc054ee1a98fe711e3169a9f08c8b96781af0a8f5f7e1b3d86608f64c"
     },
     {
       "path": "schemas/putEvidence.request.schema.json",
@@ -173,7 +173,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "9dcf3e3120a42f671c615a60e1ff149401da7b5380543d37b71efca4eec5548f",
+  "bundleDigest": "dea251a955a4d68faf402aa6977db1b4544737e43aa1f624f39dc359008f6414",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",

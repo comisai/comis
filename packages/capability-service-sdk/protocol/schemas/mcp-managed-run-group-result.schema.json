@@ -49,6 +49,12 @@
                 ],
                 "type": "string"
               },
+              "relayIdentity": {
+                "maxLength": 64,
+                "minLength": 64,
+                "pattern": "^[a-f0-9]*[a-f1-9][a-f0-9]*$",
+                "type": "string"
+              },
               "sourcePath": {
                 "maxLength": 4096,
                 "minLength": 1,
@@ -57,7 +63,8 @@
             },
             "required": [
               "kind",
-              "sourcePath"
+              "sourcePath",
+              "relayIdentity"
             ],
             "type": "object"
           },

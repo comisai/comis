@@ -79,6 +79,7 @@ export const ManagedRunActivationDescriptorSchema = z.strictObject({
   requestedAttachment: z.strictObject({
     kind: z.enum(["unix_socket", "inherited_descriptor"]),
     sourcePath: z.string().min(1).max(4_096),
+    relayIdentity: z.string().length(64).regex(/^[a-f0-9]*[a-f1-9][a-f0-9]*$/u),
   }).optional(),
   managedRunGroup: z.strictObject({
     managedRunGroupId: OpaqueRefSchema,

@@ -425,6 +425,7 @@ describe("capability-service protocol bundle contract", () => {
           registrationNonce: expect.any(String),
           requestedAttachment: {
             kind: "unix_socket",
+            relayIdentity: expect.stringMatching(/^[a-f0-9]{64}$/u),
             sourcePath: expect.stringMatching(/^\//u),
           },
           requestedWorkspace: { rootHint: expect.stringMatching(/^\//u) },

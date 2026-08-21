@@ -206,6 +206,7 @@ describe("daemon capability-service fixture host", () => {
         requestedAttachment: {
           kind: "unix_socket",
           sourcePath: "/approved/runtime/task-a/service.sock",
+          relayIdentity: "ab".repeat(32),
         },
       },
     }).ok).toBe(true);
@@ -261,6 +262,7 @@ describe("daemon capability-service fixture host", () => {
         requestedAttachment: {
           kind: "unix_socket",
           sourcePath: "/approved/runtime/task-a/service.sock",
+          relayIdentity: "ab".repeat(32),
         },
       },
     });
