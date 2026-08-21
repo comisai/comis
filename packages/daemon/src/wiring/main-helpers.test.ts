@@ -67,6 +67,18 @@ function gatewayTokenDeps(input: {
 }
 
 describe("resolveGatewayTokens post-resolution validation", () => {
+  it("accepts a resolved SecretRef value at the minimum length", () => {
+    const secret = "a".repeat(32);
+    const result = resolveGatewayTokens(
+      gatewayTokenDeps({ configuredSecret: secret }),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      value: [{ id: "default", secret, scopes: ["rpc"] }],
+    });
+  });
+
   it("rejects a short configured SecretRef value without exposing it", () => {
     const secret = "short-secret";
     const result = resolveGatewayTokens(
@@ -93,6 +105,24 @@ describe("resolveGatewayTokens post-resolution validation", () => {
     expect(result.error?.message).toContain(`${secret.length} characters`);
     expect(result.error?.message).not.toContain(secret);
     expect(deps.daemonLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it("generates an ephemeral token only when no value exists", () => {
+    const deps = gatewayTokenDeps({});
+    const result = resolveGatewayTokens(deps);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toHaveLength(1);
+      expect(result.value[0]?.secret).toHaveLength(64);
+    }
+    expect(deps.daemonLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        envVar: "GATEWAY_TOKEN_DEFAULT",
+        errorKind: "config",
+      }),
+      expect.stringContaining("auto-generated"),
+    );
   });
 });
 

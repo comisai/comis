@@ -32,7 +32,7 @@ import {
   type GeminiCacheManager,
   type SessionTrackerRegistry,
 } from "@comis/agent";
-import { suppressError } from "@comis/shared";
+import { err, ok, suppressError, type Result } from "@comis/shared";
 import { createRootRunIdRegistry } from "./setup-capability-endpoint-boot.js";
 // Video generation: the FAL queue factory + per-agent rate
 // limiter, imported from the bare @comis/skills barrel exactly like the image
@@ -277,6 +277,8 @@ export interface ResolvedGatewayToken {
   };
 }
 
+const MINIMUM_GATEWAY_TOKEN_CHARACTERS = 32;
+
 /**
  * Resolve gateway tokens from config (config -> env -> auto-generated).
  *
@@ -286,10 +288,11 @@ export interface ResolvedGatewayToken {
 export function resolveGatewayTokens(deps: {
   container: BootContext["container"];
   daemonLogger: BootContext["daemonLogger"];
-}): Array<ResolvedGatewayToken> {
+}): Result<Array<ResolvedGatewayToken>, Error> {
   const { container, daemonLogger } = deps;
   const resolved: Array<ResolvedGatewayToken> = [];
-  for (const t of container.config.gateway?.tokens ?? []) {
+  const configuredTokens = container.config.gateway?.tokens ?? [];
+  for (const [tokenIndex, t] of configuredTokens.entries()) {
     const tokenId = t.id ?? "unknown";
     const tokenScopes = [...(t.scopes ?? [])];
     // Preserve the per-MCP-client config block so the TokenStore can surface
@@ -303,8 +306,15 @@ export function resolveGatewayTokens(deps: {
         }
       : undefined;
 
-    if (typeof t.secret === "string" && t.secret.length >= 32) {
-      // Source: config (explicit secret present and valid)
+    if (typeof t.secret === "string") {
+      if (t.secret.length < MINIMUM_GATEWAY_TOKEN_CHARACTERS) {
+        return err(
+          new Error(
+            `gateway.tokens[${tokenIndex}].secret for token '${tokenId}' resolved to ${t.secret.length} characters; provide at least ${MINIMUM_GATEWAY_TOKEN_CHARACTERS}`,
+          ),
+        );
+      }
+      // Source: config (explicit literal, environment reference, or SecretRef).
       resolved.push({
         id: tokenId,
         secret: t.secret,
@@ -314,7 +324,14 @@ export function resolveGatewayTokens(deps: {
     } else {
       const envKey = `GATEWAY_TOKEN_${tokenId.toUpperCase().replace(/-/g, "_")}`;
       const envSecret = container.secretManager.get(envKey);
-      if (envSecret) {
+      if (envSecret !== undefined) {
+        if (envSecret.length < MINIMUM_GATEWAY_TOKEN_CHARACTERS) {
+          return err(
+            new Error(
+              `${envKey} for gateway token '${tokenId}' resolved to ${envSecret.length} characters; provide at least ${MINIMUM_GATEWAY_TOKEN_CHARACTERS}`,
+            ),
+          );
+        }
         // Source: env / SecretManager
         resolved.push({
           id: tokenId,
@@ -338,7 +355,7 @@ export function resolveGatewayTokens(deps: {
       }
     }
   }
-  return resolved;
+  return ok(resolved);
 }
 
 /**

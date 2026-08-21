@@ -1423,7 +1423,7 @@ Running without `gateway.tls` on the default loopback bind (`127.0.0.1`) is the 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `id` | `string` | _(required)_ | Unique token identifier |
-| `secret` | `string \| SecretRef` | _(unset)_ | Secret value (min 32 chars; auto-generated if omitted) |
+| `secret` | `string \| SecretRef` | _(unset)_ | Secret value (min 32 chars, enforced after environment or SecretRef resolution; auto-generated only when no value is configured) |
 | `scopes` | `string[]` | `[]` | Allowed scopes (e.g., `["rpc", "ws", "admin"]`) |
 
 **Rate Limit (gateway.rateLimit)**

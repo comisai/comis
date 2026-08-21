@@ -413,7 +413,11 @@ ERROR above in the startup log.
           scopes: ["rpc", "ws", "admin"]
     ```
 
-    The token secret must be at least 32 characters long.
+    The token secret must be at least 32 characters long. The daemon enforces
+    this after resolving environment references and `SecretRef` values; an
+    explicitly configured short value stops startup instead of being replaced
+    by an ephemeral token. The startup error names the failing selector and
+    resolved length without printing the credential.
   </Accordion>
 
   <Accordion title="Shutdown timeout exceeded, forcing exit">
