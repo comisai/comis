@@ -95,7 +95,7 @@ import {
   setupCapabilityServices,
 } from "./wiring/index.js";
 import { resolveEffectiveTrajectoryConfig } from "./wiring/trajectory-runtime-config.js";
-import { hasBootstrapSecret } from "./wiring/bootstrap-secret.js";
+import { ensureEncryptedCanarySecret, hasBootstrapSecret } from "./wiring/bootstrap-secret.js";
 import { SENSITIVE_EXACT_KEYS, SENSITIVE_PREFIXES, buildMergedEnv } from "./wiring/env-scrub.js";
 import {
   createActiveRunRegistry,
@@ -1006,21 +1006,13 @@ async function bootFoundation(
   // "encrypted"|"file"|"env". NEVER writes key material before this check.
   const storageMode = _preReadStorageMode(requestedConfigPaths);
 
-  // Step 2: Write master key ONLY when storageMode is "encrypted".
-  // file/env modes create NO key material on first boot.
+  // Step 2: Write the master key only for encrypted storage. The canary waits
+  // until the store opens; file/env modes create no first-boot key material.
   if (storageMode === "encrypted") {
     if (!hasBootstrapSecret(process.env, "SECRETS_MASTER_KEY")) _writeMasterKeyIfAbsent(dataDir);
-    // Generate the exfiltration-canary seed on the same gate. Without it the canary token derives
-    // from tenantId+agentId — stable but PREDICTABLE to anyone who knows those, so the canary can be
-    // recognised and stepped around. Idempotent: never rotates an existing value, because rotating
-    // would invalidate every canary already embedded in prior outbound content. Deliberately NOT
-    // written in file/env mode, preserving the boot invariant that those modes create no key
-    // material on first boot.
-    if (!hasBootstrapSecret(process.env, "CANARY_SECRET")) _writeCanarySecretIfAbsent(dataDir);
     // loadEnvFile below picks up the freshly-written key from the .env file,
     // so selectSecretStore can read SECRETS_MASTER_KEY from process.env.
   }
-
   loadEnvFile(envPath);
 
   // 0.5. Select secret store by mode, merge with env, scrub process.env.
@@ -1061,6 +1053,14 @@ async function bootFoundation(
   if (selected.kind === "encrypted") {
     secretsCrypto = selected.secretsCrypto;
     secretsDb = selected.secretsDb;
+  }
+
+  if (storageMode === "encrypted") {
+    const canaryBootstrap = ensureEncryptedCanarySecret(secretStore, process.env, () => {
+      _writeCanarySecretIfAbsent(dataDir);
+      loadEnvFile(envPath);
+    });
+    if (!canaryBootstrap.ok) throw new Error(`Failed to prepare CANARY_SECRET for encrypted storage: ${canaryBootstrap.error.message}`);
   }
 
   // Build mergedEnv (store-wins) + stage-1 scrub.

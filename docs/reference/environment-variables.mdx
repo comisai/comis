@@ -345,11 +345,11 @@ is active.
 |----------|-------|
 | **Used by** | Daemon |
 | **Format** | Non-empty random secret |
-| **Default** | Auto-generated with encrypted storage and written to `~/.comis/.env` (mode 0600) |
+| **Default** | Auto-generated with encrypted storage when absent from both the active store and environment, then written to `~/.comis/.env` (mode 0600) |
 
 The canary seed makes outbound exfiltration markers unpredictable. When an
-external secret manager supplies `CANARY_SECRET`, Comis uses that value and does
-not duplicate it under the data directory.
+external secret manager or the active encrypted store supplies `CANARY_SECRET`,
+Comis uses that value and does not duplicate it under the data directory.
 
 ## OAuth Variables
 
