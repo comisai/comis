@@ -6602,6 +6602,48 @@ describe("PiExecutor", () => {
       // v0.65.0: beforeToolCall is a direct property assignment, not a method call
       expect(typeof mockSession.agent.beforeToolCall).toBe("function");
     });
+
+    it("isolates foreground tool retry failures between executions", async () => {
+      const configWithStrictBreaker = {
+        ...testConfig,
+        toolRetryBreaker: {
+          enabled: true,
+          maxConsecutiveFailures: 3,
+          maxToolFailures: 5,
+          suggestAlternatives: true,
+          maxConsecutiveErrorPatterns: 2,
+        },
+      } as PerAgentConfig;
+      const deps = createMockDeps();
+      const executor = createPiExecutor(configWithStrictBreaker, deps);
+      const toolName = "mcp__example--reconcile_task";
+      const args = { taskId: "task_a", action: "reconcile" };
+
+      await executor.execute(testMessage, testSessionKey);
+      const firstExecutionBreaker = (createPiEventBridge as Mock).mock.calls.at(-1)![0]
+        .toolRetryBreaker;
+      firstExecutionBreaker.recordResult(
+        toolName,
+        args,
+        false,
+        "[precondition] owner scope unavailable",
+        { transportOk: true },
+      );
+      firstExecutionBreaker.recordResult(
+        toolName,
+        args,
+        false,
+        "[precondition] owner scope unavailable",
+        { transportOk: true },
+      );
+      expect(firstExecutionBreaker.beforeToolCall(toolName, args).block).toBe(true);
+
+      await executor.execute(testMessage, testSessionKey);
+      const nextExecutionBreaker = (createPiEventBridge as Mock).mock.calls.at(-1)![0]
+        .toolRetryBreaker;
+
+      expect(nextExecutionBreaker.beforeToolCall(toolName, args).block).toBe(false);
+    });
   });
 
   // -------------------------------------------------------------------------
