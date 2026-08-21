@@ -24,6 +24,7 @@ import { getFreePort } from "../../../support/free-port.js";
 import {
   createTgEmulator,
   type ChatRef,
+  type RecordedOutbound,
   type TgEmulator,
 } from "../../emulators/telegram/tg-emulator.js";
 import { FAKE_BOT_TOKEN } from "../../harness/rig-config.js";
@@ -514,6 +515,48 @@ async function liaisonTurn(
   );
 }
 
+function approvalCallback(entry: RecordedOutbound): string | undefined {
+  const markup = entry.replyMarkup as {
+    inline_keyboard?: Array<Array<{ callback_data?: string }>>;
+  } | undefined;
+  return markup?.inline_keyboard
+    ?.flat()
+    .find((button) => button.callback_data?.startsWith("v1.approve.") === true)
+    ?.callback_data;
+}
+
+async function approvedLiaisonTurn(
+  model: LiaisonModelServer,
+  telegram: TgEmulator,
+  message: string,
+  steps: readonly ToolStep[],
+): Promise<void> {
+  await pollUntil(() => model.idle, 10_000, `liaison idle before ${message}`);
+  const outboundBefore = telegram.outbound(TELEGRAM_CHAT).length;
+  const completedBefore = telegram.outbound(TELEGRAM_CHAT)
+    .filter((entry) => entry.text?.includes("LIAISON_TURN_DONE") === true).length;
+  model.setScript(steps);
+  telegram.injectMessage(TELEGRAM_CHAT, TELEGRAM_USER, message);
+
+  let approvalEntry: RecordedOutbound | undefined;
+  let callbackData: string | undefined;
+  await pollUntil(() => {
+    approvalEntry = telegram.outbound(TELEGRAM_CHAT)
+      .slice(outboundBefore)
+      .find((entry) => approvalCallback(entry) !== undefined);
+    callbackData = approvalEntry === undefined ? undefined : approvalCallback(approvalEntry);
+    return callbackData !== undefined;
+  }, 30_000, `${message} signed approval prompt`);
+  telegram.injectCallback(TELEGRAM_CHAT, TELEGRAM_USER, approvalEntry!.messageId, callbackData!);
+
+  await pollUntil(
+    () => model.idle && telegram.outbound(TELEGRAM_CHAT)
+      .filter((entry) => entry.text?.includes("LIAISON_TURN_DONE") === true).length > completedBefore,
+    60_000,
+    `${message} approved response`,
+  );
+}
+
 function cleanupFailure(
   cliBinary: string,
   operatorSocket: string,
@@ -648,6 +691,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
           allowFrom: [],
         },
       };
+      daemonConfig["approvals"] = { enabled: true, defaultTimeoutMs: 30_000, batchApprovalTtlMs: 0 };
       writeFileSync(configPath, stringify(daemonConfig), { mode: 0o600 });
 
       const bootDaemon = async (): Promise<{ handle: TestDaemonHandle }> => {
@@ -941,7 +985,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
       expect(cleanedScout?.state).toBe("cleaned");
 
       let cleanedShip = "";
-      await liaisonTurn(model, telegram, "CLEANUP_E0_SHIP", [{
+      await approvedLiaisonTurn(model, telegram, "CLEANUP_E0_SHIP", [{
         tool: "cleanup_task",
         arguments: { taskHandle: shipTask },
         capture: (text) => { cleanedShip = text; },
@@ -968,6 +1012,7 @@ describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey obser
         scoutDelivered: true,
         cleanupHoldRefused: true,
         dirtyCleanupRefused: true,
+        cleanupApprovalGranted: true,
         cleanupCompleted: true,
       })}`);
     } finally {
