@@ -6,6 +6,7 @@ import type { SessionOwner } from "./terminal-session-owner.js";
 export const MANAGED_TERMINAL_ATTACHMENT_DIRECTORY = "/run/comis/attachments";
 export const MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT = "COMIS_EXECUTION_ATTACHMENT";
 export const MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT = "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME";
+export const MANAGED_TERMINAL_ATTACHMENT_IDENTITY_ENVIRONMENT = "COMIS_EXECUTION_ATTACHMENT_IDENTITY";
 
 export function managedTerminalAttachmentTargetPath(targetName: string): string {
   return `${MANAGED_TERMINAL_ATTACHMENT_DIRECTORY}/${targetName}`;
@@ -30,6 +31,7 @@ export interface ManagedTerminalExecutionAttachment {
   readonly executionAttachmentId: string;
   readonly sourcePath: string;
   readonly targetName: string;
+  readonly relayIdentity: string;
 }
 
 export type ManagedTerminalResolveOutcome =

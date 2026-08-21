@@ -468,6 +468,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
           executionAttachmentId: "execution-attachment_a",
           sourcePath: "/srv/runtime/run-a.sock",
           targetName: `attachment-${"a".repeat(32)}.sock`,
+          relayIdentity: "ab".repeat(32),
         }],
       })),
       reserve: vi.fn(async () => ({ kind: "bound" })),
@@ -507,6 +508,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
         executionAttachmentId: "execution-attachment_a",
         sourcePath: "/srv/runtime/run-a.sock",
         targetName: `attachment-${"a".repeat(32)}.sock`,
+        relayIdentity: "ab".repeat(32),
       }],
     });
     expect(managedBinding.bind).toHaveBeenCalledWith({
@@ -527,6 +529,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
       }],
     });
     expect(JSON.stringify(result.details)).not.toContain("/srv/runtime/run-a.sock");
+    expect(JSON.stringify(result.details)).not.toContain("ab".repeat(32));
     expect(eventBus.events.find((event) => event.event === "terminal:session_state")?.payload)
       .toMatchObject({
         sessionId: expect.any(String),
@@ -566,6 +569,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
           executionAttachmentId: "execution-attachment_a",
           sourcePath: "/srv/runtime/run-a.sock",
           targetName: `attachment-${"a".repeat(32)}.sock`,
+          relayIdentity: "ab".repeat(32),
         }],
       })),
     };

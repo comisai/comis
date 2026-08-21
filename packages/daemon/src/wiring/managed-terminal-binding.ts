@@ -157,6 +157,7 @@ export function createManagedTerminalBindingResolver(
         executionAttachmentId: attachment.executionAttachmentId,
         sourcePath: attachment.sourcePath,
         targetName: attachment.targetName,
+        relayIdentity: attachment.relayIdentity,
       })),
     };
   };

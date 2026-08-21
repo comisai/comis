@@ -138,6 +138,7 @@ describe("buildScopeArgs — filesystem dimension", () => {
         executionAttachmentId: "execution-attachment_a",
         sourcePath: "/srv/runtime/worker.sock",
         targetName: `attachment-${"a".repeat(32)}.sock`,
+        relayIdentity: "ab".repeat(32),
       }],
     }));
     expect(hasBind(

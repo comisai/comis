@@ -366,6 +366,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
               executionAttachmentId: "execution-attachment_a",
               sourcePath,
               targetName,
+              relayIdentity: "ab".repeat(32),
             }],
           }, owner);
           let screen = "";

@@ -36,6 +36,7 @@ describe("terminal execution attachment relay", () => {
       executionAttachmentId: "execution-attachment_a",
       sourcePath,
       targetName: `attachment-${"a".repeat(32)}.sock`,
+      relayIdentity: "ab".repeat(32),
     }], { uid, gid });
     expect(materialized.ok).toBe(true);
     if (!materialized.ok) return;

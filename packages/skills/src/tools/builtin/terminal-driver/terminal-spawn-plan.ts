@@ -70,6 +70,7 @@ import {
   type AttachmentRelayMaterialization,
 } from "./terminal-attachment-relay.js";
 import {
+  MANAGED_TERMINAL_ATTACHMENT_IDENTITY_ENVIRONMENT,
   MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT,
   MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT,
   managedTerminalAttachmentTargetPath,
@@ -817,6 +818,7 @@ export async function buildSpawnPlan(
   // listed-hosts merge the relay's HTTPS_PROXY/HTTP_PROXY over the scrubbed env.
   delete childEnv[MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT];
   delete childEnv[MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT];
+  delete childEnv[MANAGED_TERMINAL_ATTACHMENT_IDENTITY_ENVIRONMENT];
   const soleAttachment = executionAttachments?.length === 1
     ? executionAttachments[0]
     : undefined;
@@ -835,6 +837,7 @@ export async function buildSpawnPlan(
     ...(soleAttachment === undefined ? {} : {
       [MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT]: managedTerminalAttachmentTargetPath(soleAttachment.targetName),
       [MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT]: soleAttachment.targetName,
+      [MANAGED_TERMINAL_ATTACHMENT_IDENTITY_ENVIRONMENT]: soleAttachment.relayIdentity,
     }),
   };
 
