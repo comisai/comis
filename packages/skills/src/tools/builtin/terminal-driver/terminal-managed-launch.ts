@@ -2,8 +2,10 @@
 import { randomUUID } from "node:crypto";
 import type {
   ManagedTerminalBindingResolver,
+  ManagedTerminalEventSink,
   ManagedTerminalResolveOutcome,
 } from "./terminal-managed-binding.js";
+import { err, ok, type Result } from "@comis/shared";
 import type {
   CreateResult,
   SessionOwner,
@@ -115,4 +117,39 @@ export async function confirmManagedTerminalLaunch(input: {
   return retired.kind === "released"
     ? { kind: "rejected", reason: bound.reason }
     : retired;
+}
+
+/** Require service admission for a bound terminal or retire it before returning. */
+export async function admitManagedTerminalLaunch(input: {
+  readonly registry: TerminalSessionRegistry;
+  readonly binding: ManagedTerminalBindingResolver;
+  readonly events: ManagedTerminalEventSink;
+  readonly authority: ManagedTerminalLaunchAuthority;
+  readonly reservedTerminalSessionId: string;
+  readonly liveTerminalSessionId: string;
+  readonly owner: SessionOwner;
+}): Promise<Result<void, Error>> {
+  for (const transition of ["created", "running"] as const) {
+    const published = await input.events.publish({
+      managedRunId: input.authority.managedRunId,
+      workspaceLeaseId: input.authority.workspaceLeaseId,
+      serviceInstanceId: input.authority.serviceInstanceId,
+      terminalSessionId: input.liveTerminalSessionId,
+      transition,
+    });
+    if (published.ok) continue;
+    const retired = await retireManagedTerminalLaunch({
+      registry: input.registry,
+      binding: input.binding,
+      authority: input.authority,
+      reservedTerminalSessionId: input.reservedTerminalSessionId,
+      liveTerminalSessionId: input.liveTerminalSessionId,
+      owner: input.owner,
+    });
+    if (retired.kind !== "released") {
+      return err(new Error(`managed terminal admission failed and retirement was not confirmed: ${retired.reason}`));
+    }
+    return err(new Error(`managed terminal admission failed: ${published.error.message}`));
+  }
+  return ok(undefined);
 }

@@ -80,7 +80,7 @@ export function createManagedTerminalEventBridge(deps: {
   readonly nowMs: () => number;
 }): ManagedTerminalEventSink {
   let sequence = 0;
-  const notify = async (input: Parameters<ManagedTerminalEventSink["publish"]>[0]): Promise<void> => {
+  const notify = async (input: Parameters<ManagedTerminalEventSink["publish"]>[0]): Promise<Result<void, Error>> => {
     sequence += 1;
     const operationDigest = createHash("sha256")
       .update(`${input.managedRunId}\0${input.terminalSessionId}\0${input.transition}\0${deps.nowMs()}\0${sequence}`, "utf8")
@@ -102,7 +102,9 @@ export function createManagedTerminalEventBridge(deps: {
         errorKind: failure.kind === "rejected" ? "precondition" as const : "dependency" as const,
         hint: transitionFailureHint(failure, input.transition),
       }, "Managed terminal transition delivery failed");
+      return err(new Error(`managed terminal transition ${failure.kind}: ${failure.reasonCode}`));
     }
+    return ok(undefined);
   };
   const retire: NonNullable<ManagedTerminalEventSink["retire"]> = async (input) => {
     await notify(input);
@@ -134,10 +136,9 @@ export function createManagedTerminalEventBridge(deps: {
   return {
     publish: async (input) => {
       if (input.transition === "exited" || input.transition === "released") {
-        await retire({ ...input, transition: input.transition });
-        return;
+        return retire({ ...input, transition: input.transition });
       }
-      await notify(input);
+      return notify(input);
     },
     retire,
   };

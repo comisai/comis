@@ -53,9 +53,11 @@ import {
 import { withCompleteNote } from "./terminal-wait-reply.js";
 import { managedHandleSelectionError, narrowManagedTerminalScope, prepareManagedTerminalWorkspaceGit, selectManagedHandles } from "./terminal-managed-create.js";
 import {
+  admitManagedTerminalLaunch,
   confirmManagedTerminalLaunch,
   reserveManagedTerminalLaunch,
   retireFailedManagedTerminalLaunch,
+  retireManagedTerminalLaunch,
 } from "./terminal-managed-launch.js";
 import { managedTerminalAttachmentTargetPath, type ManagedTerminalBindingResolver, type ManagedTerminalEventSink, type ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 
@@ -591,7 +593,10 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       }
 
       if (managedResolved !== undefined) {
-        if (deps.managedBinding === undefined || reservedTerminalSessionId === undefined) {
+        if (
+          deps.managedBinding === undefined
+          || reservedTerminalSessionId === undefined
+        ) {
           throwToolError("conflict", "managed terminal binding failed: launch reservation is unavailable");
         }
         const bound = await confirmManagedTerminalLaunch({
@@ -605,20 +610,36 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         if (bound.kind !== "bound") {
           throwToolError("conflict", `managed terminal binding failed: ${bound.reason}`);
         }
-        await deps.managedTerminalEvents?.publish({
-          managedRunId: managedResolved.managedRunId,
-          workspaceLeaseId: managedResolved.workspaceLeaseId,
-          serviceInstanceId: managedResolved.serviceInstanceId,
-          terminalSessionId: result.sessionId,
-          transition: "created",
+        if (deps.managedTerminalEvents === undefined) {
+          const retired = await retireManagedTerminalLaunch({
+            registry: deps.registry,
+            binding: deps.managedBinding,
+            authority: managedResolved,
+            reservedTerminalSessionId,
+            liveTerminalSessionId: result.sessionId,
+            owner,
+          });
+          throwToolError(
+            "conflict",
+            retired.kind === "released"
+              ? "managed terminal admission failed: lifecycle bridge is unavailable"
+              : `managed terminal admission failed and retirement was not confirmed: ${retired.reason}`,
+          );
+        }
+        const admitted = await admitManagedTerminalLaunch({
+          registry: deps.registry,
+          binding: deps.managedBinding,
+          events: deps.managedTerminalEvents,
+          authority: managedResolved,
+          reservedTerminalSessionId,
+          liveTerminalSessionId: result.sessionId,
+          owner,
         });
-        await deps.managedTerminalEvents?.publish({
-          managedRunId: managedResolved.managedRunId,
-          workspaceLeaseId: managedResolved.workspaceLeaseId,
-          serviceInstanceId: managedResolved.serviceInstanceId,
-          terminalSessionId: result.sessionId,
-          transition: "running",
-        });
+        if (!admitted.ok) {
+          throwToolError("conflict", admitted.error.message, {
+            hint: "inspect the capability service task state, dependency graph, and scheduling capacity before retrying",
+          });
+        }
       }
 
       const doneAt = deps.nowMs();

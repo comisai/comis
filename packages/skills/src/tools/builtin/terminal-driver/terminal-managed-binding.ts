@@ -89,7 +89,7 @@ export type ManagedTerminalTransition =
 
 /** Content-free transition bridge; publishing failure never grants cleanup authority. */
 export interface ManagedTerminalEventSink {
-  publish(input: ManagedTerminalTransitionInput): Promise<void>;
+  publish(input: ManagedTerminalTransitionInput): Promise<Result<void, Error>>;
   /** Durable end-of-life barrier. Local retirement remains authoritative when notification fails. */
   retire?(input: ManagedTerminalRetirementInput): Promise<Result<void, Error>>;
 }

@@ -99,7 +99,7 @@ describe("managed terminal event bridge", () => {
       serviceInstanceId: "service-instance_a",
       terminalSessionId: "terminal-session_a",
       transition: "released",
-    })).resolves.toBeUndefined();
+    })).resolves.toEqual({ ok: true, value: undefined });
     expect(terminalEvent).toHaveBeenCalledOnce();
     expect(releaseTerminal).toHaveBeenCalledWith(
       { kind: "service", serviceInstanceId: "service-instance_a" },

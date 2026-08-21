@@ -477,7 +477,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
       release: vi.fn(async () => ({ kind: "released" })),
     };
     const eventBus = makeCapturingBus();
-    const managedTerminalEvents = { publish: vi.fn(async () => undefined) };
+    const managedTerminalEvents = { publish: vi.fn(async () => ({ ok: true as const, value: undefined })) };
     const prepareManagedWorkspaceGit = vi.fn(() => ({ ok: true as const, value: undefined }));
     const tool = createTerminalSessionCreateTool(baseDeps(registry, {
       eventBus,
@@ -610,6 +610,41 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(registry.terminateCalls).toHaveLength(1);
     expect(managedBinding.release).toHaveBeenCalledOnce();
     expect(caps.startSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it("retires a managed terminal when the lifecycle bridge is unavailable", async () => {
+    const registry = makeFakeRegistry({
+      createImpl: async (req) => ({
+        sessionId: req.sessionId!, allowId: req.allowId, cols: req.cols, rows: req.rows,
+        rootProcessIdentity: { pid: 4123, startIdentity: "linux-proc-start-991" },
+      }),
+    });
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a", workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a", canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+      reserve: vi.fn(async () => ({ kind: "bound" as const })),
+      bind: vi.fn(async () => ({ kind: "bound" as const })),
+      release: vi.fn(async () => ({ kind: "released" as const })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-managed-bridge-unavailable", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/managed terminal admission failed.*lifecycle bridge is unavailable/u);
+
+    expect(registry.terminateCalls).toHaveLength(1);
+    expect(managedBinding.release).toHaveBeenCalledOnce();
   });
 
   it("refuses a managed launch before reservation when private Git preparation fails", async () => {
