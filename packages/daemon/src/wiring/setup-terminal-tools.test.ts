@@ -278,6 +278,7 @@ describe("wireTerminalTools — threads egressControl + bwrapPath toward the wor
     const shared = buildTerminalSharedDeps(registries, "agent-a", deps);
     expect(shared.egressControl).toBe(deps.egressControl);
     expect(shared.bwrapPath).toBe("/usr/bin/bwrap");
+    expect(shared.prepareManagedWorkspaceGit).toEqual(expect.any(Function));
   });
 });
 

@@ -107,6 +107,10 @@ export {
 // re-bind for the security posture (only this subtree is re-exposed in the jail).
 export { prepareAgentTerminalWorkspace } from "./terminal-workspace.js";
 
+// The daemon prepares lease-private Git administration before reserving a
+// managed terminal; the sandboxed worker then re-validates it before mounting.
+export { prepareManagedWorkspaceGit } from "./terminal-spawn-plan.js";
+
 // The per-session usage-cap primitive (closure-local counters + injected
 // clock). The tool layer consumes createSessionCaps to REJECT on
 // maxRequestsPerSession and EVICT on maxInteractions/wallClockMs.

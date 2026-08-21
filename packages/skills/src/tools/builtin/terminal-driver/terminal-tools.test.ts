@@ -304,6 +304,7 @@ function baseDeps(
     // rejected/evicted), so the existing delegation tests are unaffected. A
     // cap test injects createSessionCaps(limits, now) (or a spy double).
     caps: createSessionCaps(undefined, () => 1000),
+    prepareManagedWorkspaceGit: () => ({ ok: true, value: undefined }),
     ...overrides,
   };
 }

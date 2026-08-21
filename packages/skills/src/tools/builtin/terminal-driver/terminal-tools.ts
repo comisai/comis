@@ -14,6 +14,7 @@ import {
   type ApprovalGate,
   type ChannelEndpoint,
 } from "@comis/core";
+import type { Result } from "@comis/shared";
 
 import { jsonResult, throwToolError } from "../../../platform-tools/tool-helpers.js";
 import { resolveApprovalRequestContext } from "../../../platform-tools/approval-request-context.js";
@@ -50,7 +51,7 @@ import {
   type SessionOwner,
 } from "./terminal-session-registry.js";
 import { withCompleteNote } from "./terminal-wait-reply.js";
-import { narrowManagedTerminalScope, selectManagedHandles } from "./terminal-managed-create.js";
+import { narrowManagedTerminalScope, prepareManagedTerminalWorkspaceGit, selectManagedHandles } from "./terminal-managed-create.js";
 import {
   confirmManagedTerminalLaunch,
   reserveManagedTerminalLaunch,
@@ -188,11 +189,12 @@ export interface TerminalToolDeps {
   readonly approvalGate?: ApprovalGate;
   /** Daemon-owned authority resolver for the optional paired managed terminal path. */
   readonly managedBinding?: ManagedTerminalBindingResolver;
+  /** Daemon-side materialization of lease-private Git state before worker reservation. */
+  readonly prepareManagedWorkspaceGit?: (workspace: string) => Result<void, Error>;
   readonly managedTerminalEvents?: ManagedTerminalEventSink;
   /** True only when the production worker can enforce attachment mounts with bubblewrap. */
   readonly managedAttachmentSandboxAvailable?: boolean;
 }
-
 // Defaults
 
 const DEFAULT_COLS = 120;
@@ -507,6 +509,12 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         }
       }
 
+      const start = deps.nowMs();
+      if (managedResolved !== undefined) {
+        const preparation = prepareManagedTerminalWorkspaceGit(deps, managedResolved.canonicalRoot, allowId, start);
+        if (!preparation.ok) throwToolError("conflict", preparation.error.message, { hint: preparation.error.hint });
+      }
+
       // (3) CANONICALIZE (end-to-end). buildDirectSpawn consumes the
       // matcher's already-resolved realpath (no second resolution) and
       // prepends the operator's argsPrefix ahead of the agent args. We forward
@@ -514,7 +522,6 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       // canonical inode verbatim.
       // (4) REGISTER + OBSERVE. A spawn failure logs hint+errorKind and
       // emits terminal:spawn_failed before rethrowing.
-      const start = deps.nowMs();
       let result;
       const reservation = managedResolved === undefined || deps.managedBinding === undefined
         ? undefined

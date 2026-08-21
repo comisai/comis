@@ -653,6 +653,16 @@ export function resolveManagedWorkspaceGitMounts(
 }
 
 /**
+ * Materialize and validate lease-private Git administration at the daemon
+ * authority boundary. The worker repeats validation before composing mounts,
+ * but never needs write access to an arbitrary leased worktree.
+ */
+export function prepareManagedWorkspaceGit(workspace: string): Result<void, Error> {
+  const resolved = resolveManagedWorkspaceGitMounts(workspace);
+  return resolved.ok ? ok(undefined) : err(new ManagedWorkspaceGitUnavailableError());
+}
+
+/**
  * Fail-closed (typed) when `cwd` is not contained by the scope's bound paths. `full`
  * binds everything → no check. Throws {@link CwdOutsideScopeError} (errorKind
  * `permission_denied`, message names `cwd`) so the worker maps it to an `ok:false`

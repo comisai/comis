@@ -69,6 +69,7 @@ import {
   resolveWorkerMainPath,
   createTerminalEgressProxy,
   prepareAgentTerminalWorkspace,
+  prepareManagedWorkspaceGit,
   createTerminalSessionCreateTool,
   createTerminalSessionReadTool,
   createTerminalSessionListTool,
@@ -702,6 +703,7 @@ export function buildTerminalSharedDeps(
     // gate fail-closes in the tool.
     approvalGate: deps.approvalGate,
     managedBinding: deps.managedBinding,
+    prepareManagedWorkspaceGit,
     managedTerminalEvents: deps.managedTerminalEvents,
     managedAttachmentSandboxAvailable: deps.managedAttachmentSandboxAvailable,
     // The net-new egress dimensions, threaded toward the worker.
