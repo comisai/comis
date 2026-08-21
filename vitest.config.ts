@@ -24,6 +24,10 @@ export default defineConfig({
     // `pnpm validate` runs, so until it was listed here a break in a gate's
     // own oracle could pass the pre-push gate that depends on it.
     projects: ["packages/*", "test/architecture", "test/support", "scripts/contracts", "test/live/bin", "test/live/self-driving/scripts"],
+    // Stage the shared local model once before package workers start. The
+    // worker setup then hard-links from this suite-local source instead of
+    // copying the large model into every isolated daemon data directory.
+    globalSetup: ["./test/support/global-setup.ts"],
     // Coverage instrumentation transforms several large workspace graphs at
     // once. Deriving the worker count from every host CPU can saturate that
     // transform pipeline so thoroughly that otherwise millisecond-scale tests
