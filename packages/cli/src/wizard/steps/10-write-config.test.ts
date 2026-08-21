@@ -162,6 +162,17 @@ describe("writeConfigStep", () => {
     );
   });
 
+  it("creates the atomic config temp file with owner-only permissions", async () => {
+    await writeConfigStep.execute(populatedState(), createMockPrompter());
+
+    const tempWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.endsWith("config.yaml.tmp"),
+    );
+
+    expect(tempWriteCall).toBeDefined();
+    expect(tempWriteCall?.[2]).toEqual({ encoding: "utf-8", mode: 0o600 });
+  });
+
   it("writes every configuration artifact under the requested config directory", async () => {
     const state = {
       ...populatedState(),
