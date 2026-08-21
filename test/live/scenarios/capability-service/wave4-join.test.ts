@@ -384,6 +384,8 @@ export function startInstalledService(input: {
     "--codex-terminal-allow-entry", input.terminalAllowEntryId ?? REVIEWED_ALLOW_ID,
     "--codex-network", "host",
     "--codex-concurrency", "2",
+    "--max-concurrent-tasks", "2",
+    "--max-concurrent-tasks-per-repository", "2",
   ];
   if (input.candidateConfig !== undefined) {
     arguments_.push("--candidate-config", input.candidateConfig);
