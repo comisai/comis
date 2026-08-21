@@ -17,6 +17,7 @@ import {
 } from "./index.js";
 
 const digest = "a".repeat(64);
+const relayIdentity = "ab".repeat(32);
 
 function activateParams(overrides: Readonly<Record<string, unknown>> = {}) {
   return {
@@ -84,9 +85,36 @@ describe("capability-service execution-attachment contract", () => {
         requestedAttachment: {
           kind,
           sourcePath: "/approved/runtime/task-a/service.sock",
+          relayIdentity,
         },
       }).success).toBe(true);
     }
+  });
+
+  it("requires one canonical nonzero relay identity for every requested attachment", () => {
+    const prepared = (requestedAttachment: Readonly<Record<string, unknown>>) => ({
+      state: "prepared",
+      externalRunRef: "external-run_a",
+      registrationNonce: "registration-nonce_a",
+      expiresAt: "2030-01-01T00:00:00.000Z",
+      requestedWorkspace: { rootHint: "/approved/workspaces/task-a" },
+      requestedAttachment,
+    });
+
+    expect(McpManagedRunResultSchema.safeParse(prepared({
+      kind: "unix_socket",
+      sourcePath: "/approved/runtime/task-a/service.sock",
+    })).success).toBe(false);
+    expect(McpManagedRunResultSchema.safeParse(prepared({
+      kind: "unix_socket",
+      sourcePath: "/approved/runtime/task-a/service.sock",
+      relayIdentity: "0".repeat(64),
+    })).success).toBe(false);
+    expect(McpManagedRunResultSchema.safeParse(prepared({
+      kind: "unix_socket",
+      sourcePath: "/approved/runtime/task-a/service.sock",
+      relayIdentity: relayIdentity.toUpperCase(),
+    })).success).toBe(false);
   });
 
   it("accepts a bounded prepared group with one private group nonce", () => {
@@ -103,6 +131,7 @@ describe("capability-service execution-attachment contract", () => {
         requestedAttachment: {
           kind: "unix_socket",
           sourcePath: "/approved/runtime/task-a/service.sock",
+          relayIdentity,
         },
       }],
     }).success).toBe(true);
