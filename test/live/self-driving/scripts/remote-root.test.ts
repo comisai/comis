@@ -1125,6 +1125,53 @@ describe("local rig mode", () => {
     );
   });
 
+  it("returns the selected remote wrapper process instead of a sibling daemon", () => {
+    const directory = makeCanonicalTempDirectory("comis-rig-remote-wrapper-pid-");
+    const packageRoot = resolve(directory, "comisai");
+    const daemonDist = resolve(packageRoot, "node_modules/@comis/daemon/dist");
+    const wrapper = resolve(directory, "campaign-daemon.mjs");
+    const bin = resolve(directory, "bin");
+    mkdirSync(daemonDist, { recursive: true });
+    mkdirSync(bin);
+    writeFileSync(resolve(daemonDist, "daemon.js"), "export const daemon = true;\n");
+    writeFileSync(
+      wrapper,
+      `import { main } from ${JSON.stringify(`${daemonDist}/index.js`)};\nvoid main;\n`,
+    );
+    writeFileSync(resolve(bin, "systemctl"), "#!/usr/bin/env bash\nprintf '4242\\n'\n", { mode: 0o700 });
+    writeFileSync(
+      resolve(bin, "ps"),
+      `#!/usr/bin/env bash\nprintf '%s\\n' ${shellQuote(`/usr/bin/node ${wrapper}`)}\n`,
+      { mode: 0o700 },
+    );
+    writeFileSync(resolve(bin, "pgrep"), "#!/usr/bin/env bash\nprintf '9999\\n'\n", { mode: 0o700 });
+
+    const selected = runRigHelper(
+      'kill() { return 0; }; printf "%s" "$(rig_daemon_pid)"',
+      {
+        RIG_MODE: "remote",
+        SERVICE: "comis-campaign",
+        PKG: packageRoot,
+        PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+      },
+    );
+
+    expect(selected).toBe("4242");
+
+    writeFileSync(wrapper, 'import "./unrelated.js";\n');
+    const rejected = runRigHelper(
+      'kill() { return 0; }; printf "%s" "$(rig_daemon_pid)"',
+      {
+        RIG_MODE: "remote",
+        SERVICE: "comis-campaign",
+        PKG: packageRoot,
+        PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+      },
+    );
+
+    expect(rejected).toBe("");
+  });
+
   it("parses every deployment record kind by its final timestamp", () => {
     const source = readFileSync(VERIFY_BUILD, "utf8");
 
