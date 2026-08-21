@@ -100,6 +100,8 @@ export const CONTRIBUTION: CapabilityServiceContributionRegistration = {
       "workspace_lease",
       "terminal_events",
       "execution_attachment",
+      "managed_run_group",
+      "approval_receipt",
     ],
     evidencePolicies: [
       { kind: "candidate_bundle" as const, verificationLevel: "adapter_verified" as const, use: "outcome" as const },
