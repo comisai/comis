@@ -29,6 +29,13 @@ export function selectManagedHandles(params: Readonly<Record<string, unknown>>):
   return { kind: "managed", managedRunId, workspaceLeaseId };
 }
 
+/** Explain why a managed handle pair cannot be used without exposing either handle. */
+export function managedHandleSelectionError(reason: "pair_required" | "format_invalid"): string {
+  return reason === "pair_required"
+    ? "managedRunId and workspaceLeaseId must be provided together"
+    : "managed terminal handles are invalid; copy both exact handles from a fresh launch plan";
+}
+
 /**
  * A managed run sees only its leased filesystem root while retaining the
  * operator-reviewed network, read-only credential-bind, and uid policy.
