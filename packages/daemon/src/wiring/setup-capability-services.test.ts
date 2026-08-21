@@ -84,27 +84,21 @@ interface LinePeer {
   close(): void;
 }
 
-async function connectPeer(socketPath: string): Promise<LinePeer> {
-  let socket: net.Socket | undefined;
-  let lastError: Error | undefined;
+async function waitForSocket(socketPath: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const candidate = net.createConnection(socketPath);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        candidate.once("connect", resolve);
-        candidate.once("error", reject);
-      });
-      socket = candidate;
-      break;
-    } catch (error) {
-      candidate.destroy();
-      lastError = error instanceof Error ? error : new Error(String(error));
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    if (existsSync(socketPath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
-  if (socket === undefined) {
-    throw lastError ?? new Error("capability-service setup did not accept a socket connection");
-  }
+  throw new Error("capability-service setup did not bind its socket");
+}
+
+async function connectPeer(socketPath: string): Promise<LinePeer> {
+  await waitForSocket(socketPath);
+  const socket = net.createConnection(socketPath);
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
   let buffered = "";
   const values: Record<string, unknown>[] = [];
   const waiters: Array<(value: Record<string, unknown>) => void> = [];

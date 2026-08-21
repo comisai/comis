@@ -15,7 +15,7 @@
  * @module
  */
 import net from "node:net";
-import { chmodSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -68,26 +68,14 @@ interface LinePeer {
 }
 
 async function connectPeer(socketPath: string): Promise<LinePeer> {
-  let socket: net.Socket | undefined;
-  let lastError: Error | undefined;
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    const candidate = net.createConnection(socketPath);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        candidate.once("connect", resolve);
-        candidate.once("error", reject);
-      });
-      socket = candidate;
-      break;
-    } catch (error) {
-      candidate.destroy();
-      lastError = error instanceof Error ? error : new Error(String(error));
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+  for (let attempt = 0; attempt < 200 && !existsSync(socketPath); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
-  if (socket === undefined) {
-    throw lastError ?? new Error("capability-service setup did not accept a socket connection");
-  }
+  const socket = net.createConnection(socketPath);
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
   let buffered = "";
   const values: Record<string, unknown>[] = [];
   const waiters: Array<(value: Record<string, unknown>) => void> = [];
