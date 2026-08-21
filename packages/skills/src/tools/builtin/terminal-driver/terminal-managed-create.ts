@@ -5,19 +5,27 @@ import type { TerminalScope } from "./allowlist-matcher.js";
 
 export type ManagedHandleSelection =
   | { readonly kind: "ordinary" }
-  | { readonly kind: "invalid" }
+  | { readonly kind: "invalid"; readonly reason: "pair_required" | "format_invalid" }
   | {
       readonly kind: "managed";
       readonly managedRunId: string;
       readonly workspaceLeaseId: string;
     };
 
+const OPAQUE_HANDLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/u;
+
 /** Read the paired opaque handles without ever accepting a caller-supplied path. */
 export function selectManagedHandles(params: Readonly<Record<string, unknown>>): ManagedHandleSelection {
   const managedRunId = typeof params.managedRunId === "string" ? params.managedRunId : undefined;
   const workspaceLeaseId = typeof params.workspaceLeaseId === "string" ? params.workspaceLeaseId : undefined;
   if (managedRunId === undefined && workspaceLeaseId === undefined) return { kind: "ordinary" };
-  if (!managedRunId || !workspaceLeaseId) return { kind: "invalid" };
+  if (!managedRunId || !workspaceLeaseId) return { kind: "invalid", reason: "pair_required" };
+  if (
+    managedRunId.length > 256
+    || workspaceLeaseId.length > 256
+    || !OPAQUE_HANDLE_PATTERN.test(managedRunId)
+    || !OPAQUE_HANDLE_PATTERN.test(workspaceLeaseId)
+  ) return { kind: "invalid", reason: "format_invalid" };
   return { kind: "managed", managedRunId, workspaceLeaseId };
 }
 

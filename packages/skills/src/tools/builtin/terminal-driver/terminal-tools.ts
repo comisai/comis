@@ -377,7 +377,12 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       const project = readString(params, "project");
       const managed = selectManagedHandles(params);
       if (managed.kind === "invalid") {
-        throwToolError("invalid_value", "managedRunId and workspaceLeaseId must be provided together");
+        throwToolError(
+          "invalid_value",
+          managed.reason === "pair_required"
+            ? "managedRunId and workspaceLeaseId must be provided together"
+            : "managed terminal handles are invalid; copy both exact handles from a fresh launch plan",
+        );
       }
       if (managed.kind === "managed" && (cwd !== undefined || project !== undefined)) {
         throwToolError("permission_denied", "managed terminals use the server-resolved leased root; cwd and project are not accepted");
