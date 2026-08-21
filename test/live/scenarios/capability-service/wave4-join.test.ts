@@ -65,8 +65,7 @@ const CURRENT_MUTATION_BINDINGS = [
   },
   {
     toolName: "attest_scout_decisions",
-    behavior: "run_command" as const,
-    runHandleArgument: "taskHandle",
+    behavior: "read_only" as const,
     actionClassification: "mutate" as const,
     invocationSideEffects: ["task.attest"],
   },
