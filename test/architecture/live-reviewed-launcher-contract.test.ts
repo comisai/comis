@@ -84,6 +84,13 @@ describe("reviewed launcher provisioning", () => {
     }
   });
 
+  it("keeps the journey forge check response complete", () => {
+    const source = read(`${SCENARIOS}/e0-journey.test.ts`);
+    expect(source, "GitHub check-runs truth includes its required total").toContain(
+      "total_count: 1,",
+    );
+  });
+
   it("installs every launcher the live gates pin, under the reviewed prefix", () => {
     const script = read(PROVISIONER);
     const paths = pinnedLauncherPaths();
