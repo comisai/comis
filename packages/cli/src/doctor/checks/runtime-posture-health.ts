@@ -14,7 +14,8 @@ export const runtimePostureHealthCheck: DoctorCheck = {
   run: async (context) => {
     const findings: DoctorFinding[] = [];
 
-    if (context.secretPresent?.("CANARY_SECRET") === false) {
+    const canaryPresence = context.secretPresent?.("CANARY_SECRET");
+    if (canaryPresence === "absent") {
       findings.push({
         category: CATEGORY,
         check: "Canary secret",
@@ -23,6 +24,17 @@ export const runtimePostureHealthCheck: DoctorCheck = {
           "CANARY_SECRET is not configured; canary tokens use a deterministic fallback",
         suggestion:
           `Set CANARY_SECRET in the selected secret store or ${context.dataDir}/.env, then restart the daemon`,
+        repairable: false,
+      });
+    } else if (canaryPresence === "unavailable") {
+      findings.push({
+        category: CATEGORY,
+        check: "Canary secret",
+        status: "warn",
+        message:
+          "CANARY_SECRET presence could not be verified because the selected secret store is unavailable to this CLI process",
+        suggestion:
+          "Run `comis secrets list` to verify the selected store, or rerun this check from the service credential context; do not overwrite CANARY_SECRET based on this indeterminate result",
         repairable: false,
       });
     }

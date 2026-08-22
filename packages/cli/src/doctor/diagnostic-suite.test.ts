@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./config-resolve.js", () => ({
   resolveDoctorConfig: vi.fn(),
-  resolveDoctorSecretPresence: vi.fn(() => true),
+  resolveDoctorSecretPresence: vi.fn(() => "present"),
 }));
 
 vi.mock("../util/cli-version.js", () => ({
@@ -54,7 +54,7 @@ describe("diagnostic suite", () => {
     expect(context.config).toBe(config);
     expect(context.dataDir).toBe("/srv/comis-data");
     expect(context.daemonPidFile).toBe("/srv/comis-data/daemon.pid");
-    expect(context.secretPresent?.("CANARY_SECRET")).toBe(true);
+    expect(context.secretPresent?.("CANARY_SECRET")).toBe("present");
     expect(context.platform).toBe(process.platform);
     expect(context.memoryDbPath).toBe("/srv/comis-data/memory.db");
     expect(context.gatewayUrl).toBe("http://127.0.0.1:9876");

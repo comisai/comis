@@ -18,7 +18,7 @@ function makeContext(
     configPaths: ["/tmp/comis/config.yaml"],
     dataDir: "/tmp/comis",
     daemonPidFile: "/tmp/comis/daemon.pid",
-    secretPresent: () => false,
+    secretPresent: () => "absent",
     platform: "darwin",
     ...overrides,
   };
@@ -55,7 +55,7 @@ describe("runtimePostureHealthCheck", () => {
             },
           },
         }),
-        secretPresent: () => true,
+        secretPresent: () => "present",
       }),
     );
 
@@ -97,7 +97,7 @@ describe("runtimePostureHealthCheck", () => {
   it("does not warn about autonomy platform support on Linux", async () => {
     const findings = await runtimePostureHealthCheck.run(
       makeContext({
-        secretPresent: () => true,
+        secretPresent: () => "present",
         platform: "linux",
       }),
     );

@@ -694,6 +694,11 @@ Raw message history (`lcd_messages`) is **never modified** by any repair action 
 
 Quick view of system health issues. Unlike `doctor` which shows all checks, `health` shows only failures and warnings by default. Exits with code 1 when failures exist, making it suitable for CI pipelines.
 
+Secret-posture findings distinguish a confirmed missing secret from a store that the local CLI
+cannot inspect. When the configured encrypted store credential is service-scoped, an
+`unavailable` warning does not mean `CANARY_SECRET` is absent; verify the selected store with
+`comis secrets list` or rerun the check from the service credential context before changing it.
+
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-c, --config <paths...>` | `string[]` | - | Config file paths |

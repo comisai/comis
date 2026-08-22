@@ -126,7 +126,7 @@ describe("resolveDoctorConfig", () => {
       expect(resolution.config?.gateway.tokens[0]?.secret).toBe(TOKEN_48);
       expect(
         resolveDoctorSecretPresence([configPath], "CANARY_SECRET", deps),
-      ).toBe(true);
+      ).toBe("present");
     } finally {
       rmSync(configuredDataDir, { recursive: true, force: true });
       rmSync(fallbackDataDir, { recursive: true, force: true });
