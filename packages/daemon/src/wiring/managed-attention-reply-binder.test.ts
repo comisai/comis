@@ -36,12 +36,16 @@ const SCOPE: ManagedRunOwnerScope = {
   conversationRef: conversationRef.value,
 };
 
-function attention(attentionId: string, managedRunId = "managed-run-a"): ManagedRunAttentionRecord {
+function attention(
+  attentionId: string,
+  managedRunId = "managed-run-a",
+  serviceInstanceId = "service-a",
+): ManagedRunAttentionRecord {
   return {
     schemaVersion: 1,
     attentionId,
     managedRunId,
-    serviceInstanceId: "service-a",
+    serviceInstanceId,
     tenantId: "tenant-a",
     agentId: "agent-a",
     principalId: "user-a",
@@ -64,6 +68,7 @@ function managedRun(managedRunId: string, externalRunRef: string): ManagedRunRec
 function makeBinder(
   candidates: ManagedRunAttentionRecord[],
   runs: ManagedRunRecord[] = [managedRun("managed-run-a", "external-run-a")],
+  configuredServiceInstanceIds: ReadonlySet<string> = new Set(["service-a"]),
 ) {
   const claimAttentionResponse = vi.fn(async (_scope, input) => ok({
     kind: "updated" as const,
@@ -94,7 +99,11 @@ function makeBinder(
     getAttentionBody,
     deleteAttentionBody: vi.fn(async () => ok(true)),
   } as unknown as ManagedRunContentPort;
-  const binder = createManagedAttentionReplyBinder({ store, contentStore });
+  const binder = createManagedAttentionReplyBinder({
+    store,
+    contentStore,
+    configuredServiceInstanceIds,
+  });
   return {
     binder,
     store,
@@ -163,6 +172,42 @@ describe("managed attention reply binding", () => {
     }));
     expect(ambiguous.contentStore.putAttentionBody).not.toHaveBeenCalled();
     expect(absent.claimAttentionResponse).not.toHaveBeenCalled();
+  });
+
+  it("ignores open attention retained from an unconfigured service instance", async () => {
+    const setup = makeBinder([
+      attention("attention-retired", "managed-run-retired", "service-retired"),
+      attention("attention-current", "managed-run-current", "service-current"),
+    ], [
+      managedRun("managed-run-retired", "external-run-retired"),
+      managedRun("managed-run-current", "external-run-current"),
+    ], new Set(["service-current"]));
+
+    const bare = await setup.binder.bind(SCOPE, {
+      operationId: "reply-current-service",
+      text: "Proceed with the active request",
+      respondedAtMs: 100,
+    });
+    const retired = await setup.binder.bind(SCOPE, {
+      operationId: "reply-retired-service",
+      attentionId: "attention-retired",
+      text: "This must remain ordinary chat",
+      respondedAtMs: 101,
+    });
+
+    expect(bare).toMatchObject({
+      ok: true,
+      value: { kind: "bound", attention: { attentionId: "attention-current" } },
+    });
+    expect(retired).toEqual(ok({
+      kind: "clarification_required",
+      reason: "handle_not_found",
+      candidateAttentionIds: ["attention-current"],
+    }));
+    expect(setup.claimAttentionResponse).toHaveBeenCalledOnce();
+    expect(setup.claimAttentionResponse).toHaveBeenCalledWith(SCOPE, expect.objectContaining({
+      attentionId: "attention-current",
+    }));
   });
 
   it("routes handle-qualified replies only to attention owned by that managed run", async () => {
