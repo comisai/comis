@@ -153,24 +153,28 @@ function isSafePersistencePlaceholder(value: string): boolean {
  * the shape without importing the schema into the persistence hot path.
  */
 const CONVERSATION_REF_SHAPE = /^cv_[A-Za-z0-9_-]{43}$/u;
+const MANAGED_RUN_ID_SHAPE = /^managed-run-[a-f0-9]{48}$/u;
+const WORKSPACE_LEASE_ID_SHAPE = /^workspace-lease-[a-f0-9]{48}$/u;
 const CITATION_URL_DIGEST_SHAPE = /^[a-f0-9]{64}$/u;
 
 /**
  * Whether a field carries a structural identifier the projector must leave alone.
  *
- * A conversation ref is a machine-minted, fixed-shape identity — high-entropy by
- * construction and therefore indistinguishable from an API key to the entropy
- * heuristics below. Redacting it does not protect anything (it is derived from
- * already-stored conversation scope, not a credential) and it corrupts the record:
- * a persisted `conversationRef` of `[REDACTED]` no longer parses, so the
- * delivered-assistant idempotency scan skipped the stored attempt and appended a
- * duplicate on every retry.
+ * Machine-minted, fixed-shape identities are high-entropy by construction and
+ * therefore indistinguishable from API keys to the entropy heuristics below.
+ * Redacting them does not protect authority: conversation refs are derived from
+ * already-stored scope, while managed-run and workspace-lease handles already
+ * appear in the owner-only launch-plan result. Redacting only the later tool-call
+ * arguments corrupts replay and can make the model submit the literal placeholder.
  *
  * Deliberately narrow — the field name AND the exact ref shape must both hold, so
  * a credential parked under this key is still redacted.
  */
 function isStructuralIdentifier(fieldName: string | undefined, value: string): boolean {
-  return fieldName === "conversationRef" && CONVERSATION_REF_SHAPE.test(value);
+  if (fieldName === "conversationRef") return CONVERSATION_REF_SHAPE.test(value);
+  if (fieldName === "managedRunId") return MANAGED_RUN_ID_SHAPE.test(value);
+  if (fieldName === "workspaceLeaseId") return WORKSPACE_LEASE_ID_SHAPE.test(value);
+  return false;
 }
 
 function isToolProtocolIdentity(

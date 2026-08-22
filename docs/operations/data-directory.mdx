@@ -252,6 +252,12 @@ that scope.
 | **RAG memory** | `memory_*` | **Durable.** Distilled facts learned from conversations. Cleared per-session via `comis sessions reset --memory` (deletes paired + LCD-distilled memories by `source_session_key` and unlinks consolidated observations; `--purge-derived` also purges derived observations). |
 | **SDK session JSONL** | `~/.comis/workspace/sessions/.../<key>.jsonl` | **Disposable and owner-only (`0600`)** — the SDK's per-session working transcript after mandatory secret redaction. Existing nested session artifacts are hardened at daemon startup. Routinely deleted by the operator (housekeeping) and wiped by `comis sessions reset`. |
 
+Secret redaction preserves exact, fixed-shape runtime identities needed for replay,
+including conversation references and Comis-minted managed-run/workspace-lease
+handles. Those handles already appear in the owner-only launch-plan result and are
+not service credentials; credential-shaped values under the same field names are
+still redacted.
+
 <Note>
 The SDK session JSONL is **disposable**. Deleting it directly (for any reason — operator housekeeping, `rm`, daemon restart) is always treated as "continue": the LCD store keeps its full history and appends the fresh transcript as a continuation. The daemon cannot distinguish disk-space housekeeping from a deliberate reset, so it never infers forget from a file deletion — it always continues. To perform an explicit reset, use `comis sessions reset` which clears both layers atomically.
 </Note>
