@@ -67,6 +67,33 @@ describe("runtimePostureHealthCheck", () => {
     ]);
   });
 
+  it("reports an inaccessible secret store without claiming the canary is absent", async () => {
+    const context = {
+      ...makeContext({
+        config: AppConfigSchema.parse({
+          agents: {
+            default: {
+              autonomy: { profile: "assistant" },
+            },
+          },
+        }),
+      }),
+      secretPresent: () => "unavailable",
+    } as unknown as DoctorContext;
+
+    const findings = await runtimePostureHealthCheck.run(context);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        status: "warn",
+        check: "Canary secret",
+        message: expect.stringContaining("could not be verified"),
+        suggestion: expect.stringContaining("secrets list"),
+      }),
+    ]);
+    expect(findings[0]?.message).not.toContain("is not configured");
+  });
+
   it("does not warn about autonomy platform support on Linux", async () => {
     const findings = await runtimePostureHealthCheck.run(
       makeContext({

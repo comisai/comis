@@ -134,6 +134,29 @@ describe("resolveDoctorConfig", () => {
     }
   });
 
+  it("reports encrypted secret presence as unavailable when the offline key is inaccessible", () => {
+    const dataDir = mkdtempSync(resolve(tmpdir(), "comis-doctor-credential-store-"));
+    const configPath = resolve(dataDir, "config.yaml");
+
+    try {
+      writeFileSync(
+        configPath,
+        [
+          `dataDir: ${dataDir}`,
+          "security:",
+          "  storage: encrypted",
+        ].join("\n"),
+        { mode: 0o600 },
+      );
+
+      expect(resolveDoctorSecretPresence([configPath], "CANARY_SECRET")).toBe(
+        "unavailable",
+      );
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("prefers the encrypted-store value over a shadowed environment value like daemon boot", () => {
     const envToken = "e".repeat(40);
     const r = resolveDoctorConfig(
