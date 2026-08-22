@@ -856,6 +856,46 @@ describe("projectSessionValueForPersistence — structural conversation identity
   });
 });
 
+describe("projectSessionValueForPersistence — managed terminal identity", () => {
+  const MANAGED_RUN_ID = `managed-run-${createHash("sha256").update("managed-run-test").digest("hex").slice(0, 48)}`;
+  const WORKSPACE_LEASE_ID = `workspace-lease-${createHash("sha256").update("workspace-lease-test").digest("hex").slice(0, 48)}`;
+
+  it("keeps exact Comis-minted managed launch handles in a persisted tool call", () => {
+    const out = projectSessionValueForPersistence({
+      role: "assistant",
+      content: [{
+        type: "toolCall",
+        id: "call_managed_launch",
+        name: "terminal_session_create",
+        arguments: {
+          managedRunId: MANAGED_RUN_ID,
+          workspaceLeaseId: WORKSPACE_LEASE_ID,
+        },
+      }],
+    });
+    const args = (out.value as {
+      content: Array<{ arguments: Record<string, string> }>;
+    }).content[0]!.arguments;
+
+    expect(out.redactions).toBe(0);
+    expect(args.managedRunId).toBe(MANAGED_RUN_ID);
+    expect(args.workspaceLeaseId).toBe(WORKSPACE_LEASE_ID);
+  });
+
+  it("still redacts credential-shaped values under managed launch field names", () => {
+    const credential = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const out = projectSessionValueForPersistence({
+      managedRunId: credential,
+      workspaceLeaseId: credential,
+    });
+    const persisted = out.value as Record<string, string>;
+
+    expect(out.redactions).toBe(2);
+    expect(persisted.managedRunId).toBe("[REDACTED]");
+    expect(persisted.workspaceLeaseId).toBe("[REDACTED]");
+  });
+});
+
 describe("projectSessionValueForPersistence — runtime citation receipts", () => {
   const DIGEST = createHash("sha256")
     .update("https://example.com/source", "utf8")
