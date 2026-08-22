@@ -52,6 +52,7 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
 export function createManagedAttentionReplyBinder(deps: {
   readonly store: ManagedRunStorePort;
   readonly contentStore: ManagedRunContentPort;
+  readonly configuredServiceInstanceIds: ReadonlySet<string>;
 }): ManagedAttentionReplyPort {
   return Object.freeze({
     bind: async (
@@ -99,13 +100,19 @@ export function createManagedAttentionReplyBinder(deps: {
       if (selected === undefined) {
         const listed = await invoke(() => deps.store.listOpenAttention(scope, { limit: 10_000 }));
         if (!listed.ok) return listed;
-        const open = listed.value.filter((candidate) => candidate.status === "open");
+        const open = listed.value.filter((candidate) => (
+          candidate.status === "open"
+          && deps.configuredServiceInstanceIds.has(candidate.serviceInstanceId)
+        ));
         candidateAttentionIds = open.map((candidate) => candidate.attentionId).sort();
         if (input.attentionId !== undefined) {
           const exactAttentionId = input.attentionId;
           const exact = await invoke(() => deps.store.getAttention(scope, exactAttentionId));
           if (!exact.ok) return exact;
-          if (exact.value === undefined) {
+          if (
+            exact.value === undefined
+            || !deps.configuredServiceInstanceIds.has(exact.value.serviceInstanceId)
+          ) {
             return ok({ kind: "clarification_required", reason: "handle_not_found", candidateAttentionIds });
           }
           if (exact.value.status !== "open") {

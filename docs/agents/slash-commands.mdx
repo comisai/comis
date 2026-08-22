@@ -58,10 +58,12 @@ an administrator mapping. Confirm the gate is enabled before relying on
 `/approve` or `/deny`; see [Approvals](/security/approvals).
 
 Managed attention replies are handled before ordinary agent execution. A bare
-reply binds when exactly one open request is unambiguous. Text that names a
-different managed run remains ordinary chat, while a matching run handle can
-disambiguate concurrent runs. Use `/attention <ID> <response>` when a run has
-multiple open requests.
+reply binds when exactly one open request from an enabled, currently configured
+service instance is unambiguous. Historical requests from removed or disabled
+instances remain available to operator diagnostics but never capture new chat
+messages. Text that names a different managed run remains ordinary chat, while a
+matching run handle can disambiguate concurrent runs. Use
+`/attention <ID> <response>` when a run has multiple open requests.
 
 ## Prompt skills are not slash commands
 

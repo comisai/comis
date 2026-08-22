@@ -1974,8 +1974,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const sessionTrackerSlot: { current?: import("./notification/session-tracker.js").SessionTracker } = {};
   const inboundMessageIdResolverSlot: { current?: InboundMessageIdResolver } = {};
   const managedAttentionReplies = createManagedAttentionReplyBinder({
-    store: capabilityServices.store,
-    contentStore: capabilityServices.contentStore,
+    store: capabilityServices.store, contentStore: capabilityServices.contentStore,
+    configuredServiceInstanceIds: new Set(capabilityServices.plan.orderedInstances.map(({ serviceInstanceId }) => serviceInstanceId)),
   });
 
   // 6.6.8.4.1. Sandbox + image generation providers (HOISTED before setupTools

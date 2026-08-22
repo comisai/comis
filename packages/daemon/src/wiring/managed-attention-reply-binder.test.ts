@@ -194,6 +194,16 @@ describe("managed attention reply binding", () => {
       text: "This must remain ordinary chat",
       respondedAtMs: 101,
     });
+    const retiredOnly = makeBinder([
+      attention("attention-only-retired", "managed-run-only-retired", "service-retired"),
+    ], [
+      managedRun("managed-run-only-retired", "external-run-only-retired"),
+    ], new Set(["service-current"]));
+    const ordinaryChat = await retiredOnly.binder.bind(SCOPE, {
+      operationId: "reply-with-no-current-service",
+      text: "Start an unrelated development task",
+      respondedAtMs: 102,
+    });
 
     expect(bare).toMatchObject({
       ok: true,
@@ -204,10 +214,16 @@ describe("managed attention reply binding", () => {
       reason: "handle_not_found",
       candidateAttentionIds: ["attention-current"],
     }));
+    expect(ordinaryChat).toEqual(ok({
+      kind: "clarification_required",
+      reason: "none_open",
+      candidateAttentionIds: [],
+    }));
     expect(setup.claimAttentionResponse).toHaveBeenCalledOnce();
     expect(setup.claimAttentionResponse).toHaveBeenCalledWith(SCOPE, expect.objectContaining({
       attentionId: "attention-current",
     }));
+    expect(retiredOnly.claimAttentionResponse).not.toHaveBeenCalled();
   });
 
   it("routes handle-qualified replies only to attention owned by that managed run", async () => {
