@@ -267,6 +267,8 @@ describe("managed-run report bridge", () => {
   });
 
   it("returns the original sequence for same replay and audits altered reuse", async () => {
+    const accepted = vi.fn();
+    eventBus.on("managed_run:report_accepted", accepted);
     const bridge = makeBridge();
     expect((await bridge.ingestReport(makeInput())).ok).toBe(true);
     const replay = await bridge.ingestReport(makeInput());
@@ -287,6 +289,7 @@ describe("managed-run report bridge", () => {
       decision: "deny",
       reasonCode: "replay_conflict",
     }), "Managed-run report rejected");
+    expect(accepted).toHaveBeenCalledTimes(1);
     const audit = logger.audit as ReturnType<typeof vi.fn>;
     expect(JSON.stringify(audit.mock.calls)).not.toContain("Altered private body");
   });
