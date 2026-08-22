@@ -644,6 +644,75 @@ describe("managed MCP private metadata boundary", () => {
     });
   });
 
+  it("resolves approved destructive replay through the exact released owner record", async () => {
+    const releasedRecord = {
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationRef.value,
+      status: "succeeded",
+    } as ManagedRunRecord;
+    const view = makeView("run_command", "destructive");
+    const getManagedRunByExternalRef = vi.fn(async (
+      _scope: unknown,
+      _serviceInstanceId: string,
+      _externalRunRef: string,
+      availability?: "active" | "released",
+    ) => ok(availability === "released" ? releasedRecord : undefined));
+    const bindApprovalGrant = vi.fn(() => ok(undefined));
+    const bridge = createManagedMcpPrivateMetadataBridge(makeDeps({
+      activeView: {
+        ...view,
+        definitions: view.definitions.map((definition) => ({
+          ...definition,
+          requestedScopes: [...definition.requestedScopes, "approval_receipt"],
+        })),
+        instances: view.instances.map((instance) => ({
+          ...instance,
+          activeScopes: [...instance.activeScopes, "approval_receipt"],
+        })),
+      },
+      getManagedRunByExternalRef,
+      getCapturedToolIds: () => ["mcp:fixture-service/send_command"],
+      bindApprovalGrant,
+    }));
+    const call = {
+      ...makeCall("send_command", { run_handle: "external-run_a", command: "release" }),
+      approvalGrant: {
+        resolution: {
+          requestId: "10000000-0000-4000-8000-000000000002",
+          approved: true,
+          approvedBy: "principal_a",
+          resolvedAt: NOW_MS,
+        },
+        toolName: "mcp__fixture-service--send_command",
+        action: "mcp.fixture-service.send_command",
+        fingerprintParams: {
+          serverName: "fixture-service",
+          toolName: "send_command",
+          arguments: { run_handle: "external-run_a", command: "release" },
+        },
+      },
+    };
+
+    const request = await runWithContext(makeContext(), () => bridge.createRequestMeta(call));
+
+    expect(request.ok).toBe(true);
+    if (!request.ok) return;
+    expect(request.value?.[MCP_CAPABILITY_CALL_CONTEXT_KEY]).toMatchObject({
+      managedRunId: "managed-run_a",
+    });
+    expect(getManagedRunByExternalRef).toHaveBeenNthCalledWith(
+      1, expect.anything(), "service-instance_a", "external-run_a", "active",
+    );
+    expect(getManagedRunByExternalRef).toHaveBeenNthCalledWith(
+      2, expect.anything(), "service-instance_a", "external-run_a", "released",
+    );
+    expect(bindApprovalGrant).toHaveBeenCalledOnce();
+  });
+
   it("rejects managed metadata from an unbound tool despite server-authored claims", async () => {
     const deps = makeDeps();
     const bridge = createManagedMcpPrivateMetadataBridge(deps);
