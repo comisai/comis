@@ -258,6 +258,7 @@ describe("managed-run grouped two-phase activation", () => {
       OWNER_SCOPE,
       "service-instance_a",
       "external-run_member-a",
+      "active",
     )).toMatchObject({
       ok: true,
       value: {

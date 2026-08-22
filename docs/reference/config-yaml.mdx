@@ -2349,11 +2349,14 @@ daemon memory for 15 minutes. A restart before consumption requires a new
 approval and never restores authority from private MCP metadata.
 
 Linked contributions also declare the managed MCP tool bindings enforced by the
-host. Run commands resolve their model-visible handle only within the active
-owner scope. Read and mutate commands are unavailable after a managed run
-reaches a terminal outcome; destructive commands remain available there so an
-authorized service can release retained workspaces, attachments, or other
-run-owned resources through the normal approval and security path.
+host. Run commands resolve their model-visible handle within the exact owner
+scope. Comis checks the active authority set first. Only a destructive binding
+may fall back to the exact release-reserved record, allowing an approved cleanup
+or other terminal operation to replay idempotently without restoring its lease,
+attachment, terminal, or worker authority. Read and mutate commands remain
+active-only. Destructive commands remain available after a terminal outcome so
+an authorized service can release retained resources through the normal
+approval and security path.
 When the handle is missing from that owner scope, Comis refuses the call before
 MCP transport, returns the exact bounded authority reason to the agent, and
 records a `precondition` failure with the `managed_mcp_authority` rule and a

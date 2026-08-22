@@ -461,7 +461,7 @@ describe("managed MCP private metadata boundary", () => {
       agentId: "agent_a",
       principalId: "principal_a",
       conversationRef: conversationRef.value,
-    }, "service-instance_a", "external-run_a");
+    }, "service-instance_a", "external-run_a", "active");
   });
 
   it("binds an exact approval grant before exposing a destructive managed operation", async () => {
@@ -711,6 +711,39 @@ describe("managed MCP private metadata boundary", () => {
       2, expect.anything(), "service-instance_a", "external-run_a", "released",
     );
     expect(bindApprovalGrant).toHaveBeenCalledOnce();
+  });
+
+  it("keeps non-destructive commands out of the released owner set", async () => {
+    const releasedRecord = {
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationRef.value,
+      status: "succeeded",
+    } as ManagedRunRecord;
+    const getManagedRunByExternalRef = vi.fn(async (
+      _scope: unknown,
+      _serviceInstanceId: string,
+      _externalRunRef: string,
+      availability?: "active" | "released",
+    ) => ok(availability === "released" ? releasedRecord : undefined));
+    const bridge = createManagedMcpPrivateMetadataBridge(makeDeps({
+      activeView: makeView("run_command", "mutate"),
+      getManagedRunByExternalRef,
+      getCapturedToolIds: () => ["mcp:fixture-service/send_command"],
+    }));
+
+    const request = await runWithContext(makeContext(), () => bridge.createRequestMeta(
+      makeCall("send_command", { run_handle: "external-run_a", command: "change" }),
+    ));
+
+    expect(request.ok).toBe(false);
+    expect(getManagedRunByExternalRef).toHaveBeenCalledOnce();
+    expect(getManagedRunByExternalRef).toHaveBeenCalledWith(
+      expect.anything(), "service-instance_a", "external-run_a", "active",
+    );
   });
 
   it("rejects managed metadata from an unbound tool despite server-authored claims", async () => {

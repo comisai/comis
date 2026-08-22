@@ -282,7 +282,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       managedRunId: "managed-run_a",
       evidenceRefs: ["evidence_a", "evidence_a"],
     })).ok).toBe(false);
-    expect((await store.getByExternalRunRef(OWNER_SCOPE, "", "external-run_a")).ok).toBe(false);
+    expect((await store.getByExternalRunRef(OWNER_SCOPE, "", "external-run_a", "active")).ok).toBe(false);
   });
 
   it("creates reads and lists records only through exact explicit scopes", async () => {
@@ -306,13 +306,13 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     });
     expect((await store.create(record)).ok).toBe(true);
 
-    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", externalRunRef))
+    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", externalRunRef, "active"))
       .toEqual({ ok: true, value: record });
-    expect(await store.getByExternalRunRef(OTHER_OWNER_SCOPE, "service-instance_a", externalRunRef))
+    expect(await store.getByExternalRunRef(OTHER_OWNER_SCOPE, "service-instance_a", externalRunRef, "active"))
       .toEqual({ ok: true, value: undefined });
-    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_b", externalRunRef))
+    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_b", externalRunRef, "active"))
       .toEqual({ ok: true, value: undefined });
-    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", "external-run_b"))
+    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", "external-run_b", "active"))
       .toEqual({ ok: true, value: undefined });
 
     expect((await store.create({
@@ -321,7 +321,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       activationDescriptorDigest: "e".repeat(64),
       activationDescriptorRef: "activation-descriptor_b",
     })).ok).toBe(true);
-    expect((await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", externalRunRef)).ok)
+    expect((await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", externalRunRef, "active")).ok)
       .toBe(false);
   });
 
@@ -1091,8 +1091,10 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       ...reservation,
       releasedAtMs: 1_800_000_000_101,
     })).value?.kind).toBe("replay_conflict");
-    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", externalRunRef))
+    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", externalRunRef, "active"))
       .toEqual({ ok: true, value: undefined });
+    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", externalRunRef, "released"))
+      .toMatchObject({ ok: true, value: { managedRunId: "managed-run_a" } });
     expect((await store.bindTerminal(OWNER_SCOPE, {
       managedRunId: "managed-run_a",
       terminalSessionId: "terminal_after_release_reservation",
@@ -1567,7 +1569,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       managedRunId: "managed-run_a",
       evidenceRefs: ["evidence_a"],
     })).ok).toBe(false);
-    expect((await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", "external-run_a")).ok)
+    expect((await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", "external-run_a", "active")).ok)
       .toBe(false);
     expect((await store.releaseTerminal(SERVICE_SCOPE, {
       managedRunId: "managed-run_a",

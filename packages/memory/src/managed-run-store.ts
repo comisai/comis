@@ -75,9 +75,7 @@ function asError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
 }
 
-function validLimit(limit: number): boolean {
-  return Number.isInteger(limit) && limit > 0 && limit <= 10_000;
-}
+function validLimit(limit: number): boolean { return Number.isInteger(limit) && limit > 0 && limit <= 10_000; }
 
 function resultRecord<K extends "bound" | "claimed" | "identical_replay" | "released" | "updated">(
   kind: K,
@@ -99,10 +97,10 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       AND runs.agent_id = ?
       AND runs.principal_id = ?
       AND runs.conversation_ref = ?
-      AND NOT EXISTS (
+      AND EXISTS (
         SELECT 1 FROM managed_run_release_reservations AS reservation
         WHERE reservation.managed_run_id = runs.managed_run_id
-      )
+      ) = ?
     LIMIT 2
   `);
   const insertRun = db.prepare(`
@@ -830,12 +828,13 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       if (!record.ok || record.value === undefined) return record;
       return ok(scopeMatches(record.value, scope) ? record.value : undefined);
     }),
-    getByExternalRunRef: (scope, serviceInstanceId, externalRunRef) => boundary(() => {
+    getByExternalRunRef: (scope, serviceInstanceId, externalRunRef, availability) => boundary(() => {
       if (
         serviceInstanceId.length === 0
         || serviceInstanceId.length > 256
         || externalRunRef.length === 0
         || externalRunRef.length > 256
+        || (availability !== "active" && availability !== "released")
       ) return err(new Error("managed-run external reference lookup is invalid"));
       const externalRunRefDigest = createHash("sha256").update(externalRunRef, "utf8").digest("hex");
       const rows = runMapper.parseRows(selectRunByExternalRef.all(
@@ -845,6 +844,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
         scope.agentId,
         scope.principalId,
         scope.conversationRef,
+        availability === "released" ? 1 : 0,
       ));
       if (!rows.ok) return err(new Error(rows.error.message));
       if (rows.value.length > 1) {

@@ -112,6 +112,7 @@ export interface ManagedMcpPrivateMetadataDeps {
     scope: ManagedRunOwnerScope,
     serviceInstanceId: string,
     externalRunRef: string,
+    availability: "active" | "released",
   ) => Promise<Result<ManagedRunRecord | undefined, Error>>;
   readonly activatePrepared: (
     input: ManagedMcpActivationInput,
@@ -321,9 +322,20 @@ async function resolveRunHandle(
     scope,
     bound.serviceInstanceId,
     handle,
+    "active",
   ));
   if (!loaded.ok) return loaded;
-  const record = loaded.value;
+  let record = loaded.value;
+  if (record === undefined && bound.binding.actionClassification === "destructive") {
+    const released = await invoke(() => deps.getManagedRunByExternalRef(
+      scope,
+      bound.serviceInstanceId,
+      handle,
+      "released",
+    ));
+    if (!released.ok) return released;
+    record = released.value;
+  }
   if (
     record === undefined
     || record.serviceInstanceId !== bound.serviceInstanceId

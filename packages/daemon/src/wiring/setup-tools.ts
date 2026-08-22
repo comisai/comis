@@ -493,8 +493,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
             ? ok(resolved.value)
             : err(new Error(resolved.error.message));
       },
-      getManagedRunByExternalRef: (scope, serviceInstanceId, externalRunRef) =>
-        deps.capabilityServices.store.getByExternalRunRef(scope, serviceInstanceId, externalRunRef),
+      getManagedRunByExternalRef: (scope, serviceInstanceId, externalRunRef, availability) =>
+        deps.capabilityServices.store.getByExternalRunRef(
+          scope, serviceInstanceId, externalRunRef, availability,
+        ),
       activatePrepared: (input) => deps.capabilityServices.activationCoordinator.activatePrepared({ ...input, authority: { ...input.authority, capturedAgentCapabilities: [...input.authority.capturedAgentCapabilities], capturedToolIds: [...input.authority.capturedToolIds] } }),
       activatePreparedGroup: (input) => deps.capabilityServices.groupActivationCoordinator
         .activatePreparedGroup({ ...input, authority: { ...input.authority, capturedAgentCapabilities: [...input.authority.capturedAgentCapabilities], capturedToolIds: [...input.authority.capturedToolIds] } }),

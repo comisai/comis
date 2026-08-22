@@ -470,10 +470,12 @@ export interface ManagedRunGroupStorePort {
 export interface ManagedRunStorePort {
   create(record: ManagedRunRecord): Promise<Result<ManagedRunCreateOutcome, Error>>;
   get(scope: ManagedRunLookupScope, managedRunId: string): Promise<Result<ManagedRunRecord | undefined, Error>>;
+  /** Selects one exact owner-scoped run from either the active or release-reserved authority set. */
   getByExternalRunRef(
     scope: ManagedRunOwnerScope,
     serviceInstanceId: string,
     externalRunRef: string,
+    availability: "active" | "released",
   ): Promise<Result<ManagedRunRecord | undefined, Error>>;
   claimTransition(scope: ManagedRunLookupScope, input: ManagedRunTransitionClaimInput): Promise<Result<ManagedRunTransitionClaimOutcome, Error>>;
   bindTerminal(scope: ManagedRunOwnerScope, input: ManagedRunTerminalBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
