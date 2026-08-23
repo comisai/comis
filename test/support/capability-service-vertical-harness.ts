@@ -225,6 +225,7 @@ function createServiceCandidateConfig(root: string): string {
         required: true,
       }],
       forgeChecks: [{ name: "ci/unit", required: true }],
+      pathRules: [{ kind: "exact", path: "report.md" }],
       artifactRules: [{
         kind: "regular_file",
         relativePath: "report.md",
@@ -754,7 +755,7 @@ export function startFixtureService(input: {
     "--codex-profile", "codex-reviewed",
     "--codex-executable", codexExecutable,
     "--codex-version", "codex-cli 0.147.0",
-    "--codex-model", "gpt-5.5-codex",
+    "--codex-model", "gpt-5.6-sol",
     "--codex-effort", "high",
     "--codex-terminal-allow-entry", "codex-confined",
     "--codex-network", "restricted",
