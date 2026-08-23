@@ -72,6 +72,29 @@ function hasBind(args: string[], flag: string, src: string, dest?: string): bool
 const RELAY_INIT_PATH = fileURLToPath(RELAY_INIT_SCRIPT_URL);
 
 describe("buildSpawnPlan — relay-init script bind (the VPS Cannot-find-module fix)", () => {
+  it("threads durable session identity to the egress materializer", async () => {
+    const calls: unknown[][] = [];
+    const egressControl = {
+      materialize: async (...args: unknown[]) => {
+        calls.push(args);
+        return { socketPath: "/tmp/egress.sock", dispose: () => Promise.resolve() };
+      },
+    } as unknown as EgressControlPort;
+
+    await buildSpawnPlan(
+      {
+        ...makeInput({ scope: makeScope({ network: "listed-hosts", hosts: ["example.com"] }) }),
+        sessionId: "terminal_a",
+        durability: "durable",
+      } as SpawnPlanInput,
+      { bwrapPath: "/usr/bin/bwrap", egressControl },
+    );
+
+    expect(calls).toEqual([
+      [["example.com"], { sessionId: "terminal_a", durability: "durable" }],
+    ]);
+  });
+
   it("listed-hosts ro-binds the relay-init script into the jail (so in-jail node can read it)", async () => {
     const plan = await buildSpawnPlan(
       makeInput({ scope: makeScope({ network: "listed-hosts", hosts: ["example.com"] }) }),
