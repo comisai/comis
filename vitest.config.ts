@@ -63,6 +63,13 @@ export default defineConfig({
         // Its pure helpers ARE unit-tested (terminal-worker-main.test.ts) and the real
         // fork is exercised by terminal-worker-fork.linux.test.ts on Linux/the VPS.
         "packages/skills/src/tools/builtin/terminal-driver/terminal-worker-main.ts",
+        // Detached PROCESS entry (`node terminal-egress-proxy-main.js`): main()
+        // binds real signals/stdout/tmux lifetime and calls process.exit, so importing
+        // it would corrupt the test runner and subprocess execution is not collected
+        // by in-process V8 coverage. The launcher and pure lifetime decision are
+        // unit-tested in terminal-durable-egress-proxy.test.ts; the real helper is
+        // exercised by the durable-terminal live restart scenario on Linux.
+        "packages/skills/src/tools/builtin/terminal-driver/terminal-egress-proxy-main.ts",
       ],
       // Monotonic ramp protocol: per-package floors are derived from a
       // measured baseline and ramp each floor toward the final
