@@ -99,6 +99,12 @@ export {
   type TerminalEgressProxyDeps,
   type EgressProxyLogger,
 } from "./terminal-egress-proxy.js";
+export {
+  createDurableEgressMaterializer,
+  durableProxyLivenessDecision,
+  resolveDurableEgressProxyMainPath,
+  type DurableEgressMaterializer,
+} from "./terminal-durable-egress-proxy.js";
 
 // The PERSISTENT, agent-scoped projects-root allocator (`<agentWorkspaceDir>/projects`).
 // The daemon injects it as the registry's `allocateWorkspace` with a no-op

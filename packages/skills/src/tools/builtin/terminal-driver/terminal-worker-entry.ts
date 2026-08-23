@@ -427,10 +427,21 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // The operator jail opt-out, frame-threaded from the daemon (registry-stamped) like bwrapPath.
     const frameUnsafeDisableSandbox =
       typeof p["unsafeDisableSandbox"] === "boolean" ? p["unsafeDisableSandbox"] : spawnComposers.unsafeDisableSandbox;
+    const requestedBackend: WorkerBackend | undefined = p["backend"] === "tmux" ? "tmux" : undefined;
     let plan;
     try {
       plan = await planSpawnFromCreateFrame(
-        { bin, argv, scope, workspace, cwd, managedWorkspace, executionAttachments },
+        {
+          sessionId,
+          durability: requestedBackend === "tmux" && deps.loadTmux !== undefined ? "durable" : "transient",
+          bin,
+          argv,
+          scope,
+          workspace,
+          cwd,
+          managedWorkspace,
+          executionAttachments,
+        },
         envSnapshot(),
         { ...spawnComposers, bwrapPath: frameBwrapPath, unsafeDisableSandbox: frameUnsafeDisableSandbox },
       );
@@ -448,7 +459,6 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // Only an explicit create-frame `backend:"tmux"` (allow-entry, daemon-threaded) + a
     // wired `loadTmux` diverges to the tmux survival backend; everything else takes the
     // node-pty → pipe path (attachBackend decides).
-    const requestedBackend: WorkerBackend | undefined = p["backend"] === "tmux" ? "tmux" : undefined;
     attachBackend({
       plan: { bin: plan.bin, argv: plan.argv, env: plan.env, cwd: plan.cwd, unsandboxed: plan.unsandboxed },
       cols,

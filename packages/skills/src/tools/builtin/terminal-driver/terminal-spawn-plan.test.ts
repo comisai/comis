@@ -40,6 +40,8 @@ function makeScope(overrides: Partial<TerminalScope> = {}): TerminalScope {
 
 function makeInput(overrides: Partial<SpawnPlanInput> = {}): SpawnPlanInput {
   return {
+    sessionId: "terminal_a",
+    durability: "transient",
     scope: makeScope(),
     bin: "/bin/cat",
     argv: [],
@@ -201,6 +203,8 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       });
 
       const params = {
+        sessionId: "terminal_a",
+        durability: "transient",
         bin: "/bin/cat",
         argv: [],
         scope: makeScope(),

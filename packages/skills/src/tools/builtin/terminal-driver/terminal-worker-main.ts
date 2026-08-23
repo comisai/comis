@@ -41,7 +41,11 @@ import { fileURLToPath } from "node:url";
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { createStdioPump } from "./terminal-worker-stdio-pump.js";
 import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
-import { buildTmuxPanePidArgv, createTmuxBackend, tmuxSocketPathForSession } from "./terminal-tmux-backend.js";
+import {
+  createDurableEgressMaterializer,
+  resolveDurableEgressProxyMainPath,
+} from "./terminal-durable-egress-proxy.js";
+import { buildTmuxPanePidArgv, createTmuxBackend, tmuxSessionName, tmuxSocketPathForSession } from "./terminal-tmux-backend.js";
 import type { TmuxBackendLike, FakePtyLike, PtyModuleLike } from "./terminal-worker-types.js";
 
 /**
@@ -286,18 +290,24 @@ function main(): void {
   }
   const logger = createFileLogger(pathResolve(dir, "worker.log"));
 
-  // The no-secret host-allowlist egress proxy for `network: listed-hosts`. The
-  // worker runs OUTSIDE the jail (it has host network), so it owns its own proxy:
-  // materialize(hosts) stands up a /tmp unix socket the jailed child bind-mounts +
-  // relays through (the daemon needn't coordinate — the proxy injects no secret).
-  // Untouched for network none/full.
-  const egressControl = createTerminalEgressProxy({ logger });
-
   // Long-run tmux backend — present only if tmux is installed; absent ⇒
   // a backend:"tmux" request degrades to pty/pipe (never an error).
   const tmuxPath = resolveTmuxPath();
   // The attach client is an ordinary pty → reuse the SAME node-pty loader the pty backend uses.
   const loadTmux = tmuxPath ? buildLoadTmux(tmuxPath, defaultLoadPty) : undefined;
+  // A transient drive keeps its no-secret allowlist proxy in this worker. A durable
+  // tmux drive launches a detached helper that follows the tmux lifetime, so the
+  // bound socket remains usable when this worker is replaced during daemon restart.
+  const durableMaterialize = tmuxPath === undefined ? undefined : createDurableEgressMaterializer({
+    logger,
+    nodePath: process.execPath,
+    entryPath: resolveDurableEgressProxyMainPath(),
+    tmuxPath,
+    tmuxSocketForSession: (sessionId) => tmuxSocketPathForSession(dir, sessionId),
+    tmuxNameForSession: tmuxSessionName,
+    logPath: pathResolve(dir, "worker.log"),
+  });
+  const egressControl = createTerminalEgressProxy({ logger, durableMaterialize });
   // WARN at boot if tmux is unavailable — a durable drive will degrade to
   // non-durable here, so a restart ends it `lost` (journal preserved; the `failed`
   // outcome is derived downstream).

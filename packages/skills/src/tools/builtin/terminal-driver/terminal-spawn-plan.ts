@@ -51,7 +51,7 @@ import {
 } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath, sep as pathSep } from "node:path";
 
-import { safePath, type EgressControlPort, type EgressMaterialization } from "@comis/core";
+import { safePath, type EgressControlPort, type EgressMaterialization, type EgressMaterializationContext } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
@@ -155,6 +155,9 @@ function validateEphemeralWritablePaths(scope: TerminalScope, home: string): Res
 
 /** The session geometry + identity the plan needs (off the create frame). */
 export interface SpawnPlanInput {
+  /** Opaque session identity and lifetime for session-bound egress materialization. */
+  sessionId: string;
+  durability: EgressMaterializationContext["durability"];
   /** The operator-declared scope (least-privilege default applied upstream). */
   scope: TerminalScope;
   /** The driven command (daemon-canonical) — placed verbatim AFTER bwrap's `--`. */
@@ -754,7 +757,10 @@ export async function buildSpawnPlan(
       // listed-hosts demands an egress port; absent ⇒ fail-closed (no open net).
       throw new JailUnavailableError();
     }
-    egress = await composers.egressControl.materialize(scope.hosts ?? []);
+    egress = await composers.egressControl.materialize(
+      scope.hosts ?? [],
+      { sessionId: input.sessionId, durability: input.durability },
+    );
     relaySocketPath = egress.socketPath;
     relay = buildEgressRelayLaunch({
       socketPath: egress.socketPath,
@@ -862,6 +868,9 @@ export async function buildSpawnPlan(
 
 /** The create-frame fields {@link planSpawnFromCreateFrame} reads. */
 export interface CreateFrameSpawnParams {
+  /** Opaque session identity and resolved backend lifetime. */
+  sessionId: string;
+  durability: EgressMaterializationContext["durability"];
   /** The driven command (daemon-canonical). */
   bin: string;
   /** The driven command argv. */
@@ -901,6 +910,8 @@ export async function planSpawnFromCreateFrame(
   if (!gitCommon.ok) throw new ManagedWorkspaceGitUnavailableError();
   return buildSpawnPlan(
     {
+      sessionId: params.sessionId,
+      durability: params.durability,
       scope,
       bin: params.bin,
       argv: params.argv,

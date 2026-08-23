@@ -1048,7 +1048,7 @@ describe("createTerminalWorker — the scope materializes into the bwrap argv", 
  * assertions without standing up a real proxy server (the LIVE bridge is VPS-only).
  */
 function makeFakeEgressControl(socketPath = "/tmp/e.sock") {
-  const materialize = vi.fn(async (_hosts: string[]) => ({
+  const materialize = vi.fn(async (_hosts: string[], _context: { sessionId: string; durability: "transient" | "durable" }) => ({
     socketPath,
     dispose,
   }));
@@ -1097,12 +1097,63 @@ describe("createTerminalWorker — listed-hosts egress materialization", () => {
 
     // materialize was called with exactly the scope's hosts.
     expect(egress.materialize).toHaveBeenCalledTimes(1);
-    expect(egress.materialize).toHaveBeenCalledWith(["api.example.com"]);
+    expect(egress.materialize).toHaveBeenCalledWith(
+      ["api.example.com"],
+      { sessionId: "s1", durability: "transient" },
+    );
     // The returned socket is bound via the composer's relaySocketPath.
     const argv = fake.lastSpawn()?.argv ?? [];
     expect(argv.join(" ")).toContain("--bind /tmp/e.sock /tmp/e.sock");
     // The child env carries HTTPS_PROXY pointing at the in-jail relay loopback.
     expect(recordedEnv?.["HTTPS_PROXY"]).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+
+  it("marks listed-hosts egress durable only when the tmux backend is available", async () => {
+    const egress = makeFakeEgressControl("/tmp/e.sock");
+    const tmuxSpawn = vi.fn((): FakePtyLike => ({
+      pid: 7373,
+      onData: vi.fn(),
+      onExit: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+    }));
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => {
+          throw new Error("tmux path must not load the ordinary pty backend");
+        },
+        loadTmux: { spawn: tmuxSpawn },
+        bwrapPath: "/usr/bin/bwrap",
+        egressControl: egress.egressControl,
+      }),
+    );
+
+    await worker.handle(
+      createFrame({
+        sessionId: "s-durable",
+        bin: "/bin/curl",
+        argv: ["https://api.example.com"],
+        cols: 80,
+        rows: 24,
+        backend: "tmux",
+        scope: {
+          filesystem: "workspace",
+          network: "listed-hosts",
+          hosts: ["api.example.com"],
+          credentialPaths: [],
+          ephemeralWritablePaths: [],
+          uid: "dedicated",
+        },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+
+    expect(egress.materialize).toHaveBeenCalledWith(
+      ["api.example.com"],
+      { sessionId: "s-durable", durability: "durable" },
+    );
   });
 
   it("inserts the RUNNABLE relay-init between bwrap's `--` and the child, and lets the init own the uid drop (no bwrap --uid)", async () => {

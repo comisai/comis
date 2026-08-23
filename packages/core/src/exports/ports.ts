@@ -182,6 +182,7 @@ export type {
   CaManagerPort,
   EgressControlPort,
   EgressMaterialization,
+  EgressMaterializationContext,
   PrincipalResolverPort,
   CapabilityServiceActivateCommand,
   CapabilityServiceGroupActivateCommand,
