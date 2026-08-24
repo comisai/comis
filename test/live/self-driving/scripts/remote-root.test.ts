@@ -1064,6 +1064,15 @@ describe("local rig mode", () => {
     expect(launcher).toContain('process.env["EMU_JSON"] ?? "/tmp/comis-emu.json"');
   });
 
+  it("removes stale emulator wiring before launching a replacement process", () => {
+    const source = readFileSync(RESTART_EMULATOR, "utf8");
+    const removeWiring = source.indexOf('rm -f -- "$EMU_JSON"');
+    const launch = source.indexOf('LAUNCH="cd');
+
+    expect(removeWiring).toBeGreaterThan(-1);
+    expect(removeWiring).toBeLessThan(launch);
+  });
+
   it("scopes the local phase-zero daemon probe to the selected lifecycle owner", () => {
     const source = readFileSync(PHASE_ZERO_CHECK, "utf8");
 
