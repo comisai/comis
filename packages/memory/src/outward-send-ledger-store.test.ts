@@ -303,6 +303,32 @@ describe("createSqliteOutwardSendLedger — terminal decisions", () => {
       .toEqual({ ok: true, value: undefined });
   });
 
+  it("rejects terminal decisions that contradict a committed delivery receipt", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    for (const outcome of ["discarded", "no_reply"] as const) {
+      const rootRunId = `run-committed-${outcome}`;
+      const operationId = `operation-committed-${outcome}`;
+      const step = await ledger.allocateStep(rootRunId, operationId);
+      if (!step.ok) throw step.error;
+      await ledger.begin(makeBegin({ rootRunId, stepIndex: step.value }));
+      await ledger.markUnknown(rootRunId, step.value);
+      await ledger.commit(rootRunId, step.value, `message-${outcome}`);
+
+      expect((await ledger.recordTerminalDecision(rootRunId, operationId, outcome)).ok)
+        .toBe(false);
+      expect(await ledger.lookupTerminalDecision(rootRunId, operationId))
+        .toEqual({ ok: true, value: undefined });
+      expect(await ledger.lookup(rootRunId, step.value)).toMatchObject({
+        ok: true,
+        value: {
+          state: "committed",
+          platformMessageId: `message-${outcome}`,
+        },
+      });
+    }
+  });
+
   it("persists no-reply as a terminal admission decision", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 
