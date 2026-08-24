@@ -5259,7 +5259,7 @@ describe("announcement dead-letter admission cancellation", () => {
     expect(queue.size()).toBe(1);
   });
 
-  it("refuses an enqueue whose caller already gave up", async () => {
+  it("rejects an enqueue whose caller already gave up", async () => {
     const queue = fullQueue();
     await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: true });
 
