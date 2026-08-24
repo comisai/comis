@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { err } from "@comis/shared";
@@ -10,7 +10,9 @@ import {
   createAnnouncementTerminalDecisionStore,
   createTerminalDecisionRecord,
   isAnnouncementTerminalDecisionRecord,
+  isAnnouncementTerminalRetirementRecord,
 } from "./announcement-dead-letter-terminal-decision.js";
+import { MAX_DEAD_LETTER_ROW_BYTES } from "./announcement-dead-letter-invalid.js";
 
 const owner = {
   announcementText: "completion",
@@ -55,6 +57,40 @@ describe("announcement terminal decisions", () => {
 
     expect(isAnnouncementTerminalDecisionRecord(created.value)).toBe(true);
     expect(JSON.stringify(created.value)).not.toContain(owner.sessionKey);
+  });
+
+  it("rejects malformed terminal decision and retirement record shapes", () => {
+    const created = createTerminalDecisionRecord(owner, "delivered", 10);
+    if (!created.ok) throw created.error;
+
+    for (const invalid of [
+      null,
+      [],
+      {},
+      { ...created.value, id: "terminal:bad" },
+      { ...created.value, outcome: "unknown" },
+      { ...created.value, decidedAt: Number.NaN },
+      { ...created.value, retirementKeyDigests: [] },
+      { ...created.value, retirementKeyDigests: ["bad"] },
+      {
+        ...created.value,
+        retirementKeyDigests: [
+          created.value.retirementKeyDigests[0],
+          created.value.retirementKeyDigests[0],
+        ],
+      },
+    ]) {
+      expect(isAnnouncementTerminalDecisionRecord(invalid)).toBe(false);
+    }
+    for (const invalid of [null, [], {}, {
+      recordType: "terminal_retirement",
+      id: `retirement:${"a".repeat(64)}`,
+      producer: { kind: "graph", tenantId: "tenant_a", graphId: "" },
+      completionKeyDigests: ["b".repeat(64)],
+      preparedAt: 1,
+    }]) {
+      expect(isAnnouncementTerminalRetirementRecord(invalid)).toBe(false);
+    }
   });
 
   it("persists indexed ledgerless decisions outside the pending snapshot", async () => {
@@ -197,6 +233,72 @@ describe("announcement terminal decisions", () => {
     await expect(store.listInvalid()).resolves.toEqual({ ok: true, value: [] });
   });
 
+  it("quarantines an oversized terminal decision without reading its full body", async () => {
+    const record = createTerminalDecisionRecord(owner, "no_reply", 10);
+    if (!record.ok) throw record.error;
+    const recordDirectory = join(
+      `${filePath}.terminal-decisions`,
+      "decisions",
+      record.value.keyDigest.slice(0, 2),
+    );
+    await mkdir(recordDirectory, { recursive: true });
+    await writeFile(
+      join(recordDirectory, `${record.value.keyDigest}.json`),
+      Buffer.alloc(MAX_DEAD_LETTER_ROW_BYTES + 1, 0x61),
+    );
+
+    const invalid = await createAnnouncementTerminalDecisionStore(filePath).listInvalid();
+    if (!invalid.ok) throw invalid.error;
+    expect(invalid.value).toMatchObject([{ reason: "oversized_row" }]);
+    expect(invalid.value[0]?.rawBytes).toBe(MAX_DEAD_LETTER_ROW_BYTES + 1);
+  });
+
+  it("rejects an oversized decision that appears after the index is loaded", async () => {
+    const record = createTerminalDecisionRecord(owner, "no_reply", 10);
+    if (!record.ok) throw record.error;
+    const recordDirectory = join(
+      `${filePath}.terminal-decisions`,
+      "decisions",
+      record.value.keyDigest.slice(0, 2),
+    );
+    const recordPath = join(recordDirectory, `${record.value.keyDigest}.json`);
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+    await expect(store.lookup(owner)).resolves.toEqual({ ok: true, value: undefined });
+    await mkdir(recordDirectory, { recursive: true });
+    await writeFile(recordPath, Buffer.alloc(MAX_DEAD_LETTER_ROW_BYTES + 1, 0x61));
+
+    await expect(store.lookup(owner)).resolves.toMatchObject({ ok: false });
+    await expect(store.listInvalid()).resolves.toMatchObject({
+      ok: true,
+      value: [{ reason: "oversized_row" }],
+    });
+  });
+
+  it("quarantines a valid decision stored under another decision identity", async () => {
+    const expected = createTerminalDecisionRecord(owner, "delivered", 10);
+    const misplaced = createTerminalDecisionRecord(
+      { ...owner, runId: "run-other", idempotencyKey: "operation-other" },
+      "discarded",
+      11,
+    );
+    if (!expected.ok) throw expected.error;
+    if (!misplaced.ok) throw misplaced.error;
+    const recordDirectory = join(
+      `${filePath}.terminal-decisions`,
+      "decisions",
+      expected.value.keyDigest.slice(0, 2),
+    );
+    await mkdir(recordDirectory, { recursive: true });
+    await writeFile(
+      join(recordDirectory, `${expected.value.keyDigest}.json`),
+      JSON.stringify(misplaced.value),
+    );
+
+    const invalid = await createAnnouncementTerminalDecisionStore(filePath).listInvalid();
+    if (!invalid.ok) throw invalid.error;
+    expect(invalid.value).toMatchObject([{ reason: "schema_mismatch" }]);
+  });
+
   const retirementProducer = {
     kind: "session" as const,
     tenantId: "tenant_a",
@@ -243,6 +345,8 @@ describe("announcement terminal decisions", () => {
   it("rejects a retirement intent naming no completion or a malformed producer", async () => {
     const store = createAnnouncementTerminalDecisionStore(filePath);
 
+    await expect(store.retire([])).resolves.toMatchObject({ ok: false });
+    await expect(store.retire([""])).resolves.toMatchObject({ ok: false });
     await expect(store.prepareRetirement([], retirementProducer))
       .resolves.toMatchObject({ ok: false });
     await expect(store.prepareRetirement([""], retirementProducer))
@@ -274,5 +378,49 @@ describe("announcement terminal decisions", () => {
 
     await expect(store.collectRetirements(async () => ({ ok: true, value: false })))
       .resolves.toEqual({ ok: true, value: 1 });
+  });
+
+  it("loads tool-result and graph retirement producers from durable records", async () => {
+    const toolProducer = {
+      kind: "tool_result" as const,
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      conversationRef: ConversationRefSchema.parse(`cv_${"c".repeat(43)}`),
+      toolCallId: "tool-call-a",
+    };
+    const graphProducer = {
+      kind: "graph" as const,
+      tenantId: "tenant_a",
+      graphId: "graph-a",
+    };
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+    await store.prepareRetirement(["completion-tool"], toolProducer);
+    await store.prepareRetirement(["completion-graph"], graphProducer);
+
+    const restarted = createAnnouncementTerminalDecisionStore(filePath);
+    const seen: string[] = [];
+    await expect(restarted.collectRetirements(async (producer) => {
+      seen.push(producer.kind);
+      return { ok: true, value: true };
+    })).resolves.toEqual({ ok: true, value: 0 });
+    expect(seen.sort()).toEqual(["graph", "tool_result"]);
+  });
+
+  it("quarantines a valid retirement record moved under another digest", async () => {
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+    await store.prepareRetirement(["completion-a"], retirementProducer);
+    const [recordPath] = (await durableRecordFiles(directory)).filter((path) =>
+      path.includes(`${filePath}.terminal-decisions/retirements/`));
+    if (recordPath === undefined) throw new Error("retirement record was not persisted");
+    const content = await readFile(recordPath, "utf8");
+    const wrongDigest = "f".repeat(64);
+    const wrongDirectory = join(`${filePath}.terminal-decisions`, "retirements", "ff");
+    await mkdir(wrongDirectory, { recursive: true });
+    await rename(recordPath, join(wrongDirectory, `${wrongDigest}.json`));
+    await writeFile(join(wrongDirectory, `${wrongDigest}.json`), content);
+
+    const invalid = await createAnnouncementTerminalDecisionStore(filePath).listInvalid();
+    if (!invalid.ok) throw invalid.error;
+    expect(invalid.value).toMatchObject([{ reason: "schema_mismatch" }]);
   });
 });

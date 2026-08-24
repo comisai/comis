@@ -103,6 +103,17 @@ describe("createSqliteOutwardSendLedger — begin + lookup", () => {
     expect(await ledger.reclaimPreSend("run-A", 0)).toEqual({ ok: true, value: false });
     expect((await ledger.lookup("run-A", 0)).ok).toBe(true);
   });
+
+  it("rejects a truncated operation fingerprint before writing an outward row", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    await expect(ledger.begin(makeBegin({ operationFingerprint: "c".repeat(16) })))
+      .resolves.toMatchObject({
+        ok: false,
+        error: { message: "operationFingerprint must be a full SHA-256 hex digest" },
+      });
+    await expect(ledger.lookup("run-A", 0)).resolves.toEqual({ ok: true, value: undefined });
+  });
 });
 
 describe("createSqliteOutwardSendLedger — closed five-state lifecycle", () => {
@@ -265,6 +276,32 @@ describe("createSqliteOutwardSendLedger — durable outward sequence", () => {
 });
 
 describe("createSqliteOutwardSendLedger — terminal decisions", () => {
+  it("rejects malformed terminal identities, outcomes, and scan bounds", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    expect((await ledger.lookupTerminalDecision("", "operation")).ok).toBe(false);
+    expect((await ledger.lookupTerminalDecision("run", "x".repeat(257))).ok).toBe(false);
+    expect((await ledger.recordTerminalDecision("", "operation", "delivered")).ok).toBe(false);
+    expect((await ledger.recordTerminalDecision(
+      "run",
+      "operation",
+      "unknown" as "delivered",
+    )).ok).toBe(false);
+    expect((await ledger.listUnreconciled(0)).ok).toBe(false);
+    expect((await ledger.listUnreconciled(1_002)).ok).toBe(false);
+  });
+
+  it("accepts an identical repeated terminal decision idempotently", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    await expect(ledger.recordTerminalDecision("run", "operation", "discarded"))
+      .resolves.toEqual({ ok: true, value: undefined });
+    await expect(ledger.recordTerminalDecision("run", "operation", "discarded"))
+      .resolves.toEqual({ ok: true, value: undefined });
+    expect((await ledger.recordTerminalDecision("run", "operation", "delivered")).ok)
+      .toBe(false);
+  });
+
   it("persists a stable decision and blocks a later send intent", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 
@@ -349,6 +386,13 @@ describe("createSqliteOutwardSendLedger — terminal decisions", () => {
 });
 
 describe("createSqliteOutwardSendLedger — failure + uncertainty parking", () => {
+  it("returns an error when a mark-unknown transition loses its backing table", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    db.exec("DROP TABLE outward_send_ledger");
+
+    await expect(ledger.markUnknown("run-A", 0)).resolves.toMatchObject({ ok: false });
+  });
+
   it("rejects a truncated digest before persisting the send intent", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 

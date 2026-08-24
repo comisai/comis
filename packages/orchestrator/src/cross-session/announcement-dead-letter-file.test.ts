@@ -4,14 +4,17 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConversationLocator } from "@comis/core";
+import { err, ok } from "@comis/shared";
 import type { DeadLetterEntry } from "./announcement-dead-letter.js";
 import {
+  createParentDecisionReservationStore,
   isAnnouncementChannelType,
   isAnnouncementProducerRecoveryOutcome,
   readDeadLetterEntries,
   readDeadLetterSnapshot,
   writeDeadLetterEntries,
   type DeadLetterWriteOperations,
+  type ParentDecisionReservationRecord,
 } from "./announcement-dead-letter-file.js";
 
 const ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS = 100_000;
@@ -87,6 +90,59 @@ function createRecordingOperations(
     chmod: async (path, mode) => {
       events.push(`chmod:${path}:${mode}`);
       if (path === failure.chmodPath) throw new Error("chmod unavailable");
+    },
+  };
+}
+
+function makeDecision(overrides: Record<string, unknown> = {}) {
+  const entry = makeEntry();
+  return {
+    idempotencyKey: "operation-a",
+    agentId: entry.agentId ?? "agent-a",
+    runId: entry.runId,
+    sessionKey: entry.sessionKey,
+    announcementText: entry.announcementText,
+    channelType: entry.channelType,
+    channelId: entry.channelId,
+    failedAt: entry.failedAt,
+    rootRunId: "root-a",
+    deliveryAuthority: entry.deliveryAuthority!,
+    destinationEndpoint: entry.destinationEndpoint!,
+    completionKeys: ["operation-a"],
+    ...overrides,
+  };
+}
+
+function makeReservation(
+  overrides: Partial<ParentDecisionReservationRecord> = {},
+): ParentDecisionReservationRecord {
+  return {
+    ...makeDecision(),
+    recordType: "parent_decision_reservation",
+    id: "reservation-a",
+    ...overrides,
+  } as ParentDecisionReservationRecord;
+}
+
+function makeReservationStore(overrides: Record<string, unknown> = {}) {
+  let reservations: ParentDecisionReservationRecord[] = [];
+  const deps = {
+    load: vi.fn(async () => ok(undefined)),
+    hasDeliveryKey: vi.fn(() => false),
+    getReservations: vi.fn(() => reservations),
+    persist: vi.fn(async () => ok(undefined)),
+    canPersistReservationCount: vi.fn(() => true),
+    replaceReservations: vi.fn((next: readonly ParentDecisionReservationRecord[]) => {
+      reservations = [...next];
+    }),
+    logger: { error: vi.fn() },
+    ...overrides,
+  };
+  return {
+    deps,
+    store: createParentDecisionReservationStore(deps),
+    setReservations(next: ParentDecisionReservationRecord[]) {
+      reservations = next;
     },
   };
 }
@@ -451,6 +507,128 @@ describe("announcement dead-letter file", () => {
         recordType: "invalid_record",
         reason: "schema_mismatch",
       }],
+    });
+  });
+
+  it("handles parent-reservation load, collision, capacity, and persistence failures", async () => {
+    const unreadable = makeReservationStore({ load: async () => err(new Error("disk unavailable")) });
+    await expect(unreadable.store.reserve(makeDecision())).resolves.toMatchObject({ ok: false });
+    await expect(unreadable.store.lookup("operation-a")).resolves.toMatchObject({ ok: false });
+
+    const collision = makeReservationStore();
+    collision.setReservations([makeReservation({
+      idempotencyKey: "owner-a",
+      completionKeys: ["operation-a"],
+    })]);
+    await expect(collision.store.reserve(makeDecision())).resolves.toEqual(ok({ created: false }));
+
+    const capacity = makeReservationStore({ canPersistReservationCount: () => false });
+    await expect(capacity.store.reserve(makeDecision())).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter quarantine capacity exhausted" },
+    });
+
+    const persistence = makeReservationStore({ persist: async () => err(new Error("disk unavailable")) });
+    await expect(persistence.store.reserve(makeDecision())).resolves.toMatchObject({ ok: false });
+    expect(persistence.deps.logger.error).toHaveBeenCalledOnce();
+  });
+
+  it("handles absent, invalid, and unpersisted parent-reservation resolutions", async () => {
+    const missing = makeReservationStore();
+    await expect(missing.store.resolve("missing", "no_reply")).resolves.toEqual(ok(false));
+    await expect(missing.store.resolve("missing", "invalid" as never)).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Parent decision resolution outcome is invalid" },
+    });
+
+    const persistence = makeReservationStore({ persist: async () => err(new Error("disk unavailable")) });
+    persistence.setReservations([makeReservation()]);
+    await expect(persistence.store.resolve("operation-a", "receipt_committed"))
+      .resolves.toMatchObject({ ok: false });
+    expect(persistence.deps.logger.error).toHaveBeenCalledOnce();
+  });
+
+  it("validates parent-reservation replacement ownership and persistence", async () => {
+    const unreadable = makeReservationStore({ load: async () => err(new Error("disk unavailable")) });
+    await expect(unreadable.store.replace([], [makeDecision()])).resolves.toMatchObject({ ok: false });
+
+    const invalid = makeReservationStore();
+    await expect(invalid.store.replace([], [])).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Announcement operation reservation transition is invalid" },
+    });
+
+    const transitionedFailure = makeReservationStore({ persist: async () => err(new Error("disk unavailable")) });
+    transitionedFailure.setReservations([makeReservation()]);
+    await expect(transitionedFailure.store.replace(
+      ["operation-a"],
+      [makeDecision()],
+      [],
+      ["run-a"],
+    )).resolves.toMatchObject({ ok: false });
+
+    const capacity = makeReservationStore({ canPersistReservationCount: () => false });
+    await expect(capacity.store.replace([], [makeDecision()])).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter quarantine capacity exhausted" },
+    });
+
+    const persistence = makeReservationStore({ persist: async () => err(new Error("disk unavailable")) });
+    await expect(persistence.store.replace([], [makeDecision()])).resolves.toMatchObject({ ok: false });
+  });
+
+  it.each(["write", "sync", "close", "rename"])(
+    "keeps the visible snapshot unchanged when temporary %s fails",
+    async (failure) => {
+      const operations = createRecordingOperations([]);
+      const openOriginal = operations.open;
+      operations.open = async (...args) => {
+        const handle = await openOriginal(...args);
+        return {
+          ...handle,
+          writeFile: async (...writeArgs) => {
+            if (failure === "write") throw new Error("write unavailable");
+            return handle.writeFile(...writeArgs);
+          },
+          sync: async () => {
+            if (failure === "sync") throw new Error("sync unavailable");
+            return handle.sync();
+          },
+          close: async () => {
+            if (failure === "close") throw new Error("close unavailable");
+            return handle.close();
+          },
+        };
+      };
+      if (failure === "rename") {
+        operations.rename = async () => {
+          throw new Error("rename unavailable");
+        };
+      }
+
+      await expect(writeDeadLetterEntries("/data/dead-letters.jsonl", [makeEntry()], operations))
+        .resolves.toMatchObject({ ok: false, error: { state: "snapshot_unchanged" } });
+    },
+  );
+
+  it("accepts an absent queue file and a valid final row without a newline", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    await expect(writeDeadLetterEntries(filePath, [])).resolves.toEqual(ok(undefined));
+    await writeFile(filePath, JSON.stringify(makeEntry()), { encoding: "utf8", mode: 0o600 });
+    await expect(readDeadLetterEntries(filePath)).resolves.toMatchObject({
+      ok: true,
+      value: [{ id: "entry-1" }],
+    });
+  });
+
+  it("rejects invalid snapshot read limits", async () => {
+    await expect(readDeadLetterSnapshot("/data/dead-letters.jsonl", undefined, {
+      maxRows: 0,
+      maxBytes: 1,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter snapshot read limits are invalid" },
     });
   });
 });
