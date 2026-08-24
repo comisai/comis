@@ -61,6 +61,13 @@ if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
   kill -0 "$old_pid" 2>/dev/null && kill -9 "$old_pid" 2>/dev/null || true
 fi
 
+# The wiring file is ephemeral and must describe only the process launched below. Removing it also
+# avoids Linux protected-regular-file rejection when a prior SSH user owns the fixed /tmp path.
+if ! rm -f -- "$EMU_JSON"; then
+  echo "cannot remove stale emulator wiring at $EMU_JSON" >&2
+  exit 1
+fi
+
 # (2) Launch it detached. tmux when available (the only thing that survives an ssh close); locally a
 # plain nohup suffices when tmux is absent, since there is no channel to close.
 : >"$EMU_LOG"
