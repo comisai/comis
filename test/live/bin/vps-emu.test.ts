@@ -19,10 +19,16 @@ describe("standalone Telegram emulator", () => {
     const directory = mkdtempSync(resolve(tmpdir(), "comis-vps-emu-banner-"));
     directories.push(directory);
     const wiringPath = resolve(directory, "emulator.json");
+    const messageIdStateDirectory = resolve(directory, "message-id-state");
     const botToken = "987654321:test-banner-secret";
     const child = spawn(process.execPath, ["--import", "tsx", "test/live/bin/vps-emu.ts"], {
       cwd: process.cwd(),
-      env: { ...process.env, EMU_BOT_TOKEN: botToken, EMU_JSON: wiringPath },
+      env: {
+        ...process.env,
+        EMU_BOT_TOKEN: botToken,
+        EMU_JSON: wiringPath,
+        EMU_MESSAGE_ID_STATE_DIR: messageIdStateDirectory,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
 

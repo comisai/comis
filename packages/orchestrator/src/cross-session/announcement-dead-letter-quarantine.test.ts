@@ -47,6 +47,7 @@ describe("quarantined announcement operator helpers", () => {
     const rows = projectQuarantined(
       [makeEntry()],
       [makeReservation({ threadId: "thread_a" })],
+      [],
     );
 
     expect(rows.map((row) => row.id)).toEqual(["reservation_a", "entry_a"]);
@@ -77,12 +78,13 @@ describe("quarantined announcement operator helpers", () => {
       outcome: "delivered",
       entries: [entry],
       reservations: [reservation],
+      invalidRecords: [],
       logger,
       persist,
     });
 
     expect(released).toEqual(ok(true));
-    expect(persist).toHaveBeenCalledWith([entry], []);
+    expect(persist).toHaveBeenCalledWith([entry], [], []);
     expect(logger.error).not.toHaveBeenCalled();
     expect(logger.info).toHaveBeenCalledWith(
       {
@@ -106,12 +108,13 @@ describe("quarantined announcement operator helpers", () => {
       outcome: "discarded",
       entries: [entry],
       reservations: [],
+      invalidRecords: [],
       logger,
       persist,
     });
 
     expect(released).toEqual(err(storageError));
-    expect(persist).toHaveBeenCalledWith([], []);
+    expect(persist).toHaveBeenCalledWith([], [], []);
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(
       {
