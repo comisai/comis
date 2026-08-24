@@ -764,6 +764,7 @@ describe("local rig mode", () => {
           GW_PORT: String(address.port),
           SERVICE: "comis-busy-port",
           LOCAL_SUPERVISOR: "direct",
+          LOCAL_TMUX_SESSION: `comis-busy-port-${process.pid}`,
         },
       });
 
