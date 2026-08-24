@@ -79,7 +79,6 @@ import {
   createManagedRunContinuationDelivery,
   createManagedAttentionReplyBinder,
   createBackgroundRecoveryRecorder,
-  createDeadLetterRecoveryObserver,
   setupTerminalWake,
   setupMcp,
   selectMcpTokenStore,
@@ -181,7 +180,7 @@ import {
 } from "./wiring/daemon-entrypoint.js";
 import { wireHealthLogging } from "./health-metrics.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint, wirePostAgentsCleanup } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint, wirePostAgentsCleanup, createBootDeadLetterRecoveryObserver } from "./wiring/main-helpers.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
@@ -470,13 +469,9 @@ function buildGraphCoordinatorDeps(deps: {
     ...(channels.sendGovernedAnnouncement
       ? { sendGovernedAnnouncement: channels.sendGovernedAnnouncement }
       : {}),
-    ...(channels.sendRecoverableAnnouncement
-      ? { sendRecoverableAnnouncement: channels.sendRecoverableAnnouncement }
-      : {}),
+    ...(channels.sendRecoverableAnnouncement ? { sendRecoverableAnnouncement: channels.sendRecoverableAnnouncement } : {}),
     announceToParent: channels.announceToParent,
-    ...(channels.deadLetterQueue
-      ? { announcementDeadLetterQueue: channels.deadLetterQueue }
-      : {}),
+    ...(channels.deadLetterQueue ? { announcementDeadLetterQueue: channels.deadLetterQueue } : {}),
     batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
     maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? graphDefaults.maxConcurrency,
     maxResultLength: a2aSec.graphMaxResultLength as number | undefined, maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
@@ -2341,23 +2336,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // the eventBus.on("system:shutdown", ...) subscriber inside
   // registerProxyTypingListeners that silently no-op'd in production.
   const gatewaySendRef: { ref?: (channelId: string, text: string) => boolean } = {};
-  // The git-worktree seam for `spawn --worktree`. ONE registry shared
-  // by executeSubAgent (which creates + auto-cleans worktrees in-line) and the boot
-  // orphan-sweep (which reclaims worktrees orphaned by a crashed run). The lifecycle
-  // GitExec is the SAME real execFile-backed `execGit` config-git uses, adapted to
-  // the lifecycle's `{ stdout, exitCode }` shape (toLifecycleGitExec). The boot
-  // sweep is started in wirePostChannelsLifecycle (after channels) + cancelled on
-  // shutdown — modeled on the durable-resume two-phase boot hook.
+  // One registry and Git seam serve inline cleanup plus boot-time orphan recovery;
+  // the lifecycle hook starts the sweep after channels and cancels it on shutdown.
   const worktreeRegistry = createWorktreeRegistry();
   const worktreeGitExec = toLifecycleGitExec(handle.execGit);
-  const ensureDeadLetterRecoveryObservation = createDeadLetterRecoveryObserver({
-    dataDir: boot.dataDir,
-    eventBus: container.eventBus,
-    logger: daemonLogger,
-    trajectoryConfig: resolveEffectiveTrajectoryConfig(container.config),
-    sessionAdapters: handle.piSessionAdapters,
-    trajectoryRegistry: handle.trajectoryRegistry,
-  });
+  const ensureDeadLetterRecoveryObservation = createBootDeadLetterRecoveryObserver({ boot: handle, daemonLogger });
   const graphProducerState = { exists: (_graphId: string) => true };
   const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, sendRecoverableAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, closeAnnouncementAdmission, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
@@ -2375,13 +2358,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // Trajectory-recorder release on sub-agent terminal settle — without it a dead child's recorder stays bus-subscribed and ingests other sessions' events.
     closeTrajectory: (formattedSessionKey: string) => handle.trajectoryRegistry.close(formattedSessionKey),
     ensureDeadLetterRecoveryObservation,
-    // The same outward ledger + rootRunId resolver gives announce() and DLQ
-    // drain one retained operation identity (off ⇒ pass-through).
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
     graphProducerExists: (graphId) => graphProducerState.exists(graphId),
   });
-
   // The worktree orphan-sweep. Boot recovery (discover prior-crash
   // worktrees from `git worktree list` → seed the registry → one conservative
   // sweep) THEN a periodic interval (.unref()'d, cancelled on shutdown). Modeled

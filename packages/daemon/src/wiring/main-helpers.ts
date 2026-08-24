@@ -72,6 +72,24 @@ import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 import { createMainProviderVision, type MainProviderVision } from "../api/main-provider-vision.js";
 import { restartChannelAdapter } from "./channel-adapter-restart.js";
 import type { SessionTracker } from "../notification/session-tracker.js";
+import { createDeadLetterRecoveryObserver } from "./dead-letter-recovery-observer.js";
+import { resolveEffectiveTrajectoryConfig } from "./trajectory-runtime-config.js";
+
+/** Build the retained-delivery observer from daemon boot-owned dependencies. */
+export function createBootDeadLetterRecoveryObserver(deps: {
+  boot: BootContext & Required<Pick<BootContext, "piSessionAdapters" | "trajectoryRegistry">>;
+  daemonLogger: LoggingResult["daemonLogger"];
+}) {
+  const { boot, daemonLogger } = deps;
+  return createDeadLetterRecoveryObserver({
+    dataDir: boot.dataDir,
+    eventBus: boot.container.eventBus,
+    logger: daemonLogger,
+    trajectoryConfig: resolveEffectiveTrajectoryConfig(boot.container.config),
+    sessionAdapters: boot.piSessionAdapters,
+    trajectoryRegistry: boot.trajectoryRegistry,
+  });
+}
 
 /**
  * Wire post-agent cleanup listeners and schedule orphaned provider-cache
