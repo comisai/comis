@@ -67,7 +67,7 @@ describe("dead-letter storage guard boundaries", () => {
     expect(validateDeadLetterSnapshotAdmission([], new Array(201) as never)).toMatchObject({ ok: false });
   });
 
-  it("compares distinct retirement producer kinds and identities", () => {
+  it("returns distinct retirement producer kinds and identities", () => {
     const session = {
       kind: "session" as const,
       tenantId: "default",
