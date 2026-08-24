@@ -150,6 +150,10 @@ describe("createSqliteManagedRunGroupStore grouped preparation", () => {
       managedRunId: "managed-run_group-member",
       externalRunRefDigest: "e".repeat(64),
     });
+    expect((await groupStore.prepareGroup(
+      prepareInput([groupMember]),
+      { maxActiveRuns: 0 },
+    )).ok).toBe(false);
 
     const outcomes = await Promise.all([
       runStore.create(single, { maxActiveRuns: 1 }),

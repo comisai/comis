@@ -315,6 +315,19 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", "external-run_b", "active"))
       .toEqual({ ok: true, value: undefined });
 
+    db.pragma("ignore_check_constraints = ON");
+    db.prepare("UPDATE managed_runs SET schema_version = 2 WHERE managed_run_id = ?")
+      .run(record.managedRunId);
+    expect((await store.getByExternalRunRef(
+      OWNER_SCOPE,
+      "service-instance_a",
+      externalRunRef,
+      "active",
+    )).ok).toBe(false);
+    db.prepare("UPDATE managed_runs SET schema_version = 1 WHERE managed_run_id = ?")
+      .run(record.managedRunId);
+    db.pragma("ignore_check_constraints = OFF");
+
     expect((await store.create({
       ...record,
       managedRunId: "managed-run_b",
@@ -417,6 +430,9 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);
     await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      rateAdmission: { sinceMs: 1_799_999_940_100, maxReports: 0 },
+    }))).ok).toBe(false);
     const firstInput = reportInput({
       rateAdmission: { sinceMs: 1_799_999_940_100, maxReports: 1 },
     });
@@ -440,6 +456,9 @@ describe("createSqliteManagedRunStore durable state machine", () => {
 
   it("admits one concurrent run when the service capacity is one", async () => {
     const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord({
+      managedRunId: "managed-run_invalid-capacity",
+    }), { maxActiveRuns: 0 })).ok).toBe(false);
     const outcomes = await Promise.all([
       store.create(makeRecord({ managedRunId: "managed-run_capacity-a" }), { maxActiveRuns: 1 }),
       store.create(makeRecord({
