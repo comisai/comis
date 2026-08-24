@@ -24,6 +24,7 @@ import {
 } from "../support/daemon-harness.js";
 import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.js";
 import { RPC_FAST_MS } from "../support/timeouts.js";
+import { EchoChannelAdapter } from "@comis/channels";
 
 // ---------------------------------------------------------------------------
 // Path resolution
@@ -35,6 +36,35 @@ const CONFIG_PATH = resolve(
   __dirname,
   "../config/config.test-typed-graph-approval.yaml",
 );
+
+function graphCallerAuthority(conversationId: string): Record<string, unknown> {
+  const endpoint = {
+    channelType: "echo",
+    channelInstanceId: "typed-graph-approval",
+    conversationId,
+    conversationKind: "direct",
+  };
+  return {
+    _agentId: "default",
+    _callerChannelType: endpoint.channelType,
+    _callerChannelId: endpoint.conversationId,
+    _callerSessionKey:
+      `test:agent:default:test-user:echo:typed-graph-approval:${conversationId}:peer:test-user`,
+    _callerTurnScope: {
+      conversation: {
+        tenantId: "test",
+        agentId: "default",
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint,
+          principalId: "test-user",
+        },
+      },
+      principal: { principalId: "test-user" },
+      endpoint,
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // RPC helpers
@@ -140,6 +170,13 @@ describe("Typed Graph Approval-Gate Integration", () => {
 
   beforeAll(async () => {
     handle = await startTestDaemon({ configPath: CONFIG_PATH });
+
+    const echo = new EchoChannelAdapter({
+      channelId: "typed-graph-approval",
+      channelType: "echo",
+    });
+    handle.daemon.adapterRegistry.set("echo", echo);
+    handle.daemon.deliveryAdapters.set("echo", echo);
   }, 120_000);
 
   afterAll(async () => {
@@ -187,9 +224,7 @@ describe("Typed Graph Approval-Gate Integration", () => {
           ],
           label: "Approval Gate Test",
           _capabilities: ["orch:graph"],
-          _callerChannelType: "echo",
-          _callerChannelId: "test-approval-ch",
-          _callerSessionKey: "test:test-user:test-approval-ch",
+          ...graphCallerAuthority("test-approval-ch"),
         })) as { graphId: string };
 
         const graphId = execResult.graphId;
@@ -288,9 +323,7 @@ describe("Typed Graph Approval-Gate Integration", () => {
         // direct rpcCall does not pass through the gateway injector, so the test
         // supplies it the way createAgentRpcCall would in production.
         _capabilities: ["orch:graph"],
-        _callerChannelType: "echo",
-        _callerChannelId: "test-timeout-ch",
-        _callerSessionKey: "test:test-user:test-timeout-ch",
+        ...graphCallerAuthority("test-timeout-ch"),
       })) as { graphId: string };
 
       const graphId = execResult.graphId;
