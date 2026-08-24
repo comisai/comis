@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { createServer as createNetServer, createConnection, type Server as NetServer, type Socket } from "node:net";
 import {
@@ -506,7 +507,8 @@ function responseChunk(model: string, delta: Record<string, unknown>, finishReas
 
 function initiativeFixtureArguments(allText: string): Record<string, unknown> {
   const baseRevision = allText.match(/BASE_REVISION=([0-9a-f]{40})/u)?.[1] ?? "";
-  const contractHash = "a".repeat(64);
+  const contractContent = '{"openapi":"3.1.0"}';
+  const contractHash = createHash("sha256").update(contractContent).digest("hex");
   const contract = (consumesContract: boolean): Record<string, unknown> => ({
     shape: "ship",
     acceptanceCriteria: ["Complete the assigned full-stack initiative lane."],
@@ -559,7 +561,13 @@ function initiativeFixtureArguments(allText: string): Record<string, unknown> {
       { fromTaskRef: "frontend-ref", toTaskRef: "integration-ref", kind: "integrates_after" },
       { fromTaskRef: "integration-ref", toTaskRef: "validation-ref", kind: "blocks_start" },
     ],
-    contractArtifacts: ["artifact-api-v1"],
+    contractArtifacts: [{
+      artifactHandle: "artifact-api-v1",
+      producerTaskRef: "contract-ref",
+      kind: "api_schema",
+      mediaType: "application/json",
+      content: contractContent,
+    }],
     integrationPolicyId: "integration-default",
     integrationOwnerTask: "integration-ref",
   };
