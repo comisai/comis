@@ -238,7 +238,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: comisai/comis-dev-crew
-          ref: 34c6e5fd092635a32cf0676a11888af2471b73ac
+          ref: 5f68a2e03c8ef6f07478c6d913c3856f5b494e83
           path: comis-dev-crew
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
