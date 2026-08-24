@@ -26,7 +26,7 @@ const OPAQUE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 const OpaqueIdSchema = z.string().min(1).max(256).regex(OPAQUE_ID_PATTERN);
 const TimestampMsSchema = z.number().int().nonnegative();
 
-/** Ratified initial ceiling for one prepared group (platform §22 item 8). */
+/** Maximum members admitted in one prepared group. */
 export const MANAGED_RUN_GROUP_MAX_MEMBERS = 16;
 
 /**

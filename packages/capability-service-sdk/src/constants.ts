@@ -51,7 +51,7 @@ export type CapabilityServiceErrorKind = (typeof CAPABILITY_SERVICE_ERROR_KINDS)
 
 export const CAPABILITY_SERVICE_LIMITS = Object.freeze({
   maxEvidenceBytes: 1_048_576,
-  // Ratified ceiling for one prepared group (platform §22 item 8).
+  // Maximum members admitted in one prepared group.
   maxGroupMembers: 16,
   maxInFlightRequests: 32,
   maxLineBytes: 1_441_792,

@@ -151,8 +151,8 @@ function openObsStoreIfPresent(dataDir: string): {
     }
     let managedRunReads: Pick<ManagedRunStorePort, "countByStatus" | "listByTraceIds"> | undefined;
     try {
-      // A db from before the managed-run tables existed throws at the eager
-      // statement-prepare — degrade to no linkage (the section is presence-conditional).
+      // A database without the managed-run tables throws during eager
+      // statement preparation; omit the presence-conditional linkage section.
       managedRunReads = createSqliteManagedRunStore(db);
     } catch {
       managedRunReads = undefined;

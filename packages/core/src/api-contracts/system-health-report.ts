@@ -293,12 +293,10 @@ export const SystemHealthReportSchema = z.object({
   /**
    * The cross-session CAPABILITY-SERVICE / managed-run health slice. Counts,
    * closed status-reason enums, and one opaque host-minted run id ONLY — never a
-   * body, path, objective, or service credential (the smuggled-key test proves
-   * the non-strict z.object strips any extra field). Optional (schemaVersion
-   * stays 1) — additive; the block is ABSENT when the managed-run store is
-   * unwired (the daemon-less offline CLI) OR the window held no managed-run
-   * activity at all (honest omit, so a daemon that never used a capability
-   * service does not carry an empty block).
+   * body, path, objective, or service credential; the non-strict z.object strips
+   * any extra field. The block is absent when the managed-run store is unwired
+   * (the daemon-less offline CLI) or the window held no managed-run activity, so
+   * a daemon that never used a capability service does not carry an empty block.
    *
    * Sourced from the durable managed-run index
    * (`ManagedRunStorePort.countByStatus`) — runs are content-free durable rows by

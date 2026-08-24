@@ -3,15 +3,9 @@
  * `@comis/core/api-contracts` aggregator (barrel-only public surface).
  * External consumers always import from `"@comis/core"`.
  *
- * One contract file per logical domain; this file aggregates the 19
- * domain registries into a single deterministic registry. Imports are
- * alphabetically sorted so future contract authors get deterministic
- * git diffs (alphabetical position of the domain).
- *
- * Domain order: agents → auth → capabilities → capability-services → channels →
- * config → context → daemon → managed-runs → mcp → mcp-oauth → media → memory →
- * observability → orchestrator → secrets → sessions → tokens → workspace.
- * Note: `mcp` < `mcp-oauth` < `media` alphabetically.
+ * One contract file per logical domain; this file aggregates the domain
+ * registries into a single deterministic registry. Imports are alphabetically
+ * sorted so future contract authors get deterministic git diffs.
  *
  * The bidirectional 1:1 test in
  * `test/architecture/api-contracts-bidirectional.test.ts` is the
@@ -23,7 +17,7 @@
 import type { ZodTypeAny } from "zod";
 import type { ApiContract } from "./types.js";
 
-// 19 domain imports — alphabetical order for deterministic git diffs.
+// Domain imports are alphabetical for deterministic git diffs.
 import { AGENTS_CONTRACTS } from "./agents.js";
 import { AUTH_CONTRACTS } from "./auth.js";
 import { CAPABILITIES_CONTRACTS } from "./capabilities.js";

@@ -259,10 +259,9 @@ export const IncidentReportSchema = z.object({
    *  run and service ids plus the closed status/reason enums and summary counts,
    *  never a report body, workspace path, objective, or service credential.
    *  `degraded` counts the `failed` + `unknown` runs (a `cancelled` run is an
-   *  intended outcome). Optional + additive (present only when the session
-   *  prepared at least one managed run; schemaVersion stays 1 — the `spawnTree`
-   *  presence-conditional precedent, and the non-strict `.parse()` strips any
-   *  undeclared key). Drill into a run with `comis managed-runs explain <id>`. */
+   *  intended outcome). Present only when the session prepared at least one
+   *  managed run; the non-strict `.parse()` strips undeclared keys. Drill into
+   *  a run with `comis managed-runs explain <id>`. */
   managedRuns: z.object({
     total: z.number(),
     degraded: z.number(),
