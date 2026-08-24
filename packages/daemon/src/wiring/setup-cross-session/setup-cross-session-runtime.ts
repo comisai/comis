@@ -17,7 +17,7 @@ import type {
   DeliveryService, DurableRunPort,
   FileLockPort, NormalizedMessage, OutwardSendLedgerPort,
   SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef,
-  MemoryWriteEntry, MemoryWriteScope, CitationEvidence, 
+  MemoryWriteEntry, MemoryWriteScope, CitationEvidence,
 } from "@comis/core";
 import {
   createResolvedRequestContext,
