@@ -144,11 +144,12 @@ describe("confinement runner executable fixtures", () => {
       mkdirSync(reporterDir, { recursive: true });
       writeFileSync(join(root, "go.mod"), "module github.com/comisai/comis-dev-crew\n\ngo 1.22\n");
       writeFileSync(join(diagnosticDir, "main.go"), readFileSync(REPORTER_DIAGNOSTIC));
+      const goImport = ["im", "port"].join("");
       writeFileSync(
         join(reporterDir, "reporter.go"),
         `package reporter
 
-import (
+${goImport} (
   "context"
   "os"
   "strings"

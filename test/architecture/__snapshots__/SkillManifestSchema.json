@@ -129,11 +129,21 @@
               "items": {
                 "type": "string"
               }
+            },
+            "capabilityServices": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
             }
           },
           "required": [
             "bins",
-            "env"
+            "env",
+            "capabilityServices"
           ],
           "additionalProperties": false
         },

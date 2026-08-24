@@ -223,7 +223,6 @@ export type {
   ManagedRunServiceScope,
   ManagedRunLookupScope,
   ManagedRunContentScope,
-  ManagedRunCapacityAdmission,
   ManagedRunCreateOutcome,
   ManagedRunTransitionClaimInput,
   ManagedRunTransitionClaimOutcome,

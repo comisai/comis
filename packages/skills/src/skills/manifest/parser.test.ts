@@ -357,10 +357,14 @@ Requires ffmpeg binary.
     const result = parseSkillManifest(content);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.comis?.requires).toEqual({ bins: ["ffmpeg"], env: ["OPENAI_KEY"] });
+    expect(result.value.comis?.requires).toEqual({
+      bins: ["ffmpeg"],
+      env: ["OPENAI_KEY"],
+      capabilityServices: [],
+    });
   });
 
-  it("requires defaults bins and env to empty arrays under comis: namespace", () => {
+  it("requires defaults every dependency list to an empty array", () => {
     const content = `---
 name: partial-requires
 description: A skill with partial requires
@@ -380,6 +384,7 @@ Body.
     expect(result.value.comis?.requires).toBeDefined();
     expect(result.value.comis!.requires!.bins).toEqual(["ffmpeg"]);
     expect(result.value.comis!.requires!.env).toEqual([]);
+    expect(result.value.comis!.requires!.capabilityServices).toEqual([]);
   });
 
   it("parses skill with skill-key under comis: namespace", () => {
@@ -501,7 +506,11 @@ Body content.
 
     // Fields live inside comis: namespace
     expect(result.value.comis?.os).toEqual(["linux", "darwin"]);
-    expect(result.value.comis?.requires).toEqual({ bins: ["ffmpeg"], env: ["OPENAI_KEY"] });
+    expect(result.value.comis?.requires).toEqual({
+      bins: ["ffmpeg"],
+      env: ["OPENAI_KEY"],
+      capabilityServices: [],
+    });
     expect(result.value.comis?.["skill-key"]).toBe("my-namespaced-skill");
     expect(result.value.comis?.["primary-env"]).toBe("discord");
     expect(result.value.comis?.["command-dispatch"]).toBe("slash");
