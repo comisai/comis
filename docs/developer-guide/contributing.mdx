@@ -55,7 +55,8 @@ Runs ESLint with `eslint-plugin-security` rules that enforce path safety, secret
 </Steps>
 
 <Tip>
-Run `pnpm validate` before every push. This expands to the full gate chain: `pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage`.
+Run `pnpm validate` before every push. The root `package.json` owns the exact
+gate chain, including the capability-protocol drift check.
 </Tip>
 
 ## Coding Standards
@@ -147,17 +148,17 @@ Every fix and every feature in `packages/*/src/**` starts with a failing test th
 
 ## Validation Gates
 
-Run `pnpm validate` before every push. This is the full gate chain:
+Run `pnpm validate` before every push. The executable gate order lives in the
+root `package.json`:
 
 ```bash
 pnpm validate
-# Expands to:
-pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage
 ```
 
 | Step | Command | What It Checks |
 |------|---------|----------------|
 | Docs compile | `pnpm docs:check` | Compiles every `docs/**/*.mdx` through the MDX compiler — catches syntax errors the Mintlify deploy would reject |
+| Capability protocol | `pnpm capability-protocol:check` | Regenerates the language-neutral protocol bundle in check mode and rejects drift |
 | Clean build | `pnpm build:clean` | `pnpm clean && pnpm build` — clean-room TypeScript build using project references (not incremental) |
 | Circular deps (dist) | `pnpm cycles` | `madge` dist-mode check — finds circular dependencies between compiled packages |
 | Circular deps (refs) | `pnpm cycles:refs` | `tsc -b --dry packages/comis` — catches project-reference cycles (TS6202) |

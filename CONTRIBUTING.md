@@ -141,8 +141,9 @@ Before opening a PR, run the full validation suite:
 pnpm validate
 ```
 
-This runs: `docs:check && build:clean && cycles && cycles:refs && lint:security && test:coverage`.
-All gates must pass before a code change is submitted.
+The root `package.json` owns the ordered gate chain. It covers documentation,
+capability-protocol drift, a clean build, both cycle checks, security lint, and
+coverage. All gates must pass before a code change is submitted.
 
 **Allowlists are shrink-only.** If a PR adds a new entry to any architecture allowlist
 (`test/support/architecture-allowlist.ts`, lint suppression comments, etc.), it will

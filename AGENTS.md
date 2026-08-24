@@ -255,7 +255,7 @@ When uncertain, classify higher.
 3. **Define scope** — one concern per change; no mixed feature+refactor+infra patches.
 4. **Test-first (TDD)** — write the failing test before the production patch (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. RED must be reproducible on the pre-patch code; the patch is the GREEN step.
 5. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
-6. **Validate** — `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`) must all pass.
+6. **Validate** — `pnpm validate` must pass. The root `package.json` owns the exact gate chain.
 7. **Document impact** — update comments/docs for behavior changes, risk, side effects.
 8. **Commit the slice** — commit this RED → GREEN pair on the working branch before starting the next concern (§2.13). Steps 4–8 repeat per concern; the task is not done until `git status --short` is empty.
 
@@ -315,12 +315,12 @@ Register metadata via `registerToolMetadata(name, meta)` in `packages/skills/src
 The full gate — required before declaring a task complete, and before any push or PR:
 ```bash
 pnpm validate
-# = pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage
 ```
 
 Each step is deliberate — do not substitute a cheaper one and call it validated:
 
 - **`docs:check`** runs first because it is cheap and needs no build. It compiles every `docs/**/*.mdx`; the docs are otherwise outside every gate (§2.14).
+- **`capability-protocol:check`** verifies the committed language-neutral protocol bundle against its schema source before the build.
 - **`build:clean`** (not incremental `build`) — a stale `dist/` hides workspace-dependency cycles.
 - **`cycles`** (madge, dist `.d.ts`) and **`cycles:refs`** (`tsc -b --dry`, project-reference/TS6202) are **two different checks**; running only the first misses reference cycles.
 - **`test:coverage`** (not bare `test`) — the per-package coverage floors only run under coverage. Skipping incremental-vs-clean build and coverage is exactly what let a build-cycle + coverage cascade reach `main`.

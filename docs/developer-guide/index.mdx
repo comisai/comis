@@ -93,7 +93,8 @@ pnpm test             # Run all unit tests
 pnpm lint:security    # ESLint with security rules
 ```
 
-The primary validation command before any commit is `pnpm validate` (expands to `pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage`).
+The primary validation command before any commit is `pnpm validate`; the root
+`package.json` owns its exact gate chain.
 
 ## Getting Started
 
