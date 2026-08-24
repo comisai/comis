@@ -411,6 +411,9 @@ export function createSqliteOutwardSendLedger(
           ) {
             throw new Error("outward operation is still in flight");
           }
+          if (ledgerState.value?.state === "committed" && outcome !== "delivered") {
+            throw new Error("outward terminal decision conflicts with committed delivery receipt");
+          }
           if (outcome === "no_reply") {
             insertNoReplyDecisionStmt.run(rootRunId, operationDigest, nowMs());
           } else {
