@@ -391,7 +391,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     markNodeFailed: (gs: GraphRunState, nodeId: string, error: string) => {
       runDurableTransition(gs, (afterPersistence) => {
         markNodeFailedFn(state, deps, gs, nodeId, error, {
-          spawnReadyNodes: (gs2) => afterPersistence(() => callbacks.spawnReadyNodes(gs2)),
+          spawnReadyNodes: (gs2) => persistThen(gs2, () => callbacks.spawnReadyNodes(gs2)),
           handleGraphCompletion: (gs2) => completeAfterPersistence(gs2, afterPersistence),
         });
       });
