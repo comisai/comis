@@ -1,151 +1,69 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Atomic JSONL storage for the announcement dead-letter queue. */
 
-import { chmod, open, readFile, rename, unlink } from "node:fs/promises";
-import { randomBytes, randomUUID } from "node:crypto";
+import { chmod, open, rename, unlink } from "node:fs/promises";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { dirname } from "node:path";
-import { toSafeErrorLogString } from "@comis/core";
+import {
+  toSafeErrorLogString,
+} from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import {
+  createInvalidDeadLetterRecord,
+  createOversizedDeadLetterRecord,
+  isInvalidDeadLetterRecord,
+  MAX_DEAD_LETTER_ROW_BYTES,
+} from "./announcement-dead-letter-invalid.js";
 
-interface StorageLogger {
-  warn(obj: Record<string, unknown>, message: string): void;
-  error?(obj: Record<string, unknown>, message: string): void;
-}
-
-export class MalformedDeadLetterFileError extends Error {
-  override readonly name = "MalformedDeadLetterFileError";
-}
-
-export type ChannelType =
-  | "discord"
-  | "telegram"
-  | "slack"
-  | "whatsapp"
-  | "imessage"
-  | "signal"
-  | "irc"
-  | "line"
-  | "email"
-  | "msteams"
-  | "echo";
-
-export function isAnnouncementChannelType(value: string): value is ChannelType {
-  switch (value) {
-    case "discord":
-    case "telegram":
-    case "slack":
-    case "whatsapp":
-    case "imessage":
-    case "signal":
-    case "irc":
-    case "line":
-    case "email":
-    case "msteams":
-    case "echo":
-      return true;
-    default:
-      return false;
-  }
-}
-
-export interface DeadLetterEntry {
-  id: string;
-  announcementText: string;
-  channelType: ChannelType;
-  channelId: string;
-  agentId?: string;
-  runId: string;
-  sessionKey: string;
-  failedAt: number;
-  attemptCount: number;
-  lastAttemptAt: number;
-  lastError?: string;
-  threadId?: string;
-  extra?: Record<string, unknown>;
-  idempotencyKey?: string;
-  rootRunId?: string;
-  stepIndex?: number;
-}
-
-export interface ParentDecisionReservation {
-  idempotencyKey: string;
-  agentId: string;
-  runId: string;
-  announcementText: string;
-  channelType: ChannelType;
-  channelId: string;
-  failedAt: number;
-  threadId?: string;
-  /** Outward-ledger tree root for this announcement. Present, it makes a parked
-   *  reservation ADJUDICABLE: `allocateStep(rootRunId, idempotencyKey)` is
-   *  idempotent by that pair, so the drain can recover the exact step the send
-   *  would have used and ask the ledger whether it ever happened. Absent (a
-   *  record written before this field existed) the reservation stays parked. */
-  rootRunId?: string;
-}
-
-export interface ParentDecisionReservationRecord extends ParentDecisionReservation {
-  recordType: "parent_decision_reservation";
-  id: string;
-}
-
-export type StoredDeadLetterEntry = DeadLetterEntry | ParentDecisionReservationRecord;
-
-interface ParentDecisionReservationStoreDeps {
-  load(): Promise<Result<void, Error>>;
-  hasDeliveryKey(idempotencyKey: string): boolean;
-  getReservations(): readonly ParentDecisionReservationRecord[];
-  persist(
-    reservations: readonly ParentDecisionReservationRecord[],
-  ): Promise<Result<void, Error>>;
-  replaceReservations(reservations: readonly ParentDecisionReservationRecord[]): void;
-  logger?: StorageLogger;
-}
-
-function publicDecision(
-  record: ParentDecisionReservationRecord,
-): ParentDecisionReservation {
-  return {
-    idempotencyKey: record.idempotencyKey,
-    agentId: record.agentId,
-    runId: record.runId,
-    announcementText: record.announcementText,
-    channelType: record.channelType,
-    channelId: record.channelId,
-    failedAt: record.failedAt,
-    ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
-  };
-}
-
-function sameDecision(
-  left: ParentDecisionReservationRecord,
-  right: ParentDecisionReservation,
-): boolean {
-  return left.idempotencyKey === right.idempotencyKey
-    && left.agentId === right.agentId
-    && left.runId === right.runId
-    && left.announcementText === right.announcementText
-    && left.channelType === right.channelType
-    && left.channelId === right.channelId
-    && left.threadId === right.threadId;
-}
-
-function validDecision(entry: ParentDecisionReservation): boolean {
-  return typeof entry.idempotencyKey === "string"
-    && entry.idempotencyKey.length > 0
-    && typeof entry.agentId === "string"
-    && entry.agentId.length > 0
-    && typeof entry.runId === "string"
-    && entry.runId.length > 0
-    && typeof entry.announcementText === "string"
-    && typeof entry.channelType === "string"
-    && isAnnouncementChannelType(entry.channelType)
-    && typeof entry.channelId === "string"
-    && entry.channelId.length > 0
-    && typeof entry.failedAt === "number"
-    && Number.isFinite(entry.failedAt)
-    && (entry.threadId === undefined || typeof entry.threadId === "string");
-}
+export {
+  isAnnouncementChannelType,
+  announcementProducerHandoffDigest,
+  isDeadLetterAttachmentSnapshot,
+  isAnnouncementTextChunks,
+  isAnnouncementProducerRecoveryOutcome,
+  isDeadLetterSnapshotCapacityError,
+  reservedDeadLetterSnapshotBytes,
+  validateDeadLetterSnapshotAdmission,
+  isValidAnnouncementDecision,
+  sameAnnouncementProducerReservation,
+  isAnnouncementRetirementProducer,
+  isAnnouncementProducerHandoffRecord,
+} from "./announcement-dead-letter-guards.js";
+export type {
+  DeadLetterReadLimits,
+  ChannelType,
+  DeadLetterEntry,
+  ParentDecisionReservation,
+  ParentDecisionReservationRecord,
+  ProducerReservationRecord,
+  AnnouncementProducerHandoffRecord,
+  StoredDeadLetterEntry,
+  DeadLetterReadSnapshot,
+} from "./announcement-dead-letter-guards.js";
+import {
+  DEAD_LETTER_READ_BUFFER_BYTES,
+  INVALID_ROW_EVIDENCE_BYTES,
+  MAX_DEAD_LETTER_SNAPSHOT_BYTES,
+  MAX_DEAD_LETTER_SNAPSHOT_ROWS,
+  isAnnouncementProducerReservationRecord,
+  isDeadLetterEntry,
+  isParentDecisionReservationRecord,
+  isAnnouncementProducerHandoffRecord,
+  isValidAnnouncementDecision,
+  publicDecision,
+  sameDecision,
+} from "./announcement-dead-letter-guards.js";
+import type {
+  AnnouncementProducerHandoffRecord,
+  DeadLetterReadLimits,
+  DeadLetterReadSnapshot,
+  ParentDecisionReservation,
+  ParentDecisionReservationRecord,
+  ParentDecisionReservationStoreDeps,
+  ProducerReservationRecord,
+  StorageLogger,
+  StoredDeadLetterEntry,
+} from "./announcement-dead-letter-guards.js";
 
 export function createParentDecisionReservationStore(
   deps: ParentDecisionReservationStoreDeps,
@@ -160,16 +78,21 @@ export function createParentDecisionReservationStore(
     idempotencyKey: string,
     outcome: "receipt_committed" | "no_reply",
   ): Promise<Result<boolean, Error>>;
+  replace(
+    expectedKeys: readonly string[],
+    operations: readonly ParentDecisionReservation[],
+    settledCompletionKeys?: readonly string[],
+    consumedProducerKeys?: readonly string[],
+  ): Promise<Result<{ created: boolean }, Error>>;
 } {
   async function reserve(
     entry: ParentDecisionReservation,
   ): Promise<Result<{ created: boolean }, Error>> {
     const load = await deps.load();
     if (!load.ok) return load;
-    if (!validDecision(entry)) {
+    if (!isValidAnnouncementDecision(entry)) {
       return err(new Error("Parent decision reservation is invalid"));
     }
-    if (deps.hasDeliveryKey(entry.idempotencyKey)) return ok({ created: false });
     const existing = deps.getReservations().find(
       (candidate) => candidate.idempotencyKey === entry.idempotencyKey,
     );
@@ -184,12 +107,19 @@ export function createParentDecisionReservationStore(
       );
       return err(new Error("Parent decision reservation identity mismatch"));
     }
+    if (deps.hasDeliveryKey(entry.idempotencyKey)) return ok({ created: false });
+    if (deps.getReservations().some(
+      (candidate) => candidate.completionKeys.includes(entry.idempotencyKey),
+    )) return ok({ created: false });
     const id = tryCatch(() => randomUUID());
     if (!id.ok) return id;
     const next = [
       ...deps.getReservations(),
       { ...entry, recordType: "parent_decision_reservation" as const, id: id.value },
     ];
+    if (!deps.canPersistReservationCount(next.length)) {
+      return err(new Error("Dead-letter quarantine capacity exhausted"));
+    }
     const persisted = await deps.persist(next);
     if (!persisted.ok) {
       deps.logger?.error?.(
@@ -252,7 +182,109 @@ export function createParentDecisionReservationStore(
     return ok(true);
   }
 
-  return { reserve, lookup, resolve };
+  async function replace(
+    expectedKeys: readonly string[],
+    operations: readonly ParentDecisionReservation[],
+    settledCompletionKeys: readonly string[] = [],
+    consumedProducerKeys: readonly string[] = [],
+  ): Promise<Result<{ created: boolean }, Error>> {
+    const load = await deps.load();
+    if (!load.ok) return load;
+    if (
+      new Set(expectedKeys).size !== expectedKeys.length
+      || expectedKeys.some((key) => typeof key !== "string" || key.length === 0)
+      || new Set(settledCompletionKeys).size !== settledCompletionKeys.length
+      || settledCompletionKeys.some((key) => typeof key !== "string" || key.length === 0)
+      || operations.length + settledCompletionKeys.length === 0
+      || operations.some((operation) => !isValidAnnouncementDecision(operation))
+      || new Set(operations.map((operation) => operation.idempotencyKey)).size
+        !== operations.length
+    ) {
+      return err(new Error("Announcement operation reservation transition is invalid"));
+    }
+
+    const current = deps.getReservations();
+    const expected = new Set(expectedKeys);
+    const completionKeys = new Set([
+      ...operations.flatMap((operation) => operation.completionKeys),
+      ...settledCompletionKeys,
+    ]);
+    const operationKeys = new Set(operations.map((operation) => operation.idempotencyKey));
+    const replacementReservationKeys = new Set(
+      [...expected].filter((key) => operationKeys.has(key)),
+    );
+    const ownerCompletionKeys = new Set(
+      [...completionKeys].filter((key) => !operationKeys.has(key)),
+    );
+    const expectedReservations = current.filter((reservation) =>
+      expected.has(reservation.idempotencyKey));
+    const replacementTransitioned = operations.every((operation) =>
+      current.some((reservation) =>
+        reservation.idempotencyKey === operation.idempotencyKey
+        && sameDecision(reservation, operation))
+      || deps.hasDeliveryKey(operation.idempotencyKey));
+    const retained = current.filter((reservation) => !expected.has(reservation.idempotencyKey));
+    const transitionedRetained = current.filter((reservation) =>
+      !expected.has(reservation.idempotencyKey)
+      || operations.some((operation) =>
+        operation.idempotencyKey === reservation.idempotencyKey
+        && sameDecision(reservation, operation)));
+    const persistReplacement = (reservations: readonly ParentDecisionReservationRecord[]) =>
+      consumedProducerKeys.length > 0
+        ? deps.persist(reservations, consumedProducerKeys)
+        : deps.persist(reservations);
+    const finishTransitionedReplacement = async (): Promise<Result<{ created: boolean }, Error>> => {
+      if (transitionedRetained.length !== current.length || consumedProducerKeys.length > 0) {
+        const persisted = await persistReplacement(transitionedRetained);
+        if (!persisted.ok) return persisted;
+        deps.replaceReservations(transitionedRetained);
+      }
+      return ok({ created: false });
+    };
+    if (expectedReservations.length !== expectedKeys.length) {
+      if (replacementTransitioned) {
+        return finishTransitionedReplacement();
+      }
+      return err(new Error("Announcement decision reservation transition lost its expected owner"));
+    }
+    if (expectedKeys.length > 0) {
+      const expectedCompletionKeys = new Set(
+        expectedReservations
+          .flatMap((reservation) => reservation.completionKeys)
+          .filter((key) => !replacementReservationKeys.has(key)),
+      );
+      if (
+        ownerCompletionKeys.size !== expectedCompletionKeys.size
+        || [...expectedCompletionKeys].some((key) => !ownerCompletionKeys.has(key))
+      ) {
+        return err(new Error("Announcement operation reservations do not preserve their owners"));
+      }
+    }
+
+    if (replacementTransitioned) {
+      return finishTransitionedReplacement();
+    }
+    if (!deps.canPersistReservationCount(retained.length + operations.length)) {
+      return err(new Error("Dead-letter quarantine capacity exhausted"));
+    }
+    const records: ParentDecisionReservationRecord[] = [];
+    for (const operation of operations) {
+      const id = tryCatch(() => randomUUID());
+      if (!id.ok) return id;
+      records.push({
+        ...operation,
+        recordType: "parent_decision_reservation",
+        id: id.value,
+      });
+    }
+    const next = [...retained, ...records];
+    const persisted = await persistReplacement(next);
+    if (!persisted.ok) return persisted;
+    deps.replaceReservations(next);
+    return ok({ created: operations.length > 0 });
+  }
+
+  return { reserve, lookup, resolve, replace };
 }
 
 interface DeadLetterFileHandle {
@@ -281,67 +313,6 @@ const systemWriteOperations: DeadLetterWriteOperations = {
   chmod,
 };
 
-function isOptionalString(value: unknown): boolean {
-  return value === undefined || typeof value === "string";
-}
-
-function isParentDecisionReservationRecord(
-  value: unknown,
-): value is ParentDecisionReservationRecord {
-  if (typeof value !== "object" || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return record.recordType === "parent_decision_reservation"
-    && typeof record.id === "string"
-    && typeof record.idempotencyKey === "string"
-    && record.idempotencyKey.length > 0
-    && typeof record.agentId === "string"
-    && record.agentId.length > 0
-    && typeof record.runId === "string"
-    && typeof record.announcementText === "string"
-    && typeof record.channelType === "string"
-    && isAnnouncementChannelType(record.channelType)
-    && typeof record.channelId === "string"
-    && typeof record.failedAt === "number"
-    && Number.isFinite(record.failedAt)
-    && isOptionalString(record.threadId)
-    && isOptionalString(record.rootRunId);
-}
-
-function isDeadLetterEntry(
-  value: unknown,
-): value is DeadLetterEntry {
-  if (typeof value !== "object" || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return record.recordType === undefined
-    && typeof record.id === "string"
-    && typeof record.announcementText === "string"
-    && typeof record.channelType === "string"
-    && isAnnouncementChannelType(record.channelType)
-    && typeof record.channelId === "string"
-    && typeof record.runId === "string"
-    && typeof record.sessionKey === "string"
-    && record.sessionKey.length > 0
-    && typeof record.failedAt === "number"
-    && Number.isFinite(record.failedAt)
-    && typeof record.attemptCount === "number"
-    && Number.isSafeInteger(record.attemptCount)
-    && record.attemptCount >= 0
-    && typeof record.lastAttemptAt === "number"
-    && Number.isFinite(record.lastAttemptAt)
-    && isOptionalString(record.agentId)
-    && isOptionalString(record.lastError)
-    && isOptionalString(record.threadId)
-    && isOptionalString(record.idempotencyKey)
-    && isOptionalString(record.rootRunId)
-    && (
-      record.stepIndex === undefined
-      || (typeof record.stepIndex === "number" && Number.isSafeInteger(record.stepIndex) && record.stepIndex >= 0)
-    )
-    && (
-      record.extra === undefined
-      || (typeof record.extra === "object" && record.extra !== null && !Array.isArray(record.extra))
-    );
-}
 
 export function isParentDecisionReservation(
   value: StoredDeadLetterEntry,
@@ -350,34 +321,43 @@ export function isParentDecisionReservation(
     && value.recordType === "parent_decision_reservation";
 }
 
-function parseEntries(
-  content: string,
-  logger?: StorageLogger,
-): Result<StoredDeadLetterEntry[], Error> {
-  const entries: StoredDeadLetterEntry[] = [];
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "") continue;
-    const parsed = tryCatch(() => JSON.parse(trimmed) as unknown);
-    const value = parsed.ok ? parsed.value : undefined;
-    if (parsed.ok && isDeadLetterEntry(value)) {
-      entries.push(value);
-      continue;
-    }
-    if (parsed.ok && isParentDecisionReservationRecord(value)) {
-      entries.push(value);
-      continue;
-    }
+export function isAnnouncementProducerHandoff(
+  value: StoredDeadLetterEntry,
+): value is AnnouncementProducerHandoffRecord {
+  return "recordType" in value && value.recordType === "producer_handoff";
+}
+
+export function isAnnouncementProducerReservation(
+  value: StoredDeadLetterEntry,
+): value is ProducerReservationRecord {
+  return "recordType" in value && value.recordType === "producer_reservation";
+}
+
+function parseEntryLine(
+  trimmed: string,
+  sourceLine: number,
+): Result<StoredDeadLetterEntry, Error> {
+  const parsed = tryCatch(() => JSON.parse(trimmed) as unknown);
+  const value = parsed.ok ? parsed.value : undefined;
+  if (parsed.ok && isDeadLetterEntry(value)) return ok(value);
+  if (parsed.ok && isParentDecisionReservationRecord(value)) return ok(value);
+  if (parsed.ok && isAnnouncementProducerReservationRecord(value)) return ok(value);
+  if (parsed.ok && isAnnouncementProducerHandoffRecord(value)) return ok(value);
+  if (parsed.ok && isInvalidDeadLetterRecord(value)) return ok(value);
+  return createInvalidDeadLetterRecord(trimmed, sourceLine, parsed.ok);
+}
+
+function reportInvalidRows(invalidRowCount: number, logger?: StorageLogger): void {
+  if (invalidRowCount > 0) {
     logger?.warn(
       {
+        invalidRowCount,
         errorKind: "precondition" as const,
-        hint: "repair or quarantine the malformed dead-letter file before accepting or draining announcements",
+        hint: "review and explicitly release invalid dead-letter records; valid announcements remain available",
       },
-      "Malformed dead-letter file blocked",
+      "Invalid dead-letter rows quarantined",
     );
-    return err(new MalformedDeadLetterFileError("Malformed dead-letter JSONL row"));
   }
-  return ok(entries);
 }
 
 function writeFailure(
@@ -455,19 +435,174 @@ export async function readDeadLetterEntries(
   filePath: string,
   logger?: StorageLogger,
 ): Promise<Result<StoredDeadLetterEntry[], Error>> {
-  const read = await fromPromise(readFile(filePath, "utf-8"));
-  if (read.ok) return parseEntries(read.value, logger);
-  if ("code" in read.error && (read.error as NodeJS.ErrnoException).code === "ENOENT") {
-    return ok([]);
+  const snapshot = await readDeadLetterSnapshot(filePath, logger);
+  return snapshot.ok ? ok(snapshot.value.entries) : snapshot;
+}
+
+export async function readDeadLetterSnapshot(
+  filePath: string,
+  logger?: StorageLogger,
+  limits: DeadLetterReadLimits = {},
+): Promise<Result<DeadLetterReadSnapshot, Error>> {
+  const maxRows = limits.maxRows ?? MAX_DEAD_LETTER_SNAPSHOT_ROWS;
+  const maxBytes = limits.maxBytes ?? MAX_DEAD_LETTER_SNAPSHOT_BYTES;
+  if (!Number.isSafeInteger(maxRows) || maxRows <= 0
+    || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    return err(new Error("Dead-letter snapshot read limits are invalid"));
   }
-  return err(read.error);
+  const opened = await fromPromise(open(filePath, "r"));
+  if (!opened.ok && "code" in opened.error
+    && (opened.error as NodeJS.ErrnoException).code === "ENOENT") {
+    return ok({ entries: [], invalidRowCount: 0 });
+  }
+  if (!opened.ok) return opened;
+  const handle = opened.value;
+  const initialStat = await fromPromise(handle.stat({ bigint: true }));
+  if (!initialStat.ok) {
+    await fromPromise(handle.close());
+    return initialStat;
+  }
+  if (initialStat.value.size > BigInt(maxBytes)) {
+    await fromPromise(handle.close());
+    return err(new Error("Dead-letter snapshot exceeds the byte limit"));
+  }
+
+  const entries: StoredDeadLetterEntry[] = [];
+  const readBuffer = Buffer.alloc(DEAD_LETTER_READ_BUFFER_BYTES);
+  const evidence = Buffer.alloc(INVALID_ROW_EVIDENCE_BYTES);
+  let evidenceLength = 0;
+  let invalidRowCount = 0;
+  let lineNumber = 1;
+  let physicalRowCount = 0;
+  let position = 0;
+  let rowBytes = 0;
+  let rowParts: Buffer[] = [];
+  let rowHash = createHash("sha256");
+
+  const append = (segment: Buffer): void => {
+    if (segment.length === 0) return;
+    rowHash.update(segment);
+    rowBytes += segment.length;
+    if (evidenceLength < evidence.length) {
+      const copied = segment.copy(evidence, evidenceLength, 0,
+        Math.min(segment.length, evidence.length - evidenceLength));
+      evidenceLength += copied;
+    }
+    if (rowBytes <= MAX_DEAD_LETTER_ROW_BYTES) {
+      rowParts.push(Buffer.from(segment));
+    } else {
+      rowParts = [];
+    }
+  };
+  const resetRow = (): void => {
+    evidenceLength = 0;
+    rowBytes = 0;
+    rowParts = [];
+    rowHash = createHash("sha256");
+  };
+  const finishRow = (): Result<void, Error> => {
+    physicalRowCount++;
+    if (physicalRowCount > maxRows) {
+      return err(new Error("Dead-letter snapshot exceeds the row limit"));
+    }
+    if (rowBytes === 0) {
+      resetRow();
+      return ok(undefined);
+    }
+    if (rowBytes > MAX_DEAD_LETTER_ROW_BYTES) {
+      const invalid = createOversizedDeadLetterRecord(
+        rowHash.digest("hex"),
+        rowBytes,
+        evidence.subarray(0, evidenceLength).toString("utf8"),
+        lineNumber,
+      );
+      if (!invalid.ok) return invalid;
+      entries.push(invalid.value);
+      invalidRowCount++;
+      resetRow();
+      return ok(undefined);
+    }
+    const trimmed = Buffer.concat(rowParts, rowBytes).toString("utf8").trim();
+    resetRow();
+    if (trimmed === "") return ok(undefined);
+    const parsed = parseEntryLine(trimmed, lineNumber);
+    if (!parsed.ok) return parsed;
+    entries.push(parsed.value);
+    if (isInvalidDeadLetterRecord(parsed.value)) invalidRowCount++;
+    return ok(undefined);
+  };
+
+  let failure: Error | undefined;
+  while (failure === undefined) {
+    const read = await fromPromise(handle.read(readBuffer, 0, readBuffer.length, position));
+    if (!read.ok) {
+      failure = read.error;
+      break;
+    }
+    if (read.value.bytesRead === 0) break;
+    position += read.value.bytesRead;
+    if (position > maxBytes) {
+      failure = new Error("Dead-letter snapshot exceeds the byte limit");
+      break;
+    }
+    let segmentStart = 0;
+    for (let index = 0; index < read.value.bytesRead; index++) {
+      if (readBuffer[index] !== 0x0a) continue;
+      append(readBuffer.subarray(segmentStart, index));
+      const finished = finishRow();
+      if (!finished.ok) {
+        failure = finished.error;
+        break;
+      }
+      lineNumber++;
+      segmentStart = index + 1;
+    }
+    if (failure === undefined) append(readBuffer.subarray(segmentStart, read.value.bytesRead));
+  }
+  if (failure === undefined && rowBytes > 0) {
+    const finished = finishRow();
+    if (!finished.ok) failure = finished.error;
+  }
+  const finalStat = await fromPromise(handle.stat({ bigint: true }));
+  const closed = await fromPromise(handle.close());
+  if (failure !== undefined) return err(failure);
+  if (!finalStat.ok) return finalStat;
+  if (!closed.ok) return closed;
+  if (
+    finalStat.value.dev !== initialStat.value.dev
+    || finalStat.value.ino !== initialStat.value.ino
+    || finalStat.value.size !== initialStat.value.size
+    || finalStat.value.mtimeNs !== initialStat.value.mtimeNs
+    || finalStat.value.ctimeNs !== initialStat.value.ctimeNs
+  ) {
+    return err(new Error("Dead-letter snapshot changed while reading"));
+  }
+  reportInvalidRows(invalidRowCount, logger);
+  return ok({ entries, invalidRowCount });
 }
 
 export async function writeDeadLetterEntries(
   filePath: string,
-  entries: readonly unknown[],
+  entries: readonly StoredDeadLetterEntry[],
   operations: DeadLetterWriteOperations = systemWriteOperations,
 ): Promise<Result<void, DeadLetterWriteFailure>> {
+  if (entries.length > MAX_DEAD_LETTER_SNAPSHOT_ROWS) {
+    return writeFailure(
+      new Error("Dead-letter snapshot exceeds the row limit"),
+      "snapshot_unchanged",
+    );
+  }
+  if (entries.some((entry) =>
+    !isDeadLetterEntry(entry)
+    && !isParentDecisionReservationRecord(entry)
+    && !isAnnouncementProducerReservationRecord(entry)
+    && !isAnnouncementProducerHandoffRecord(entry)
+    && !isInvalidDeadLetterRecord(entry))) {
+    return writeFailure(
+      new Error("Dead-letter snapshot contains an invalid record"),
+      "snapshot_unchanged",
+    );
+  }
   if (entries.length === 0) {
     const removed = await fromPromise(operations.unlink(filePath));
     if (removed.ok) {
@@ -481,9 +616,28 @@ export async function writeDeadLetterEntries(
     }
     return writeFailure(removed.error, "snapshot_unchanged");
   }
-  const serialized = tryCatch(
-    () => `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+  const serializedRows = tryCatch(() => entries.map((entry) => JSON.stringify(entry)));
+  if (!serializedRows.ok) {
+    return writeFailure(serializedRows.error, "snapshot_unchanged");
+  }
+  if (serializedRows.value.some(
+    (row) => Buffer.byteLength(row, "utf8") > MAX_DEAD_LETTER_ROW_BYTES,
+  )) {
+    return writeFailure(
+      new Error("Dead-letter snapshot contains an oversized record"),
+      "snapshot_unchanged",
+    );
+  }
+  const serializedBytes = serializedRows.value.reduce(
+    (total, row) => total + Buffer.byteLength(row, "utf8") + 1,
+    0,
   );
-  if (!serialized.ok) return writeFailure(serialized.error, "snapshot_unchanged");
-  return atomicWrite(filePath, serialized.value, operations);
+  if (serializedBytes > MAX_DEAD_LETTER_SNAPSHOT_BYTES) {
+    return writeFailure(
+      new Error("Dead-letter snapshot exceeds the byte limit"),
+      "snapshot_unchanged",
+    );
+  }
+  const serialized = `${serializedRows.value.join("\n")}\n`;
+  return atomicWrite(filePath, serialized, operations);
 }

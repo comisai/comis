@@ -42,6 +42,34 @@ export interface DeliveryAdapter {
   ): Promise<Result<string, Error>>;
 }
 
+export interface DeliveryChunkSendInput {
+  readonly adapter: DeliveryAdapter;
+  readonly channelId: string;
+  readonly text: string;
+  readonly options: SendMessageOptions;
+  readonly chunkIndex: number;
+  readonly totalChunks: number;
+}
+
+export type DeliveryChunkSendOutcome =
+  | { readonly kind: "sent"; readonly messageId: string }
+  | { readonly kind: "settled" }
+  | { readonly kind: "halted" };
+
+export type DeliveryChunkSender = (
+  input: DeliveryChunkSendInput,
+) => Promise<Result<DeliveryChunkSendOutcome, Error>>;
+
+export type DeliveryChunkManifest =
+  | {
+      readonly kind: "prepared";
+      readonly chunks: readonly string[];
+    }
+  | {
+      readonly kind: "persist";
+      persist(chunks: readonly string[]): Promise<Result<void, Error>>;
+    };
+
 // -------------------------------------------------------------------------
 // Per-call options
 // -------------------------------------------------------------------------
@@ -99,6 +127,14 @@ export type ChunkDeliveryResult =
       errorKind?: never;
       charCount: number;
       retried: boolean;
+    }
+  | {
+      status: "settled";
+      messageId?: never;
+      error?: never;
+      errorKind?: never;
+      charCount: number;
+      retried: false;
     }
   | {
       status: "rejected" | "unknown";

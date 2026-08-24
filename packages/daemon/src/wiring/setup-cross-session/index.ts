@@ -18,5 +18,8 @@
  */
 
 export type { CrossSessionResult } from "./setup-cross-session-runtime.js";
-export { setupCrossSession } from "./setup-cross-session-runtime.js";
+export {
+  createRetirementProducerStateResolver,
+  setupCrossSession,
+} from "./setup-cross-session-runtime.js";
 export { resolveGraphCacheRetention } from "./setup-cross-session-graph.js";

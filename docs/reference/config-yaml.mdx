@@ -1628,11 +1628,11 @@ Security configuration for log redaction, audit logging, permissions, action con
 
 **Delivery (security.agentToAgent.delivery)**
 
-Bounds the self-healing retry on sub-agent completion delivery. See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-delivery-retries).
+Bounds safe durable recovery attempts for sub-agent completion delivery. See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-delivery-retries).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `maxRetries` | `number` | `3` | Maximum retry attempts for a **transient** sub-agent completion-delivery failure (connection reset/refused, socket hang up, timeout, HTTP 5xx, rate limit) before the message is dead-lettered. Range `0`–`10`. Retries use exponential backoff (1s, 2s, 4s, … capped at 30s). A **permanent** failure (budget breach, killed, context exhausted, step-limit) dead-letters immediately regardless of this value. |
+| `maxRetries` | `number` | `3` | Maximum automatic recovery attempts for a ledgerless completion delivery whose platform call definitively failed. Range `0`–`10`; `0` quarantines the retained entry without a recovery attempt. Governed, in-flight, unresolved, validation-blocked, and receipt-ambiguous outcomes are parked immediately and never replayed automatically. |
 
 **Subagent Context (security.agentToAgent.subagentContext)**
 

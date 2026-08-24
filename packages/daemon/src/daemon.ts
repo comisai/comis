@@ -79,6 +79,7 @@ import {
   createManagedRunContinuationDelivery,
   createManagedAttentionReplyBinder,
   createBackgroundRecoveryRecorder,
+  createDeadLetterRecoveryObserver,
   setupTerminalWake,
   setupMcp,
   selectMcpTokenStore,
@@ -410,8 +411,10 @@ function buildGraphCoordinatorDeps(deps: {
     subAgentRunner: ReturnType<typeof setupCrossSession>["subAgentRunner"];
     sendToChannel: ReturnType<typeof setupCrossSession>["sendToChannel"];
     sendGovernedAnnouncement: ReturnType<typeof setupCrossSession>["sendGovernedAnnouncement"];
+    sendRecoverableAnnouncement: ReturnType<typeof setupCrossSession>["sendRecoverableAnnouncement"];
     announceToParent: ReturnType<typeof setupCrossSession>["announceToParent"];
     announcementBatcher: ReturnType<typeof setupCrossSession>["announcementBatcher"];
+    deadLetterQueue: ReturnType<typeof setupCrossSession>["deadLetterQueue"];
     commandQueue: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
     assembleToolsForAgent: ReturnType<typeof setupTools>["assembleToolsForAgent"];
     nodeTypeRegistry: ReturnType<typeof createNodeTypeRegistry>;
@@ -467,7 +470,13 @@ function buildGraphCoordinatorDeps(deps: {
     ...(channels.sendGovernedAnnouncement
       ? { sendGovernedAnnouncement: channels.sendGovernedAnnouncement }
       : {}),
+    ...(channels.sendRecoverableAnnouncement
+      ? { sendRecoverableAnnouncement: channels.sendRecoverableAnnouncement }
+      : {}),
     announceToParent: channels.announceToParent,
+    ...(channels.deadLetterQueue
+      ? { announcementDeadLetterQueue: channels.deadLetterQueue }
+      : {}),
     batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
     maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? graphDefaults.maxConcurrency,
     maxResultLength: a2aSec.graphMaxResultLength as number | undefined, maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
@@ -2341,7 +2350,16 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // shutdown — modeled on the durable-resume two-phase boot hook.
   const worktreeRegistry = createWorktreeRegistry();
   const worktreeGitExec = toLifecycleGitExec(handle.execGit);
-  const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup } = setupCrossSession({
+  const ensureDeadLetterRecoveryObservation = createDeadLetterRecoveryObserver({
+    dataDir: boot.dataDir,
+    eventBus: container.eventBus,
+    logger: daemonLogger,
+    trajectoryConfig: resolveEffectiveTrajectoryConfig(container.config),
+    sessionAdapters: handle.piSessionAdapters,
+    trajectoryRegistry: handle.trajectoryRegistry,
+  });
+  const graphProducerState = { exists: (_graphId: string) => true };
+  const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, sendRecoverableAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, closeAnnouncementAdmission, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
     sessionResolver, deliveryQueue, deliveryService,
@@ -2356,10 +2374,12 @@ async function bootChannels(boot: BootContext): Promise<void> {
     ...(durableRunFacts ? { durableRunFacts } : {}),
     // Trajectory-recorder release on sub-agent terminal settle — without it a dead child's recorder stays bus-subscribed and ingests other sessions' events.
     closeTrajectory: (formattedSessionKey: string) => handle.trajectoryRegistry.close(formattedSessionKey),
+    ensureDeadLetterRecoveryObservation,
     // The same outward ledger + rootRunId resolver gives announce() and DLQ
     // drain one retained operation identity (off ⇒ pass-through).
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
+    graphProducerExists: (graphId) => graphProducerState.exists(graphId),
   });
 
   // The worktree orphan-sweep. Boot recovery (discover prior-crash
@@ -2411,7 +2431,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const nodeTypeRegistry = createNodeTypeRegistry();
   const graphCoordinator = createGraphCoordinator(buildGraphCoordinatorDeps({
     agents: handle,
-    channels: { subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
+    channels: { subAgentRunner, sendToChannel, sendGovernedAnnouncement, sendRecoverableAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
     // Thread the live durable store so the coordinator checkpoints node state (DAG durability).
     ...(durableResume.durableRunStore ? { durableRunStore: durableResume.durableRunStore } : {}),
     ...(capEndpointHandle
@@ -2425,6 +2445,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
         }
       : {}),
   }));
+  graphProducerState.exists = (graphId) => graphCoordinator.getStatus(graphId) !== undefined;
   subAgentRunner.setGraphCoordinator(graphCoordinator);
   // Populate the late-bound holder so resumeRun (fires at resumeAndStart, after channels) routes a DAG record to coordinator.resumeGraph (incomplete-node re-entry).
   graphResumeHolder.ref = (record, lease) => graphCoordinator.resumeGraph(record, lease);
@@ -2481,7 +2502,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
     suspendedAgents, modelCatalog, channelConfig, promptTimeoutTimestamps,
     // Teardown handles surfaced for ShutdownDeps wiring.
-    shutdownBackgroundProcesses, proxyTypingCleanup,
+    shutdownBackgroundProcesses, closeAnnouncementAdmission, proxyTypingCleanup,
     outputRetentionHandle,
   });
 }
@@ -2713,7 +2734,7 @@ async function bootShutdown(
     | "sessionStoreBridge" | "shutdownRef" | "hotAdd" | "hotRemove" | "rpcDispatchDeps"
     | "activeExecutions" | "getActiveConnectionCount" | "wsConnections"
     | "heartbeatRunner" | "duplicateDetector" | "heartbeatCoordinator"
-    | "stopChannelHealthMonitor" | "stopChannelLivenessMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
+    | "stopChannelHealthMonitor" | "stopChannelLivenessMonitor" | "shutdownBackgroundProcesses" | "closeAnnouncementAdmission" | "proxyTypingCleanup"
     | "outputRetentionHandle"
     | "bgCompletionRunnerContext" | "managedRunContinuations" | "trajectoryRegistry"
     | "auditAggregator" | "onSuspiciousContent"
@@ -2748,8 +2769,8 @@ async function bootShutdown(
     sessionStoreBridge, shutdownRef, gatewayHandle,
     activeExecutions, getActiveConnectionCount,
     trajectoryRegistry,
-    // 9 new teardown handles surfaced through BootContext.
-    shutdownBackgroundProcesses, proxyTypingCleanup,
+    // Teardown handles surfaced through BootContext.
+    shutdownBackgroundProcesses, closeAnnouncementAdmission, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
     bgCompletionRunnerContext, managedRunContinuations, terminalWakeContext, stopChannelHealthMonitor, stopChannelLivenessMonitor, mcpClientManager,
     // The background video poller (undefined when video disabled) —
@@ -2794,15 +2815,14 @@ async function bootShutdown(
     disposeActivityStream, otelShutdown: otelHandle ? () => otelHandle.shutdown() : undefined, // drain ActivityStream; flush+close the OTLP/Prometheus exporter (stops /metrics listener)
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
-    // 9 new teardown fields (8 production subscribers + setup-tools
-    // split into background-processes + mcp-client-manager).
-    // Each was previously a silent no-op subscriber.
+    // Teardown fields surfaced by subsystem composition roots.
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll: () => mcpClientManager.disconnectAll(),
     bgCompletionRunnerShutdown: () => bgCompletionRunnerContext.runner.shutdown(),
     managedRunContinuationShutdown: () => managedRunContinuations.shutdown(),
     // Drain the terminal wake-FSM (unsubscribe + await in-flight woken turns).
     terminalWakeShutdown: terminalWakeContext ? () => terminalWakeContext.shutdown() : undefined,
+    closeAnnouncementAdmission,
     proxyTypingCleanup,
     shutdownDeliveryQueue,
     // SIGTERM clears the poller's sweeper interval + stops in-flight

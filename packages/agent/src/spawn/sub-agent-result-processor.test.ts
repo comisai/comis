@@ -5,7 +5,11 @@ import { mkdtemp, writeFile, mkdir, readdir, readFile, utimes } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ok } from "@comis/shared";
-import { createConversationLocator, formatSessionKey } from "@comis/core";
+import {
+  createConversationLocator,
+  createStableAnnouncementOperationId,
+  formatSessionKey,
+} from "@comis/core";
 import { createDeliveryDedup } from "./announce-key.js";
 import {
   sweepResultFiles,
@@ -308,9 +312,39 @@ describe("deliverFailureNotification", () => {
       channelType: "telegram",
       channelId: "chat-1",
       options: { threadId: "topic-1" },
+      completionKeys: ["default:user_a:chat-1::run-1"],
     }));
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(deliveryDedup.has("default:user_a:chat-1::run-1")).toBe(true);
+  });
+
+  it("routes a ledgerless failure notice through durable receipt-aware recovery", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const sendRecoverableAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-ledgerless",
+    }));
+    const deliveryDedup = createDeliveryDedup();
+
+    await deliverFailureNotification({
+      channelType: "telegram",
+      channelId: "chat-1",
+      task: "failed child task",
+      runtimeMs: 1_000,
+      runId: "run-ledgerless",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:user_a:chat-1",
+      callerConversation: makeCallerConversation("parent-agent"),
+      destinationEndpoint: makeCallerEndpoint("telegram", "chat-1"),
+    }, { sendToChannel, sendRecoverableAnnouncement, deliveryDedup });
+
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-ledgerless",
+      completionKeys: ["default:user_a:chat-1::run-ledgerless"],
+    }));
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(deliveryDedup.has("default:user_a:chat-1::run-ledgerless")).toBe(true);
   });
 
   it("does not raw-fallback or mark a governed false or lost response", async () => {
@@ -345,6 +379,65 @@ describe("deliverFailureNotification", () => {
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(deliveryDedup.size).toBe(0);
   });
+
+  it("accepts an operator-confirmed governed failure notice delivery", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const deliveryDedup = createDeliveryDedup();
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: false as const,
+      terminalDecision: "delivered" as const,
+    }));
+
+    await deliverFailureNotification({
+      channelType: "telegram",
+      channelId: "chat-1",
+      task: "failed child task",
+      runtimeMs: 1_000,
+      runId: "run-terminal-delivered",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:user_a:chat-1",
+      callerConversation: makeCallerConversation("parent-agent"),
+      destinationEndpoint: makeCallerEndpoint(),
+    }, { sendToChannel, sendGovernedAnnouncement, deliveryDedup });
+
+    expect(deliveryDedup.has(
+      "default:user_a:chat-1::run-terminal-delivered",
+    )).toBe(true);
+    expect(sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["governed", "discarded"],
+    ["recoverable", "no_reply"],
+  ] as const)(
+    "treats a %s terminal %s failure notice as settled suppression",
+    async (boundaryKind, terminalDecision) => {
+      const sendToChannel = vi.fn().mockResolvedValue(true);
+      const deliveryDedup = createDeliveryDedup();
+      const terminalBoundary = vi.fn().mockResolvedValue(ok({
+        delivered: false as const,
+        terminalDecision,
+      }));
+      const boundary = boundaryKind === "governed"
+        ? { sendGovernedAnnouncement: terminalBoundary }
+        : { sendRecoverableAnnouncement: terminalBoundary };
+
+      await expect(deliverFailureNotification({
+        channelType: "telegram",
+        channelId: "chat-1",
+        task: "failed child task",
+        runtimeMs: 1_000,
+        runId: `run-terminal-${boundaryKind}`,
+        callerAgentId: "parent-agent",
+        callerSessionKey: "default:user_a:chat-1",
+        callerConversation: makeCallerConversation("parent-agent"),
+        destinationEndpoint: makeCallerEndpoint(),
+      }, { sendToChannel, deliveryDedup, ...boundary })).resolves.toBeUndefined();
+
+      expect(sendToChannel).not.toHaveBeenCalled();
+      expect(deliveryDedup.size).toBe(0);
+    },
+  );
 
   it("joins concurrent governed failure notices onto one operation", async () => {
     let settle!: (value: ReturnType<typeof ok>) => void;
@@ -535,6 +628,7 @@ function makeDecisionDeadLetterQueue() {
     reserveDecision: vi.fn().mockResolvedValue(ok({ created: true })),
     lookupDecision: vi.fn().mockResolvedValue(ok(undefined)),
     resolveDecision: vi.fn().mockResolvedValue(ok(true)),
+    replaceDecisions: vi.fn().mockResolvedValue(ok({ created: true })),
     drain: vi.fn().mockResolvedValue(undefined),
     size: vi.fn().mockReturnValue(0),
   };
@@ -751,6 +845,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       announceToParent,
       sendGovernedAnnouncement,
       deadLetterQueue,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
     });
     await Promise.resolve();
     expect(announceToParent).not.toHaveBeenCalled();
@@ -761,7 +856,11 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     expect(announceToParent).toHaveBeenCalledOnce();
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      `${callerSessionKey}::run-reserved`,
+      createStableAnnouncementOperationId(
+        "agent-main",
+        callerSessionKey,
+        "run-reserved",
+      ),
       "receipt_committed",
     );
   });
@@ -789,6 +888,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       announceToParent,
       sendGovernedAnnouncement,
       deadLetterQueue,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
     });
 
     expect(announceToParent).not.toHaveBeenCalled();
@@ -909,6 +1009,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       sendGovernedAnnouncement,
       deadLetterQueue,
       deliveryDedup,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
     });
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
@@ -916,10 +1017,123 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       runId: "run-rewrite",
     }));
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      `${callerSessionKey}::run-rewrite`,
+      createStableAnnouncementOperationId(
+        "agent-main",
+        callerSessionKey,
+        "run-rewrite",
+      ),
       "receipt_committed",
     );
     expect(deliveryDedup.has(`${callerSessionKey}::run-rewrite`)).toBe(true);
+  });
+
+  it("separates and sanitizes direct attachment operations before incremental settlement", async () => {
+    const deadLetterQueue = makeDecisionDeadLetterQueue();
+    const callerSessionKey = formatSessionKey({
+      tenantId: "default", agentId: "agent-main", userId: "user_a", channelId: "chat_a",
+    });
+    const summaryKey = createStableAnnouncementOperationId(
+      "agent-main",
+      callerSessionKey,
+      "run-attachments",
+      "summary",
+    );
+    const firstKey = createStableAnnouncementOperationId(
+      "agent-main",
+      callerSessionKey,
+      "run-attachments",
+      "attachment:0",
+    );
+    const secondKey = createStableAnnouncementOperationId(
+      "agent-main",
+      callerSessionKey,
+      "run-attachments",
+      "attachment:1",
+    );
+    const sendGovernedAnnouncement = vi.fn()
+      .mockResolvedValueOnce(ok({
+        delivered: true as const,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 1 },
+      }))
+      .mockResolvedValueOnce(ok({
+        delivered: true as const,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 2 },
+      }))
+      .mockResolvedValueOnce(ok({
+        delivered: false as const,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 3 },
+        failure: "transport_uncertain",
+      }));
+
+    await deliverAnnouncement({
+      announcementText: `[System Message]\nResult: files ready at /workspace/files/first.txt ${"x".repeat(1_100)}`,
+      terminalOutcome: { status: "completed" },
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+      callerAgentId: "agent-main",
+      callerSessionKey,
+      callerConversation: makeCallerConversation(),
+      destinationEndpoint: makeCallerEndpoint(),
+      runId: "run-attachments",
+      attachments: [
+        { sourceAgentId: "worker-a", path: "/workspace/files/first.txt" },
+        { sourceAgentId: "worker-a", path: "second.txt" },
+      ],
+    }, {
+      sendToChannel: vi.fn().mockResolvedValue(true),
+      sendGovernedAnnouncement,
+      deadLetterQueue,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
+    });
+
+    expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith([], [
+      expect.objectContaining({
+        idempotencyKey: summaryKey,
+        partId: "summary",
+        announcementText: expect.stringContaining("files ready at first.txt"),
+        completionKeys: [`${callerSessionKey}::run-attachments`],
+      }),
+      expect.objectContaining({
+        idempotencyKey: firstKey,
+        partId: "attachment:0",
+        announcementText: "",
+        attachment: {
+          kind: "source",
+          sourceAgentId: "worker-a",
+          path: "/workspace/files/first.txt",
+        },
+        completionKeys: [`${callerSessionKey}::run-attachments`],
+      }),
+      expect.objectContaining({
+        idempotencyKey: secondKey,
+        partId: "attachment:1",
+        announcementText: "",
+        attachment: { kind: "source", sourceAgentId: "worker-a", path: "second.txt" },
+        completionKeys: [`${callerSessionKey}::run-attachments`],
+      }),
+    ]);
+    expect(sendGovernedAnnouncement).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      partId: "summary",
+      text: expect.stringContaining("files ready at first.txt"),
+    }));
+    expect(sendGovernedAnnouncement.mock.calls[0]?.[0]).not.toHaveProperty("attachment");
+    expect(sendGovernedAnnouncement).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      partId: "attachment:0",
+      text: "",
+      attachment: { sourceAgentId: "worker-a", path: "/workspace/files/first.txt" },
+    }));
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledTimes(2);
+    expect(deadLetterQueue.resolveDecision).toHaveBeenNthCalledWith(
+      1,
+      summaryKey,
+      "receipt_committed",
+    );
+    expect(deadLetterQueue.resolveDecision).toHaveBeenNthCalledWith(
+      2,
+      firstKey,
+      "receipt_committed",
+    );
+    expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
   });
 
   it("blocks a governed completion before any send when caller identity is absent", async () => {
@@ -1057,9 +1271,9 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     expect(deliveryDedup.has("default:u5:c5::r-false")).toBe(false);
   });
 
-  it("threads the governed identity into a direct-send dead letter", async () => {
+  it("retains a governed failure through its operation reservation", async () => {
     const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
-    const enqueue = vi.fn();
+    const deadLetterQueue = makeDecisionDeadLetterQueue();
     const sendGovernedAnnouncement = vi.fn().mockResolvedValue({
       ok: true,
       value: {
@@ -1072,6 +1286,8 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         failure: "operation_retained",
       },
     });
+    const callerConversation = makeCallerConversation();
+    const destinationEndpoint = makeCallerEndpoint("telegram", "chat-governed");
 
     await deliverAnnouncement(
       {
@@ -1081,27 +1297,22 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         announceChannelId: "chat-governed",
         callerAgentId: "agent-main",
         callerSessionKey: "default:u6:c6",
-        callerConversation: makeCallerConversation(),
-        destinationEndpoint: makeCallerEndpoint("telegram", "chat-governed"),
+        callerConversation,
+        destinationEndpoint,
         runId: "r-governed",
       },
       {
         sendToChannel: vi.fn().mockResolvedValue(true),
         sendGovernedAnnouncement,
-        deadLetterQueue: {
-          enqueue,
-          drain: vi.fn().mockResolvedValue(undefined),
-          size: vi.fn().mockReturnValue(0),
-        },
-      } as never,
+        deadLetterQueue,
+        resolveRootRunId: vi.fn(() => ok("root-r-governed")),
+      },
     );
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
-    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: "agent-main",
-      rootRunId: "root-r-governed",
-      stepIndex: 11,
-    }));
+    expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledOnce();
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
+    expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
   });
 });
 
@@ -1429,9 +1640,11 @@ describe("deliverAnnouncement idempotency-key threading", () => {
     expect(dlqEnqueue).toHaveBeenCalledOnce();
     const entry = dlqEnqueue.mock.calls[0]![0] as {
       idempotencyKey?: string;
+      sessionKey?: string;
       lastError: string;
     };
     expect(entry.idempotencyKey).toBe("default:user2:chan2::run-dlq");
+    expect(entry.sessionKey).toBe("default:user2:chan2");
     expect(entry.lastError).not.toContain("xoxb-");
     expect(entry.lastError).not.toContain("private.example");
   });

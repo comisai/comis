@@ -21,14 +21,83 @@ const eventBus = {
 } as unknown as TypedEventBus;
 
 function makeDeliveryService(): DeliveryService {
+  const deliverToChannel: DeliveryService["deliverToChannel"] = vi.fn(async (
+    adapter,
+    channelId,
+    text,
+    options,
+    sendChunk,
+    chunkManifest,
+  ) => {
+    if (chunkManifest?.kind === "persist") {
+      const persisted = await chunkManifest.persist([text]);
+      if (!persisted.ok) return persisted;
+    }
+    const deliveryText = chunkManifest?.kind === "prepared"
+      ? chunkManifest.chunks[0] ?? text
+      : text;
+    const sent = sendChunk
+      ? await sendChunk({
+          adapter,
+          channelId,
+          text: deliveryText,
+          options: {
+            ...(options.threadId ? { threadId: options.threadId } : {}),
+            ...(options.extra ? { extra: options.extra } : {}),
+          },
+          chunkIndex: 0,
+          totalChunks: 1,
+        })
+      : await adapter.sendMessage(channelId, deliveryText).then((result) => result.ok
+          ? ok({ kind: "sent" as const, messageId: result.value })
+          : result);
+    const sentMessageId = sent.ok && sent.value.kind === "sent"
+      ? sent.value.messageId
+      : undefined;
+    return ok({
+      chunks: sent.ok
+        ? [{
+            status: sentMessageId ? "accepted" as const : "settled" as const,
+            ...(sentMessageId ? { messageId: sentMessageId } : {}),
+            charCount: deliveryText.length,
+            retried: false,
+          }]
+        : [{
+            status: "unknown" as const,
+            error: sent.error,
+            errorKind: "platform" as const,
+            charCount: deliveryText.length,
+            retried: false,
+          }],
+      totalChars: deliveryText.length,
+      platform: sent.ok
+        ? {
+          status: "accepted" as const,
+          deliveredChunks: 1,
+          settledAtMs: 1,
+          ...(sentMessageId ? { lastMessageId: sentMessageId } : {}),
+          }
+        : {
+            status: "unknown" as const,
+            errorKind: "platform" as const,
+            deliveredChunks: 0,
+            failedChunks: 1,
+            ambiguousChunks: 1,
+            settledAtMs: 1,
+          },
+      queueDisposition: "settled" as const,
+    });
+  });
   return {
-    deliverToChannel: vi.fn(),
+    deliverToChannel,
     drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   } as unknown as DeliveryService;
 }
 
 function makeLedger(): OutwardSendLedgerPort {
   return {
+    lookupTerminalDecision: vi.fn(async () => ok(undefined)),
+    recordTerminalDecision: vi.fn(async () => ok(undefined)),
     allocateStep: vi.fn(async () => ok(0)),
     lookup: vi.fn(async () => ok(undefined)),
     begin: vi.fn(async () => ok(undefined)),
@@ -87,6 +156,33 @@ describe("completion announcement delivery wiring", () => {
     expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
   });
 
+  it("keeps a retained text operation within one platform send boundary", async () => {
+    const deliveryService = makeDeliveryService();
+    const adapter = {
+      channelId: "telegram-primary",
+      channelType: "telegram",
+      sendMessage: vi.fn(async () => ok("message-1")),
+    };
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", adapter]]),
+      deliveryService,
+      eventBus,
+    });
+
+    await expect(delivery.sendSingleTextToChannelWithReceipt(
+      "telegram",
+      "chat-1",
+      "retained completion text",
+    )).resolves.toMatchObject({ ok: true, value: { status: "accepted" } });
+
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      "retained completion text",
+      expect.objectContaining({ completionMode: "settled", skipChunking: true }),
+    );
+  });
+
   it("blocks a governed attempt before allocation when the root resolver is absent", async () => {
     const ledger = makeLedger();
     const deliveryService = makeDeliveryService();
@@ -97,7 +193,7 @@ describe("completion announcement delivery wiring", () => {
       outwardLedger: ledger,
     });
 
-    const result = await delivery.sendGovernedAnnouncement?.({
+    const result = await delivery.sendLedgerAnnouncement?.({
       agentId: "agent-1",
       callerSessionKey: "default:user1:chan1",
       runId: "run-1",
@@ -116,22 +212,6 @@ describe("completion announcement delivery wiring", () => {
   it("passes authenticated caller authority to delivery persistence without ambient context", async () => {
     const ledger = makeLedger();
     const deliveryService = makeDeliveryService();
-    vi.mocked(deliveryService.deliverToChannel).mockResolvedValue(ok({
-      chunks: [{
-        status: "accepted" as const,
-        messageId: "telegram-message-1",
-        charCount: 10,
-        retried: false,
-      }],
-      totalChars: 10,
-      platform: {
-        status: "accepted" as const,
-        deliveredChunks: 1,
-        settledAtMs: 1,
-        lastMessageId: "telegram-message-1",
-      },
-      queueDisposition: "settled" as const,
-    }));
     const adapter = {
       channelId: "telegram-primary",
       channelType: "telegram",
@@ -144,6 +224,7 @@ describe("completion announcement delivery wiring", () => {
       eventBus,
       outwardLedger: ledger,
       resolveRootRunId: () => ({ ok: true, value: "root-1" }),
+      recordTextChunks: vi.fn(async () => ok(undefined)),
     });
 
     const request = {
@@ -157,7 +238,7 @@ describe("completion announcement delivery wiring", () => {
       text: "completion",
       options: { threadId: "topic-7" },
     };
-    const result = await delivery.sendGovernedAnnouncement?.(request);
+    const result = await delivery.sendLedgerAnnouncement?.(request);
 
     expect(result?.ok && result.value.delivered).toBe(true);
     expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
@@ -174,35 +255,186 @@ describe("completion announcement delivery wiring", () => {
         },
         destinationEndpoint: caller.endpoint,
       },
+      expect.any(Function),
+      expect.objectContaining({ kind: "persist" }),
     );
+  });
+
+  it("governs each irreversible text chunk with a distinct ledger operation", async () => {
+    const ledger = makeLedger();
+    vi.mocked(ledger.allocateStep)
+      .mockResolvedValueOnce(ok(0))
+      .mockResolvedValueOnce(ok(1));
+    const adapter = {
+      channelId: "telegram-primary",
+      channelType: "telegram",
+      sendMessage: vi.fn()
+        .mockResolvedValueOnce(ok("message-first"))
+        .mockResolvedValueOnce(err(new Error("500 response unavailable"))),
+    };
+    const deliveryService = makeDeliveryService();
+    vi.mocked(deliveryService.deliverToChannel).mockImplementation(async (
+      deliveryAdapter,
+      channelId,
+      _text,
+      _options,
+      sendChunk,
+      chunkManifest,
+    ) => {
+      if (!sendChunk) return err(new Error("governed chunk sender missing"));
+      if (chunkManifest?.kind !== "persist") {
+        return err(new Error("governed chunk manifest missing"));
+      }
+      const persisted = await chunkManifest.persist(["first chunk", "second chunk"]);
+      if (!persisted.ok) return persisted;
+      const first = await sendChunk({
+        adapter: deliveryAdapter,
+        channelId,
+        text: "first chunk",
+        options: { threadId: "topic-7" },
+        chunkIndex: 0,
+        totalChunks: 2,
+      });
+      if (!first.ok) return first;
+      if (first.value.kind !== "sent") return err(new Error("first chunk was not sent"));
+      const second = await sendChunk({
+        adapter: deliveryAdapter,
+        channelId,
+        text: "second chunk",
+        options: { threadId: "topic-7" },
+        chunkIndex: 1,
+        totalChunks: 2,
+      });
+      return ok({
+        chunks: [
+          {
+            status: "accepted" as const,
+            messageId: first.value.messageId,
+            charCount: 11,
+            retried: false,
+          },
+          second.ok
+            ? second.value.kind === "sent"
+              ? {
+                  status: "accepted" as const,
+                  messageId: second.value.messageId,
+                  charCount: 12,
+                  retried: false,
+                }
+              : {
+                  status: "settled" as const,
+                  charCount: 12,
+                  retried: false as const,
+                }
+            : {
+              status: "unknown" as const,
+              error: second.error,
+              errorKind: "platform" as const,
+              charCount: 12,
+              retried: false,
+            },
+        ],
+        totalChars: 23,
+        platform: second.ok
+          ? { status: "accepted" as const, deliveredChunks: 2, settledAtMs: 1 }
+          : {
+              status: "unknown" as const,
+              errorKind: "platform" as const,
+              deliveredChunks: 1,
+              failedChunks: 1,
+              ambiguousChunks: 1,
+              settledAtMs: 1,
+            },
+        queueDisposition: "settled" as const,
+      });
+    });
+    const caller = makeChannelPrincipalCaller();
+    const recordTextChunks = vi.fn(async () => {
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+      return ok(undefined);
+    });
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", adapter]]),
+      deliveryService,
+      eventBus,
+      outwardLedger: ledger,
+      resolveRootRunId: () => ok("root-chunked"),
+      recordTextChunks,
+    });
+
+    const result = await delivery.sendLedgerAnnouncement?.({
+      agentId: "agent-1",
+      callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      callerConversation: caller.locator,
+      destinationEndpoint: caller.endpoint,
+      runId: "run-chunked",
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "long completion",
+      options: { threadId: "topic-7" },
+    });
+
+    expect(result).toMatchObject({ ok: true, value: { delivered: false } });
+    expect(recordTextChunks).toHaveBeenCalledWith(
+      expect.any(String),
+      ["first chunk", "second chunk"],
+    );
+    const allocatedIds = vi.mocked(ledger.allocateStep).mock.calls.map((call) => call[1]);
+    expect(allocatedIds).toHaveLength(2);
+    expect(new Set(allocatedIds).size).toBe(2);
+    expect(ledger.commit).toHaveBeenCalledWith("root-chunked", 0, "message-first");
+    expect(ledger.commit).not.toHaveBeenCalledWith("root-chunked", 1, expect.anything());
+    expect(adapter.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses a recovery-scoped chunk writer before the shared queue writer", async () => {
+    const ledger = makeLedger();
+    const deliveryService = makeDeliveryService();
+    const adapter = {
+      channelId: "telegram-primary",
+      channelType: "telegram",
+      sendMessage: vi.fn(async () => ok("message-recovered")),
+    };
+    const sharedWriter = vi.fn(async () => err(new Error("serializer reentry")));
+    const recoveryWriter = vi.fn(async () => ok(undefined));
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", adapter]]),
+      deliveryService,
+      eventBus,
+      outwardLedger: ledger,
+      recordTextChunks: sharedWriter,
+    });
+    const caller = makeChannelPrincipalCaller();
+
+    const result = await delivery.sendGovernedTextToChannelWithReceipt?.({
+      operationId: "operation-recovered",
+      rootRunId: "root-recovered",
+      runId: "run-recovered",
+      agentId: "agent-1",
+      sessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "recovered completion",
+      options: { threadId: "topic-7" },
+    }, caller.endpoint, {
+      tenantId: "tenant-a",
+      agentId: "agent-1",
+      conversationRef: caller.locator.conversationRef,
+    }, recoveryWriter);
+
+    expect(result).toMatchObject({ ok: true, value: { delivered: true } });
+    expect(recoveryWriter).toHaveBeenCalledWith(["recovered completion"]);
+    expect(sharedWriter).not.toHaveBeenCalled();
+    expect(adapter.sendMessage).toHaveBeenCalledOnce();
   });
 
   it("preserves an unknown platform outcome as an uncertain governed failure", async () => {
     const ledger = makeLedger();
     const deliveryService = makeDeliveryService();
-    vi.mocked(deliveryService.deliverToChannel).mockResolvedValue(ok({
-      chunks: [{
-        status: "unknown" as const,
-        error: new Error("500 Internal Server Error"),
-        errorKind: "platform" as const,
-        charCount: 10,
-        retried: false,
-      }],
-      totalChars: 10,
-      platform: {
-        status: "unknown" as const,
-        errorKind: "platform" as const,
-        deliveredChunks: 0,
-        failedChunks: 1,
-        ambiguousChunks: 1,
-        settledAtMs: 1,
-      },
-      queueDisposition: "settled" as const,
-    }));
     const adapter = {
       channelId: "telegram-primary",
       channelType: "telegram",
-      sendMessage: vi.fn(async () => ok("unused")),
+      sendMessage: vi.fn(async () => err(new Error("500 Internal Server Error"))),
     };
     const caller = makeChannelPrincipalCaller();
     const delivery = createAnnouncementDelivery({
@@ -211,9 +443,10 @@ describe("completion announcement delivery wiring", () => {
       eventBus,
       outwardLedger: ledger,
       resolveRootRunId: () => ({ ok: true, value: "root-uncertain" }),
+      recordTextChunks: vi.fn(async () => ok(undefined)),
     });
 
-    const result = await delivery.sendGovernedAnnouncement?.({
+    const result = await delivery.sendLedgerAnnouncement?.({
       agentId: "agent-1",
       callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
       callerConversation: caller.locator,
@@ -261,7 +494,7 @@ describe("completion announcement delivery wiring", () => {
       text: "must not send",
       options: { threadId: "topic-7" },
     };
-    const result = await delivery.sendGovernedAnnouncement?.(request);
+    const result = await delivery.sendLedgerAnnouncement?.(request);
 
     expect(result).toEqual(ok({ delivered: false, failure: "operation_validation_blocked" }));
     expect(ledger.allocateStep).not.toHaveBeenCalled();
@@ -294,6 +527,9 @@ describe("completion announcement delivery wiring", () => {
       outwardLedger: ledger,
       resolveRootRunId: () => ({ ok: true, value: "root-1" }),
       prepareCompletionAttachment: vi.fn(async () => ok({
+        kind: "snapshot" as const,
+        sourceAgentId: "agent-1",
+        sourcePath: "/workspace/reports/completion-report.csv",
         path: "/tmp/completion-report.csv",
         fileName: "completion-report.csv",
         mimeType: "text/csv",
@@ -303,7 +539,7 @@ describe("completion announcement delivery wiring", () => {
       })),
     });
 
-    const result = await delivery.sendGovernedAnnouncement?.({
+    const result = await delivery.sendLedgerAnnouncement?.({
       agentId: "agent-1",
       callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
       callerConversation: caller.locator,
@@ -329,19 +565,6 @@ describe("completion announcement delivery wiring", () => {
     const emitSafely = vi.fn(() => ({ failures: [], pendingFailures: Promise.resolve([]) }));
     const ledger = makeLedger();
     const deliveryService = makeDeliveryService();
-    vi.mocked(deliveryService.deliverToChannel).mockResolvedValue(ok({
-      ok: true,
-      totalChunks: 1,
-      deliveredChunks: 1,
-      failedChunks: 0,
-      chunks: [{
-        ok: true,
-        messageId: "text-message",
-        charCount: 10,
-        retried: false,
-      }],
-      totalChars: 10,
-    }));
     const cleanup = vi.fn(async () => ok(undefined));
     const sendAttachment = vi.fn(async () => ok({
       kind: "tracked" as const,
@@ -359,6 +582,9 @@ describe("completion announcement delivery wiring", () => {
       outwardLedger: ledger,
       resolveRootRunId: () => ({ ok: true, value: "root-1" }),
       prepareCompletionAttachment: vi.fn(async () => ok({
+        kind: "snapshot" as const,
+        sourceAgentId: "agent-1",
+        sourcePath: "/workspace/reports/completion-report.csv",
         path: "/tmp/completion-report.csv",
         fileName: "completion-report.csv",
         mimeType: "text/csv",
@@ -366,10 +592,11 @@ describe("completion announcement delivery wiring", () => {
         sizeBytes: 128,
         cleanup,
       })),
+      verifyCompletionAttachment: vi.fn(async (attachment) => ok(attachment)),
     });
 
     const caller = makeChannelPrincipalCaller();
-    const result = await delivery.sendGovernedAnnouncement?.({
+    const result = await delivery.sendLedgerAnnouncement?.({
       agentId: "agent-1",
       callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
       callerConversation: caller.locator,
@@ -434,9 +661,10 @@ describe("completion announcement delivery wiring", () => {
       outwardLedger: makeLedger(),
       resolveRootRunId: () => ({ ok: true, value: "root-partial" }),
       prepareCompletionAttachment: vi.fn(async () => err(new Error("invalid output"))),
+      verifyCompletionAttachment: vi.fn(async (attachment) => ok(attachment)),
     });
 
-    const result = await delivery.sendGovernedAnnouncement?.({
+    const result = await delivery.sendLedgerAnnouncement?.({
       agentId: "agent-1",
       callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
       callerConversation: caller.locator,

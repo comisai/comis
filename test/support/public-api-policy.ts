@@ -2339,6 +2339,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OutwardSendBeginInput",
       "ReconcileSendQuery",
       "ReconcileSendOutcome",
+      // Durable delivery-recovery port shapes, following the
+      // OutwardSendLedgerPort precedent directly above. Each names a field or
+      // parameter in a port that orchestrator and daemon implement, but every
+      // one is structurally satisfiable — an attachment union, a
+      // `readonly string[]` chunk manifest, a two-field response ref, a chunk
+      // sender callback — so implementers match the shape without importing
+      // the name and the consumer scan sees no importer. The names are the
+      // documented contract regardless; dropping them from the barrel would
+      // leave the port surface describable only by duplicating its shapes.
+      "AnnouncementDeadLetterAttachment",
+      "AnnouncementTextChunkManifest",
+      "AnnouncementToolResultResponseRef",
+      "DeliveryChunkSender",
+      "DeliveryChunkManifest",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { closeSync, mkdirSync, openSync, readdirSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { isAbsolute, resolve } from "node:path";
 import type {
   CreateGroupChatOptions,
   GroupMember,
@@ -20,29 +23,82 @@ interface StandaloneEmulatorState {
   readonly messageIdBase?: unknown;
 }
 
+export function resolveStandaloneMessageIdReservationDirectory(
+  stateDirectory?: string,
+): string {
+  if (!stateDirectory || !isAbsolute(stateDirectory)) {
+    throw new TypeError("EMU_MESSAGE_ID_STATE_DIR must be an absolute durable directory");
+  }
+  return resolve(stateDirectory, "message-id-reservations");
+}
+
+function createCollisionResistantMessageIdBase(): number {
+  const random = randomBytes(6).readUIntBE(0, 6);
+  const blockCount = Math.floor(
+    (Number.MAX_SAFE_INTEGER - RESTART_MESSAGE_ID_BLOCK - FIRST_MESSAGE_ID)
+      / RESTART_MESSAGE_ID_BLOCK,
+  );
+  return FIRST_MESSAGE_ID + (random % blockCount) * RESTART_MESSAGE_ID_BLOCK;
+}
+
 /**
  * Reserve a fresh message-id block for each standalone emulator process.
  *
  * Telegram message ids do not rewind when a bot reconnects. The standalone
- * harness persists only this block base, so a restart cannot reuse a stable
- * `(bot, chat, message_id)` identity against an existing Comis session.
+ * harness advances independently persisted blocks and seeds a missing state
+ * file with a collision-resistant base. Ephemeral wiring and checkout state do
+ * not define the retained `(bot, chat, message_id)` identity.
  */
-export function nextStandaloneMessageIdBase(
+export function reserveStandaloneMessageIdBase(
   previous: StandaloneEmulatorState | undefined,
+  reservationDirectory: string,
+  freshBase: number = createCollisionResistantMessageIdBase(),
 ): number {
-  if (previous === undefined) return FIRST_MESSAGE_ID;
-  if (previous.messageIdBase === undefined) {
-    return FIRST_MESSAGE_ID + RESTART_MESSAGE_ID_BLOCK;
-  }
   if (
-    typeof previous.messageIdBase !== "number" ||
-    !Number.isSafeInteger(previous.messageIdBase) ||
-    previous.messageIdBase < FIRST_MESSAGE_ID ||
-    previous.messageIdBase > Number.MAX_SAFE_INTEGER - RESTART_MESSAGE_ID_BLOCK
+    !Number.isSafeInteger(freshBase)
+    || freshBase < FIRST_MESSAGE_ID
+    || freshBase > Number.MAX_SAFE_INTEGER - RESTART_MESSAGE_ID_BLOCK
   ) {
-    throw new TypeError("Standalone emulator state has an invalid messageIdBase");
+    throw new TypeError("Standalone emulator fresh messageIdBase is invalid");
   }
-  return previous.messageIdBase + RESTART_MESSAGE_ID_BLOCK;
+  let previousFloor = FIRST_MESSAGE_ID;
+  if (previous?.messageIdBase !== undefined) {
+    if (
+      typeof previous.messageIdBase !== "number"
+      || !Number.isSafeInteger(previous.messageIdBase)
+      || previous.messageIdBase < FIRST_MESSAGE_ID
+      || previous.messageIdBase > Number.MAX_SAFE_INTEGER - RESTART_MESSAGE_ID_BLOCK
+    ) {
+      throw new TypeError("Standalone emulator state has an invalid messageIdBase");
+    }
+    previousFloor = previous.messageIdBase + RESTART_MESSAGE_ID_BLOCK;
+  }
+
+  mkdirSync(reservationDirectory, { recursive: true, mode: 0o700 });
+  const reservedBases = readdirSync(reservationDirectory)
+    .map((name) => Number(name))
+    .filter((value) => Number.isSafeInteger(value) && value >= FIRST_MESSAGE_ID);
+  const greatestReservedBase = reservedBases.reduce(
+    (greatest, value) => Math.max(greatest, value),
+    FIRST_MESSAGE_ID - RESTART_MESSAGE_ID_BLOCK,
+  );
+  let candidate = Math.max(
+    freshBase,
+    previousFloor,
+    greatestReservedBase + RESTART_MESSAGE_ID_BLOCK,
+  );
+
+  while (candidate <= Number.MAX_SAFE_INTEGER - RESTART_MESSAGE_ID_BLOCK) {
+    try {
+      const handle = openSync(resolve(reservationDirectory, String(candidate)), "wx", 0o600);
+      closeSync(handle);
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      candidate += RESTART_MESSAGE_ID_BLOCK;
+    }
+  }
+  throw new RangeError("Standalone emulator message-id reservations are exhausted");
 }
 
 /** The emulator's own bot identity — a group's bot member MUST match it or mentions can never fire. */

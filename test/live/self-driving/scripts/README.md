@@ -313,7 +313,8 @@ that unrelated daemon for a session it never saw.
   `WIRE=1 deploy-emu.sh`. It writes `EMU_JSON` (`$DATA/emulator-wiring.json` locally,
   `/tmp/comis-emu.json` remotely; `{apiRoot, port, botToken}`), which
   `drive.mjs`/`wire-emu.mjs` read. It binds a **kernel-allocated loopback port** — re-wire after every
-  relaunch.
+  relaunch. `restart-emu.sh` keeps message-id reservations in the independent durable
+  `EMU_MESSAGE_ID_STATE_DIR` so replacing the wiring file or emulator checkout cannot rewind identity.
 - The **Microsoft Teams emulator** is launched from `tsx test/live/bin/vps-emu-msteams.ts`. Teams is the
   INVERSE of Telegram — the daemon EXPOSES the inbound webhook and POSTs OUTBOUND to the Connector — so there
   is no `apiRoot` config key. Instead the launcher writes `/tmp/comis-msteams-emu.json` (`{apiRoot, appId,

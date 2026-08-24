@@ -114,6 +114,11 @@ export {
   type BackgroundRecoveryRecorderDeps,
   type BackgroundRecoveryTrajectoryInput,
 } from "./background-recovery-recorder.js";
+export {
+  createDeadLetterRecoveryObserver,
+  type DeadLetterRecoveryObserverDeps,
+  type DeadLetterRecoveryObservationInput,
+} from "./dead-letter-recovery-observer.js";
 export { setupTerminalWake, type SetupTerminalWakeDeps, type TerminalWakeContext } from "./setup-terminal-wake.js";
 export type {
   BackgroundCompletionRunnerContext,

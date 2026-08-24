@@ -34,6 +34,7 @@ const PersistedGraphRunSchema = z.object({
     "unavailable",
     "committed",
     "retained",
+    "suppressed",
     "failed",
   ]),
   startedAt: z.string().optional(),

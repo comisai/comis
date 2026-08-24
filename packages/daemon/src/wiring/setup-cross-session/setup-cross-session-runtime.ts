@@ -13,71 +13,50 @@
  * @module
  */
 import type {
-  AgentCapability, AgentConfig, AppContainer, ChannelPort, ClockPort,
-  DeliveryService, DeliverToChannelOptions, DurableRunPort,
+  AgentCapability, AppContainer, ChannelPort, ClockPort,
+  DeliveryService, DurableRunPort,
   FileLockPort, NormalizedMessage, OutwardSendLedgerPort,
   SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef,
-  MemoryWriteEntry, MemoryWriteScope, CitationEvidence,
+  MemoryWriteEntry, MemoryWriteScope, CitationEvidence, 
 } from "@comis/core";
 import {
-  createConversationRef, createResolvedRequestContext,
-  resolveWorkspaceDir, runWithContext, safePath, systemNowMs, tryGetContext,
+  createResolvedRequestContext,
+  runWithContext, safePath, systemNowMs, tryGetContext,
 } from "@comis/core";
-import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
 import type { ExecutionResult, SpawnCeilingDecision } from "@comis/agent";
-import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
+import { createLifecycleHooks, createSubAgentRunner, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
 import {
   createCrossSessionSender,
   createAnnouncementBatcher,
   createAnnouncementDeadLetterQueue,
-  type SendGovernedCompletionAnnouncement,
 } from "@comis/orchestrator";
 import { randomUUID } from "node:crypto";
 import { err, ok } from "@comis/shared";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
-import { createCompletionAttachmentPreparer } from "./completion-attachment.js";
+import {
+  createReceiptAwareRecoverableAnnouncementDelivery,
+  createRecoverableAnnouncementDelivery,
+} from "./recoverable-announcement-delivery.js";
+import {
+  cleanupCompletionAttachmentSnapshot,
+  createCompletionAttachmentPreparer,
+  reconcileCompletionAttachmentSnapshots,
+  verifyCompletionAttachmentSnapshot,
+} from "./completion-attachment.js";
 import { createAnnouncementFailureNoticeRenderer } from "./announcement-failure-locale.js";
 import { resolvePreservedCrossSessionRoute } from "./cross-session-route.js";
 import { createInternalTurnScope } from "./internal-turn-scope.js";
-/** Silent fallback for test wiring that omits the production logger. */
-const NOOP_LOGGER: ComisLogger = {
-  level: "silent",
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  fatal: () => {},
-  audit: () => {},
-  child: () => NOOP_LOGGER,
-};
-/** All services produced by the cross-session messaging setup. */
-export interface CrossSessionResult {
-  /** Cross-session message sender for agent-to-agent communication. */
-  crossSessionSender: ReturnType<typeof createCrossSessionSender>;
-  /** Sub-agent task runner for delegated execution. */
-  subAgentRunner: ReturnType<typeof createSubAgentRunner>;
-  /** Channel message sender for graph completion announcements */
-  sendToChannel: (channelType: string, channelId: string, text: string, options?: Omit<DeliverToChannelOptions, "completionMode">) => Promise<boolean>;
-  /** Receipt-aware retained-operation boundary for completion announcements. */
-  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
-  /** Parent session announcement for graph results */
-  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, callerConversation: ConversationLocator, text: string, channelType: string, channelId: string, options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence }) => Promise<string | undefined>;
-  /** Dead-letter queue for failed announcement persistence. */
-  deadLetterQueue?: ReturnType<typeof createAnnouncementDeadLetterQueue>;
-  /** Announcement batcher for coalescing concurrent graph/sub-agent completions. */
-  announcementBatcher: ReturnType<typeof createAnnouncementBatcher>;
-  /**
-   * Cleanup function for proxy-typing controllers + TTL sweep timer. Threaded
-   * to the composition root for invocation via
-   * ShutdownDeps.proxyTypingCleanup (replaces eventBus.on(
-   * "system:shutdown", ...) indirection that silently no-op'd in production).
-   */
-  proxyTypingCleanup: () => void;
-}
+import { createSubAgentResultProcessing } from "./sub-agent-result-processing.js";
+import { createRetirementProducerStateResolver } from "./retirement-producer-state.js";
+import { createAnnounceToParent } from "./announce-to-parent.js";
+
+export { createRetirementProducerStateResolver } from "./retirement-producer-state.js";
+
+export type { CrossSessionResult } from "./cross-session-result.js";
+import type { CrossSessionResult } from "./cross-session-result.js";
 
 /**
  * Create cross-session messaging services: cross-session sender + sub-agent runner.
@@ -174,6 +153,7 @@ export function setupCrossSession(deps: {
    */
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
+  graphProducerExists?: (graphId: string) => boolean;
   /**
    * Release a child session's trajectory recorder when its run settles
    * (bound to `SessionTrajectoryHandleRegistry.close` by the daemon).
@@ -182,6 +162,11 @@ export function setupCrossSession(deps: {
    * lifetime and keeps ingesting events into the dead child's trajectory.
    */
   closeTrajectory?: (formattedSessionKey: string) => Promise<void>;
+  /** Ensures boot/off-turn recovery has a session-scoped trajectory bridge. */
+  ensureDeadLetterRecoveryObservation?: (input: {
+    agentId: string;
+    sessionKey: string;
+  }) => import("@comis/shared").Result<void, Error>;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
   // Build the three callback closures from injected deps.
@@ -255,10 +240,23 @@ export function setupCrossSession(deps: {
       return { response: result.response, tokensUsed: result.tokensUsed, cost: result.cost };
     });
   };
+  const prepareCompletionAttachment = createCompletionAttachmentPreparer({
+    dataDir: container.config.dataDir,
+    agents: container.config.agents,
+  });
+  const announcementAdmissionAbort = new AbortController();
+  // The delivery surface captures the chunk store before the dead-letter queue
+  // that backs it exists, so the binding is a holder assigned once below.
+  const textChunkQueue: {
+    current: ReturnType<typeof createAnnouncementDeadLetterQueue> | undefined;
+  } = { current: undefined };
   const {
     sendToChannelWithReceipt,
+    sendSingleTextToChannelWithReceipt,
     sendToChannel,
-    sendGovernedAnnouncement,
+    sendPreparedAttachmentToChannelWithReceipt,
+    sendLedgerAnnouncement,
+    sendGovernedTextToChannelWithReceipt,
   } = createAnnouncementDelivery({
     adaptersByType,
     deliveryService: deps.deliveryService,
@@ -267,10 +265,14 @@ export function setupCrossSession(deps: {
     ...(deps.logger ? { logger: deps.logger } : {}),
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
-    prepareCompletionAttachment: createCompletionAttachmentPreparer({
-      dataDir: container.config.dataDir,
-      agents: container.config.agents,
-    }),
+    recordTextChunks: (operationId, chunks) => textChunkQueue.current
+      ? textChunkQueue.current.recordDecisionTextChunks(operationId, chunks)
+      : Promise.resolve(err(new Error("Announcement text chunk storage is unavailable"))),
+    prepareCompletionAttachment,
+    verifyCompletionAttachment: (attachment) => verifyCompletionAttachmentSnapshot(
+      container.config.dataDir,
+      attachment,
+    ),
   });
   // executeSubAgent built via setup-cross-session-graph.ts.
   const executeSubAgent = buildExecuteSubAgent({
@@ -287,106 +289,20 @@ export function setupCrossSession(deps: {
     ...(deps.worktreeRegistry ? { worktreeRegistry: deps.worktreeRegistry } : {}),
   });
 
-  // Cross-session sender — fire-and-forget, wait, or ping-pong messaging
-  const crossSessionSender = createCrossSessionSender({
-    sessionStore,
-    executeInSession,
-    sendToChannel,
-    eventBus: container.eventBus,
-    config: container.config.security.agentToAgent,
-    logger: deps.logger,
-    ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
-  });
-
   // Ask the parent agent to rewrite an announcement. The irreversible platform
   // send remains at the receipt-aware announcement-delivery boundary.
-  const announceToParent = async (
-    callerAgentId: string,
-    callerSessionKey: SessionKey,
-    callerConversation: ConversationLocator,
-    text: string,
-    channelType: string,
-    channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence },
-  ): Promise<string | undefined> => {
-    deps.logger?.debug({
-      callerAgentId,
-      channelId: callerSessionKey.channelId,
-      textLength: text.length,
-      channelType,
-      targetChannelId: channelId, resolvedLanguage: options?.resolvedLanguage ?? "unset",
-    }, "announceToParent invoked");
-
-    // Emit proxy typing around announcement delivery (not spawn-time).
-    const proxyId = `announce-${systemNowMs()}-${Math.random().toString(36).slice(2, 8)}`;
-    container.eventBus.emit("typing:proxy_start", {
-      runId: proxyId,
-      channelType,
-      channelId,
-      parentSessionKey: typeof callerSessionKey === "string"
-        ? callerSessionKey
-        : `${callerSessionKey.channelId}:${callerSessionKey.userId}:${callerSessionKey.tenantId}`,
-      agentId: callerAgentId,
-      timestamp: systemNowMs(),
-    });
-    try {
-      // Candidate rewriting is a text-only boundary. An explicit empty tool
-      // set prevents the parent execution from producing platform/tool side
-      // effects before the governed delivery decision is durable.
-      if (
-        callerConversation.conversationScope.tenantId !== callerSessionKey.tenantId
-        || callerConversation.conversationScope.agentId !== callerAgentId
-      ) {
-        deps.logger?.warn({
-          callerAgentId,
-          hint: "repair the captured parent conversation authority before retrying the announcement",
-          errorKind: "precondition" as const,
-        }, "Parent announcement conversation authority is inconsistent");
-        return undefined;
-      }
-      const callerRef = createConversationRef(callerConversation.conversationScope);
-      if (!callerRef.ok || callerRef.value !== callerConversation.conversationRef) return undefined;
-      const result = await executeInSession(
-        callerAgentId,
-        callerSessionKey,
-        callerConversation,
-        text,
-        // Capability-free: the candidate REWRITE boundary for a background completion,
-        // not a work turn — it must not act on the evidence grounding it. Expressed
-        // as `noToolCalls`, not an empty tool array: tools are the FIRST element of
-        // the provider cache key, so emptying them re-wrote a ~200k prefix on the
-        // way in AND again on the way out.
-        undefined,
-        options?.resolvedLanguage, { kind: "background_completion" }, options?.citationEvidence,
-        true,
-      );
-      const trimmed = result.response.trim();
-      const isNoReply = !trimmed || trimmed === "NO_REPLY" || trimmed.startsWith("NO_REPLY");
-      deps.logger?.debug({
-        callerAgentId,
-        responseLength: trimmed.length,
-        willDeliver: !isNoReply,
-        isNoReply,
-      }, "announceToParent execution result");
-      return isNoReply ? undefined : trimmed;
-    } finally {
-      container.eventBus.emit("typing:proxy_stop", {
-        runId: proxyId,
-        channelType,
-        channelId,
-        reason: "completed" as const,
-        durationMs: 0,
-        timestamp: systemNowMs(),
-      });
-    }
-  };
+  const announceToParent = createAnnounceToParent({
+    eventBus: container.eventBus,
+    executeInSession,
+    ...(deps.logger ? { logger: deps.logger } : {}),
+  });
 
   // Dead-letter queue (created before batcher so batcher can reference it).
   // safePath requires an absolute base; process.cwd() is the fallback.
   const deadLetterFilePath = safePath(container.config.dataDir || process.cwd(), "dead-letters.jsonl");
   const deadLetterQueue = createAnnouncementDeadLetterQueue({
     filePath: deadLetterFilePath,
-    maxRetries: 5,
+    maxRetries: container.config.security.agentToAgent.delivery.maxRetries,
     retryIntervalMs: 60_000,
     maxAgeMs: 3_600_000,
     maxEntries: 100,
@@ -397,7 +313,149 @@ export function setupCrossSession(deps: {
     // (the in-memory deliveredKeys set rebuilds empty on boot; the durable ledger
     // is the authoritative no-double-notify signal). Absent ⇒ at-least-once delivery.
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
-    ...(deps.outwardLedger ? { governedSendToChannel: sendToChannelWithReceipt } : {}),
+    receiptAwareSendToChannel: sendSingleTextToChannelWithReceipt,
+    retirementProducerState: createRetirementProducerStateResolver({
+      sessionStore,
+      ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+      ...(deps.graphProducerExists ? { graphProducerExists: deps.graphProducerExists } : {}),
+    }),
+    reconcileAttachments: (referencedPaths) => reconcileCompletionAttachmentSnapshots(
+      container.config.dataDir,
+      referencedPaths,
+    ),
+    ...(deps.outwardLedger ? {
+      governedSendToChannel: (
+        channelType,
+        channelId,
+        text,
+        options,
+        attachment,
+      ) => {
+        if (attachment) {
+          const destinationEndpoint = options?.destinationEndpoint;
+          if (!destinationEndpoint) {
+            return Promise.resolve(err(new Error(
+              "Retained attachment has no immutable destination endpoint",
+            )));
+          }
+          return sendPreparedAttachmentToChannelWithReceipt(
+            channelType,
+            channelId,
+            text,
+            attachment,
+            destinationEndpoint,
+            options,
+          );
+        }
+        const governedText = options?.governedText;
+        const destinationEndpoint = options?.destinationEndpoint;
+        const deliveryAuthority = options?.authority;
+        if (
+          !governedText
+          || !destinationEndpoint
+          || !deliveryAuthority
+          || !sendGovernedTextToChannelWithReceipt
+        ) {
+          return Promise.resolve(err(new Error(
+            "Retained text announcement has no governed operation identity",
+          )));
+        }
+        const { persistTextChunks, ...governedRequest } = governedText;
+        return sendGovernedTextToChannelWithReceipt({
+          ...governedRequest,
+          channelType,
+          channelId,
+          text,
+          ...(options?.threadId || options?.extra ? {
+            options: {
+              ...(options?.threadId ? { threadId: options.threadId } : {}),
+              ...(options?.extra ? { extra: options.extra } : {}),
+            },
+          } : {}),
+        }, destinationEndpoint, deliveryAuthority, persistTextChunks).then((result) => {
+          if (!result.ok) return result;
+          const outcome = result.value;
+          if (outcome.delivered) {
+            return ok({
+              delivered: true,
+              status: "accepted" as const,
+              ...(outcome.platformMessageId
+                ? { platformMessageId: outcome.platformMessageId }
+                : {}),
+            });
+          }
+          if (
+            "terminalDecision" in outcome
+            && outcome.terminalDecision === "delivered"
+          ) {
+            return ok({
+              delivered: true,
+              status: "accepted" as const,
+            });
+          }
+          return ok({
+            delivered: false,
+            status: "unknown" as const,
+          });
+        });
+      },
+      prepareAttachment: prepareCompletionAttachment,
+      cleanupAttachment: (attachment) => cleanupCompletionAttachmentSnapshot(
+        container.config.dataDir,
+        attachment,
+      ),
+    } : {}),
+    ...(deps.ensureDeadLetterRecoveryObservation
+      ? { ensureSessionObservation: deps.ensureDeadLetterRecoveryObservation }
+      : {}),
+  });
+  textChunkQueue.current = deadLetterQueue;
+
+  const sendGovernedAnnouncement = sendLedgerAnnouncement
+    ? createRecoverableAnnouncementDelivery({
+        adaptersByType,
+        deadLetterQueue,
+        send: sendLedgerAnnouncement,
+        lifecycleSignal: announcementAdmissionAbort.signal,
+        ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
+        ...(deps.logger ? { logger: deps.logger } : {}),
+      })
+    : undefined;
+  const sendRecoverableAnnouncement = sendGovernedAnnouncement
+    ? undefined
+    : createReceiptAwareRecoverableAnnouncementDelivery({
+        adaptersByType,
+        deadLetterQueue,
+        deliveryService: deps.deliveryService,
+        lifecycleSignal: announcementAdmissionAbort.signal,
+        ...(deps.logger ? { logger: deps.logger } : {}),
+      });
+  const crossSessionSender = createCrossSessionSender({
+    sessionStore,
+    executeInSession,
+    sendToChannel,
+    eventBus: container.eventBus,
+    config: container.config.security.agentToAgent,
+    logger: deps.logger,
+    reserveAnnouncementProducer: (reservation) => deadLetterQueue.reserveProducer(
+      reservation,
+      announcementAdmissionAbort.signal,
+    ),
+    releaseAnnouncementProducer: (producerKey) => deadLetterQueue.releaseProducer(producerKey),
+    recordAnnouncementProducerOutcome: (producerKey, outcome) =>
+      deadLetterQueue.recordProducerOutcome(
+        producerKey,
+        outcome,
+        announcementAdmissionAbort.signal,
+      ),
+    lifecycleSignal: announcementAdmissionAbort.signal,
+    cancelAnnouncementProducer: (producerKey) => deadLetterQueue.cancelProducer(producerKey),
+    suppressAnnouncementProducer: (producerKey) => deadLetterQueue.suppressProducer(producerKey),
+    prepareAnnouncementRetirement: (completionKeys, producer) =>
+      deadLetterQueue.prepareTerminalDecisionRetirement(completionKeys, producer),
+    ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
+    ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
+    resolveRootRunId: deps.resolveRootRunId,
   });
 
   // ONE bounded delivered-key store shared across every
@@ -413,82 +471,24 @@ export function setupCrossSession(deps: {
     eventBus: container.eventBus,
     announceToParent,
     sendToChannel,
+    sendToChannelWithReceipt,
     logger: deps.logger?.child({ submodule: "announcement-batcher" }),
     deadLetterQueue,
     deliveryDedup,
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
+    ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
   });
 
-  // Resolve condensation model via 5-level priority chain
-  const subagentCtxConfigForCondenser = container.config.security?.agentToAgent?.subagentContext;
-  const defaultAgentConfig = container.config.agents?.["default"];
-
-  const condensationResolution = resolveOperationModel({
-    operationType: "condensation",
-    agentProvider: defaultAgentConfig?.provider ?? "anthropic",
-    agentModel: defaultAgentConfig?.model ?? "default",
-    operationModels: defaultAgentConfig?.operationModels ?? {},
-    providerFamily: resolveProviderFamily(defaultAgentConfig?.provider ?? "anthropic"),
-    agentPromptTimeoutMs: defaultAgentConfig?.promptTimeout?.promptTimeoutMs,
+  const {
+    resultCondenser,
+    narrativeCaster,
+    materializeFullOutput,
+    condenserApiKey,
+    condenserModel,
+  } = createSubAgentResultProcessing({
+    container,
+    ...(deps.logger ? { logger: deps.logger } : {}),
   });
-
-  // Resolve API key from resolution.provider (enables cross-provider condensation)
-  const condenserProviderEntry = container.config.providers?.entries?.[condensationResolution.provider];
-  const condenserApiKeyName = condenserProviderEntry?.apiKeyName
-    || `${condensationResolution.provider.toUpperCase()}_API_KEY`;
-  const condenserApiKey = container.secretManager?.get(condenserApiKeyName) ?? "";
-
-  deps.logger?.debug(
-    { model: condensationResolution.model, source: condensationResolution.source, provider: condensationResolution.provider },
-    "Condensation model resolved",
-  );
-
-  const resultCondenser = createResultCondenser({
-    maxResultTokens: subagentCtxConfigForCondenser?.maxResultTokens ?? 4000,
-    condensationStrategy: subagentCtxConfigForCondenser?.condensationStrategy ?? "auto",
-    dataDir: container.config.dataDir || ".",
-    logger: deps.logger
-      ? { info: deps.logger.info.bind(deps.logger), warn: deps.logger.warn.bind(deps.logger), debug: deps.logger.debug.bind(deps.logger) }
-      : { info: () => {}, warn: () => {}, debug: () => {} },
-  });
-
-  // Create NarrativeCaster for tagged result announcements
-  const narrativeCaster = createNarrativeCaster({
-    enabled: subagentCtxConfigForCondenser?.narrativeCasting ?? true,
-    tagPrefix: subagentCtxConfigForCondenser?.resultTagPrefix ?? "Subagent Result",
-  });
-
-  // The full-output ResultRef store. The runner stays
-  // @comis/skills-free (DI) — the daemon owns the store + the child-workspace
-  // target selection. The callback resolves the CHILD's OWN jailed workspace
-  // from ctx.agentId (mirroring setup-cross-session-graph.ts:358-361), NEVER the
-  // lead's; createResultRefStore is additionally safePath-confined to
-  // that root, so a traversal returns a MaterializeError the runner degrades on.
-  // The store's 3-way union (ResultRef | MaterializeError | undefined) is returned
-  // UNCHANGED — the runner's dep contract IS that union, so no mapping is forced.
-  const resultRefStore = createResultRefStore({
-    logger: deps.logger
-      ? deps.logger.child({ submodule: "sub-agent-result-ref" })
-      : NOOP_LOGGER,
-  });
-  const materializeFullOutput = (
-    content: string,
-    ctx: { runId: string; nowMs: number; agentId: string },
-  ) => {
-    const childAgentConfig = container.config.agents[ctx.agentId]
-      ?? container.config.agents["default"]
-      ?? ({} as AgentConfig);
-    const childWorkspaceDir = resolveWorkspaceDir(
-      childAgentConfig,
-      ctx.agentId,
-      container.config.dataDir || undefined,
-    );
-    return resultRefStore.materialize(content, "sessions_spawn", {
-      workspacePath: childWorkspaceDir,
-      runId: ctx.runId,
-      nowMs: ctx.nowMs,
-    });
-  };
 
   const lifecycleHooks = createLifecycleHooks({
     logger: deps.logger
@@ -528,7 +528,7 @@ export function setupCrossSession(deps: {
     batcher: announcementBatcher,
     sessionResolver: deps.sessionResolver,
     resultCondenser,
-    condenserModel: condenserApiKey ? { id: condensationResolution.modelId, provider: condensationResolution.provider } as unknown : undefined,
+    condenserModel,
     condenserApiKey: condenserApiKey || undefined,
     narrativeCaster,
     // The full-output ResultRef materialize, targeting the CHILD's
@@ -539,6 +539,7 @@ export function setupCrossSession(deps: {
     deadLetterQueue,
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}), deliveryDedup,
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
+    ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
     clock: deps.clock,
     timers: deps.timers,
     // The tree-wide spawn ceiling (bound to
@@ -581,9 +582,11 @@ export function setupCrossSession(deps: {
     subAgentRunner,
     sendToChannel,
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
+    ...(sendRecoverableAnnouncement ? { sendRecoverableAnnouncement } : {}),
     announceToParent,
     deadLetterQueue,
     announcementBatcher,
+    closeAnnouncementAdmission: () => announcementAdmissionAbort.abort(),
     proxyTypingCleanup,
   };
 }

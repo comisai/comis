@@ -9,12 +9,15 @@ import {
   formatSessionKey,
   RequiredToolsUnreachableError,
   TypedEventBus,
-  type ConversationLocator, SUB_AGENT_TOOL_DENYLIST} from "@comis/core";
+  type ConversationLocator,
+  SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
+  SUB_AGENT_TOOL_DENYLIST,
+} from "@comis/core";
 import { SandboxDowngradeError } from "./sandbox-posture.js";
 import { mkdtemp, writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
@@ -964,11 +967,19 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   it("auto-archive removes old completed runs after retention period", async () => {
     deps.config.subAgentRetentionMs = 60_000; // 1 minute for test
+    const prepareTerminalDecisionRetirement = vi.fn(async () => ok(undefined));
+    const collectTerminalDecisionRetirements = vi.fn(async () => ok(1));
+    deps.deadLetterQueue = {
+      prepareTerminalDecisionRetirement,
+      collectTerminalDecisionRetirements,
+      drain: vi.fn(async () => undefined),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
 
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
       task: "short task",
       agentId: "default",
+      callerSessionKey: "default:user_a:telegram:chat-1",
     });
 
     // Complete the run
@@ -982,7 +993,7 @@ describe("createSubAgentRunner", () => {
     });
 
     // Advance past retention period + sweep interval
-    vi.advanceTimersByTime(60_000 + 300_001);
+    await vi.advanceTimersByTimeAsync(60_000 + 300_001);
 
     // Run should be archived (removed from Map)
     const runAfter = runner.getRunStatus(runId);
@@ -991,6 +1002,11 @@ describe("createSubAgentRunner", () => {
 
     // sessionStore.delete should have been called
     expect(deps.sessionStore.delete).toHaveBeenCalledTimes(1);
+    expect(prepareTerminalDecisionRetirement).toHaveBeenCalledWith(
+      [`default:user_a:telegram:chat-1::${runId}`],
+      expect.objectContaining({ agentId: "default" }),
+    );
+    expect(collectTerminalDecisionRetirements).toHaveBeenCalledOnce();
 
     // Archive event should have been emitted
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
@@ -999,6 +1015,35 @@ describe("createSubAgentRunner", () => {
         runId,
       }),
     );
+  });
+
+  it("auto-archive retains run state until replay-guard retirement is prepared", async () => {
+    deps.config.subAgentRetentionMs = 60_000;
+    let storageAvailable = false;
+    const prepareTerminalDecisionRetirement = vi.fn(async () => storageAvailable
+      ? ok(undefined)
+      : err(new Error("storage unavailable")));
+    deps.deadLetterQueue = {
+      prepareTerminalDecisionRetirement,
+      collectTerminalDecisionRetirements: vi.fn(async () => ok(1)),
+      drain: vi.fn(async () => undefined),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "short task",
+      agentId: "default",
+      callerSessionKey: "default:user_a:telegram:chat-1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(60_000 + 300_001);
+
+    expect(runner.getRunStatus(runId)).toBeDefined();
+    expect(deps.sessionStore.delete).not.toHaveBeenCalled();
+    storageAvailable = true;
+    await vi.advanceTimersByTimeAsync(300_001);
+    expect(runner.getRunStatus(runId)).toBeUndefined();
+    expect(deps.sessionStore.delete).toHaveBeenCalledTimes(1);
   });
 
   // -----------------------------------------------------------------------
@@ -1024,6 +1069,476 @@ describe("createSubAgentRunner", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(deps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("durably terminalizes announce skip before completing the run", async () => {
+    vi.useRealTimers();
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "private result ANNOUNCE_SKIP",
+      tokensUsed: { total: 100 },
+      cost: { total: 0.01 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    const suppressProducer = vi.fn(async () => ok(true));
+    const reserveProducer = vi.fn(async () => ok({ status: "claimed" as const }));
+    deps.deadLetterQueue = {
+      reserveProducer,
+      recordProducerOutcome: vi.fn(async () => ok(undefined)),
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer,
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "silent task",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+
+    await vi.waitFor(() => expect(reserveProducer).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "completed",
+    }));
+    expect(suppressProducer).toHaveBeenCalledWith(runId);
+    expect(deps.deadLetterQueue.releaseProducer).not.toHaveBeenCalled();
+    expect(deps.deadLetterQueue.cancelProducer).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("settles recovery-owned producer work without starting the provider", async () => {
+    vi.useRealTimers();
+    const reserveProducer = vi.fn(async () => ok({
+      status: "recovery_owned" as const,
+      lifecycleState: "delivery_owned" as const,
+      recoveryOutcome: {
+        kind: "session" as const,
+        terminalReason: "failed" as const,
+        completedAtMs: 1_234,
+        errorKind: "dependency" as const,
+        summary: "persisted failure summary",
+        resultRef: {
+          ref: "results/persisted.txt",
+          kind: "text" as const,
+          bytes: 24,
+          preview: "persisted result",
+          expiresAt: "2026-08-18T00:00:00.000Z",
+        },
+      },
+    }));
+    deps.deadLetterQueue = {
+      reserveProducer,
+      reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordProducerOutcome: vi.fn(async () => ok(undefined)),
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer: vi.fn(async () => ok(true)),
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "recover completion",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+    const completion = runner.waitForCompletion(runId);
+    if (!completion) throw new Error("Recovery completion was not registered");
+
+    await expect(completion).resolves.toMatchObject({
+      endReason: "failed",
+      completedAtMs: 1_234,
+      summary: "persisted failure summary",
+      resultRef: {
+        ref: "results/persisted.txt",
+        kind: "text",
+        bytes: 24,
+      },
+    });
+    expect(reserveProducer).toHaveBeenCalledOnce();
+    expect(deps.executeAgent).not.toHaveBeenCalled();
+    expect(deps.deadLetterQueue.releaseProducer).not.toHaveBeenCalled();
+    expect(deps.deadLetterQueue.cancelProducer).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("retries completed outcome persistence without relabeling the run", async () => {
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "private result ANNOUNCE_SKIP",
+      tokensUsed: { total: 100 },
+      cost: { total: 0.01 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    const recordProducerOutcome = vi.fn()
+      .mockResolvedValueOnce(err(new Error("outcome storage unavailable")))
+      .mockResolvedValue(ok(undefined));
+    const suppressProducer = vi.fn(async () => ok(true));
+    deps.deadLetterQueue = {
+      reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordProducerOutcome,
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer,
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "persist result",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+    const completion = runner.waitForCompletion(runId);
+    if (!completion) throw new Error("Completed producer outcome was not registered");
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(recordProducerOutcome).toHaveBeenCalledTimes(1);
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "running" });
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "session:sub_agent_completed",
+      expect.objectContaining({ runId, success: false }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(recordProducerOutcome).toHaveBeenCalledTimes(2);
+    expect(recordProducerOutcome).toHaveBeenLastCalledWith(runId, expect.objectContaining({
+      kind: "session",
+      terminalReason: "completed",
+      summary: expect.any(String),
+    }), expect.any(AbortSignal));
+    await expect(completion).resolves.toMatchObject({
+      endReason: "completed",
+      summary: expect.any(String),
+    });
+    expect(suppressProducer).toHaveBeenCalledWith(runId);
+    await runner.shutdown();
+  });
+
+  it("bounds the durable producer outcome before terminalizing completion", async () => {
+    const response = "x".repeat(SUBAGENT_RESULT_SUMMARY_MAX_CHARS + 2_000);
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response,
+      tokensUsed: { total: 100 },
+      cost: { total: 0.01 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    const recordProducerOutcome = vi.fn(async () => ok(undefined));
+    deps.deadLetterQueue = {
+      reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordProducerOutcome,
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer: vi.fn(async () => ok(true)),
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "persist bounded result",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+    const completion = runner.waitForCompletion(runId);
+    if (!completion) throw new Error("Bounded completion was not registered");
+
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(completion).resolves.toMatchObject({
+      endReason: "completed",
+      summary: "x".repeat(SUBAGENT_RESULT_SUMMARY_MAX_CHARS),
+    });
+    expect(recordProducerOutcome).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({
+        terminalReason: "completed",
+        summary: "x".repeat(SUBAGENT_RESULT_SUMMARY_MAX_CHARS),
+      }),
+      expect.any(AbortSignal),
+    );
+    await runner.shutdown();
+  });
+
+  it("retries failed outcome persistence before terminalizing the run", async () => {
+    vi.mocked(deps.executeAgent).mockRejectedValue(new Error("provider unavailable"));
+    const recordProducerOutcome = vi.fn()
+      .mockResolvedValueOnce(err(new Error("outcome storage unavailable")))
+      .mockResolvedValue(ok(undefined));
+    deps.deadLetterQueue = {
+      reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordProducerOutcome,
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer: vi.fn(async () => ok(true)),
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "persist failed result",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+    const completion = runner.waitForCompletion(runId);
+    if (!completion) throw new Error("Failed completion was not registered");
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(recordProducerOutcome).toHaveBeenCalledTimes(1);
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "running" });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(recordProducerOutcome).toHaveBeenCalledTimes(2);
+    await expect(completion).resolves.toMatchObject({
+      endReason: "failed",
+      summary: "provider unavailable",
+    });
+    await runner.shutdown();
+  });
+
+  it("persists the completed outcome before bounded shutdown abandons retries", async () => {
+    const retryHandles: Array<{ delayMs: number; unref: ReturnType<typeof vi.fn> }> = [];
+    deps.timers = {
+      setTimeout: (callback, delayMs) => {
+        const handle = testTimers.setTimeout(callback, delayMs);
+        const unref = vi.fn(() => handle.unref());
+        retryHandles.push({ delayMs, unref });
+        return { ...handle, unref };
+      },
+      setInterval: testTimers.setInterval,
+    };
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "persist after shutdown starts",
+      tokensUsed: { total: 100 },
+      cost: { total: 0.01 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    const recordProducerOutcome = vi.fn(async () =>
+      err(new Error("outcome storage unavailable")));
+    deps.deadLetterQueue = {
+      reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+      recordProducerOutcome,
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer: vi.fn(async () => ok(true)),
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const childConversation = createTestConversation({ agentId: "default" });
+    vi.mocked(deps.sessionStore.loadByRef).mockReturnValue(
+      ok(persistedConversation(childConversation)),
+    );
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "persist during shutdown",
+      agentId: "default",
+      reuseConversation: childConversation,
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(recordProducerOutcome).toHaveBeenCalledOnce();
+    expect(deps.sessionStore.save).toHaveBeenCalledWith(
+      childConversation.conversationScope,
+      [],
+      expect.objectContaining({
+        announcementProducerRecoveryOutcome: {
+          checkpointId: runId,
+          outcome: expect.objectContaining({
+            kind: "session",
+            terminalReason: "completed",
+            summary: expect.any(String),
+          }),
+        },
+      }),
+    );
+
+    const shutdown = runner.shutdown();
+    await vi.advanceTimersByTimeAsync(1_000);
+    const retry = retryHandles.findLast((record) => record.delayMs === 1_000);
+    expect(retry?.unref).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(29_000);
+    await shutdown;
+    expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "completed",
+      completion: expect.objectContaining({
+        endReason: "completed",
+        summary: expect.any(String),
+      }),
+    });
+  });
+
+  it("retries announce skip persistence without sending a failure notice", async () => {
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "private result ANNOUNCE_SKIP",
+      tokensUsed: { total: 100 },
+      cost: { total: 0.01 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    const suppressProducer = vi.fn()
+      .mockResolvedValueOnce(err(new Error("suppression storage unavailable")))
+      .mockResolvedValueOnce(ok(false))
+      .mockResolvedValue(ok(true));
+    const reserveProducer = vi.fn(async () => ok({ status: "claimed" as const }));
+    deps.deadLetterQueue = {
+      reserveProducer,
+      recordProducerOutcome: vi.fn(async () => ok(undefined)),
+      releaseProducer: vi.fn(async () => ok(undefined)),
+      cancelProducer: vi.fn(async () => ok(undefined)),
+      suppressProducer,
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as NonNullable<SubAgentRunnerDeps["deadLetterQueue"]>;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "chat123",
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "silent task",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "chat123",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "chat123",
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(suppressProducer).toHaveBeenCalledTimes(1);
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "running" });
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "session:sub_agent_completed",
+      expect.objectContaining({ runId, success: false }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(suppressProducer).toHaveBeenCalledTimes(2);
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "running" });
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(suppressProducer).toHaveBeenCalledTimes(3);
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "completed" });
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(deps.deadLetterQueue.releaseProducer).not.toHaveBeenCalled();
+    expect(deps.deadLetterQueue.cancelProducer).not.toHaveBeenCalled();
+    await runner.shutdown();
   });
 
   it("missing completion route emits a child-routed delivery-skipped event", async () => {
@@ -7156,6 +7671,71 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     const killedCall = emit.mock.calls.find((c) => c[0] === "subagent:killed");
     expect((killedCall![1] as Record<string, unknown>).killedBy).toBe("parent");
     expect(localDeps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("parent kill cancels producer ownership when no delivery transfer occurred", async () => {
+    const localDeps = createMockDeps();
+    localDeps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    let resolveExecution!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(localDeps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const reserveProducer = vi.fn(async () => ok({ status: "claimed" as const }));
+    const releaseProducer = vi.fn(async () => ok(undefined));
+    const cancelProducer = vi.fn(async () => ok(undefined));
+    localDeps.deadLetterQueue = {
+      reserveProducer,
+      recordProducerOutcome: vi.fn(async () => ok(undefined)),
+      releaseProducer,
+      cancelProducer,
+      drain: vi.fn(async () => undefined),
+      size: vi.fn(() => 0),
+    } as unknown as SubAgentRunnerDeps["deadLetterQueue"];
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "telegram",
+      conversationId: "42",
+    });
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({
+      task: "t",
+      agentId: "default",
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "telegram",
+      announceChannelId: "42",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "42",
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    runner.killRun(runId);
+    resolveExecution({
+      response: "late result",
+      tokensUsed: { total: 1 },
+      cost: { total: 0 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(reserveProducer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId,
+        retirementKeys: [expect.any(String)],
+        producer: expect.objectContaining({ kind: "session", checkpointId: runId }),
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(cancelProducer).toHaveBeenCalledWith(runId);
+    expect(releaseProducer).not.toHaveBeenCalled();
   });
 
   it("health-monitor kill delivers an LLM-free failure notification to the announce channel", async () => {

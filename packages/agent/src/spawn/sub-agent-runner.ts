@@ -57,6 +57,8 @@ import {
   type WorkspacePolicySnapshot,
   verifyWorkspacePolicySnapshot,
   SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
+  type AnnouncementProducerReservation,
+  type AnnouncementProducerRecoveryOutcome,
 } from "@comis/core";
 import { err, fromPromise, isSilentResponse, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
@@ -74,8 +76,9 @@ import type {
   AnnouncementBatcher,
   AnnouncementDeadLetterQueue,
   SendGovernedCompletionAnnouncement,
+  SendRecoverableCompletionAnnouncement,
 } from "./announcement-ports.js";
-import type { DeliveryDedup } from "./announce-key.js";
+import { buildAnnounceKey, type DeliveryDedup } from "./announce-key.js";
 import {
   activelyAwaitedChildRunIds,
   hasIndependentAnnouncementAuthority,
@@ -119,6 +122,7 @@ export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 const SHUTDOWN_ACTIVE_GRACE_MS = 30_000;
 const SHUTDOWN_NOTICE_GRACE_MS = 5_000;
 const DURABLE_TERMINAL_RETRY_MS = 1_000;
+const ANNOUNCEMENT_SUPPRESSION_RETRY_MS = 1_000;
 /**
  * Maximum caller-side guard for a sub-agent runner shutdown. The runner owns
  * the active-run drain and governed-notice grace, with a final bounded margin
@@ -572,6 +576,7 @@ export interface SubAgentRunnerDeps {
   deadLetterQueue?: AnnouncementDeadLetterQueue;
   /** Durable single-attempt sender for final completion-announcement delivery. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
   /**
    * Shared, bounded delivered-key store, forwarded to deliverAnnouncement
    * + deliverFailureNotification so the failure-path dedup is correct whether or
@@ -1090,6 +1095,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     inFlight: boolean;
     retryHandle?: TimerHandle;
   }
+  interface PendingProducerOutcome {
+    readonly completion: SubAgentCompletion;
+    readonly telemetry?: SubAgentRunTelemetry;
+  }
   const completionDeferreds = new Map<string, CompletionDeferred>();
   const completionAnnouncementWaitClaims = new Map<string, number>();
   const abortedCompletionWaitClaimsByParentRunId = new Map<string, Set<string>>();
@@ -1099,6 +1108,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const activeRunIds = new Set<string>();
   const providerSettledRunIds = new Set<string>();
   const deliverySuppressedRunIds = new Set<string>();
+  const deliveryAdmissionRunIds = new Set<string>();
+  const producerSuppressionPendingRunIds = new Set<string>();
+  const producerLifecyclePendingRunIds = new Set<string>();
+  const producerOutcomePendingRunIds = new Set<string>();
+  const producerTransferAttemptedRunIds = new Set<string>();
+  const producerOutcomeHandoffRunIds = new Set<string>();
+  const producerShutdownHandoffRunIds = new Set<string>();
+  const pendingProducerOutcomes = new Map<string, PendingProducerOutcome>();
+  const producerAdmissionAbort = new AbortController();
   const forcedTerminalRunIds = new Set<string>();
   const durableAdmittedRunIds = new Set<string>();
   const durableTerminalReasons = new Map<string, DurableRunTerminalReason>();
@@ -1110,6 +1128,58 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   let acceptingSpawns = true;
   let spawnPaused = false;
   let shutdownPromise: Promise<void> | undefined;
+
+  async function settleAnnouncementProducerLifecycle(
+    runId: string,
+    transition: "cancel" | "release" | "suppress" | "record_outcome",
+    operation: () => Promise<Result<void, Error>>,
+  ): Promise<void> {
+    producerLifecyclePendingRunIds.add(runId);
+    if (transition === "record_outcome") producerOutcomePendingRunIds.add(runId);
+    let attemptCount = 0;
+    const startedAt = clock.now();
+    try {
+      while (true) {
+        attemptCount++;
+        const boundary = await fromPromise(operation());
+        if (boundary.ok && boundary.value.ok) {
+          if (attemptCount > 1) {
+            deps.logger?.info({
+              runId,
+              transition,
+              attempts: attemptCount,
+              durationMs: clock.now() - startedAt,
+            }, "Announcement producer lifecycle transition recovered");
+          }
+          return;
+        }
+        const failure = !boundary.ok
+          ? boundary.error
+          : boundary.value.ok
+            ? new Error("Announcement producer lifecycle transition failed without an error")
+            : boundary.value.error;
+        if (attemptCount === 1) {
+          deps.logger?.warn({
+            runId,
+            transition,
+            err: toSafeErrorLogString(failure),
+            errorKind: "resource" as const,
+            hint: "Restore dead-letter storage; producer ownership remains live and will retry",
+          }, "Announcement producer lifecycle transition could not be persisted");
+        } else {
+          deps.logger?.debug({ runId, transition, attempts: attemptCount },
+            "Announcement producer lifecycle retry remains pending");
+        }
+        await new Promise<void>((resolve) => {
+          const retryHandle = timers.setTimeout(resolve, ANNOUNCEMENT_SUPPRESSION_RETRY_MS);
+          retryHandle.unref();
+        });
+      }
+    } finally {
+      producerLifecyclePendingRunIds.delete(runId);
+      if (transition === "record_outcome") producerOutcomePendingRunIds.delete(runId);
+    }
+  }
 
   function createCompletionDeferred(runId: string): void {
     let resolvePromise!: (completion: SubAgentCompletion) => void;
@@ -1193,6 +1263,30 @@ function classifyCompletionErrorKind(
       ...(summary ? { summary } : {}),
       ...(resultRef ? { resultRef } : {}),
     });
+  }
+
+  function persistProducerOutcomeHandoff(
+    run: SubAgentRun,
+    outcome: AnnouncementProducerRecoveryOutcome,
+  ): Result<void, Error> {
+    const loaded = deps.sessionStore.loadByRef(
+      run.conversationScope,
+      run.conversationRef,
+    );
+    if (!loaded.ok) return err(loaded.error);
+    if (!loaded.value) return err(new Error("Sub-agent producer session was not found"));
+    const saved = deps.sessionStore.save(
+      loaded.value.conversationScope,
+      loaded.value.messages,
+      {
+        ...loaded.value.metadata,
+        announcementProducerRecoveryOutcome: {
+          checkpointId: run.runId,
+          outcome,
+        },
+      },
+    );
+    return saved.ok ? ok(undefined) : err(saved.error);
   }
 
   function terminalizeRun(
@@ -1446,7 +1540,8 @@ function classifyCompletionErrorKind(
     }
   }
 
-  function trackFailureNotification(promise: Promise<void>): void {
+  function trackFailureNotification(runId: string, promise: Promise<void>): void {
+    producerTransferAttemptedRunIds.add(runId);
     const tracked = promise.then(
       () => undefined,
       () => undefined,
@@ -1936,15 +2031,66 @@ function classifyCompletionErrorKind(
     deps.batcher?.markDelivered(idempotencyKey);
   };
 
-  const sweepInterval = timers.setInterval(() => {
-    const now = clock.now();
-    const retentionMs = deps.config.subAgentRetentionMs;
+  const prepareAnnouncementReplayGuardRetirement = async (
+    run: SubAgentRun,
+  ): Promise<Result<void, Error>> => {
+    const completionKey = buildAnnounceKey(run.callerSessionKey, run.runId);
+    if (!completionKey || !deps.deadLetterQueue?.prepareTerminalDecisionRetirement) {
+      return ok(undefined);
+    }
+    return deps.deadLetterQueue.prepareTerminalDecisionRetirement(
+      [completionKey],
+      {
+        kind: "session",
+        tenantId: run.conversationScope.tenantId,
+        agentId: run.agentId,
+        conversationRef: run.conversationRef,
+        checkpointId: run.runId,
+      },
+    );
+  };
 
-    for (const [runId, run] of runs) {
-      if (
-        (run.status === "completed" || run.status === "failed") &&
-        now - run.completion.completedAtMs > retentionMs
-      ) {
+  const archivalRunIds = new Set<string>();
+  const archivedSessionRunIds = new Set<string>();
+
+  const removeArchivedRun = (runId: string, run: SubAgentRun): void => {
+    removeDedupEntry(run);
+    runs.delete(runId);
+    completionDeferreds.delete(runId);
+    startDeferreds.delete(runId);
+    durableResumeHandshakeRunIds.delete(runId);
+    forcedTerminalRunIds.delete(runId);
+    durableAdmittedRunIds.delete(runId);
+    durableTerminalReasons.delete(runId);
+    trajectoryClosedRunIds.delete(runId);
+    resumeDescriptors.delete(runId);
+    archivedSessionRunIds.delete(runId);
+    producerSuppressionPendingRunIds.delete(runId);
+    producerLifecyclePendingRunIds.delete(runId);
+    producerTransferAttemptedRunIds.delete(runId);
+    producerOutcomeHandoffRunIds.delete(runId);
+    producerShutdownHandoffRunIds.delete(runId);
+    pendingProducerOutcomes.delete(runId);
+  };
+
+  const scheduleRunArchive = (
+    runId: string,
+    run: Extract<SubAgentRun, { status: "completed" | "failed" }>,
+    now: number,
+  ): void => {
+    if (archivalRunIds.has(runId)) return;
+    archivalRunIds.add(runId);
+    const archive = (async () => {
+      const preparedRetirement = await prepareAnnouncementReplayGuardRetirement(run);
+      if (!preparedRetirement.ok) {
+        deps.logger?.warn({
+          runId,
+          errorKind: "resource" as const,
+          hint: "Restore dead-letter storage; the retention sweep will retry before deleting the producer session",
+        }, "Sub-agent announcement replay-guard retirement was not prepared");
+        return;
+      }
+      if (!archivedSessionRunIds.has(runId)) {
         const deleted = deps.sessionStore.delete(run.conversationScope);
         if (!deleted.ok) {
           deps.logger?.warn({
@@ -1953,36 +2099,62 @@ function classifyCompletionErrorKind(
             hint: "Inspect session database integrity; the retention sweep will retry on its next pass",
             errorKind: deleted.error.errorKind,
           }, "Sub-agent session archive failed");
-          continue;
+          return;
         }
-
-        deps.eventBus.emit("session:sub_agent_archived", {
+        archivedSessionRunIds.add(runId);
+      }
+      const collected = await deps.deadLetterQueue?.collectTerminalDecisionRetirements?.();
+      if (collected && !collected.ok) {
+        deps.logger?.warn({
           runId,
-          sessionKey: run.sessionKey,
-          ageMs: now - run.completion.completedAtMs,
-          timestamp: now,
-        });
+          errorKind: "resource" as const,
+          hint: "Restore dead-letter storage; the durable retirement intent will retry during recovery",
+        }, "Sub-agent announcement replay guards remain queued for retirement");
+      }
+      deps.eventBus.emit("session:sub_agent_archived", {
+        runId,
+        sessionKey: run.sessionKey,
+        ageMs: now - run.completion.completedAtMs,
+        timestamp: now,
+      });
+      deps.logger?.debug(
+        { runId, ageMs: now - run.completion.completedAtMs },
+        "Sub-agent run auto-archived",
+      );
+      removeArchivedRun(runId, run);
+    })();
+    const tracked: Promise<void> = archive.finally(() => {
+      archivalRunIds.delete(runId);
+      activePromises.delete(tracked);
+    });
+    activePromises.add(tracked);
+    suppressError(
+      tracked,
+      "archive sub-agent run after replay-guard retirement",
+      (message) => deps.logger?.debug({ runId }, message),
+    );
+  };
 
-        deps.logger?.debug({ runId, ageMs: now - run.completion.completedAtMs }, "Sub-agent run auto-archived");
-        // Belt-and-suspenders: terminal-transition sites already remove the
-        // dedup entry, but archive is the last chance to evict if those missed.
-        removeDedupEntry(run);
-        runs.delete(runId);
-        completionDeferreds.delete(runId);
-        startDeferreds.delete(runId);
-        durableResumeHandshakeRunIds.delete(runId);
-        forcedTerminalRunIds.delete(runId);
-        durableAdmittedRunIds.delete(runId);
-        durableTerminalReasons.delete(runId);
-        trajectoryClosedRunIds.delete(runId);
-        resumeDescriptors.delete(runId);
+  const sweepInterval = timers.setInterval(() => {
+    const now = clock.now();
+    const retentionMs = deps.config.subAgentRetentionMs;
+
+    for (const [runId, run] of runs) {
+      if (
+        (run.status === "completed" || run.status === "failed") &&
+        !producerLifecyclePendingRunIds.has(runId) &&
+        now - run.completion.completedAtMs > retentionMs
+      ) {
+        scheduleRunArchive(runId, run, now);
       }
     }
 
     // Size cap: prune oldest completed runs if over limit
     if (runs.size > MAX_RUNS) {
       const completedRuns = [...runs.entries()]
-        .filter(([, r]) => r.status === "completed" || r.status === "failed")
+        .filter(([runId, r]) =>
+          !producerLifecyclePendingRunIds.has(runId)
+          && (r.status === "completed" || r.status === "failed"))
         .sort((a, b) => {
           const aCompleted = a[1].status === "completed" || a[1].status === "failed"
             ? a[1].completion.completedAtMs
@@ -1996,16 +2168,8 @@ function classifyCompletionErrorKind(
       const toRemove = runs.size - MAX_RUNS;
       for (let i = 0; i < toRemove && i < completedRuns.length; i++) {
         const [pruneRunId, pruneRun] = completedRuns[i]!;
-        removeDedupEntry(pruneRun);
-        runs.delete(pruneRunId);
-        completionDeferreds.delete(pruneRunId);
-        startDeferreds.delete(pruneRunId);
-        durableResumeHandshakeRunIds.delete(pruneRunId);
-        forcedTerminalRunIds.delete(pruneRunId);
-        durableAdmittedRunIds.delete(pruneRunId);
-        durableTerminalReasons.delete(pruneRunId);
-        trajectoryClosedRunIds.delete(pruneRunId);
-        resumeDescriptors.delete(pruneRunId);
+        if (pruneRun.status !== "completed" && pruneRun.status !== "failed") continue;
+        scheduleRunArchive(pruneRunId, pruneRun, now);
       }
     }
 
@@ -2133,7 +2297,7 @@ function classifyCompletionErrorKind(
 
       // Deliver failure notification using stored announce channel
       if (!completionClaimedByWait && run.announceChannelType && run.announceChannelId) {
-        trackFailureNotification(deliverFailureNotification({
+        trackFailureNotification(runId, deliverFailureNotification({
           channelType: run.announceChannelType,
           channelId: run.announceChannelId,
           task: run.task,
@@ -3068,6 +3232,9 @@ function classifyCompletionErrorKind(
     // Async execution
     const execPromise = (async () => {
       let rollbackHandle: { rollback: () => Promise<void> } | undefined;
+      let producerSuppressionAttempted = false;
+      let producerRecoveryOwned = false;
+      let producerClaimed = false;
       const traceId = params.graphTraceId ?? randomUUID();
 
       try {
@@ -3103,6 +3270,123 @@ function classifyCompletionErrorKind(
           throw new DurableSubAgentAdmissionError(
             "Sub-agent terminalized during checkpoint admission",
           );
+        }
+        if (
+          params.announceChannelType
+          && params.announceChannelId
+          && params.callerAgentId
+          && params.callerSessionKey
+          && params.callerConversation
+          && run.callerEndpoint
+          && deps.deadLetterQueue?.reserveProducer
+        ) {
+          const projectedCaller = conversationScopeToSessionKey(
+            params.callerConversation.conversationScope,
+          );
+          if (!projectedCaller.ok) {
+            throw new DurableSubAgentAdmissionError(
+              "Sub-agent announcement producer identity failed",
+              projectedCaller.error,
+            );
+          }
+          const resolvedRoot = deps.resolveRootRunId?.(
+            params.callerAgentId,
+            projectedCaller.value,
+          );
+          const completionKey = buildAnnounceKey(params.callerSessionKey, runId);
+          if (!completionKey) {
+            throw new DurableSubAgentAdmissionError(
+              "Sub-agent announcement producer identity failed",
+            );
+          }
+          const producerReservation: AnnouncementProducerReservation = {
+            idempotencyKey: completionKey,
+            agentId: params.callerAgentId,
+            runId,
+            sessionKey: params.callerSessionKey,
+            announcementText: "A background task finished, but its completion notification was interrupted before delivery ownership transferred.",
+            channelType: params.announceChannelType,
+            channelId: params.announceChannelId,
+            failedAt: clock.now(),
+            rootRunId: resolvedRoot?.ok
+              ? resolvedRoot.value
+              : `announcement:${params.callerSessionKey}`,
+            deliveryAuthority: {
+              tenantId: params.callerConversation.conversationScope.tenantId,
+              agentId: params.callerAgentId,
+              conversationRef: params.callerConversation.conversationRef,
+            },
+            destinationEndpoint: run.callerEndpoint,
+            completionKeys: [completionKey],
+            retirementKeys: [completionKey],
+            producer: {
+              kind: "session",
+              tenantId: run.conversationScope.tenantId,
+              agentId: run.agentId,
+              conversationRef: run.conversationRef,
+              checkpointId: runId,
+            },
+            ...(resolveAnnouncementThreadId(
+              params.requesterOrigin,
+              params.announceChannelType,
+              params.announceChannelId,
+            ) ? {
+                threadId: resolveAnnouncementThreadId(
+                  params.requesterOrigin,
+                  params.announceChannelType,
+                  params.announceChannelId,
+                ),
+              } : {}),
+          };
+          const reserveProducer = params.callerType === "durable-resume"
+            ? deps.deadLetterQueue.reclaimProducer
+            : deps.deadLetterQueue.reserveProducer;
+          if (!reserveProducer || !deps.deadLetterQueue.recordProducerOutcome) {
+            throw new DurableSubAgentAdmissionError(
+              "Sub-agent announcement producer lifecycle is incomplete",
+            );
+          }
+          const reservedProducer = await reserveProducer(
+            producerReservation,
+            producerAdmissionAbort.signal,
+          );
+          if (!reservedProducer.ok) {
+            throw new DurableSubAgentAdmissionError(
+              "Sub-agent announcement producer admission failed",
+              reservedProducer.error,
+            );
+          }
+          if (reservedProducer.value.status === "recovery_owned") {
+            producerRecoveryOwned = true;
+            const recovery = reservedProducer.value.recoveryOutcome;
+            if (!recovery || recovery.kind !== "session") {
+              throw new DurableSubAgentAdmissionError(
+                "Sub-agent recovery outcome is unavailable",
+              );
+            }
+            startDeferreds.get(runId)?.resolve(ok(undefined));
+            if (!durableResumeHandshakeRunIds.has(runId)) {
+              startDeferreds.delete(runId);
+            }
+            if (recovery.terminalReason === "completed") {
+              terminalizeRun(runId, {
+                endReason: "completed",
+                completedAtMs: recovery.completedAtMs,
+                ...(recovery.summary !== undefined ? { summary: recovery.summary } : {}),
+                ...(recovery.resultRef !== undefined ? { resultRef: recovery.resultRef } : {}),
+              });
+            } else {
+              terminalizeRun(runId, {
+                endReason: "failed",
+                completedAtMs: recovery.completedAtMs,
+                errorKind: recovery.errorKind,
+                ...(recovery.summary !== undefined ? { summary: recovery.summary } : {}),
+                ...(recovery.resultRef !== undefined ? { resultRef: recovery.resultRef } : {}),
+              });
+            }
+            return;
+          }
+          producerClaimed = true;
         }
 
         if (deps.lifecycleHooks) {
@@ -3683,6 +3967,79 @@ function classifyCompletionErrorKind(
         // enqueue a late terminal result behind the final batch drain.
         if (deliverySuppressedRunIds.has(runId)) return;
 
+        const completedAt = clock.now();
+        // Ordered by specificity. An abandoned background process is a
+        // precondition the child broke; a clean stop that skipped its
+        // contracted outputs is a validation failure. Only when neither
+        // applies does the finish-reason classifier decide — it would label a
+        // "stop" as `internal` and send an operator hunting a crash that
+        // never happened.
+        const completionErrorKind = backgroundProcessFailure !== undefined
+          ? ("precondition" as const)
+          : subAgentOutcome.reason === "contract_unsatisfied"
+            ? ("validation" as const)
+            : classifyCompletionErrorKind(
+                result.finishReason,
+                result.terminalErrorKind,
+              );
+        const completion = freezeCompletion(
+          isSuccess
+            ? {
+                endReason: "completed",
+                completedAtMs: completedAt,
+                summary: completionSummary,
+                ...(materializedRef ? { resultRef: materializedRef } : {}),
+              }
+            : {
+                endReason: "failed",
+                completedAtMs: completedAt,
+                errorKind: completionErrorKind,
+                summary: completionSummary || result.errorContext?.originalError,
+                ...(materializedRef ? { resultRef: materializedRef } : {}),
+              },
+        );
+        if (producerClaimed) {
+          const recordProducerOutcome = deps.deadLetterQueue?.recordProducerOutcome;
+          if (!recordProducerOutcome) {
+            producerRecoveryOwned = true;
+            throw new Error("Announcement producer lifecycle is incomplete");
+          }
+          const outcome: AnnouncementProducerRecoveryOutcome = completion.endReason === "completed"
+            ? {
+                kind: "session",
+                terminalReason: "completed",
+                completedAtMs: completion.completedAtMs,
+                ...(completion.summary !== undefined ? { summary: completion.summary } : {}),
+                ...(completion.resultRef !== undefined ? { resultRef: completion.resultRef } : {}),
+              }
+            : {
+                kind: "session",
+                terminalReason: "failed",
+                completedAtMs: completion.completedAtMs,
+                errorKind: completion.errorKind,
+                ...(completion.summary !== undefined ? { summary: completion.summary } : {}),
+                ...(completion.resultRef !== undefined ? { resultRef: completion.resultRef } : {}),
+              };
+          pendingProducerOutcomes.set(runId, { completion, telemetry });
+          const handoff = persistProducerOutcomeHandoff(run, outcome);
+          if (handoff.ok) {
+            producerOutcomeHandoffRunIds.add(runId);
+          } else {
+            deps.logger?.warn({
+              runId,
+              err: toSafeErrorLogString(handoff.error),
+              errorKind: "resource" as const,
+              hint: "Restore session or dead-letter storage before stopping the completed producer",
+            }, "Sub-agent producer outcome handoff could not be persisted");
+          }
+          await settleAnnouncementProducerLifecycle(
+            runId,
+            "record_outcome",
+            () => recordProducerOutcome(runId, outcome, producerAdmissionAbort.signal),
+          );
+          pendingProducerOutcomes.delete(runId);
+        }
+
         // Route provider_degraded to failure notification path
         // When isDegraded() skips the LLM call, executor returns empty response with
         // finishReason "provider_degraded". Route to deliverFailureNotification instead
@@ -3692,26 +4049,53 @@ function classifyCompletionErrorKind(
           // the only user-facing response for this terminal result.
         } else if (result.finishReason === "provider_degraded") {
           if (params.announceChannelType && params.announceChannelId) {
-            await deliverFailureNotification({
-              channelType: params.announceChannelType,
-              channelId: params.announceChannelId,
-              task: params.task,
-              runtimeMs,
-              runId,
-              threadId: resolveAnnouncementThreadId(
-                params.requesterOrigin,
-                params.announceChannelType,
-                params.announceChannelId,
-              ),
-              callerAgentId: params.callerAgentId,
-              callerSessionKey: params.callerSessionKey,  // shared dedup key
-              callerConversation: params.callerConversation,
-              destinationEndpoint: run.callerEndpoint,
-            }, deps);
+            producerTransferAttemptedRunIds.add(runId);
+            deliveryAdmissionRunIds.add(runId);
+            try {
+              await deliverFailureNotification({
+                channelType: params.announceChannelType,
+                channelId: params.announceChannelId,
+                task: params.task,
+                runtimeMs,
+                runId,
+                threadId: resolveAnnouncementThreadId(
+                  params.requesterOrigin,
+                  params.announceChannelType,
+                  params.announceChannelId,
+                ),
+                callerAgentId: params.callerAgentId,
+                callerSessionKey: params.callerSessionKey,  // shared dedup key
+                callerConversation: params.callerConversation,
+                destinationEndpoint: run.callerEndpoint,
+              }, deps);
+            } finally {
+              deliveryAdmissionRunIds.delete(runId);
+            }
           }
         } else if (params.announceChannelType && params.announceChannelId) {
-          // Announce with stats
-          if (!result.response.includes("ANNOUNCE_SKIP")) {
+          if (result.response.includes("ANNOUNCE_SKIP")) {
+            const suppressProducer = deps.deadLetterQueue?.suppressProducer;
+            if (deps.deadLetterQueue?.reserveProducer && !suppressProducer) {
+              throw new Error("Announcement producer lifecycle is incomplete");
+            }
+            if (suppressProducer) {
+              producerSuppressionAttempted = true;
+              producerSuppressionPendingRunIds.add(runId);
+              deliveryAdmissionRunIds.add(runId);
+              try {
+                await settleAnnouncementProducerLifecycle(runId, "suppress", async () => {
+                  const suppressed = await suppressProducer(runId);
+                  if (!suppressed.ok) return suppressed;
+                  return suppressed.value
+                    ? ok(undefined)
+                    : err(new Error("Announcement producer suppression found no durable owner"));
+                });
+                producerSuppressionPendingRunIds.delete(runId);
+              } finally {
+                deliveryAdmissionRunIds.delete(runId);
+              }
+            }
+          } else {
             // Use NarrativeCaster for tagged result announcement.
             // Skip NarrativeCaster for error results — buildAnnouncementMessage
             // enriches the status label with errorContext (e.g., "Halted (PromptTimeout, retryable)")
@@ -3776,61 +4160,67 @@ function classifyCompletionErrorKind(
                 sourceAgentId: params.agentId,
                 path: output.resolvedPath ?? output.path,
               })) ?? [];
-            await deliverAnnouncement({
-              announcementText,
-              announceChannelType: params.announceChannelType,
-              announceChannelId: params.announceChannelId,
-              announceThreadId: resolveAnnouncementThreadId(
-                params.requesterOrigin,
-                params.announceChannelType,
-                params.announceChannelId,
-              ),
-              callerAgentId: params.callerAgentId,
-              callerSessionKey: params.callerSessionKey,
-              callerConversation: params.callerConversation,
-              destinationEndpoint: run.callerEndpoint,
-              resolvedLanguage: params.resolvedLanguage,
-              ...(runCitationEvidence?.observedWebResearch === true
-                ? {
-                    citationEvidence: {
-                      kind: "web_fetch",
-                      urlDigests: [...runCitationEvidence.urlDigests],
-                    },
-                  }
-                : {}),
-              terminalOutcome: !isSuccess
-                ? {
-                    status: "failed",
-                    failureNotice: deps.renderAnnouncementFailureNotice?.(
-                      params.callerAgentId ?? params.agentId,
-                      params.resolvedLanguage,
-                      result.finishReason,
-                    ) ?? (
-                      result.finishReason === "loop_detected"
-                        ? `${buildBackgroundTaskFailedNotice(params.resolvedLanguage)}\n\n${buildLoopDetectedReply({ language: params.resolvedLanguage })}`
-                        : buildBackgroundTaskFailedNotice(params.resolvedLanguage)
-                    ),
-                    ...(result.errorContext?.errorType === "UpstreamToolFailure"
-                      && result.errorContext.configKey !== undefined
-                      ? { requiredConfigKey: result.errorContext.configKey }
-                      : {}),
-                  }
-                : result.finishReason === "completed_with_tool_errors"
+            producerTransferAttemptedRunIds.add(runId);
+            deliveryAdmissionRunIds.add(runId);
+            try {
+              await deliverAnnouncement({
+                announcementText,
+                announceChannelType: params.announceChannelType,
+                announceChannelId: params.announceChannelId,
+                announceThreadId: resolveAnnouncementThreadId(
+                  params.requesterOrigin,
+                  params.announceChannelType,
+                  params.announceChannelId,
+                ),
+                callerAgentId: params.callerAgentId,
+                callerSessionKey: params.callerSessionKey,
+                callerConversation: params.callerConversation,
+                destinationEndpoint: run.callerEndpoint,
+                resolvedLanguage: params.resolvedLanguage,
+                ...(runCitationEvidence?.observedWebResearch === true
                   ? {
-                      status: "completed_with_warnings",
-                      warningNotice: buildToolFailureNoticeUnnamed(
-                        params.resolvedLanguage,
-                      ).trim(),
+                      citationEvidence: {
+                        kind: "web_fetch",
+                        urlDigests: [...runCitationEvidence.urlDigests],
+                      },
                     }
-                  : { status: "completed" },
-              ...(isSuccess && isSilentResponse(result.response)
-                ? { suppressText: true }
-                : {}),
-              runId,
-              ...(completionAttachments.length > 0
-                ? { attachments: completionAttachments }
-                : {}),
-            }, deps);
+                  : {}),
+                terminalOutcome: !isSuccess
+                  ? {
+                      status: "failed",
+                      failureNotice: deps.renderAnnouncementFailureNotice?.(
+                        params.callerAgentId ?? params.agentId,
+                        params.resolvedLanguage,
+                        result.finishReason,
+                      ) ?? (
+                        result.finishReason === "loop_detected"
+                          ? `${buildBackgroundTaskFailedNotice(params.resolvedLanguage)}\n\n${buildLoopDetectedReply({ language: params.resolvedLanguage })}`
+                          : buildBackgroundTaskFailedNotice(params.resolvedLanguage)
+                      ),
+                      ...(result.errorContext?.errorType === "UpstreamToolFailure"
+                        && result.errorContext.configKey !== undefined
+                        ? { requiredConfigKey: result.errorContext.configKey }
+                        : {}),
+                    }
+                  : result.finishReason === "completed_with_tool_errors"
+                    ? {
+                        status: "completed_with_warnings",
+                        warningNotice: buildToolFailureNoticeUnnamed(
+                          params.resolvedLanguage,
+                        ).trim(),
+                      }
+                    : { status: "completed" },
+                ...(isSuccess && isSilentResponse(result.response)
+                  ? { suppressText: true }
+                  : {}),
+                runId,
+                ...(completionAttachments.length > 0
+                  ? { attachments: completionAttachments }
+                  : {}),
+              }, deps);
+            } finally {
+              deliveryAdmissionRunIds.delete(runId);
+            }
           }
         } else {
           // Log explicit reason when announcement cannot be routed
@@ -3852,36 +4242,7 @@ function classifyCompletionErrorKind(
         }
 
         if (deliverySuppressedRunIds.has(runId)) return;
-        const completedAt = clock.now();
-        if (isSuccess) {
-          terminalizeRun(runId, {
-            endReason: "completed",
-            completedAtMs: completedAt,
-            summary: completionSummary,
-            ...(materializedRef ? { resultRef: materializedRef } : {}),
-          }, telemetry);
-        } else {
-          terminalizeRun(runId, {
-            endReason: "failed",
-            completedAtMs: completedAt,
-            // Ordered by specificity. An abandoned background process is a
-            // precondition the child broke; a clean stop that skipped its
-            // contracted outputs is a validation failure. Only when neither
-            // applies does the finish-reason classifier decide — it would label a
-            // "stop" as `internal` and send an operator hunting a crash that
-            // never happened.
-            errorKind: backgroundProcessFailure !== undefined
-              ? ("precondition" as const)
-              : subAgentOutcome.reason === "contract_unsatisfied"
-                ? ("validation" as const)
-                : classifyCompletionErrorKind(
-                    result.finishReason,
-                    result.terminalErrorKind,
-                  ),
-            summary: completionSummary || result.errorContext?.originalError,
-            ...(materializedRef ? { resultRef: materializedRef } : {}),
-          }, telemetry);
-        }
+        terminalizeRun(runId, completion, telemetry);
         deps.eventBus.emit("session:sub_agent_completed", {
           runId,
           parentSessionKey: params.callerSessionKey ?? "unknown",
@@ -3954,12 +4315,54 @@ function classifyCompletionErrorKind(
           params.callerSessionKey,
           runtimeMs,
         );
-        terminalizeRun(runId, {
+        const failureErrorKind: ErrorKind = "internal";
+        const failureCompletion = freezeCompletion({
           endReason: "failed",
           completedAtMs: completedAt,
-          errorKind: "internal",
+          errorKind: failureErrorKind,
           summary: errorMessage,
         });
+        let producerOutcomeDurable = true;
+        if (producerClaimed) {
+          const recordProducerOutcome = deps.deadLetterQueue?.recordProducerOutcome;
+          if (!recordProducerOutcome) {
+            producerRecoveryOwned = true;
+            producerOutcomeDurable = false;
+          } else {
+            const failureOutcome: AnnouncementProducerRecoveryOutcome = {
+              kind: "session",
+              terminalReason: "failed",
+              completedAtMs: failureCompletion.completedAtMs,
+              errorKind: failureErrorKind,
+              ...(failureCompletion.summary !== undefined
+                ? { summary: failureCompletion.summary }
+                : {}),
+            };
+            pendingProducerOutcomes.set(runId, { completion: failureCompletion });
+            const handoff = persistProducerOutcomeHandoff(run, failureOutcome);
+            if (handoff.ok) {
+              producerOutcomeHandoffRunIds.add(runId);
+            } else {
+              deps.logger?.warn({
+                runId,
+                err: toSafeErrorLogString(handoff.error),
+                errorKind: "resource" as const,
+                hint: "Restore session or dead-letter storage before stopping the failed producer",
+              }, "Sub-agent failure outcome handoff could not be persisted");
+            }
+            await settleAnnouncementProducerLifecycle(
+              runId,
+              "record_outcome",
+              () => recordProducerOutcome(
+                runId,
+                failureOutcome,
+                producerAdmissionAbort.signal,
+              ),
+            );
+            pendingProducerOutcomes.delete(runId);
+          }
+        }
+        terminalizeRun(runId, failureCompletion);
 
         deps.logger?.error({
           runId,
@@ -4033,9 +4436,11 @@ function classifyCompletionErrorKind(
         if (
           !completionClaimedByWait
           && !admissionRejected
+          && producerOutcomeDurable
           && params.announceChannelType
           && params.announceChannelId
         ) {
+          producerTransferAttemptedRunIds.add(runId);
           await deliverFailureNotification({
             channelType: params.announceChannelType,
             channelId: params.announceChannelId,
@@ -4052,7 +4457,7 @@ function classifyCompletionErrorKind(
             callerConversation: params.callerConversation,
             destinationEndpoint: run.callerEndpoint,
           }, deps);
-        } else if (!completionClaimedByWait && !admissionRejected) {
+        } else if (!completionClaimedByWait && !admissionRejected && producerOutcomeDurable) {
           // Log explicit reason when failure announcement cannot be routed
           const suppressAnnounceReason = params.requesterOrigin
             ? "no_channel_params" as const
@@ -4103,6 +4508,22 @@ function classifyCompletionErrorKind(
         // ingesting other sessions' events into its trajectory file (stamped
         // with the dead child's sessionId).
         closeTrajectoryOnce(run);
+        if (
+          !producerSuppressionAttempted
+          && !producerRecoveryOwned
+          && !producerShutdownHandoffRunIds.has(runId)
+        ) {
+          const transition = producerTransferAttemptedRunIds.has(runId)
+            ? deps.deadLetterQueue?.releaseProducer
+            : deps.deadLetterQueue?.cancelProducer;
+          if (transition) {
+            await settleAnnouncementProducerLifecycle(
+              runId,
+              producerTransferAttemptedRunIds.has(runId) ? "release" : "cancel",
+              () => transition(runId),
+            );
+          }
+        }
       }
     })();
 
@@ -4196,7 +4617,7 @@ function classifyCompletionErrorKind(
         && params.announceChannelType
         && params.announceChannelId
       ) {
-        trackFailureNotification(deliverFailureNotification({
+        trackFailureNotification(runId, deliverFailureNotification({
           channelType: params.announceChannelType,
           channelId: params.announceChannelId,
           task: params.task,
@@ -4480,7 +4901,7 @@ function classifyCompletionErrorKind(
       && run.announceChannelType
       && run.announceChannelId
     ) {
-      trackFailureNotification(deliverFailureNotification({
+      trackFailureNotification(runId, deliverFailureNotification({
         channelType: run.announceChannelType,
         channelId: run.announceChannelId,
         task: run.task,
@@ -4692,12 +5113,27 @@ function classifyCompletionErrorKind(
 
   async function performShutdown(): Promise<void> {
     sweepInterval.cancel();
+    producerAdmissionAbort.abort();
     deps.eventBus.off("tool:executed", observeChildToolOutcome);
 
-    const activeSettled = await waitForTrackedPromises(
+    let activeSettled = await waitForTrackedPromises(
       activePromises,
       SHUTDOWN_ACTIVE_GRACE_MS,
     );
+    let batcherShutdown: Promise<void> | undefined;
+    if (
+      !activeSettled
+      && [...deliveryAdmissionRunIds].some((runId) =>
+        providerSettledRunIds.has(runId) && !durableAdmittedRunIds.has(runId))
+      && deps.batcher
+    ) {
+      batcherShutdown = deps.batcher.shutdown();
+      await batcherShutdown;
+      activeSettled = await waitForTrackedPromises(
+        activePromises,
+        SHUTDOWN_NOTICE_GRACE_MS,
+      );
+    }
     if (!activeSettled) {
       const remaining = new Set(activeRunIds);
       let suspendedRunCount = 0;
@@ -4717,6 +5153,55 @@ function classifyCompletionErrorKind(
         }
         if (providerSettledRunIds.has(runId)) {
           if (run.status === "completed" || run.status === "failed") continue;
+          if (
+            deliveryAdmissionRunIds.has(runId)
+            && suspendDurableRunForRestart(run)
+          ) {
+            suspendedRunCount++;
+            continue;
+          }
+          if (producerSuppressionPendingRunIds.has(runId)) {
+            deps.logger?.error({
+              runId,
+              errorKind: "resource" as const,
+              hint: "Restore dead-letter storage; shutdown will keep retrying the explicit suppression authority",
+            }, "Explicit announcement suppression remains pending at shutdown");
+            continue;
+          }
+          if (producerOutcomePendingRunIds.has(runId)) {
+            const pendingOutcome = pendingProducerOutcomes.get(runId);
+            if (
+              pendingOutcome !== undefined
+              && producerOutcomeHandoffRunIds.has(runId)
+              && run.status === "running"
+            ) {
+              producerShutdownHandoffRunIds.add(runId);
+              deliverySuppressedRunIds.add(runId);
+              terminalizeRun(
+                runId,
+                pendingOutcome.completion,
+                pendingOutcome.telemetry,
+              );
+              forceTerminalCleanup(run);
+              deps.eventBus.emit("session:sub_agent_completed", {
+                runId,
+                parentSessionKey: run.callerSessionKey ?? "unknown",
+                agentId: run.agentId,
+                success: pendingOutcome.completion.endReason === "completed",
+                runtimeMs: Math.max(0, pendingOutcome.completion.completedAtMs - run.startedAt),
+                tokensUsed: pendingOutcome.telemetry?.tokensUsedTotal ?? 0,
+                cost: pendingOutcome.telemetry?.costTotal ?? 0,
+                timestamp: pendingOutcome.completion.completedAtMs,
+              });
+              continue;
+            }
+            deps.logger?.error({
+              runId,
+              errorKind: "resource" as const,
+              hint: "Restore dead-letter storage; shutdown will keep the completed producer outcome pending",
+            }, "Completed announcement producer outcome remains pending at shutdown");
+            continue;
+          }
           deliverySuppressedRunIds.add(runId);
           if (run.status === "running") {
             const completedAtMs = clock.now();
@@ -4739,7 +5224,7 @@ function classifyCompletionErrorKind(
             });
           }
           if (run.announceChannelType && run.announceChannelId) {
-            trackFailureNotification(deliverFailureNotification({
+            trackFailureNotification(runId, deliverFailureNotification({
               channelType: run.announceChannelType,
               channelId: run.announceChannelId,
               task: run.task,
@@ -4832,7 +5317,7 @@ function classifyCompletionErrorKind(
     // The batcher closes its own admission and waits any reservation already
     // admitted before this final drain. Stopped runs are status-gated from
     // producing a late success when their underlying provider call returns.
-    await deps.batcher?.shutdown();
+    await (batcherShutdown ?? deps.batcher?.shutdown());
 
     // Batcher delivery may have persisted a dead letter, so drain it last.
     if (deps.deadLetterQueue) {

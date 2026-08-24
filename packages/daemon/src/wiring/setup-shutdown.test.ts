@@ -101,6 +101,7 @@ describe("setupShutdown", () => {
     const gatewayHandle = { stop: vi.fn(async () => {}) } as any;
 
     const deps = createMinimalDeps({
+      closeAnnouncementAdmission: vi.fn(),
       ownedCronSchedulers: new Map([["agent-1", cronScheduler as any]]),
       resetSchedulers: new Map([["agent-1", resetScheduler as any]]),
       browserServices: new Map([["agent-1", browserService as any]]),
@@ -150,6 +151,7 @@ describe("setupShutdown", () => {
 
     // Verify key components were stopped
     expect(deps.subAgentRunner.shutdown).toHaveBeenCalled();
+    expect(deps.closeAnnouncementAdmission).toHaveBeenCalledOnce();
     expect(cronScheduler.closeAdmission).toHaveBeenCalled();
     expect(resetScheduler.stop).toHaveBeenCalled();
     expect(browserService.stop).toHaveBeenCalled();

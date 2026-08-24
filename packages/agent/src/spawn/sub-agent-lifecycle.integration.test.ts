@@ -277,8 +277,10 @@ describe("sub-agent lifecycle integration", () => {
     expect(runBefore).toBeDefined();
     expect(runBefore!.status).toBe("completed");
 
-    // Advance past retention (5s) + sweep interval (300s) to trigger archive sweep
-    vi.advanceTimersByTime(5_000 + 300_001);
+    // Advance past retention (5s) + sweep interval (300s) to trigger archive
+    // sweep. The sweep awaits replay-guard retirement before it removes the run,
+    // so the advance has to drain those continuations, not just fire the timer.
+    await vi.advanceTimersByTimeAsync(5_000 + 300_001);
 
     // Run should be archived (removed from Map)
     const runAfter = runner.getRunStatus(runId);

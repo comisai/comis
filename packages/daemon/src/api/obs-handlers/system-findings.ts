@@ -26,7 +26,6 @@ import {
   cronTimerDegradationFromRow,
   unresolvedModelFromRow,
   DEDICATED_SCRIPT_SIGNALS,
-  deliveryDeadletteredFromRow,
   flaggedPostureKeys,
   healthSignalLabel,
   healthSignalReason,
@@ -66,19 +65,42 @@ function latestBackgroundRecoveryScan(
   return latestRow === undefined ? null : backgroundRecoveryScanFromRow(latestRow);
 }
 
+const ANNOUNCEMENT_QUARANTINE_SIGNALS = new Set([
+  "announcement_quarantine",
+  "announcement_quarantine_read_failed",
+]);
+
+function latestAnnouncementQuarantineRow(
+  rows: readonly DiagnosticRow[],
+): DiagnosticRow | undefined {
+  let latest: DiagnosticRow | undefined;
+  for (const row of rows) {
+    if (
+      ANNOUNCEMENT_QUARANTINE_SIGNALS.has(healthSignalLabel(row))
+      && (latest === undefined || row.timestamp >= latest.timestamp)
+    ) latest = row;
+  }
+  return latest;
+}
+
 /** Count active warning state, folding recovery scans by their latest status. */
 export function activeHealthSignalWarningCount(rows: readonly DiagnosticRow[]): number {
   const nonScanWarningCount = rows.filter(
-    (row) => row.severity !== "info" && healthSignalLabel(row) !== "background_task_recovery_scan",
+    (row) => row.severity !== "info"
+      && healthSignalLabel(row) !== "background_task_recovery_scan"
+      && !ANNOUNCEMENT_QUARANTINE_SIGNALS.has(healthSignalLabel(row)),
   ).length;
   const scanRows = rows.filter(
     (row) => healthSignalLabel(row) === "background_task_recovery_scan",
   );
   const latestScan = latestBackgroundRecoveryScan(scanRows);
-  if (latestScan === null) {
-    return nonScanWarningCount + scanRows.filter((row) => row.severity !== "info").length;
-  }
-  return nonScanWarningCount + (latestScan.status === "failed" ? 1 : 0);
+  const scanWarningCount = latestScan === null
+    ? scanRows.filter((row) => row.severity !== "info").length
+    : latestScan.status === "failed" ? 1 : 0;
+  const latestQuarantine = latestAnnouncementQuarantineRow(rows);
+  return nonScanWarningCount
+    + scanWarningCount
+    + (latestQuarantine !== undefined && latestQuarantine.severity !== "info" ? 1 : 0);
 }
 
 /**
@@ -194,6 +216,7 @@ export function buildFindings(
     if (row.severity === "info") continue;
     const label = healthSignalLabel(row);
     if (DEDICATED_SCRIPT_SIGNALS.has(label)) continue;
+    if (ANNOUNCEMENT_QUARANTINE_SIGNALS.has(label)) continue;
     bySignal.set(label, (bySignal.get(label) ?? 0) + 1);
     const reason = healthSignalReason(row);
     if (reason !== undefined) {
@@ -218,7 +241,32 @@ export function buildFindings(
       count,
       hint: label === "inbound_persistence_failed"
         ? "This failure occurred before session creation; inspect the normalized message bound and channel envelope before retrying."
-        : "run `comis explain` on an affected session; inspect the recurring health WARNs",
+        : label === "announcement_quarantine"
+          ? "Run `node packages/cli/dist/cli.js quarantine list` and explicitly release each retained item after reconciling its delivery outcome."
+          : label === "announcement_quarantine_read_failed"
+            ? "Restore access to the configured dead-letter store, then rerun `node packages/cli/dist/cli.js quarantine list`."
+          : "run `comis explain` on an affected session; inspect the recurring health WARNs",
+    });
+  }
+
+  const latestQuarantine = latestAnnouncementQuarantineRow(healthSignals);
+  if (latestQuarantine !== undefined && latestQuarantine.severity !== "info") {
+    const label = healthSignalLabel(latestQuarantine);
+    const details = parseDetailsObject(latestQuarantine.details);
+    const pendingCount = typeof details.pendingCount === "number"
+      && Number.isSafeInteger(details.pendingCount)
+      && details.pendingCount > 0
+      ? details.pendingCount
+      : 1;
+    findings.push({
+      code: `health_signal:${label}`,
+      detail: label === "announcement_quarantine"
+        ? `${pendingCount} announcement(s) currently require an operator decision`
+        : "The current announcement quarantine count is unknown",
+      count: pendingCount,
+      hint: label === "announcement_quarantine"
+        ? "Run `node packages/cli/dist/cli.js quarantine list` and explicitly release each retained item after reconciling its delivery outcome."
+        : "Restore access to the configured dead-letter store, then rerun `node packages/cli/dist/cli.js quarantine list`.",
     });
   }
 
@@ -455,30 +503,6 @@ export function buildFindings(
           : `${sandboxRefusedCount} sub-agent spawn(s) refused for sandbox downgrade`,
       count: sandboxRefusedCount,
       hint: "a sub-agent was configured LESS confined than its spawner on the named dimension(s); align the child's skills.execSandbox posture with (or stricter than) the parent's, or remove the offending agent-to-agent spawn. run `comis explain` on the spawner's session",
-    });
-  }
-
-  // Dedicated delivery_deadlettered finding — the count of sub-agent
-  // completions PERMANENTLY DROPPED (self-healing delivery exhausted retries, or an
-  // immediate permanent failure). This is a SILENT degradation today (the graph
-  // reports completed while a node's result never reached the parent). Counts + the
-  // transient/permanent split ONLY — never a runId, an announcement body, or an error
-  // string. Zero-traffic guard.
-  let deadletterCount = 0;
-  let deadletterTransient = 0;
-  for (const row of healthSignals) {
-    const parsed = deliveryDeadletteredFromRow(row);
-    if (parsed === null) continue;
-    deadletterCount += 1;
-    if (parsed.transient) deadletterTransient += 1;
-  }
-  if (deadletterCount > 0) {
-    const permanent = deadletterCount - deadletterTransient;
-    findings.push({
-      code: "delivery_deadlettered",
-      detail: `${deadletterCount} sub-agent completion(s) dead-lettered (dropped): ${deadletterTransient} after retries, ${permanent} permanent`,
-      count: deadletterCount,
-      hint: "a sub-agent result was permanently dropped before reaching its parent (the graph still reports completed); run `comis explain` on the affected session and check the delivery channel health / retry budget (security.agentToAgent.delivery)",
     });
   }
 

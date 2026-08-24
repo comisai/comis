@@ -1,20 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ok } from "@comis/shared";
 import os from "node:os";
-import { mkdirSync } from "node:fs";
-import { resolveGraphCacheRetention } from "./index.js";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  createRetirementProducerStateResolver,
+  resolveGraphCacheRetention,
+} from "./index.js";
 import {
   createDeliveryOrigin,
   createConversationLocator,
+  conversationScopeToSessionKey,
   DeliveryQueueTransitionError,
   formatSessionKey,
   getContext,
   MIN_SUB_AGENT_STEPS,
   runWithContext,
   SUB_AGENT_TOOL_DENYLIST,
+  TypedEventBus,
+  type DeliverToChannelOptions,
+  type DeliveryAdapter,
+  type DeliveryChunkSender,
   type RequestContext,
 } from "@comis/core";
+import { createSessionTrajectoryHandleRegistry } from "@comis/observability";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
+import { createDeadLetterRecoveryObserver } from "../dead-letter-recovery-observer.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -29,7 +40,7 @@ const mockCreateSubAgentRunner = vi.hoisted(() => vi.fn(() => ({
   shutdown: vi.fn(async () => {}),
 })));
 const mockRandomUUID = vi.hoisted(() => vi.fn(() => "30000000-0000-4000-8000-000000000003"));
-const mockDeliverToChannel = vi.hoisted(() => vi.fn(async () => ({
+const mockDeliverToChannel = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({
   ok: true as const,
   value: {
     chunks: [{ status: "accepted" as const, messageId: "mock-msg-id", charCount: 10, retried: false }],
@@ -98,6 +109,15 @@ vi.mock("@comis/orchestrator", async () => {
   return {
     ...actual,
     createCrossSessionSender: mockCreateCrossSessionSender,
+    isAnnouncementProducerRecoveryOutcome: (value: unknown) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+      const record = value as Record<string, unknown>;
+      return (record.kind === "session"
+        || record.kind === "tool_result"
+        || record.kind === "graph")
+        && (record.terminalReason === "completed" || record.terminalReason === "failed")
+        && typeof record.completedAtMs === "number";
+    },
   };
 });
 
@@ -209,6 +229,7 @@ vi.mock("@comis/agent", async (importOriginal) => {
     createSubAgentRunner: mockCreateSubAgentRunner,
     createSpawnPacketBuilder: mockCreateSpawnPacketBuilder,
     buildAnnouncementRewriteInput: actual.buildAnnouncementRewriteInput,
+    createCompletionAnnouncementOperationPlan: actual.createCompletionAnnouncementOperationPlan,
     enforceAnnouncementTerminalOutcome: actual.enforceAnnouncementTerminalOutcome,
     buildBackgroundTaskFailedNotice: actual.buildBackgroundTaskFailedNotice,
     catalogFromLocalePacks: actual.catalogFromLocalePacks,
@@ -392,8 +413,8 @@ function createMinimalDeps(overrides: Record<string, any> = {}) {
             subAgentMaxSteps: 50,
             subAgentToolGroups: ["coding"],
             subAgentMcpTools: "inherit",
-            // The batcher reads delivery.maxRetries for the
-            // transient-retry cap (schema-defaulted in real config).
+            // The recovery queue reads delivery.maxRetries for its
+            // durable retry cap (schema-defaulted in real config).
             delivery: { maxRetries: 3 },
           },
         },
@@ -460,6 +481,203 @@ describe("setupCrossSession", () => {
 
     expect(result.crossSessionSender).toBeDefined();
     expect(result.subAgentRunner).toBeDefined();
+  });
+
+  it("applies the configured completion recovery retry limit", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps();
+    deps.container.config.security.agentToAgent.delivery.maxRetries = 0;
+    deps.container.config.dataDir = `${os.tmpdir()}/comis-delivery-retries-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    mkdirSync(deps.container.config.dataDir, { recursive: true });
+    try {
+      const result = setupCrossSession(deps);
+      await result.deadLetterQueue?.enqueue({
+        announcementText: "completion",
+        channelType: "telegram",
+        channelId: "chat-1",
+        runId: "run-configured-retries",
+        sessionKey: "default:agent-1:telegram:chat-1:user_a",
+        failedAt: Date.now(),
+        attemptCount: 0,
+      });
+
+      await expect(result.deadLetterQueue?.listQuarantined()).resolves.toMatchObject({
+        ok: true,
+        value: [expect.objectContaining({ runId: "run-configured-retries" })],
+      });
+    } finally {
+      rmSync(deps.container.config.dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles a non-durable producer from run authority instead of session existence", async () => {
+    const conversation = makeConversation("test-tenant", "agent-1");
+    const loadByRef = vi.fn(() => ({
+      ok: true as const,
+      value: {
+        ...conversation,
+        messages: [],
+        metadata: {},
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }));
+    const producerState = createRetirementProducerStateResolver({
+      sessionStore: { loadByRef },
+    });
+
+    await expect(producerState({
+      kind: "session",
+      tenantId: "test-tenant",
+      agentId: "agent-1",
+      conversationRef: conversation.conversationRef,
+      checkpointId: "non-durable-run",
+    })).resolves.toEqual({ ok: true, value: { status: "absent" } });
+    expect(loadByRef).toHaveBeenCalledOnce();
+  });
+
+  it("recovers an exact terminal producer outcome from session authority", async () => {
+    const conversation = makeConversation("test-tenant", "agent-1");
+    const recoveryOutcome = {
+      kind: "session" as const,
+      terminalReason: "completed" as const,
+      completedAtMs: 1_234,
+      summary: "persisted completion",
+    };
+    const producerState = createRetirementProducerStateResolver({
+      sessionStore: {
+        loadByRef: vi.fn(() => ok({
+          ...conversation,
+          messages: [],
+          metadata: {
+            announcementProducerRecoveryOutcome: {
+              checkpointId: "completed-run",
+              outcome: recoveryOutcome,
+            },
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      },
+    });
+
+    await expect(producerState({
+      kind: "session",
+      tenantId: "test-tenant",
+      agentId: "agent-1",
+      conversationRef: conversation.conversationRef,
+      checkpointId: "completed-run",
+    })).resolves.toEqual({
+      ok: true,
+      value: {
+        status: "terminal",
+        terminalReason: "completed",
+        recoveryOutcome,
+      },
+    });
+  });
+
+  it("ignores a terminal session handoff owned by a different checkpoint", async () => {
+    const conversation = makeConversation("test-tenant", "agent-1");
+    const producerState = createRetirementProducerStateResolver({
+      sessionStore: {
+        loadByRef: vi.fn(() => ok({
+          ...conversation,
+          messages: [],
+          metadata: {
+            announcementProducerRecoveryOutcome: {
+              checkpointId: "previous-run",
+              outcome: {
+                kind: "session",
+                terminalReason: "completed",
+                completedAtMs: 1_234,
+                summary: "previous result",
+              },
+            },
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      },
+    });
+
+    await expect(producerState({
+      kind: "session",
+      tenantId: "test-tenant",
+      agentId: "agent-1",
+      conversationRef: conversation.conversationRef,
+      checkpointId: "current-run",
+    })).resolves.toEqual({ ok: true, value: { status: "absent" } });
+  });
+
+  it("recovers an uncommitted tool result from its scoped session handoff", async () => {
+    const conversation = makeConversation("test-tenant", "agent-1");
+    const recoveryOutcome = {
+      kind: "tool_result" as const,
+      terminalReason: "completed" as const,
+      completedAtMs: 1_234,
+      response: "persisted response",
+      stats: { runtimeMs: 4, totalTokens: 2, totalCost: 0.001 },
+    };
+    const producerState = createRetirementProducerStateResolver({
+      sessionStore: {
+        loadByRef: vi.fn(() => ok({
+          ...conversation,
+          messages: [],
+          metadata: {
+            announcementToolResultRecoveryHandoffs: {
+              "scoped-operation": {
+                operationId: "scoped-operation",
+                toolCallId: "tool-call-1",
+                outcome: recoveryOutcome,
+                response: "persisted response",
+              },
+            },
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      },
+    });
+
+    await expect(producerState({
+      kind: "tool_result",
+      tenantId: "test-tenant",
+      agentId: "agent-1",
+      conversationRef: conversation.conversationRef,
+      toolCallId: "tool-call-1",
+      operationId: "scoped-operation",
+    })).resolves.toEqual({
+      ok: true,
+      value: {
+        status: "terminal",
+        terminalReason: "completed",
+        recoveryOutcome,
+      },
+    });
+  });
+
+  it("distinguishes terminal durable runs from absent producer authority", async () => {
+    const conversation = makeConversation("test-tenant", "agent-1");
+    const getByCheckpoint = vi.fn(async () => ok({
+      status: "completed",
+      terminalReason: "failed",
+    } as never));
+    const producerState = createRetirementProducerStateResolver({
+      sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
+      durableRuns: { getByCheckpoint },
+    });
+
+    await expect(producerState({
+      kind: "session",
+      tenantId: "test-tenant",
+      agentId: "agent-1",
+      conversationRef: conversation.conversationRef,
+      checkpointId: "terminal-durable-run",
+    })).resolves.toEqual({
+      ok: true,
+      value: { status: "terminal", terminalReason: "failed" },
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -1794,7 +2012,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 15,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -1992,7 +2210,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "none",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2076,7 +2294,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2139,7 +2357,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2195,7 +2413,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2258,7 +2476,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2315,7 +2533,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2366,7 +2584,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2416,7 +2634,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2473,7 +2691,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2515,7 +2733,7 @@ describe("setupCrossSession", () => {
                   subAgentMaxSteps: 50,
                   subAgentToolGroups: ["coding"],
                   subAgentMcpTools: "inherit",
-                  delivery: { maxRetries: 3 }, // batcher retry cap
+                  delivery: { maxRetries: 3 }, // durable recovery retry cap
                 },
               },
               tenantId: "test-tenant",
@@ -2907,7 +3125,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: false,
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -2956,7 +3174,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: true,
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -3019,7 +3237,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subAgentSessionPersistence: true,
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -3353,7 +3571,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -3495,7 +3713,7 @@ describe("setupCrossSession", () => {
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
                 subagentContext: {},
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -3540,7 +3758,7 @@ describe("setupCrossSession", () => {
                 subAgentMaxSteps: 50,
                 subAgentToolGroups: ["coding"],
                 subAgentMcpTools: "inherit",
-                delivery: { maxRetries: 3 }, // batcher retry cap
+                delivery: { maxRetries: 3 }, // durable recovery retry cap
               },
             },
             tenantId: "test-tenant",
@@ -3870,6 +4088,8 @@ describe("setupCrossSession durable-store injection", () => {
   it("threads the receipt-aware announcement sender into createCrossSessionSender", async () => {
     const setupCrossSession = await getSetupCrossSession();
     const outwardLedger = {
+      lookupTerminalDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      recordTerminalDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
       allocateStep: vi.fn(async () => ({ ok: true as const, value: 0 })),
       lookup: vi.fn(async () => undefined),
       begin: vi.fn(async () => ({ ok: true as const, value: undefined })),
@@ -3885,13 +4105,137 @@ describe("setupCrossSession durable-store injection", () => {
     const senderArgs = mockCreateCrossSessionSender.mock.calls[0][0];
     expect(senderArgs.sendGovernedAnnouncement).toEqual(expect.any(Function));
     expect(senderArgs.outwardLedger).toBeUndefined();
-    expect(senderArgs.resolveRootRunId).toBeUndefined();
+    expect(senderArgs.resolveRootRunId).toBe(resolveRootRunId);
+  });
+
+  it("threads durable receipt-aware recovery when the outward ledger is disabled", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const dataDir = `${os.tmpdir()}/comis-ledgerless-batcher-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    mkdirSync(dataDir, { recursive: true });
+    let uuidCounter = 0;
+    mockRandomUUID.mockImplementation(() =>
+      `30000000-0000-4000-8000-${String(++uuidCounter).padStart(12, "0")}`);
+    const deps = createMinimalDeps();
+    deps.container.config.dataDir = dataDir;
+    const platformSend = deps.adaptersByType.get("telegram").sendMessage;
+    mockDeliverToChannel.mockImplementationOnce(async (...rawArgs: unknown[]) => {
+      const [adapter, channelId, , options, sendChunk, chunkManifest] = rawArgs as [
+        DeliveryAdapter,
+        string,
+        string,
+        DeliverToChannelOptions,
+        DeliveryChunkSender | undefined,
+        { kind: "persist"; persist: (chunks: readonly string[]) => Promise<{ ok: true; value: void } | { ok: false; error: Error }> } | undefined,
+      ];
+      if (!sendChunk || chunkManifest?.kind !== "persist") {
+        return { ok: false as const, error: new Error("durable chunk boundary unavailable") };
+      }
+      const chunks = ["first durable chunk", "second durable chunk"];
+      const persisted = await chunkManifest.persist(chunks);
+      if (!persisted.ok) return persisted;
+      const results: Array<{
+        status: "accepted";
+        messageId: string;
+        charCount: number;
+        retried: false;
+      }> = [];
+      for (const [chunkIndex, text] of chunks.entries()) {
+        const sent = await sendChunk({
+          adapter,
+          channelId,
+          text,
+          options: options.threadId ? { threadId: options.threadId } : {},
+          chunkIndex,
+          totalChunks: chunks.length,
+        });
+        if (!sent.ok) return sent;
+        if (sent.value.kind !== "sent") {
+          return { ok: false as const, error: new Error("chunk did not produce a platform receipt") };
+        }
+        results.push({
+          status: "accepted" as const,
+          messageId: sent.value.messageId,
+          charCount: text.length,
+          retried: false,
+        });
+      }
+      return {
+        ok: true as const,
+        value: {
+          chunks: results,
+          totalChars: chunks.reduce((sum, chunk) => sum + chunk.length, 0),
+          platform: {
+            status: "accepted" as const,
+            deliveredChunks: chunks.length,
+            settledAtMs: 1,
+            lastMessageId: results.at(-1)!.messageId,
+          },
+          queueDisposition: "settled" as const,
+        },
+      };
+    });
+
+    try {
+      const result = setupCrossSession(deps);
+      const senderArgs = mockCreateCrossSessionSender.mock.calls[0][0];
+      const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+      expect(senderArgs.sendGovernedAnnouncement).toBeUndefined();
+      expect(senderArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
+      expect(senderArgs.reserveAnnouncementProducer).toEqual(expect.any(Function));
+      expect(senderArgs.releaseAnnouncementProducer).toEqual(expect.any(Function));
+      expect(senderArgs.recordAnnouncementProducerOutcome).toEqual(expect.any(Function));
+      expect(senderArgs.lifecycleSignal).toBeInstanceOf(AbortSignal);
+      expect(senderArgs.cancelAnnouncementProducer).toEqual(expect.any(Function));
+      expect(senderArgs.suppressAnnouncementProducer).toEqual(expect.any(Function));
+      expect(senderArgs.prepareAnnouncementRetirement).toEqual(expect.any(Function));
+      expect(runnerArgs.sendRecoverableAnnouncement).toEqual(expect.any(Function));
+      expect(result.sendRecoverableAnnouncement).toEqual(expect.any(Function));
+
+      const admitted = await result.announcementBatcher.enqueue({
+        announcementText: "[System Message]\nResult: completed",
+        terminalOutcome: { status: "completed" },
+        announceChannelType: "telegram",
+        announceChannelId: "chat-1",
+        callerAgentId: "agent-1",
+        callerSessionKey: "default:agent:agent-1:user1:chan1",
+        callerConversation: makeConversation("default", "agent-1"),
+        destinationEndpoint: {
+          channelType: "telegram",
+          channelInstanceId: "telegram-primary",
+          conversationId: "chat-1",
+          conversationKind: "direct",
+        },
+        runId: "ledgerless-run-1",
+        idempotencyKey: "default:agent:agent-1:user1:chan1::ledgerless-run-1",
+      });
+      expect(admitted).toEqual({ ok: true, value: "queued" });
+      await result.announcementBatcher.flush();
+
+      expect(mockDeliverToChannel).toHaveBeenCalledWith(
+        expect.any(Object),
+        "chat-1",
+        expect.any(String),
+        expect.any(Object),
+        expect.any(Function),
+        expect.any(Object),
+      );
+      expect(platformSend).toHaveBeenCalledTimes(2);
+      expect(platformSend.mock.calls.map((call) => call[1])).toEqual([
+        "first durable chunk",
+        "second durable chunk",
+      ]);
+    } finally {
+      mockRandomUUID.mockImplementation(() => "30000000-0000-4000-8000-000000000003");
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("records a completion operation before the first direct fallback and commits its platform receipt", async () => {
     const setupCrossSession = await getSetupCrossSession();
     const order: string[] = [];
     const outwardLedger = {
+      lookupTerminalDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      recordTerminalDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
       allocateStep: vi.fn(async () => {
         order.push("allocate");
         return { ok: true as const, value: 4 };
@@ -3914,14 +4258,36 @@ describe("setupCrossSession durable-store injection", () => {
       hasUncertainty: vi.fn(async () => ({ ok: true as const, value: false })),
       listUnreconciled: vi.fn(async () => ({ ok: true as const, value: [] })),
     };
-    const deliverToChannel = vi.fn(async () => {
-      order.push("platform");
+    const deliverToChannel = vi.fn(async (
+      adapter: DeliveryAdapter,
+      channelId: string,
+      text: string,
+      options: DeliverToChannelOptions,
+      sendChunk?: DeliveryChunkSender,
+    ) => {
+      if (!sendChunk) throw new Error("governed chunk sender unavailable");
+      const sent = await sendChunk({
+        adapter: {
+          ...adapter,
+          sendMessage: vi.fn(async () => {
+            order.push("platform");
+            return { ok: true as const, value: "telegram-receipt-4" };
+          }),
+        },
+        channelId,
+        text,
+        options: options.threadId ? { threadId: options.threadId } : {},
+        chunkIndex: 0,
+        totalChunks: 1,
+      });
+      if (!sent.ok) throw sent.error;
+      if (sent.value.kind !== "sent") throw new Error("expected platform send receipt");
       return {
         ok: true as const,
         value: {
           chunks: [{
             status: "accepted" as const,
-            messageId: "telegram-receipt-4",
+            messageId: sent.value.messageId,
             charCount: 20,
             retried: false,
           }],
@@ -3953,7 +4319,7 @@ describe("setupCrossSession durable-store injection", () => {
     mkdirSync(deps.container.config.dataDir, { recursive: true });
     const result = setupCrossSession(deps);
 
-    result.announcementBatcher.enqueue({
+    const admitted = await result.announcementBatcher.enqueue({
       announcementText: "[System Message]\nResult: completed",
       terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
@@ -3969,7 +4335,9 @@ describe("setupCrossSession durable-store injection", () => {
       },
       runId: "completion-run-1",
       idempotencyKey: "default:agent:agent-1:user1:chan1::completion-run-1",
+      reservationRootRunId: "root-completion",
     });
+    expect(admitted).toEqual({ ok: true, value: "queued" });
     await result.announcementBatcher.flush();
 
     expect(order).toEqual(["allocate", "begin", "mark-unknown", "platform", "commit"]);
@@ -3988,6 +4356,8 @@ describe("setupCrossSession durable-store injection", () => {
     const setupCrossSession = await getSetupCrossSession();
     let row: Record<string, unknown> | undefined;
     const outwardLedger = {
+      lookupTerminalDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      recordTerminalDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
       allocateStep: vi.fn(async () => ({ ok: true as const, value: 6 })),
       lookup: vi.fn(async () => ({ ok: true as const, value: row })),
       begin: vi.fn(async (input: Record<string, unknown>) => {
@@ -4013,29 +4383,53 @@ describe("setupCrossSession durable-store injection", () => {
       hasUncertainty: vi.fn(async () => ({ ok: true as const, value: true })),
       listUnreconciled: vi.fn(async () => ({ ok: true as const, value: [] })),
     };
-    const deliverToChannel = mode === "response-loss"
-      ? vi.fn().mockRejectedValue(new Error("response lost after platform call"))
-      : vi.fn(async () => ({
-          ok: true as const,
-          value: {
-            chunks: [{
-              status: "rejected" as const,
-              error: new Error("transport rejected"),
-              errorKind: "platform" as const,
-              charCount: 20,
-              retried: false,
-            }],
-            totalChars: 20,
-            platform: {
-              status: "rejected" as const,
-              errorKind: "platform" as const,
-              deliveredChunks: 0,
-              failedChunks: 1,
-              settledAtMs: 1,
-            },
-            queueDisposition: "settled" as const,
+    const deliverToChannel = vi.fn(async (
+      adapter: DeliveryAdapter,
+      channelId: string,
+      text: string,
+      options: DeliverToChannelOptions,
+      sendChunk?: DeliveryChunkSender,
+    ) => {
+      if (!sendChunk) throw new Error("governed chunk sender unavailable");
+      const sent = await sendChunk({
+        adapter: {
+          ...adapter,
+          sendMessage: vi.fn(async () => {
+            if (mode === "response-loss") {
+              throw new Error("response lost after platform call");
+            }
+            return { ok: false as const, error: new Error("400 transport rejected") };
+          }),
+        },
+        channelId,
+        text,
+        options: options.threadId ? { threadId: options.threadId } : {},
+        chunkIndex: 0,
+        totalChunks: 1,
+      });
+      const error = sent.ok ? new Error("expected governed chunk rejection") : sent.error;
+      return {
+        ok: true as const,
+        value: {
+          chunks: [{
+            status: "rejected" as const,
+            error,
+            errorKind: "platform" as const,
+            charCount: 20,
+            retried: false,
+          }],
+          totalChars: 20,
+          platform: {
+            status: "rejected" as const,
+            errorKind: "platform" as const,
+            deliveredChunks: 0,
+            failedChunks: 1,
+            settledAtMs: 1,
           },
-        }));
+          queueDisposition: "settled" as const,
+        },
+      };
+    });
     const deps = createMinimalDeps({
       outwardLedger,
       resolveRootRunId: vi.fn(() => ({ ok: true as const, value: "root-retained" })),
@@ -4053,7 +4447,7 @@ describe("setupCrossSession durable-store injection", () => {
     mkdirSync(deps.container.config.dataDir, { recursive: true });
     const result = setupCrossSession(deps);
 
-    result.announcementBatcher.enqueue({
+    const admitted = await result.announcementBatcher.enqueue({
       announcementText: "[System Message]\nResult: retained",
       terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
@@ -4069,7 +4463,9 @@ describe("setupCrossSession durable-store injection", () => {
       },
       runId: `completion-${mode}`,
       idempotencyKey: `default:agent:agent-1:user1:chan1::completion-${mode}`,
+      reservationRootRunId: "root-retained",
     });
+    expect(admitted).toEqual({ ok: true, value: "queued" });
     await result.announcementBatcher.flush();
 
     expect(deliverToChannel).toHaveBeenCalledOnce();
@@ -4106,6 +4502,8 @@ describe("setupCrossSession durable-store injection", () => {
     // never received the ledger (dead-code wiring), it would re-send. lookup
     // returns Result<OutwardSendRecord|undefined, Error> (the port contract).
     const outwardLedger = {
+      lookupTerminalDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      recordTerminalDecision: vi.fn(async () => ({ ok: true as const, value: undefined })),
       lookup: vi.fn(async () => ({
         ok: true as const,
         value: {
@@ -4135,9 +4533,28 @@ describe("setupCrossSession durable-store injection", () => {
     };
     // Isolate the DLQ JSONL onto a unique temp dataDir so no stray
     // process.cwd()/dead-letters.jsonl leaks pre-existing entries into drain.
-    const deps = createMinimalDeps({ outwardLedger });
+    const deps = createMinimalDeps({
+      outwardLedger,
+    });
     deps.container.config.dataDir = `${os.tmpdir()}/comis-dlq-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     mkdirSync(deps.container.config.dataDir, { recursive: true });
+    deps.container.eventBus = new TypedEventBus();
+    const callerConversation = makeConversation("default", "parent-agent");
+    const projected = conversationScopeToSessionKey(callerConversation.conversationScope);
+    if (!projected.ok) throw projected.error;
+    const formattedSessionKey = formatSessionKey(projected.value);
+    const trajectoryRegistry = createSessionTrajectoryHandleRegistry();
+    deps.ensureDeadLetterRecoveryObservation = createDeadLetterRecoveryObserver({
+      dataDir: deps.container.config.dataDir,
+      eventBus: deps.container.eventBus,
+      logger: deps.logger,
+      trajectoryConfig: { enabled: true, maxFileBytes: 64_000 },
+      sessionAdapters: new Map([[
+        "parent-agent",
+        { getSessionPath: vi.fn(() => `${deps.container.config.dataDir}/session.jsonl`) },
+      ]]),
+      trajectoryRegistry,
+    });
     const result = setupCrossSession(deps);
 
     const dlq = result.deadLetterQueue;
@@ -4155,11 +4572,23 @@ describe("setupCrossSession durable-store injection", () => {
       channelId: "chat-1",
       agentId: "parent-agent",
       runId: "run-dlq",
+      sessionKey: formattedSessionKey,
       failedAt: Date.now(),
       attemptCount: 0,
       idempotencyKey: "default:u1:c1::run-dlq",
       rootRunId: "root-dlq",
       stepIndex: 3,
+      deliveryAuthority: {
+        tenantId: "default",
+        agentId: "parent-agent",
+        conversationRef: callerConversation.conversationRef,
+      },
+      destinationEndpoint: {
+        channelType: "telegram",
+        channelInstanceId: "test-instance",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
     });
 
     // The entry's lastAttemptAt is set to now by enqueue; the daemon DLQ uses a
@@ -4177,6 +4606,27 @@ describe("setupCrossSession durable-store injection", () => {
     expect(sendSpy).not.toHaveBeenCalled();
     expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-dlq");
     expect(dlq!.size()).toBe(0);
+    const recorder = trajectoryRegistry.getRecorder(formattedSessionKey);
+    expect(recorder).toBeDefined();
+    if (!recorder) throw new Error("dead-letter recovery trajectory was not created");
+    await recorder.flush();
+    const trajectoryRows = readFileSync(recorder.filePath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(trajectoryRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "delivery.outward_ledger_transition",
+        data: expect.objectContaining({
+          rootRunId: "root-dlq",
+          stepIndex: 3,
+          transition: "lookup",
+          outcome: "committed",
+        }),
+      }),
+    ]));
+    await trajectoryRegistry.closeAll();
+    rmSync(deps.container.config.dataDir, { recursive: true, force: true });
   });
 });
 

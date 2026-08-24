@@ -64,7 +64,8 @@ fi
 # (2) Launch it detached. tmux when available (the only thing that survives an ssh close); locally a
 # plain nohup suffices when tmux is absent, since there is no channel to close.
 : >"$EMU_LOG"
-LAUNCH="cd '$EMU_DIR' && exec env EMU_JSON='$EMU_JSON' EMU_GROUPS='${EMU_GROUPS:-}' $TSX test/live/bin/vps-emu.ts"
+mkdir -p "$EMU_MESSAGE_ID_STATE_DIR"
+LAUNCH="cd '$EMU_DIR' && exec env EMU_JSON='$EMU_JSON' EMU_MESSAGE_ID_STATE_DIR='$EMU_MESSAGE_ID_STATE_DIR' EMU_GROUPS='${EMU_GROUPS:-}' $TSX test/live/bin/vps-emu.ts"
 if command -v tmux >/dev/null 2>&1; then
   tmux new-session -d -s "$EMU_TMUX_SESSION" "$LAUNCH > '$EMU_LOG' 2>&1"
   tmux set-environment -t "$EMU_TMUX_SESSION" COMIS_EMU_DATA_OWNER "$DATA"

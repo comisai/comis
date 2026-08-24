@@ -1260,6 +1260,8 @@ describe("outward quota gate", () => {
       drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
     };
     const ledger: OutwardSendLedgerPort = {
+      lookupTerminalDecision: vi.fn(async () => ok(undefined)),
+      recordTerminalDecision: vi.fn(async () => ok(undefined)),
       allocateStep: vi.fn(async () => ok(7)),
       lookup: vi.fn(async () => ok(undefined)),
       begin: vi.fn(async () => ok(undefined)),
@@ -1328,6 +1330,8 @@ describe("outward quota gate", () => {
         retryEngine,
       });
       const ledger: OutwardSendLedgerPort = {
+        lookupTerminalDecision: vi.fn(async () => ok(undefined)),
+        recordTerminalDecision: vi.fn(async () => ok(undefined)),
         allocateStep: vi.fn(async () => ok(9)),
         lookup: vi.fn(async () => ok(undefined)),
         begin: vi.fn(async () => ok(undefined)),

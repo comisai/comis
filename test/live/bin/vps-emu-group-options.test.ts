@@ -9,15 +9,73 @@
  * made the group's bot member a different bot than the daemon authenticates as, so
  * `isBotMentioned` was permanently false. Both must throw, naming the expected shape.
  */
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import {
   assertValidGroupSpec,
   EMULATOR_BOT_ID,
   EMULATOR_BOT_USERNAME,
+  reserveStandaloneMessageIdBase,
+  resolveStandaloneMessageIdReservationDirectory,
   toCreateGroupChatOptions,
 } from "./vps-emu-group-options.js";
 
 const members = [{ id: 678314278, firstName: "U1", username: "u1" }];
+const reservationDirectories: string[] = [];
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const directory of reservationDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function reservationDirectory(): string {
+  const root = mkdtempSync(resolve(tmpdir(), "comis-emu-message-ids-"));
+  reservationDirectories.push(root);
+  return resolve(root, "reservations");
+}
+
+describe("reserveStandaloneMessageIdBase", () => {
+  it("requires reservation state independent of the disposable checkout", () => {
+    expect(() => resolveStandaloneMessageIdReservationDirectory(undefined))
+      .toThrow("EMU_MESSAGE_ID_STATE_DIR");
+    expect(resolveStandaloneMessageIdReservationDirectory("/var/lib/comis-emu"))
+      .toBe("/var/lib/comis-emu/message-id-reservations");
+  });
+
+  it("uses collision-resistant allocation when launcher state is absent", () => {
+    expect(reserveStandaloneMessageIdBase(undefined, reservationDirectory(), 4_000_000_000))
+      .toBe(4_000_000_000);
+  });
+
+  it("allocates distinct blocks for simultaneous stateless launches", () => {
+    const directory = reservationDirectory();
+
+    expect(reserveStandaloneMessageIdBase(undefined, directory, 4_000_000_000))
+      .toBe(4_000_000_000);
+    expect(reserveStandaloneMessageIdBase(undefined, directory, 4_000_000_000))
+      .toBe(4_001_000_000);
+  });
+
+  it("keeps a persisted reservation ahead of a fresh random candidate", () => {
+    expect(reserveStandaloneMessageIdBase(
+      { messageIdBase: 2_000_000_000 },
+      reservationDirectory(),
+      1_000_000_000,
+    )).toBe(2_001_000_000);
+  });
+
+  it("advances stale persisted state to a fresh random candidate", () => {
+    expect(reserveStandaloneMessageIdBase(
+      { messageIdBase: 100 },
+      reservationDirectory(),
+      4_000_000_000,
+    )).toBe(4_000_000_000);
+  });
+});
 
 describe("assertValidGroupSpec", () => {
   it("accepts a well-formed spec", () => {

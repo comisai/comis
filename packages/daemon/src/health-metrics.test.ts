@@ -17,11 +17,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createAnnouncementDeadLetterQueue } from "@comis/orchestrator";
 import { createProviderHealthMonitor, type ProviderHealthMonitor } from "@comis/agent";
 import type { TypedEventBus } from "@comis/core";
+import { err, ok } from "@comis/shared";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createMockEventBus } from "../../../test/support/mock-event-bus.js";
-import { ANNOUNCEMENT_QUARANTINE_HINT } from "./health-metrics.js";
+import {
+  ANNOUNCEMENT_QUARANTINE_HINT,
+  createAnnouncementQuarantineHealthReporter,
+} from "./health-metrics.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -116,16 +120,82 @@ describe("promptTimeoutsLast5m sliding window counter", () => {
 // ---------------------------------------------------------------------------
 
 describe("ANNOUNCEMENT_QUARANTINE_HINT", () => {
-  // The hint sent operators to <dataDir>/dead-letters.jsonl, but the file is
-  // unlinked as soon as the queue drains to zero. Live, reading the WARN after a
-  // correct resolution meant finding no file at that path and concluding the
-  // user's announcement had been lost — the opposite of what had happened.
-  it("states that an absent dead-letter file means the quarantine already resolved", () => {
-    expect(ANNOUNCEMENT_QUARANTINE_HINT).toMatch(/dead-letters\.jsonl/);
-    // The lifecycle is the load-bearing half: naming the path without it is what
-    // turned a resolved quarantine into a phantom data-loss report.
-    expect(ANNOUNCEMENT_QUARANTINE_HINT).toMatch(/removed|absent|no longer|drain/i);
-    expect(ANNOUNCEMENT_QUARANTINE_HINT).toMatch(/resolved|already/i);
+  it("routes operators through the content-free quarantine command", () => {
+    expect(ANNOUNCEMENT_QUARANTINE_HINT).toContain(
+      "node packages/cli/dist/cli.js quarantine list",
+    );
+    expect(ANNOUNCEMENT_QUARANTINE_HINT).not.toContain("dead-letters.jsonl");
+  });
+
+  it("refreshes standing quarantine signals without repeating warning logs", async () => {
+    const eventBus = createMockEventBus();
+    const logger = { warn: vi.fn() };
+    const pending = createAnnouncementQuarantineHealthReporter({
+      deadLetterQueue: {
+        durableStatus: vi.fn(async () => ok({
+          activeRecoveryCount: 3,
+          quarantinedCount: 2,
+        })),
+      },
+      eventBus,
+      logger,
+      now: () => 100,
+    });
+
+    await pending.sample();
+    await pending.sample();
+
+    expect(eventBus.emit).toHaveBeenCalledTimes(2);
+    expect(eventBus.emit).toHaveBeenNthCalledWith(2, "announcement:quarantine_pending", {
+      pendingCount: 2,
+      activeRecoveryCount: 3,
+      timestamp: 100,
+    });
+    expect(logger.warn).toHaveBeenCalledOnce();
+
+    const unreadableBus = createMockEventBus();
+    const unreadableLogger = { warn: vi.fn() };
+    const unreadable = createAnnouncementQuarantineHealthReporter({
+      deadLetterQueue: {
+        durableStatus: vi.fn(async () => err(new Error("storage unavailable"))),
+      },
+      eventBus: unreadableBus,
+      logger: unreadableLogger,
+      now: () => 200,
+    });
+
+    await unreadable.sample();
+    await unreadable.sample();
+
+    expect(unreadableBus.emit).toHaveBeenCalledTimes(2);
+    expect(unreadableBus.emit).toHaveBeenNthCalledWith(
+      2,
+      "announcement:quarantine_read_failed",
+      { timestamp: 200 },
+    );
+    expect(unreadableLogger.warn).toHaveBeenCalledOnce();
+  });
+
+  it("emits a current clear state after quarantine recovery", async () => {
+    const eventBus = createMockEventBus();
+    const durableStatus = vi.fn()
+      .mockResolvedValueOnce(err(new Error("storage unavailable")))
+      .mockResolvedValueOnce(ok({ activeRecoveryCount: 1, quarantinedCount: 0 }));
+    const reporter = createAnnouncementQuarantineHealthReporter({
+      deadLetterQueue: { durableStatus },
+      eventBus,
+      logger: { warn: vi.fn() },
+      now: () => 300,
+    });
+
+    await reporter.sample();
+    await reporter.sample();
+
+    expect(eventBus.emit).toHaveBeenLastCalledWith("announcement:quarantine_pending", {
+      pendingCount: 0,
+      activeRecoveryCount: 1,
+      timestamp: 300,
+    });
   });
 });
 
@@ -161,6 +231,7 @@ describe("deadLetterQueueSize metric", () => {
 
     await dlq.enqueue({
       runId: "run-1",
+      sessionKey: "default:agent-a:telegram:chat-1:user_a",
       channelType: "telegram",
       channelId: "chat-1",
       announcementText: "test message",
@@ -170,6 +241,7 @@ describe("deadLetterQueueSize metric", () => {
 
     await dlq.enqueue({
       runId: "run-2",
+      sessionKey: "default:agent-a:discord:chan-2:user_a",
       channelType: "discord",
       channelId: "chan-2",
       announcementText: "test message 2",

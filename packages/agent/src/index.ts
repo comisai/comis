@@ -503,6 +503,7 @@ export {
 export type { AnnouncementTerminalOutcome } from "./spawn/index.js";
 export { createDeliveryDedup } from "./spawn/index.js";
 export type { DeliveryDedup } from "./spawn/index.js";
+export { createCompletionAnnouncementOperationPlan } from "./spawn/index.js";
 export { comparePosture, resolvePostureFromSkills } from "./spawn/index.js";
 export type {
   SandboxPosture,

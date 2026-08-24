@@ -22,12 +22,24 @@ import {
   type SessionKey,
   type TypedEventBus,
   type AgentToAgentConfig,
+  SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
+  type AnnouncementProducerReservation,
+  type AnnouncementProducerRecoveryOutcome,
+  type AnnouncementProducerReservationOutcome,
+  type AnnouncementRetirementProducer,
   type ComisLogger,
+  type RootRunIdResolver,
+  createStableAnnouncementOperationId,
   systemNowMs,
+  systemSleep,
   systemSetTimeout,
 } from "@comis/core";
 import { fromPromise, type Result } from "@comis/shared";
-import type { SendGovernedCompletionAnnouncement } from "./announcement-outward-operation.js";
+import {
+  isGovernedAnnouncementConfirmedDelivered,
+  type SendGovernedCompletionAnnouncement,
+  type SendRecoverableCompletionAnnouncement,
+} from "./announcement-outward-operation.js";
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -53,6 +65,29 @@ export interface CrossSessionSenderDeps {
   config: AgentToAgentConfig;
   /** Receipt-aware retained-operation boundary for completion announcements. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
+  reserveAnnouncementProducer?: (
+    reservation: AnnouncementProducerReservation,
+  ) => Promise<Result<AnnouncementProducerReservationOutcome, Error>>;
+  releaseAnnouncementProducer?: (
+    producerKey: string,
+  ) => Promise<Result<void, Error>>;
+  recordAnnouncementProducerOutcome?: (
+    producerKey: string,
+    outcome: AnnouncementProducerRecoveryOutcome,
+  ) => Promise<Result<void, Error>>;
+  lifecycleSignal?: AbortSignal;
+  cancelAnnouncementProducer?: (
+    producerKey: string,
+  ) => Promise<Result<void, Error>>;
+  suppressAnnouncementProducer?: (
+    producerKey: string,
+  ) => Promise<Result<boolean, Error>>;
+  prepareAnnouncementRetirement?: (
+    completionKeys: readonly string[],
+    producer: AnnouncementRetirementProducer,
+  ) => Promise<Result<void, Error>>;
+  resolveRootRunId?: RootRunIdResolver;
   /** Logger for fail-closed durable announcement failures. */
   logger?: Pick<ComisLogger, "error">;
 }
@@ -84,11 +119,147 @@ export interface CrossSessionSendResult {
   stats?: { runtimeMs: number; totalTokens: number; totalCost: number };
 }
 
+const ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS = 100_000;
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
+  function boundRecoveryResponse(response: string): string {
+    if (response.length <= ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS) return response;
+    const suffix = "\n\n[Response truncated at the durable recovery boundary.]";
+    return `${response.slice(
+      0,
+      ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS - suffix.length,
+    )}${suffix}`;
+  }
+
+  function boundFailureSummary(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    const bounded = message.slice(0, SUBAGENT_RESULT_SUMMARY_MAX_CHARS).trim();
+    return bounded || "Cross-session execution failed after target work began";
+  }
+
+  async function persistProducerOutcome(
+    producerKey: string,
+    outcome: AnnouncementProducerRecoveryOutcome,
+  ): Promise<void> {
+    const record = deps.recordAnnouncementProducerOutcome;
+    if (record === undefined) throw new Error("Announcement producer lifecycle is incomplete");
+    let failureCount = 0;
+    while (true) {
+      if (deps.lifecycleSignal?.aborted) {
+        throw new Error("Cross-session outcome persistence was interrupted after durable handoff");
+      }
+      const boundary = await fromPromise(record(producerKey, outcome));
+      if (boundary.ok && boundary.value.ok) return;
+      const failure = !boundary.ok
+        ? boundary.error
+        : boundary.value.ok
+          ? new Error("Announcement producer outcome persistence failed without an error")
+          : boundary.value.error;
+      if (
+        failure.message === "Announcement producer recovery outcome is invalid"
+        || failure.message === "Announcement producer recovery owner was not found"
+        || failure.message === "Announcement producer recovery outcome identity mismatch"
+        || failure.message === "Announcement producer has a conflicting terminal transition"
+      ) {
+        throw failure;
+      }
+      failureCount++;
+      if (failureCount === 1) {
+        deps.logger?.error(
+          {
+            step: "producer-outcome",
+            errorKind: "resource" as const,
+            hint: "restore dead-letter storage; completed cross-session work remains owned and its result persistence will retry",
+          },
+          "Cross-session producer outcome persistence failed",
+        );
+      }
+      if (failureCount > 1) await systemSleep(1_000);
+    }
+  }
+
+  function resolveRecoveryResponse(
+    conversation: ConversationLocator,
+    operationId: string,
+    toolCallId: string,
+    outcome: Extract<AnnouncementProducerRecoveryOutcome, {
+      kind: "tool_result";
+      terminalReason: "completed";
+    }>,
+  ): string {
+    if (outcome.responseRef === undefined) return outcome.response;
+    const loaded = deps.sessionStore.loadByRef(
+      conversation.conversationScope,
+      conversation.conversationRef,
+    );
+    if (!loaded.ok) throw loaded.error;
+    if (!loaded.value) throw new Error("Cross-session recovery session was not found");
+    const value = loaded.value.metadata.announcementToolResultRecoveryHandoffs;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error("Cross-session recovery response handoff is unavailable");
+    }
+    const handoff = Object.entries(value).find(([key]) => key === operationId)?.[1];
+    if (
+      typeof handoff !== "object"
+      || handoff === null
+      || Array.isArray(handoff)
+    ) {
+      throw new Error("Cross-session recovery response handoff identity mismatch");
+    }
+    const record = handoff as Record<string, unknown>;
+    if (
+      record.operationId !== operationId
+      || record.toolCallId !== toolCallId
+      || typeof record.response !== "string"
+    ) {
+      throw new Error("Cross-session recovery response handoff identity mismatch");
+    }
+    return record.response;
+  }
+
+  function persistToolResultHandoff(
+    conversation: ConversationLocator,
+    operationId: string,
+    toolCallId: string,
+    outcome: Extract<AnnouncementProducerRecoveryOutcome, { kind: "tool_result" }>,
+    response?: string,
+  ): void {
+    const loaded = deps.sessionStore.loadByRef(
+      conversation.conversationScope,
+      conversation.conversationRef,
+    );
+    if (!loaded.ok) throw loaded.error;
+    if (!loaded.value) throw new Error("Cross-session recovery session was not found");
+    const existingValue = loaded.value.metadata.announcementToolResultRecoveryHandoffs;
+    const existing = typeof existingValue === "object"
+      && existingValue !== null
+      && !Array.isArray(existingValue)
+      ? existingValue as Record<string, unknown>
+      : {};
+    const handoffs = Object.fromEntries([
+      ...Object.entries(existing).filter(([key]) => key !== operationId),
+      [operationId, {
+        operationId,
+        toolCallId,
+        outcome,
+        ...(response !== undefined ? { response } : {}),
+      }],
+    ]);
+    const saved = deps.sessionStore.save(
+      loaded.value.conversationScope,
+      loaded.value.messages,
+      {
+        ...loaded.value.metadata,
+        announcementToolResultRecoveryHandoffs: handoffs,
+      },
+    );
+    if (!saved.ok) throw saved.error;
+  }
+
   async function announce(
     channelType: string | undefined,
     channelId: string | undefined,
@@ -102,8 +273,17 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
     if (!channelType || !channelId) return false;
 
     const sendGovernedAnnouncement = deps.sendGovernedAnnouncement;
-    if (!sendGovernedAnnouncement) {
-      return deps.sendToChannel(channelType, channelId, text);
+    const sendRecoverableAnnouncement = deps.sendRecoverableAnnouncement;
+    if (!sendGovernedAnnouncement && !sendRecoverableAnnouncement) {
+      deps.logger?.error(
+        {
+          step: "completion-announcement",
+          errorKind: "precondition" as const,
+          hint: "wire the recoverable announcement boundary before retrying the cross-session response",
+        },
+        "Cross-session announcement recovery unavailable",
+      );
+      return false;
     }
     if (
       callerAgentId === undefined
@@ -136,16 +316,41 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       );
       return false;
     }
-    const boundary = await fromPromise(sendGovernedAnnouncement({
+    const operationId = createStableAnnouncementOperationId(
+      callerAgentId,
+      callerSessionKey,
+      announceOperationId,
+    );
+    const request = {
       agentId: callerAgentId,
       callerSessionKey,
       callerConversation,
       destinationEndpoint: callerEndpoint,
-      runId: announceOperationId,
+      runId: operationId,
       channelType,
       channelId,
       text,
-    }));
+      completionKeys: [operationId],
+      ...(callerEndpoint.threadId ? { options: { threadId: callerEndpoint.threadId } } : {}),
+    };
+    if (sendRecoverableAnnouncement && !sendGovernedAnnouncement) {
+      const recoverableBoundary = await fromPromise(sendRecoverableAnnouncement(request));
+      if (!recoverableBoundary.ok || !recoverableBoundary.value.ok) {
+        deps.logger?.error(
+          {
+            step: "completion-announcement",
+            errorKind: "dependency" as const,
+            hint: "inspect the recoverable announcement boundary and retry only with the same operation identity",
+          },
+          "Cross-session recoverable announcement failed",
+        );
+        return false;
+      }
+      const outcome = recoverableBoundary.value.value;
+      return outcome.delivered
+        || ("terminalDecision" in outcome && outcome.terminalDecision === "delivered");
+    }
+    const boundary = await fromPromise(sendGovernedAnnouncement!(request));
     if (!boundary.ok || !boundary.value.ok) {
       deps.logger?.error(
         {
@@ -157,7 +362,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       );
       return false;
     }
-    return boundary.value.value.delivered;
+    return isGovernedAnnouncementConfirmedDelivered(boundary.value.value);
   }
 
   function stripAnnounceSkip(text: string): { stripped: string; hadSkip: boolean } {
@@ -181,33 +386,9 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       const targetSessionKey = projectedTarget.value;
       const targetDisplayKey = formatSessionKey(targetSessionKey);
 
-      // 3. Inject synthetic user message into target session
-      const newMessage = {
-        role: "user",
-        content: params.text,
-        timestamp: systemNowMs(),
-        metadata: { crossSession: true, fromConversationRef: params.caller?.conversationRef },
-      };
-      const updatedMessages = [...data.messages, newMessage];
-      const saved = deps.sessionStore.save(data.conversationScope, updatedMessages, data.metadata);
-      if (!saved.ok) throw saved.error;
-
-      // 4. Emit cross-send event
-      deps.eventBus.emit("session:cross_send", {
-        fromSessionKey: params.callerSessionKey ?? "unknown",
-        toSessionKey: targetDisplayKey,
-        mode: params.mode,
-        timestamp: systemNowMs(),
-      });
-
-      // 5. Fire-and-forget: return immediately
-      if (params.mode === "fire-and-forget") {
-        return { sent: true };
-      }
-
-      // 6. Self-targeting guard for wait/ping-pong modes
       if (
-        params.caller?.tenantId === params.target.tenantId
+        params.mode !== "fire-and-forget"
+        && params.caller?.tenantId === params.target.tenantId
         && params.caller.agentId === params.target.agentId
         && params.caller.conversationRef === params.target.conversationRef
       ) {
@@ -215,105 +396,423 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           "Cannot send to own session in wait/ping-pong mode (deadlock risk). Use fire-and-forget mode instead.",
         );
       }
-
-      const agentId = data.conversationScope.agentId;
-      const startMs = systemNowMs();
-      const timeoutMs = params.timeoutMs ?? deps.config.waitTimeoutMs;
-
-      const execResult = await Promise.race([
-        deps.executeInSession(agentId, targetSessionKey, {
-          conversationScope: data.conversationScope,
-          conversationRef: data.conversationRef,
-        }, params.text),
-        new Promise<never>((_, reject) =>
-          systemSetTimeout(() => reject(new Error("Cross-session wait timed out")), timeoutMs),
-        ),
-      ]);
-
-      let totalTokens = execResult.tokensUsed.total;
-      let totalCost = execResult.cost.total;
-      let lastResponse = execResult.response;
-
-      // 8. Wait mode: announce and return
-      if (params.mode === "wait") {
-        const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
-        const announced = hadSkip
-          ? false
-          : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
-        return {
-          sent: true,
-          response: stripped,
-          announced,
-          stats: {
-            runtimeMs: systemNowMs() - startMs,
-            totalTokens,
-            totalCost,
+      let reservedProducerKey: string | undefined;
+      let reservedProducerToolCallId: string | undefined;
+      let producerDisposition: "cancel" | "release" | "retain" = "cancel";
+      let producerSettled = false;
+      if (
+        params.mode !== "fire-and-forget"
+        && params.announceOperationId !== undefined
+        && params.announceChannelType !== undefined
+        && params.announceChannelId !== undefined
+        && params.callerAgentId !== undefined
+        && params.callerSessionKey !== undefined
+        && params.callerConversation !== undefined
+        && params.callerEndpoint !== undefined
+        && deps.reserveAnnouncementProducer !== undefined
+      ) {
+        if (
+          deps.releaseAnnouncementProducer === undefined
+          || deps.recordAnnouncementProducerOutcome === undefined
+          || deps.cancelAnnouncementProducer === undefined
+          || deps.suppressAnnouncementProducer === undefined
+        ) {
+          throw new Error("Announcement producer lifecycle is incomplete");
+        }
+        const callerSession = conversationScopeToSessionKey(
+          params.callerConversation.conversationScope,
+        );
+        if (!callerSession.ok) throw callerSession.error;
+        const resolvedRoot = deps.resolveRootRunId?.(
+          params.callerAgentId,
+          callerSession.value,
+        );
+        const operationId = createStableAnnouncementOperationId(
+          params.callerAgentId,
+          params.callerSessionKey,
+          params.announceOperationId,
+        );
+        const reservation: AnnouncementProducerReservation = {
+          idempotencyKey: operationId,
+          agentId: params.callerAgentId,
+          runId: operationId,
+          sessionKey: params.callerSessionKey,
+          announcementText: "A cross-session response finished, but its notification was interrupted before delivery ownership transferred.",
+          channelType: params.announceChannelType,
+          channelId: params.announceChannelId,
+          failedAt: systemNowMs(),
+          rootRunId: resolvedRoot?.ok
+            ? resolvedRoot.value
+            : `announcement:${params.callerSessionKey}`,
+          deliveryAuthority: {
+            tenantId: params.callerConversation.conversationScope.tenantId,
+            agentId: params.callerAgentId,
+            conversationRef: params.callerConversation.conversationRef,
           },
+          destinationEndpoint: params.callerEndpoint,
+          completionKeys: [operationId],
+          retirementKeys: [operationId],
+          producer: {
+            kind: "tool_result",
+            tenantId: params.callerConversation.conversationScope.tenantId,
+            agentId: params.callerConversation.conversationScope.agentId,
+            conversationRef: params.callerConversation.conversationRef,
+            toolCallId: params.announceOperationId,
+            operationId,
+          },
+          ...(params.callerEndpoint.threadId
+            ? { threadId: params.callerEndpoint.threadId }
+            : {}),
         };
+        const reserved = await deps.reserveAnnouncementProducer(reservation);
+        if (!reserved.ok) throw reserved.error;
+        if (reserved.value.status === "recovery_owned") {
+          if (reserved.value.lifecycleState === "active") {
+            throw new Error("Cross-session operation execution is already owned by an unresolved attempt");
+          }
+          const recovery = reserved.value.recoveryOutcome;
+          if (!recovery || recovery.kind !== "tool_result") {
+            throw new Error("Cross-session recovery result is unavailable");
+          }
+          if (recovery.terminalReason === "failed") {
+            throw new Error(recovery.summary);
+          }
+          const publicResponse = resolveRecoveryResponse(
+            params.callerConversation,
+            operationId,
+            params.announceOperationId,
+            recovery,
+          );
+          if (
+            reserved.value.lifecycleState !== "no_reply"
+            && recovery.announced === undefined
+          ) {
+            const announced = await announce(
+              params.announceChannelType,
+              params.announceChannelId,
+              recovery.response,
+              params.callerAgentId,
+              params.callerSessionKey,
+              params.callerConversation,
+              params.callerEndpoint,
+              params.announceOperationId,
+            );
+            persistToolResultHandoff(
+              params.callerConversation,
+              operationId,
+              params.announceOperationId,
+              { ...recovery, announced },
+              publicResponse,
+            );
+            await persistProducerOutcome(
+              operationId,
+              { ...recovery, announced },
+            );
+            const released = await deps.releaseAnnouncementProducer(operationId);
+            if (!released.ok) throw released.error;
+            return {
+              sent: true,
+              response: publicResponse,
+              ...(recovery.turnsCompleted !== undefined
+                ? { turnsCompleted: recovery.turnsCompleted }
+                : {}),
+              announced,
+              stats: recovery.stats,
+            };
+          }
+          return {
+            sent: true,
+            response: publicResponse,
+            ...(recovery.turnsCompleted !== undefined
+              ? { turnsCompleted: recovery.turnsCompleted }
+              : {}),
+            ...(reserved.value.lifecycleState === "no_reply"
+              ? { announced: false }
+              : recovery.announced !== undefined
+                ? { announced: recovery.announced }
+                : {}),
+            stats: recovery.stats,
+          };
+        }
+        reservedProducerKey = operationId;
+        reservedProducerToolCallId = params.announceOperationId;
       }
 
-      // 9. Ping-pong mode: loop alternating between sessions
-      const maxTurns = params.maxTurns ?? deps.config.maxPingPongTurns;
-      let turnsCompleted = 0;
-      if (!params.caller) {
-        throw new Error("Ping-pong mode requires explicit caller conversation authority");
-      }
-      let currentTarget = params.caller;
-      let currentSource = params.target;
+      const suppressAnnouncementProducer = async (): Promise<void> => {
+        if (reservedProducerKey === undefined) return;
+        producerDisposition = "retain";
+        const suppress = deps.suppressAnnouncementProducer;
+        if (suppress === undefined) throw new Error("Announcement producer lifecycle is incomplete");
+        const suppressed = await suppress(reservedProducerKey);
+        if (!suppressed.ok) throw suppressed.error;
+        if (!suppressed.value) {
+          throw new Error("Announcement producer suppression did not find durable ownership");
+        }
+        producerSettled = true;
+      };
 
-      while (turnsCompleted < maxTurns) {
-        // Check for ANNOUNCE_SKIP escape in last response
-        if (lastResponse.includes("ANNOUNCE_SKIP")) {
-          break;
+      let targetSideEffectsStarted = false;
+      let terminalOutcomeRecorded = false;
+
+      const persistCurrentToolResultHandoff = (
+        outcome: Extract<AnnouncementProducerRecoveryOutcome, { kind: "tool_result" }>,
+        response?: string,
+      ): void => {
+        if (
+          reservedProducerKey === undefined
+          || reservedProducerToolCallId === undefined
+          || params.callerConversation === undefined
+        ) return;
+        persistToolResultHandoff(
+          params.callerConversation,
+          reservedProducerKey,
+          reservedProducerToolCallId,
+          outcome,
+          response,
+        );
+      };
+
+      const recordProducerOutcome = async (
+        outcome: Extract<AnnouncementProducerRecoveryOutcome, { kind: "tool_result" }>,
+        response?: string,
+      ): Promise<void> => {
+        if (reservedProducerKey === undefined) return;
+        producerDisposition = "retain";
+        terminalOutcomeRecorded = true;
+        persistCurrentToolResultHandoff(outcome, response);
+        await persistProducerOutcome(reservedProducerKey, outcome);
+      };
+
+      const runSend = async (): Promise<CrossSessionSendResult> => {
+        if (
+          reservedProducerKey !== undefined
+          && reservedProducerToolCallId !== undefined
+          && params.callerConversation !== undefined
+          && deps.prepareAnnouncementRetirement !== undefined
+        ) {
+          const prepared = await deps.prepareAnnouncementRetirement(
+            [reservedProducerKey],
+            {
+              kind: "tool_result",
+              tenantId: params.callerConversation.conversationScope.tenantId,
+              agentId: params.callerConversation.conversationScope.agentId,
+              conversationRef: params.callerConversation.conversationRef,
+              toolCallId: reservedProducerToolCallId,
+              operationId: reservedProducerKey,
+            },
+          );
+          if (!prepared.ok) throw prepared.error;
         }
 
-        const loaded = deps.sessionStore.loadByRef(currentTarget, currentTarget.conversationRef);
-        if (!loaded.ok) throw loaded.error;
-        if (!loaded.value) break;
-        const targetKey = conversationScopeToSessionKey(loaded.value.conversationScope);
-        if (!targetKey.ok) throw targetKey.error;
-        const turnAgentId = loaded.value.conversationScope.agentId;
-        const turnResult = await deps.executeInSession(turnAgentId, targetKey.value, {
-          conversationScope: loaded.value.conversationScope,
-          conversationRef: loaded.value.conversationRef,
-        }, lastResponse);
+        // 3. Inject synthetic user message into target session
+        const newMessage = {
+          role: "user",
+          content: params.text,
+          timestamp: systemNowMs(),
+          metadata: { crossSession: true, fromConversationRef: params.caller?.conversationRef },
+        };
+        const updatedMessages = [...data.messages, newMessage];
+        const saved = deps.sessionStore.save(
+          data.conversationScope,
+          updatedMessages,
+          data.metadata,
+        );
+        if (!saved.ok) throw saved.error;
+        targetSideEffectsStarted = true;
+        if (reservedProducerKey !== undefined) producerDisposition = "retain";
 
-        totalTokens += turnResult.tokensUsed.total;
-        totalCost += turnResult.cost.total;
-        lastResponse = turnResult.response;
-        turnsCompleted++;
-
-        // Emit ping-pong turn event
-        deps.eventBus.emit("session:ping_pong_turn", {
-          fromSessionKey: currentSource.conversationRef,
-          toSessionKey: currentTarget.conversationRef,
-          turnNumber: turnsCompleted,
-          totalTurns: maxTurns,
-          tokensUsed: turnResult.tokensUsed.total,
+        // 4. Emit cross-send event
+        deps.eventBus.emit("session:cross_send", {
+          fromSessionKey: params.callerSessionKey ?? "unknown",
+          toSessionKey: targetDisplayKey,
+          mode: params.mode,
           timestamp: systemNowMs(),
         });
 
-        // Swap directions for next turn
-        [currentTarget, currentSource] = [currentSource, currentTarget];
-      }
+        // 5. Fire-and-forget: return immediately
+        if (params.mode === "fire-and-forget") {
+          return { sent: true };
+        }
 
-      // 10. Announce final result
-      const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
-      const announced = hadSkip
-        ? false
-        : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
+        const agentId = data.conversationScope.agentId;
+        const startMs = systemNowMs();
+        const timeoutMs = params.timeoutMs ?? deps.config.waitTimeoutMs;
 
-      return {
-        sent: true,
-        response: stripped,
-        turnsCompleted,
-        announced,
-        stats: {
+        const execResult = await Promise.race([
+          deps.executeInSession(agentId, targetSessionKey, {
+            conversationScope: data.conversationScope,
+            conversationRef: data.conversationRef,
+          }, params.text),
+          new Promise<never>((_, reject) =>
+            systemSetTimeout(() => reject(new Error("Cross-session wait timed out")), timeoutMs),
+          ),
+        ]);
+
+        let totalTokens = execResult.tokensUsed.total;
+        let totalCost = execResult.cost.total;
+        let lastResponse = execResult.response;
+
+        // 8. Wait mode: announce and return
+        if (params.mode === "wait") {
+          const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
+          const recoveryResponse = boundRecoveryResponse(stripped);
+          const stats = {
+            runtimeMs: systemNowMs() - startMs,
+            totalTokens,
+            totalCost,
+          };
+          const recoveryOutcome = {
+            kind: "tool_result" as const,
+            terminalReason: "completed" as const,
+            completedAtMs: systemNowMs(),
+            response: recoveryResponse,
+            ...(recoveryResponse === stripped || reservedProducerKey === undefined
+              ? {}
+              : { responseRef: { kind: "session_metadata" as const, operationId: reservedProducerKey } }),
+            stats,
+          };
+          await recordProducerOutcome(recoveryOutcome, stripped);
+          if (hadSkip) await suppressAnnouncementProducer();
+          const announced = hadSkip
+            ? false
+            : await announce(params.announceChannelType, params.announceChannelId, recoveryResponse, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
+          if (!hadSkip) {
+            await recordProducerOutcome({ ...recoveryOutcome, announced }, stripped);
+            producerDisposition = "release";
+          }
+          return {
+            sent: true,
+            response: stripped,
+            announced,
+            stats,
+          };
+        }
+
+        // 9. Ping-pong mode: loop alternating between sessions
+        const maxTurns = params.maxTurns ?? deps.config.maxPingPongTurns;
+        let turnsCompleted = 0;
+        if (!params.caller) {
+          throw new Error("Ping-pong mode requires explicit caller conversation authority");
+        }
+        let currentTarget = params.caller;
+        let currentSource = params.target;
+
+        while (turnsCompleted < maxTurns) {
+          // Check for ANNOUNCE_SKIP escape in last response
+          if (lastResponse.includes("ANNOUNCE_SKIP")) {
+            break;
+          }
+
+          const loaded = deps.sessionStore.loadByRef(currentTarget, currentTarget.conversationRef);
+          if (!loaded.ok) throw loaded.error;
+          if (!loaded.value) break;
+          const targetKey = conversationScopeToSessionKey(loaded.value.conversationScope);
+          if (!targetKey.ok) throw targetKey.error;
+          const turnAgentId = loaded.value.conversationScope.agentId;
+          const turnResult = await deps.executeInSession(turnAgentId, targetKey.value, {
+            conversationScope: loaded.value.conversationScope,
+            conversationRef: loaded.value.conversationRef,
+          }, lastResponse);
+
+          totalTokens += turnResult.tokensUsed.total;
+          totalCost += turnResult.cost.total;
+          lastResponse = turnResult.response;
+          turnsCompleted++;
+
+          // Emit ping-pong turn event
+          deps.eventBus.emit("session:ping_pong_turn", {
+            fromSessionKey: currentSource.conversationRef,
+            toSessionKey: currentTarget.conversationRef,
+            turnNumber: turnsCompleted,
+            totalTurns: maxTurns,
+            tokensUsed: turnResult.tokensUsed.total,
+            timestamp: systemNowMs(),
+          });
+
+          // Swap directions for next turn
+          [currentTarget, currentSource] = [currentSource, currentTarget];
+        }
+
+        // 10. Announce final result
+        const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
+        const recoveryResponse = boundRecoveryResponse(stripped);
+        const stats = {
           runtimeMs: systemNowMs() - startMs,
           totalTokens,
           totalCost,
-        },
+        };
+        const recoveryOutcome = {
+          kind: "tool_result" as const,
+          terminalReason: "completed" as const,
+          completedAtMs: systemNowMs(),
+          response: recoveryResponse,
+          ...(recoveryResponse === stripped || reservedProducerKey === undefined
+            ? {}
+            : { responseRef: { kind: "session_metadata" as const, operationId: reservedProducerKey } }),
+          turnsCompleted,
+          stats,
+        };
+        await recordProducerOutcome(recoveryOutcome, stripped);
+        if (hadSkip) await suppressAnnouncementProducer();
+        const announced = hadSkip
+          ? false
+          : await announce(params.announceChannelType, params.announceChannelId, recoveryResponse, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
+        if (!hadSkip) {
+          await recordProducerOutcome({ ...recoveryOutcome, announced }, stripped);
+          producerDisposition = "release";
+        }
+
+        return {
+          sent: true,
+          response: stripped,
+          turnsCompleted,
+          announced,
+          stats,
+        };
       };
+
+      // Settling the reservation is the last step on every exit path. Its
+      // failure outranks whatever the send itself produced, because an
+      // unsettled reservation strands durable ownership that no retry can
+      // reconcile. Raising it from ordinary control flow rather than from a
+      // `finally` keeps that precedence explicit instead of letting a cleanup
+      // throw silently discard the outcome it replaces.
+      const settleAnnouncementProducer = async (): Promise<void> => {
+        if (
+          reservedProducerKey === undefined
+          || producerSettled
+          || producerDisposition === "retain"
+        ) return;
+        const transition = producerDisposition === "cancel"
+          ? await deps.cancelAnnouncementProducer!(reservedProducerKey)
+          : await deps.releaseAnnouncementProducer!(reservedProducerKey);
+        if (!transition.ok) throw transition.error;
+      };
+
+      let sendResult: CrossSessionSendResult;
+      try {
+        sendResult = await runSend();
+      } catch (error: unknown) {
+        if (
+          reservedProducerKey !== undefined
+          && targetSideEffectsStarted
+          && !terminalOutcomeRecorded
+        ) {
+          await recordProducerOutcome({
+            kind: "tool_result",
+            terminalReason: "failed",
+            completedAtMs: systemNowMs(),
+            errorKind: error instanceof Error && error.message.includes("timed out")
+              ? "timeout"
+              : "internal",
+            summary: boundFailureSummary(error),
+          });
+        }
+        await settleAnnouncementProducer();
+        throw error;
+      }
+      await settleAnnouncementProducer();
+      return sendResult;
     },
   };
 }

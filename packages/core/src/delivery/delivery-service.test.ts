@@ -33,6 +33,7 @@ import { ok, err } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import type {
   DeliveryAdapter,
+  DeliveryChunkSendInput,
   DeliverToChannelOptions,
 } from "./types.js";
 import {
@@ -618,6 +619,156 @@ describe("DeliveryService — full pipeline behavior", () => {
       if (result.ok) {
         expect(result.value.chunks.length).toBeGreaterThan(1);
       }
+    });
+
+    it("delegates each prepared chunk to the supplied irreversible send boundary", async () => {
+      const service = makeDeliveryService({ maxCharsOverride: 150 });
+      const adapter = createMockAdapter("discord");
+      const sendChunk = vi.fn(async ({ chunkIndex }: DeliveryChunkSendInput) =>
+        ok({ kind: "sent" as const, messageId: `governed-${chunkIndex}` }));
+      const destinationEndpoint: ChannelEndpoint = {
+        channelType: "discord",
+        channelInstanceId: adapter.channelId,
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      };
+
+      const result = await service.deliverToChannel(
+        adapter,
+        "chat-1",
+        makeLongMarkdown(500),
+        {
+          completionMode: "settled",
+          authority: TEST_DELIVERY_AUTHORITY,
+          destinationEndpoint,
+        },
+        sendChunk,
+      );
+
+      expect(result.ok).toBe(true);
+      expect(sendChunk.mock.calls.length).toBeGreaterThan(1);
+      expect(sendChunk.mock.calls.map(([input]) => input.chunkIndex))
+        .toEqual(sendChunk.mock.calls.map((_, index) => index));
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not manufacture queue receipts for terminally settled chunks", async () => {
+      const queue = createMockDeliveryQueue();
+      const recordOutboundMessage = vi.fn();
+      const runAfterDelivery = vi.fn().mockResolvedValue(undefined);
+      const eventBus = createMockEventBus();
+      const service = makeDeliveryService({
+        deliveryQueue: queue,
+        recordOutboundMessage,
+        hookRunner: makeNoopHookRunner({ runAfterDelivery }),
+        eventBus,
+      });
+      const adapter = createMockAdapter("discord");
+      const result = await service.deliverToChannel(
+        adapter,
+        "chat-1",
+        "already settled",
+        {
+          completionMode: "settled",
+          authority: TEST_DELIVERY_AUTHORITY,
+          destinationEndpoint: {
+            channelType: "discord",
+            channelInstanceId: adapter.channelId,
+            conversationId: "chat-1",
+            conversationKind: "direct",
+          },
+        },
+        async () => ok({ kind: "settled" }),
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          chunks: [{ status: "settled" }],
+          platform: { status: "accepted", deliveredChunks: 1 },
+        },
+      });
+      expect(queue.enqueueInFlight).not.toHaveBeenCalled();
+      expect(queue.ack).not.toHaveBeenCalled();
+      expect(recordOutboundMessage).not.toHaveBeenCalled();
+      expect(runAfterDelivery).not.toHaveBeenCalled();
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+      expect(eventBus.emit).not.toHaveBeenCalledWith(
+        "delivery:chunk_sent",
+        expect.anything(),
+      );
+      expect(eventBus.emit).not.toHaveBeenCalledWith(
+        "delivery:complete",
+        expect.anything(),
+      );
+    });
+
+    it("persists the post-hook chunk manifest before sending and replays it unchanged", async () => {
+      const firstHook = vi.fn().mockResolvedValue({ text: makeLongMarkdown(500) });
+      const firstService = makeDeliveryService({
+        maxCharsOverride: 150,
+        hookRunner: makeNoopHookRunner({ runBeforeDelivery: firstHook }),
+      });
+      const adapter = createMockAdapter("discord");
+      const destinationEndpoint: ChannelEndpoint = {
+        channelType: "discord",
+        channelInstanceId: adapter.channelId,
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      };
+      const order: string[] = [];
+      let storedChunks: readonly string[] = [];
+      const persisted = vi.fn(async (chunks: readonly string[]) => {
+        storedChunks = [...chunks];
+        order.push("persist");
+        return ok(undefined);
+      });
+      const firstSend = vi.fn(async ({ chunkIndex }: DeliveryChunkSendInput) => {
+        order.push(`send:${chunkIndex}`);
+        return ok({ kind: "sent" as const, messageId: `first-${chunkIndex}` });
+      });
+
+      const first = await firstService.deliverToChannel(
+        adapter,
+        "chat-1",
+        "mutable input",
+        {
+          completionMode: "settled",
+          authority: TEST_DELIVERY_AUTHORITY,
+          destinationEndpoint,
+        },
+        firstSend,
+        { kind: "persist", persist: persisted },
+      );
+
+      expect(first.ok).toBe(true);
+      expect(storedChunks.length).toBeGreaterThan(1);
+      expect(order[0]).toBe("persist");
+      const recoveryHook = vi.fn().mockResolvedValue({ text: "changed recovery text" });
+      const recoveryService = makeDeliveryService({
+        maxCharsOverride: 10,
+        hookRunner: makeNoopHookRunner({ runBeforeDelivery: recoveryHook }),
+      });
+      const replayed: string[] = [];
+      const replay = await recoveryService.deliverToChannel(
+        adapter,
+        "chat-1",
+        "different source text",
+        {
+          completionMode: "settled",
+          authority: TEST_DELIVERY_AUTHORITY,
+          destinationEndpoint,
+        },
+        async (chunk) => {
+          replayed.push(chunk.text);
+          return ok({ kind: "sent" as const, messageId: `replay-${chunk.chunkIndex}` });
+        },
+        { kind: "prepared", chunks: storedChunks },
+      );
+
+      expect(replay.ok).toBe(true);
+      expect(recoveryHook).not.toHaveBeenCalled();
+      expect(replayed).toEqual(storedChunks);
     });
 
     it("does not chunk gateway messages", async () => {

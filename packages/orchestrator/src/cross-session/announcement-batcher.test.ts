@@ -2,7 +2,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAnnouncementBatcher, sanitizeForUser, type AnnouncementBatcherDeps, type QueuedAnnouncement } from "./announcement-batcher.js";
 import { createDeliveryDedup } from "@comis/agent";
-import { createConversationLocator, TypedEventBus } from "@comis/core";
+import {
+  createConversationLocator,
+  createStableAnnouncementOperationId,
+  TypedEventBus,
+} from "@comis/core";
 import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +36,7 @@ function makeAnnouncement(overrides: Partial<QueuedAnnouncement> = {}): QueuedAn
     },
     terminalOutcome: { status: "completed" },
     runId: "run-1",
+    reservationRootRunId: "root-1",
     ...overrides,
   };
 }
@@ -49,9 +54,12 @@ function makeDeps(overrides: Partial<AnnouncementBatcherDeps> = {}): Announcemen
 function makeDecisionQueue() {
   return {
     enqueue: vi.fn().mockResolvedValue(ok(undefined)),
+    beginDeliveryAttempt: vi.fn().mockResolvedValue(ok({ claimed: true })),
+    settleDeliveryAttempt: vi.fn().mockResolvedValue(ok(true)),
     reserveDecision: vi.fn().mockResolvedValue(ok({ created: true })),
     lookupDecision: vi.fn().mockResolvedValue(ok(undefined)),
     resolveDecision: vi.fn().mockResolvedValue(ok(true)),
+    replaceDecisions: vi.fn().mockResolvedValue(ok({ created: true })),
   };
 }
 
@@ -153,9 +161,12 @@ describe("AnnouncementBatcher", () => {
       reservationRootRunId: "root-1",
     }));
 
-    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
-      announcementText: "Research completed. https://example.com/report",
-    }));
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        announcementText: "Research completed. https://example.com/report",
+      }),
+      expect.any(Object),
+    );
   });
 
   it("blocks an echoed internal completion envelope at final channel egress", async () => {
@@ -400,6 +411,51 @@ describe("AnnouncementBatcher", () => {
     expect(deps.announceToParent).toHaveBeenCalledTimes(2);
   });
 
+  it("partitions batches by durable authority endpoint and root", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendRecoverableAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true,
+      status: "accepted" as const,
+    }));
+    const deps = makeDeps({
+      deadLetterQueue,
+      sendRecoverableAnnouncement,
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+    const base = makeAnnouncement({
+      idempotencyKey: "authority-base",
+      runId: "authority-base-run",
+    });
+
+    await batcher.enqueue(base);
+    await batcher.enqueue({
+      ...base,
+      idempotencyKey: "authority-conversation",
+      runId: "authority-conversation-run",
+      callerConversation: makeCallerConversation("agent-main", "other-tenant"),
+    });
+    await batcher.enqueue({
+      ...base,
+      idempotencyKey: "authority-endpoint",
+      runId: "authority-endpoint-run",
+      destinationEndpoint: {
+        ...base.destinationEndpoint,
+        channelInstanceId: "other-instance",
+      },
+    });
+    await batcher.enqueue({
+      ...base,
+      idempotencyKey: "authority-root",
+      runId: "authority-root-run",
+      reservationRootRunId: "other-root",
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(deps.announceToParent).toHaveBeenCalledTimes(4);
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledTimes(4);
+  });
+
   it("flush delivers all pending immediately", async () => {
     const deps = makeDeps();
     const batcher = createAnnouncementBatcher(deps);
@@ -492,7 +548,8 @@ describe("AnnouncementBatcher", () => {
     const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
     const batcher = createAnnouncementBatcher(deps);
 
-    const enqueue = batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-1" }));
+    const announcement = makeAnnouncement({ idempotencyKey: "decision-1" });
+    const enqueue = batcher.enqueue(announcement);
     await vi.advanceTimersByTimeAsync(2_000);
     expect(deps.announceToParent).not.toHaveBeenCalled();
 
@@ -500,13 +557,22 @@ describe("AnnouncementBatcher", () => {
     await enqueue;
     await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
-      idempotencyKey: "decision-1",
-      agentId: "agent-main",
-      runId: "run-1",
-      channelType: "discord",
-      channelId: "chan-123",
-    }));
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "decision-1",
+        agentId: "agent-main",
+        runId: "run-1",
+        channelType: "discord",
+        channelId: "chan-123",
+        deliveryAuthority: {
+          tenantId: "default",
+          agentId: "agent-main",
+          conversationRef: announcement.callerConversation.conversationRef,
+        },
+        destinationEndpoint: announcement.destinationEndpoint,
+      }),
+      expect.any(Object),
+    );
     expect(deps.announceToParent).toHaveBeenCalledOnce();
   });
 
@@ -533,26 +599,28 @@ describe("AnnouncementBatcher", () => {
     }));
     await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
-      idempotencyKey: "decision-root-1",
-      rootRunId: "root-session-abc",
-    }));
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "decision-root-1",
+        rootRunId: "root-session-abc",
+      }),
+      expect.any(Object),
+    );
   });
 
-  it("omits rootRunId rather than inventing one when the caller resolved none", async () => {
-    // Fail-safe: an absent root must not become an empty string or a guess —
-    // `adjudicateReservations` treats a zero-length root as unresolvable anyway,
-    // and a wrong root would ask the ledger about the wrong tree.
+  it("rejects governed admission before reserving when the ledger root is absent", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
     const batcher = createAnnouncementBatcher(deps);
 
-    await batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-root-2" }));
-    await vi.advanceTimersByTimeAsync(2_000);
+    const result = await batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "decision-root-2",
+      reservationRootRunId: undefined,
+    }));
 
-    const [entry] = deadLetterQueue.reserveDecision.mock.calls.at(-1) as [Record<string, unknown>];
-    expect(entry.idempotencyKey).toBe("decision-root-2");
-    expect("rootRunId" in entry).toBe(false);
+    expect(result).toMatchObject({ ok: false });
+    expect(deadLetterQueue.reserveDecision).not.toHaveBeenCalled();
+    expect(deps.announceToParent).not.toHaveBeenCalled();
   });
 
   it("suppresses a restarted decision when its durable reservation exists", async () => {
@@ -600,7 +668,11 @@ describe("AnnouncementBatcher", () => {
     expect(deps.announceToParent).toHaveBeenCalledOnce();
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "decision-concurrent",
+      createStableAnnouncementOperationId(
+        "agent-main",
+        "default:agent:agent-main:user1:chan1",
+        "run-1",
+      ),
       "receipt_committed",
     );
   });
@@ -647,9 +719,116 @@ describe("AnnouncementBatcher", () => {
     await deliveredBatcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-delivered" }));
     await vi.advanceTimersByTimeAsync(2_000);
     expect(deliveredQueue.resolveDecision).toHaveBeenCalledWith(
-      "decision-delivered",
+      createStableAnnouncementOperationId(
+        "agent-main",
+        "default:agent:agent-main:user1:chan1",
+        "run-1",
+      ),
       "receipt_committed",
     );
+  });
+
+  it("retains a no-reply completion when its durable resolution fails", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    deadLetterQueue.resolveDecision.mockResolvedValue(err(new Error("snapshot unavailable")));
+    const batcher = createAnnouncementBatcher(makeDeps({
+      deadLetterQueue,
+      sendGovernedAnnouncement: vi.fn(),
+    }));
+
+    await batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-no-reply-failed" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(batcher.hasDelivered("decision-no-reply-failed")).toBe(false);
+    expect(batcher.hasPending?.("decision-no-reply-failed")).toBe(true);
+  });
+
+  it("reserves every attachment operation before parent rewriting", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const batcher = createAnnouncementBatcher(makeDeps({
+      deadLetterQueue,
+      sendGovernedAnnouncement: vi.fn(),
+    }));
+    const item = makeAnnouncement({
+      idempotencyKey: "attachment-admission",
+      attachments: [
+        { sourceAgentId: "report-agent", path: "/workspace/a.csv" },
+        { sourceAgentId: "report-agent", path: "/workspace/b.csv" },
+      ],
+    });
+
+    await batcher.enqueue(item);
+    const summaryKey = createStableAnnouncementOperationId(
+      item.callerAgentId,
+      item.callerSessionKey,
+      item.runId,
+      "summary",
+    );
+    const firstAttachmentKey = createStableAnnouncementOperationId(
+      item.callerAgentId,
+      item.callerSessionKey,
+      item.runId,
+      "attachment:0",
+    );
+    const secondAttachmentKey = createStableAnnouncementOperationId(
+      item.callerAgentId,
+      item.callerSessionKey,
+      item.runId,
+      "attachment:1",
+    );
+
+    expect(deadLetterQueue.reserveDecision).not.toHaveBeenCalled();
+    expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith(
+      [],
+      [
+        expect.objectContaining({
+          partId: "summary",
+          completionKeys: [summaryKey, "attachment-admission"],
+        }),
+        expect.objectContaining({
+          partId: "attachment:0",
+          attachment: { kind: "source", ...item.attachments?.[0] },
+          announcementText: "",
+          completionKeys: [firstAttachmentKey, "attachment-admission"],
+        }),
+        expect.objectContaining({
+          partId: "attachment:1",
+          attachment: { kind: "source", ...item.attachments?.[1] },
+          announcementText: "",
+          completionKeys: [secondAttachmentKey, "attachment-admission"],
+        }),
+      ],
+      expect.any(Object),
+    );
+  });
+
+  it("rejects attachments without an attachment-capable boundary", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendRecoverableAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: false,
+      status: "rejected" as const,
+    }));
+    const deps = makeDeps({
+      deadLetterQueue,
+      sendRecoverableAnnouncement,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+    const attachment = { sourceAgentId: "report-agent", path: "/workspace/report.csv" };
+
+    const admitted = await batcher.enqueue({
+      ...makeAnnouncement({
+        idempotencyKey: "ledgerless-attachment",
+        announcementText: "[System Message]\nResult: NO_REPLY",
+        attachments: [attachment],
+      }),
+      suppressText: true,
+    });
+
+    expect(admitted).toMatchObject({ ok: false });
+    expect(sendRecoverableAnnouncement).not.toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(deadLetterQueue.replaceDecisions).not.toHaveBeenCalled();
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
   });
 
   it("delivers a generated file even when the parent suppresses its caption", async () => {
@@ -680,13 +859,37 @@ describe("AnnouncementBatcher", () => {
       },
     }));
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "file-no-caption",
+      createStableAnnouncementOperationId(
+        "agent-main",
+        "default:agent:agent-main:user1:chan1",
+        "run-1",
+        "attachment:0",
+      ),
       "receipt_committed",
     );
     expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalledWith(
-      "file-no-caption",
+      expect.any(String),
       "no_reply",
     );
+  });
+
+  it("rejects generated files before parent rewriting without governed delivery", async () => {
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("caption"),
+      sendToChannel: vi.fn().mockResolvedValue(true),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    const result = await batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "file-without-governance",
+      attachments: [{ sourceAgentId: "report-agent", path: "/workspace/report.csv" }],
+    }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(deps.announceToParent).not.toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(batcher.pending).toBe(0);
   });
 
   it("does not ask the parent to rewrite a silent child completion into an attachment caption", async () => {
@@ -726,17 +929,16 @@ describe("AnnouncementBatcher", () => {
     }));
   });
 
-  it("replaces an attached file absolute path with its filename before delivery", async () => {
+  it("sends a long completion summary separately from its attachment", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
       delivered: true,
       identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 5 },
     }));
+    const longSummary = `The report is ready at \`/workspace-report/reports/monthly.csv\`. ${"x".repeat(1_100)}`;
     const deps = makeDeps({
       deadLetterQueue,
-      announceToParent: vi.fn().mockResolvedValue(
-        "The report is ready at `/workspace-report/reports/monthly.csv`.",
-      ),
+      announceToParent: vi.fn().mockResolvedValue(longSummary),
       sendGovernedAnnouncement,
     });
     const batcher = createAnnouncementBatcher(deps);
@@ -747,8 +949,14 @@ describe("AnnouncementBatcher", () => {
     }));
     await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
-      text: "The report is ready at `monthly.csv`.",
+    expect(sendGovernedAnnouncement).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      text: `The report is ready at \`monthly.csv\`. ${"x".repeat(1_100)}`,
+      partId: "summary",
+    }));
+    expect(sendGovernedAnnouncement.mock.calls[0]?.[0]).not.toHaveProperty("attachment");
+    expect(sendGovernedAnnouncement).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      text: "",
+      partId: "attachment:0",
       attachment: {
         sourceAgentId: "report-agent",
         path: "/workspace-report/reports/monthly.csv",
@@ -803,17 +1011,127 @@ describe("AnnouncementBatcher", () => {
       },
     }));
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "attachment-rewrite-failure",
+      createStableAnnouncementOperationId(
+        "agent-main",
+        "default:agent:agent-main:user1:chan1",
+        "run-1",
+        "attachment:0",
+      ),
       "receipt_committed",
     );
   });
 
-  it("shutdown closes admission and waits for an in-flight reservation before flushing", async () => {
-    let finishReservation!: (value: ReturnType<typeof ok>) => void;
+  it("settles batched attachment reservations incrementally", async () => {
     const deadLetterQueue = makeDecisionQueue();
-    deadLetterQueue.reserveDecision.mockReturnValue(new Promise((resolve) => {
-      finishReservation = resolve;
+    const sendGovernedAnnouncement = vi.fn()
+      .mockResolvedValueOnce(ok({
+        delivered: true,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 10 },
+      }))
+      .mockResolvedValueOnce(ok({
+        delivered: true,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 11 },
+      }))
+      .mockResolvedValueOnce(ok({
+        delivered: false,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 12 },
+        failure: "operation_retained" as const,
+      }));
+    const batcher = createAnnouncementBatcher(makeDeps({
+      deadLetterQueue,
+      announceToParent: vi.fn().mockResolvedValue("Combined summary"),
+      sendGovernedAnnouncement,
     }));
+    const first = makeAnnouncement({
+      runId: "run-batch-a",
+      idempotencyKey: "completion-a",
+      attachments: [{ sourceAgentId: "report-agent", path: "/workspace/a.csv" }],
+    });
+    const second = makeAnnouncement({
+      runId: "run-batch-b",
+      idempotencyKey: "completion-b",
+      attachments: [{ sourceAgentId: "report-agent", path: "/workspace/b.csv" }],
+    });
+
+    await batcher.enqueue(first);
+    await batcher.enqueue(second);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    const firstAttachmentKey = createStableAnnouncementOperationId(
+      "agent-main",
+      first.callerSessionKey,
+      first.runId,
+      "attachment:0",
+    );
+    const secondAttachmentKey = createStableAnnouncementOperationId(
+      "agent-main",
+      second.callerSessionKey,
+      second.runId,
+      "attachment:0",
+    );
+    const summaryKey = createStableAnnouncementOperationId(
+      "agent-main",
+      first.callerSessionKey,
+      first.runId,
+      "summary",
+    );
+    const secondSummaryKey = createStableAnnouncementOperationId(
+      "agent-main",
+      second.callerSessionKey,
+      second.runId,
+      "summary",
+    );
+    expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        summaryKey,
+        firstAttachmentKey,
+        secondSummaryKey,
+        secondAttachmentKey,
+      ]),
+      expect.arrayContaining([
+        expect.objectContaining({
+          idempotencyKey: summaryKey,
+          announcementText: "Combined summary",
+          completionKeys: [summaryKey, "completion-a", "completion-b"],
+        }),
+        expect.objectContaining({
+          idempotencyKey: firstAttachmentKey,
+          announcementText: "",
+          attachment: { kind: "source", ...first.attachments?.[0] },
+          completionKeys: [firstAttachmentKey, "completion-a", "completion-b"],
+        }),
+        expect.objectContaining({
+          idempotencyKey: secondAttachmentKey,
+          announcementText: "",
+          attachment: { kind: "source", ...second.attachments?.[0] },
+          completionKeys: [secondAttachmentKey, "completion-a", "completion-b"],
+        }),
+      ]),
+      expect.any(Object),
+    );
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      summaryKey,
+      "receipt_committed",
+    );
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      firstAttachmentKey,
+      "receipt_committed",
+    );
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalledWith(
+      secondAttachmentKey,
+      expect.any(String),
+    );
+    expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("shutdown cancels a capacity-blocked reservation before flushing", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    deadLetterQueue.reserveDecision.mockImplementation((_entry, signal?: AbortSignal) =>
+      new Promise((resolve) => {
+        signal?.addEventListener("abort", () => resolve(err(new Error("admission cancelled"))), {
+          once: true,
+        });
+      }));
     const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
     const batcher = createAnnouncementBatcher(deps);
 
@@ -823,15 +1141,11 @@ describe("AnnouncementBatcher", () => {
     expect(refused.ok).toBe(false);
     expect(deps.announceToParent).not.toHaveBeenCalled();
 
-    finishReservation(ok({ created: true }));
-    await admission;
+    await expect(admission).resolves.toMatchObject({ ok: false });
     await shutdown;
 
-    expect(deps.announceToParent).toHaveBeenCalledOnce();
-    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "shutdown-reservation",
-      "no_reply",
-    );
+    expect(deps.announceToParent).not.toHaveBeenCalled();
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
   });
 
   it("sends the parent rewrite through the governed outward operation", async () => {
@@ -886,7 +1200,11 @@ describe("AnnouncementBatcher", () => {
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "rejected-route-key",
+      createStableAnnouncementOperationId(
+        "agent-main",
+        "default:agent:agent-main:user1:chan1",
+        "run-1",
+      ),
       "no_reply",
     );
     expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
@@ -1269,6 +1587,10 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
 
     expect(sendToChannel).toHaveBeenCalledOnce();
     expect(enqueue).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ completionKeys: ["K1", "K2"] }),
+      expect.any(Object),
+    );
   });
 
   it("treats a resolved false direct fallback as a failed delivery", async () => {
@@ -1285,6 +1607,42 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
 
     expect(enqueue).toHaveBeenCalledOnce();
     expect(batcher.hasDelivered("K-false")).toBe(false);
+  });
+
+  it("quarantines a receipt-unknown ledgerless send without replay admission", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendToChannelWithReceipt = vi.fn(async () => ok({
+      delivered: false as const,
+      status: "unknown" as const,
+    }));
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
+      sendToChannelWithReceipt,
+      deadLetterQueue,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "ledgerless-unknown",
+      reservationRootRunId: undefined,
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "ledgerless-unknown",
+        rootRunId: expect.stringContaining("announcement:"),
+      }),
+      expect.any(Object),
+    );
+    expect(deadLetterQueue.beginDeliveryAttempt).toHaveBeenCalledOnce();
+    expect(deadLetterQueue.settleDeliveryAttempt).toHaveBeenCalledWith(
+      expect.any(String),
+      "unknown",
+    );
+    expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(batcher.hasDelivered("ledgerless-unknown")).toBe(false);
   });
 
   it("does not retry an opaque direct-send failure below DeliveryService", async () => {
@@ -1322,7 +1680,7 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     expect(batcher.hasDelivered("ambiguous-parent")).toBe(false);
   });
 
-  it("persists the governed operation identity after a blocked direct fallback", async () => {
+  it("retains the governed operation reservation after a blocked direct fallback", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const enqueue = deadLetterQueue.enqueue;
     const sendGovernedAnnouncement = vi.fn().mockResolvedValue({
@@ -1345,18 +1703,29 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     } as Partial<AnnouncementBatcherDeps>);
     const batcher = createAnnouncementBatcher(deps);
 
-    batcher.enqueue(makeAnnouncement({
+    const announcement = makeAnnouncement({
       idempotencyKey: "default:user1:chan1::run-1",
-    }));
+    });
+    batcher.enqueue(announcement);
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deps.sendToChannel).not.toHaveBeenCalled();
-    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: "agent-main",
-      rootRunId: "root-run-1",
-      stepIndex: 7,
-    }));
+    const operationKey = createStableAnnouncementOperationId(
+      "agent-main",
+      announcement.callerSessionKey,
+      announcement.runId,
+    );
+    expect(deadLetterQueue.replaceDecisions).toHaveBeenCalledWith(
+      ["default:user1:chan1::run-1"],
+      [expect.objectContaining({
+        idempotencyKey: operationKey,
+        completionKeys: [operationKey, "default:user1:chan1::run-1"],
+      })],
+      expect.any(Object),
+    );
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
     expect(batcher.hasDelivered("default:user1:chan1::run-1")).toBe(false);
   });
 });

@@ -264,6 +264,90 @@ describe("createSqliteOutwardSendLedger — durable outward sequence", () => {
   });
 });
 
+describe("createSqliteOutwardSendLedger — terminal decisions", () => {
+  it("persists a stable decision and blocks a later send intent", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    expect(await ledger.recordTerminalDecision(
+      "run-operator",
+      "operation-operator",
+      "discarded",
+    )).toEqual({ ok: true, value: undefined });
+    expect(await ledger.lookupTerminalDecision("run-operator", "operation-operator"))
+      .toEqual({ ok: true, value: "discarded" });
+    const step = await ledger.allocateStep("run-operator", "operation-operator");
+    if (!step.ok) throw step.error;
+
+    expect((await ledger.begin(makeBegin({
+      rootRunId: "run-operator",
+      stepIndex: step.value,
+    }))).ok).toBe(false);
+    expect(await ledger.lookup("run-operator", step.value)).toEqual({
+      ok: true,
+      value: undefined,
+    });
+  });
+
+  it("rejects a terminal decision while the governed send is in flight", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    const step = await ledger.allocateStep("run-active", "operation-active");
+    if (!step.ok) throw step.error;
+    await ledger.begin(makeBegin({ rootRunId: "run-active", stepIndex: step.value }));
+
+    expect((await ledger.recordTerminalDecision(
+      "run-active",
+      "operation-active",
+      "delivered",
+    )).ok).toBe(false);
+    expect(await ledger.lookupTerminalDecision("run-active", "operation-active"))
+      .toEqual({ ok: true, value: undefined });
+  });
+
+  it("rejects terminal decisions that contradict a committed delivery receipt", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    for (const outcome of ["discarded", "no_reply"] as const) {
+      const rootRunId = `run-committed-${outcome}`;
+      const operationId = `operation-committed-${outcome}`;
+      const step = await ledger.allocateStep(rootRunId, operationId);
+      if (!step.ok) throw step.error;
+      await ledger.begin(makeBegin({ rootRunId, stepIndex: step.value }));
+      await ledger.markUnknown(rootRunId, step.value);
+      await ledger.commit(rootRunId, step.value, `message-${outcome}`);
+
+      expect((await ledger.recordTerminalDecision(rootRunId, operationId, outcome)).ok)
+        .toBe(false);
+      expect(await ledger.lookupTerminalDecision(rootRunId, operationId))
+        .toEqual({ ok: true, value: undefined });
+      expect(await ledger.lookup(rootRunId, step.value)).toMatchObject({
+        ok: true,
+        value: {
+          state: "committed",
+          platformMessageId: `message-${outcome}`,
+        },
+      });
+    }
+  });
+
+  it("persists no-reply as a terminal admission decision", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    expect(await ledger.recordTerminalDecision(
+      "run-no-reply",
+      "operation-no-reply",
+      "no_reply",
+    )).toEqual({ ok: true, value: undefined });
+    expect(await ledger.lookupTerminalDecision("run-no-reply", "operation-no-reply"))
+      .toEqual({ ok: true, value: "no_reply" });
+    const step = await ledger.allocateStep("run-no-reply", "operation-no-reply");
+    if (!step.ok) throw step.error;
+    expect((await ledger.begin(makeBegin({
+      rootRunId: "run-no-reply",
+      stepIndex: step.value,
+    }))).ok).toBe(false);
+  });
+});
+
 describe("createSqliteOutwardSendLedger — failure + uncertainty parking", () => {
   it("rejects a truncated digest before persisting the send intent", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
@@ -358,6 +442,27 @@ describe("createSqliteOutwardSendLedger — failure + uncertainty parking", () =
     expect(found.value?.state).toBe("unresolved");
     expect(await ledger.hasUncertainty("run-A")).toEqual({ ok: true, value: true });
     expect(await ledger.hasUncertainty("another-run")).toEqual({ ok: true, value: false });
+  });
+
+  it("clears root uncertainty after the parked operation receives a terminal decision", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    const step = await ledger.allocateStep("run-terminal", "operation-terminal");
+    if (!step.ok) throw step.error;
+    await ledger.begin(makeBegin({ rootRunId: "run-terminal", stepIndex: step.value }));
+    await ledger.markUnknown("run-terminal", step.value);
+    await ledger.parkUncertain("run-terminal", step.value);
+
+    expect(await ledger.hasUncertainty("run-terminal")).toEqual({ ok: true, value: true });
+    expect(await ledger.recordTerminalDecision(
+      "run-terminal",
+      "operation-terminal",
+      "delivered",
+    )).toEqual({ ok: true, value: undefined });
+    expect(await ledger.hasUncertainty("run-terminal")).toEqual({ ok: true, value: false });
+    expect(await ledger.lookup("run-terminal", step.value)).toMatchObject({
+      ok: true,
+      value: { state: "unresolved" },
+    });
   });
 
   it("rejects an empty platform message id instead of fabricating delivery evidence", async () => {

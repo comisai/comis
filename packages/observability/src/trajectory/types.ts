@@ -173,15 +173,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Bridged for per-session `comis explain` visibility (the subagent.steered
   // daemon-side precedent); content-free: closed dimension/channel/capSource labels +
   // ids/numbers ONLY, NEVER a path/host/uid value, an announcement body, or a task.
-  // sandbox_downgrade_refused fires WITHIN the spawning session (clean
-  // landing); the other two ride whichever session bridge is active when they fire.
+  // sandbox_downgrade_refused fires within the spawning session.
   "security.sandbox_downgrade_refused",
-  "subagent.delivery_deadlettered",
-  // The self-healing transient RETRY — the sibling of subagent.delivery_deadlettered.
-  // Emitted by the announcement-batcher via `?.emit`; the self-heal must stay visible
-  // to `comis explain`. Content-free: runId + closed
-  // channelType + attempt count + the transient tag ONLY — never an announcement body / error string.
-  "subagent.delivery_retried",
   // A terminal sub-agent result had no authenticated completion route.
   // Content-free: runId + closed missing-route reason only.
   "subagent.delivery_skipped",

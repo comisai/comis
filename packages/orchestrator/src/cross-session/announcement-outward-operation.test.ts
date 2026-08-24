@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "@comis/shared";
-import type { OutwardSendLedgerPort, OutwardSendRecord } from "@comis/core";
+import {
+  createStableAnnouncementOperationId,
+  type OutwardSendLedgerPort,
+  type OutwardSendRecord,
+} from "@comis/core";
 import {
   createAnnouncementOperationDigests,
   createGovernedAnnouncementSender,
-  createStableAnnouncementOperationId,
 } from "./announcement-outward-operation.js";
 
 function makeLedger(overrides: Partial<OutwardSendLedgerPort> = {}): OutwardSendLedgerPort {
   return {
+    lookupTerminalDecision: vi.fn(async () => ok(undefined)),
+    recordTerminalDecision: vi.fn(async () => ok(undefined)),
     allocateStep: vi.fn(async () => ok(7)),
     lookup: vi.fn(async () => ok(undefined)),
     begin: vi.fn(async () => ok(undefined)),
@@ -42,6 +47,23 @@ const request = {
 };
 
 describe("governed announcement sender", () => {
+  it("suppresses a send after a terminal decision", async () => {
+    const ledger = makeLedger({
+      lookupTerminalDecision: vi.fn(async () => ok("discarded")),
+    });
+    const sendToPlatform = vi.fn();
+    const sender = createGovernedAnnouncementSender({ ledger, sendToPlatform });
+
+    const result = await sender.send(request);
+
+    expect(result).toEqual({
+      ok: true,
+      value: { delivered: false, terminalDecision: "discarded" },
+    });
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+    expect(sendToPlatform).not.toHaveBeenCalled();
+  });
+
   it("records the stable operation before one platform attempt and commits its receipt", async () => {
     const order: string[] = [];
     const ledger = makeLedger({
@@ -73,6 +95,7 @@ describe("governed announcement sender", () => {
     expect(result).toEqual(ok({
       delivered: true,
       identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 7 },
+      platformMessageId: "telegram-message-1",
     }));
     expect(order).toEqual(["allocate", "begin", "mark-unknown", "platform", "commit"]);
     expect(ledger.commit).toHaveBeenCalledWith("root-1", 7, "telegram-message-1");
@@ -94,6 +117,9 @@ describe("governed announcement sender", () => {
     await sender.send({
       ...request,
       attachment: {
+        kind: "snapshot",
+        sourceAgentId: "worker-a",
+        sourcePath: "/workspace/report.md",
         path: "/private/report.md",
         fileName: "report.md",
         mimeType: "text/markdown",
@@ -128,6 +154,9 @@ describe("governed announcement sender", () => {
     const result = await sender.send({
       ...request,
       attachment: {
+        kind: "snapshot",
+        sourceAgentId: "worker-a",
+        sourcePath: "/workspace/report.md",
         path: "/private/report.md",
         fileName: "report.md",
         mimeType: "text/markdown",
@@ -288,6 +317,9 @@ describe("governed announcement sender", () => {
 describe("announcement operation fingerprinting", () => {
   it("binds generated-file content but not the private snapshot path", () => {
     const attachment = {
+      kind: "snapshot" as const,
+      sourceAgentId: "worker-a",
+      sourcePath: "/workspace/monthly.csv",
       path: "/private/snapshot-one.csv",
       fileName: "monthly.csv",
       mimeType: "text/csv",

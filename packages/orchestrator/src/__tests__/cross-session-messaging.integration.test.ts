@@ -310,24 +310,36 @@ describe("cross-session messaging integration", () => {
   // -------------------------------------------------------------------------
 
   it("announce sends response to channel with correct type, id, and text", async () => {
-    const sender = createCrossSessionSender(deps);
+    const sendRecoverableAnnouncement = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+    }));
+    const sender = createCrossSessionSender({ ...deps, sendRecoverableAnnouncement });
 
     const result = await sender.send({
       target: ALICE_QUERY,
       text: "query",
       mode: "wait",
       caller: BOB_QUERY,
+      callerAgentId: "default",
+      callerSessionKey: "default:bob:ch-beta",
+      callerConversation: BOB,
+      callerEndpoint: BOB.conversationScope.partition.endpoint,
+      announceOperationId: "announce-integration-tool-call",
       announceChannelType: "telegram",
       announceChannelId: "chat-789",
     });
 
     expect(result.announced).toBe(true);
-    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
-    expect(deps.sendToChannel).toHaveBeenCalledWith(
-      "telegram",
-      "chat-789",
-      "hello from target",
-    );
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledTimes(1);
+    expect(sendRecoverableAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      channelType: "telegram",
+      channelId: "chat-789",
+      text: "hello from target",
+    }));
+    // Announcements are delivered only through the recoverable boundary; the
+    // raw channel port stays unused so a failed send stays replayable.
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------

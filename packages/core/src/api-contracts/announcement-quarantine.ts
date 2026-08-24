@@ -3,14 +3,11 @@
  * The `obs.quarantine.list` / `obs.quarantine.release` wire shapes — the
  * operator lever over quarantined background-task announcements.
  *
- * A quarantined announcement is held ON PURPOSE: nothing drains it, because
+ * An uncertain announcement is held on purpose: nothing drains it, because
  * re-sending an announcement whose delivery could not be PROVEN risks telling a
- * user the same thing twice. The runtime therefore surfaces the condition (a
- * WARN, a `health_signal`) and waits for a human to decide. Until these
- * contracts existed it waited forever — the only way to clear one was to stop
- * the daemon and edit `dead-letters.jsonl` by hand, because the in-memory queue
- * is authoritative and rewrites that file on the next persist, so an edit under
- * a running daemon is silently undone.
+ * user the same thing twice. A malformed storage row is held because it cannot
+ * be safely replayed. The runtime surfaces either condition and waits for an
+ * operator decision.
  *
  * Both are `admin`-only and carry no `rpc` route, which puts them in the
  * deny-by-origin control plane: an agent turn — including a prompt-injected one
@@ -32,7 +29,7 @@ import { defineContract } from "./types.js";
  * `QuarantinedAnnouncement` field-for-field; there is no announcement-text
  * field, structurally — only `announcementChars`.
  */
-export interface QuarantinedAnnouncementWire {
+export interface QuarantinedDeliveryAnnouncementWire {
   id: string;
   kind: "entry" | "parent_decision";
   runId: string;
@@ -47,6 +44,20 @@ export interface QuarantinedAnnouncementWire {
   idempotencyKey?: string;
   announcementChars: number;
 }
+
+export interface QuarantinedInvalidAnnouncementWire {
+  id: string;
+  kind: "invalid_record";
+  reason: "invalid_json" | "schema_mismatch" | "oversized_row";
+  sourceLine: number;
+  detectedAt: number;
+  rawDigest: string;
+  rawBytes: number;
+}
+
+export type QuarantinedAnnouncementWire =
+  | QuarantinedDeliveryAnnouncementWire
+  | QuarantinedInvalidAnnouncementWire;
 
 /** List every quarantined announcement awaiting an operator decision. */
 export const ObsQuarantineListContract = defineContract({
