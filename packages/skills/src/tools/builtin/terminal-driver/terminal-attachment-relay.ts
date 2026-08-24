@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import net from "node:net";
-import { chmodSync, chownSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, chownSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { safePath } from "@comis/core";
@@ -20,14 +20,11 @@ function closeServer(server: net.Server): Promise<void> {
   });
 }
 
-/** Materialize daemon-owned relays whose endpoints belong to the jail's dedicated uid. */
-export async function materializeExecutionAttachmentRelays(
+async function materializeExecutionAttachmentRelaysInDirectory(
   attachments: readonly ManagedTerminalExecutionAttachment[],
   owner: { readonly uid: number; readonly gid: number },
+  directoryPath: string,
 ): Promise<Result<AttachmentRelayMaterialization, Error>> {
-  const directory = tryCatch(() => mkdtempSync(resolve("/tmp", "comis-attachments-")));
-  if (!directory.ok) return err(directory.error);
-  const directoryPath = directory.value;
   const servers: net.Server[] = [];
   let disposed = false;
 
@@ -82,4 +79,26 @@ export async function materializeExecutionAttachmentRelays(
   }
 
   return ok(Object.freeze({ attachments: Object.freeze(relayed), dispose }));
+}
+
+/** Materialize daemon-owned relays whose endpoints belong to the jail's dedicated uid. */
+export async function materializeExecutionAttachmentRelays(
+  attachments: readonly ManagedTerminalExecutionAttachment[],
+  owner: { readonly uid: number; readonly gid: number },
+): Promise<Result<AttachmentRelayMaterialization, Error>> {
+  const directory = tryCatch(() => mkdtempSync(resolve("/tmp", "comis-attachments-")));
+  return directory.ok
+    ? materializeExecutionAttachmentRelaysInDirectory(attachments, owner, directory.value)
+    : err(directory.error);
+}
+
+export async function materializeExecutionAttachmentRelaysAtPath(
+  attachments: readonly ManagedTerminalExecutionAttachment[],
+  owner: { readonly uid: number; readonly gid: number },
+  directoryPath: string,
+): Promise<Result<AttachmentRelayMaterialization, Error>> {
+  const created = tryCatch(() => mkdirSync(directoryPath, { mode: 0o700 }));
+  return created.ok
+    ? materializeExecutionAttachmentRelaysInDirectory(attachments, owner, directoryPath)
+    : err(created.error);
 }

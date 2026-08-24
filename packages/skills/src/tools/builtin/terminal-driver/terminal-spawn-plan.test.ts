@@ -23,7 +23,7 @@ import { join } from "node:path";
 import type { EgressControlPort } from "@comis/core";
 import { ok } from "@comis/shared";
 
-import { AttachmentSandboxUnavailableError, buildSpawnPlan, JailUnavailableError, planSpawnFromCreateFrame, resolveManagedWorkspaceGitMounts, type CreateFrameSpawnParams, type SpawnPlanInput } from "./terminal-spawn-plan.js";
+import { AttachmentSandboxUnavailableError, buildSpawnPlan, DEDICATED_UID, JailUnavailableError, planSpawnFromCreateFrame, resolveManagedWorkspaceGitMounts, type CreateFrameSpawnParams, type SpawnPlanInput } from "./terminal-spawn-plan.js";
 import { RELAY_INIT_SCRIPT_URL } from "./terminal-egress-relay.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 
@@ -394,6 +394,11 @@ describe("buildSpawnPlan — execution attachment confinement", () => {
       `/run/comis/attachments/${attachment.targetName}`,
     )).toBe(true);
     expect(plan.attachmentRelay).toBe(attachmentRelay);
+    expect(materializeExecutionAttachmentRelays).toHaveBeenLastCalledWith(
+      [attachment],
+      DEDICATED_UID,
+      { sessionId: "terminal_a", durability: "transient" },
+    );
   });
 
   it("publishes the sole protected attachment identity to the jailed child", async () => {

@@ -14,4 +14,8 @@ export const TERMINAL_PROCESS_ENTRIES = Object.freeze({
     outputFile: "terminal-egress-proxy-main.js",
     sourcePath: "packages/skills/src/tools/builtin/terminal-driver/terminal-egress-proxy-main.ts",
   },
+  attachmentRelay: {
+    outputFile: "terminal-attachment-relay-main.js",
+    sourcePath: "packages/skills/src/tools/builtin/terminal-driver/terminal-attachment-relay-main.ts",
+  },
 } as const satisfies Record<string, TerminalProcessEntry>);

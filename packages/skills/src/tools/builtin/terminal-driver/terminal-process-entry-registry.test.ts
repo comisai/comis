@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
+import { resolveDurableAttachmentRelayMainPath } from "./terminal-durable-attachment-relay.js";
 import { resolveDurableEgressProxyMainPath } from "./terminal-durable-egress-proxy.js";
 import { TERMINAL_PROCESS_ENTRIES } from "./terminal-process-entry-registry.js";
 import { resolveWorkerMainPath } from "./terminal-worker-launch.js";
@@ -11,6 +12,9 @@ describe("terminal process entry registry", () => {
     );
     expect(resolveDurableEgressProxyMainPath()).toMatch(
       new RegExp(`${TERMINAL_PROCESS_ENTRIES.egressProxy.outputFile}$`, "u"),
+    );
+    expect(resolveDurableAttachmentRelayMainPath()).toMatch(
+      new RegExp(`${TERMINAL_PROCESS_ENTRIES.attachmentRelay.outputFile}$`, "u"),
     );
   });
 });

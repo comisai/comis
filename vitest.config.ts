@@ -71,6 +71,7 @@ export default defineConfig({
         // unit-tested in terminal-durable-egress-proxy.test.ts; the real helper is
         // exercised by the durable-terminal live restart scenario on Linux.
         TERMINAL_PROCESS_ENTRIES.egressProxy.sourcePath,
+        TERMINAL_PROCESS_ENTRIES.attachmentRelay.sourcePath,
       ],
       // Monotonic ramp protocol: per-package floors are derived from a
       // measured baseline and ramp each floor toward the final

@@ -26,6 +26,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  chownSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -243,8 +244,8 @@ describe.skipIf(!isLinux() || !distBuilt)(
       45000,
     );
 
-    it.skipIf(!bwrapPathOrUndefined() || !tmuxPathOrUndefined() || !existsSync("/usr/bin/python3"))(
-      "Part C: confines a managed terminal to its leased root and fixed attachment until confirmed revocation",
+    it.skipIf(!bwrapPathOrUndefined() || !tmuxPathOrUndefined() || !existsSync("/usr/bin/python3") || process.getuid?.() !== 0)(
+      "Part C: preserves a confined managed attachment across worker replacement until confirmed revocation",
       async () => {
         const scratch = realpathSync(mkdtempSync(join(tmpdir(), "terminal-attachment-")));
         const dataDir = join(scratch, "data");
@@ -260,8 +261,10 @@ describe.skipIf(!isLinux() || !distBuilt)(
         const targetPath = managedTerminalAttachmentTargetPath(targetName);
         mkdirSync(dataDir, { mode: 0o700 });
         mkdirSync(workspace, { mode: 0o700 });
+        chownSync(workspace, 65534, 65534);
         mkdirSync(siblingWorkspace, { mode: 0o700 });
         writeFileSync(leasedMarkerPath, "LEASE_MARKER", { mode: 0o600 });
+        chownSync(leasedMarkerPath, 65534, 65534);
         writeFileSync(siblingMarkerPath, "SIBLING_MARKER", { mode: 0o600 });
         writeFileSync(serviceCredentialPath, "CONTROL_CREDENTIAL_MARKER", { mode: 0o600 });
         let calls = 0;
@@ -289,7 +292,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
         };
         const tmuxPath = tmuxPathOrUndefined();
         if (tmuxPath === undefined) throw new Error("tmux binary disappeared after test selection");
-        const registry = createTerminalSessionRegistry({
+        const makeRegistry = () => createTerminalSessionRegistry({
           spawnWorker: buildProductionSpawnWorker(distWorkerMainPath(), dataDir),
           logger: noopLogger,
           nowMs: () => Date.now(),
@@ -300,11 +303,13 @@ describe.skipIf(!isLinux() || !distBuilt)(
             descriptorStore,
             killTmuxSession: (name, socketPath) =>
               killTmuxAndConfirm(tmuxPath, name, socketPath),
+            resolveTmuxRootProcessIdentity: () => Array.from(descriptors.values())[0]?.rootProcessIdentity,
             retireManagedSession: async () => ok(undefined),
           },
           resolveRootProcessIdentity: async (pid) => ({ pid, startIdentity: `test:${pid}` }),
           cleanupWorkspace: () => undefined,
         });
+        let registry = makeRegistry();
         const owner = { agentId: "agent-attachment-linux", sessionKey: "session-attachment-linux" };
         const python = [
           "import pathlib,socket,sys,time",
@@ -354,7 +359,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
             cols: 100,
             rows: 30,
             durable: true,
-            scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "daemon" },
+            scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
             workspace,
             cwd: workspace,
             managedBinding: {
@@ -402,6 +407,20 @@ describe.skipIf(!isLinux() || !distBuilt)(
           expect(screen).toContain("ATTACHMENT_OK");
           expect(calls).toBeGreaterThanOrEqual(2);
 
+          await registry.cleanup();
+          await new Promise((resolveWorkerExit) => setTimeout(resolveWorkerExit, 300));
+          const callsBeforeReplacement = calls;
+          registry = makeRegistry();
+          let recoveredAlive = false;
+          for (let attempt = 0; attempt < 200; attempt += 1) {
+            const recovered = await registry.read(created.sessionId, owner);
+            recoveredAlive = recovered.alive;
+            if (recoveredAlive && calls >= callsBeforeReplacement + 2) break;
+            await new Promise((resolvePoll) => setTimeout(resolvePoll, 50));
+          }
+          expect(recoveredAlive).toBe(true);
+          expect(calls).toBeGreaterThanOrEqual(callsBeforeReplacement + 2);
+
           await expect(registry.terminateAndConfirm(created.sessionId, owner)).resolves.toEqual({
             ok: true,
             value: undefined,
@@ -413,11 +432,14 @@ describe.skipIf(!isLinux() || !distBuilt)(
           expect(calls).toBe(callsAfterRevocation);
         } finally {
           await registry.cleanup();
+          for (const descriptor of descriptors.values()) {
+            killTmuxAndConfirm(tmuxPath, descriptor.tmuxName, descriptor.tmuxSocket);
+          }
           await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
           rmSync(scratch, { recursive: true, force: true });
         }
       },
-      45000,
+      60000,
     );
   },
 );

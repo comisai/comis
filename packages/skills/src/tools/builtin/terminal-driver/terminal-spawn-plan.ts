@@ -69,6 +69,7 @@ import {
   materializeExecutionAttachmentRelays as defaultMaterializeExecutionAttachmentRelays,
   type AttachmentRelayMaterialization,
 } from "./terminal-attachment-relay.js";
+import type { ExecutionAttachmentRelayMaterializer } from "./terminal-durable-attachment-relay.js";
 import {
   MANAGED_TERMINAL_ATTACHMENT_IDENTITY_ENVIRONMENT,
   MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT,
@@ -133,7 +134,7 @@ export interface SpawnPlanComposers {
    * `browser.noSandbox` precedent). Default/absent ⇒ the fail-closed jail.
    */
   unsafeDisableSandbox?: boolean;
-  materializeExecutionAttachmentRelays?: typeof defaultMaterializeExecutionAttachmentRelays;
+  materializeExecutionAttachmentRelays?: ExecutionAttachmentRelayMaterializer;
 }
 
 const EPHEMERAL_WRITABLE_PATH_CONFIG = "agents.*.skills.terminal.allow[].scope.ephemeralWritablePaths";
@@ -774,9 +775,13 @@ export async function buildSpawnPlan(
   let attachmentRelay: AttachmentRelayMaterialization | undefined;
   let executionAttachments = input.executionAttachments;
   if (dedicatedUid !== undefined && (executionAttachments?.length ?? 0) > 0) {
-    const materialize = composers.materializeExecutionAttachmentRelays
-      ?? defaultMaterializeExecutionAttachmentRelays;
-    const materialized = await materialize(executionAttachments ?? [], dedicatedUid);
+    const materialized = await (composers.materializeExecutionAttachmentRelays === undefined
+      ? defaultMaterializeExecutionAttachmentRelays(executionAttachments ?? [], dedicatedUid)
+      : composers.materializeExecutionAttachmentRelays(
+          executionAttachments ?? [],
+          dedicatedUid,
+          { sessionId: input.sessionId, durability: input.durability },
+        ));
     if (!materialized.ok) {
       if (egress !== undefined) await fromPromise(egress.dispose());
       throw materialized.error;

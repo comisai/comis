@@ -45,6 +45,10 @@ import {
   createDurableEgressMaterializer,
   resolveDurableEgressProxyMainPath,
 } from "./terminal-durable-egress-proxy.js";
+import {
+  createDurableExecutionAttachmentRelayMaterializer,
+  resolveDurableAttachmentRelayMainPath,
+} from "./terminal-durable-attachment-relay.js";
 import { buildTmuxPanePidArgv, createTmuxBackend, tmuxSessionName, tmuxSocketPathForSession } from "./terminal-tmux-backend.js";
 import type { TmuxBackendLike, FakePtyLike, PtyModuleLike } from "./terminal-worker-types.js";
 
@@ -308,6 +312,15 @@ function main(): void {
     logPath: pathResolve(dir, "worker.log"),
   });
   const egressControl = createTerminalEgressProxy({ logger, durableMaterialize });
+  const materializeExecutionAttachmentRelays = tmuxPath === undefined ? undefined : createDurableExecutionAttachmentRelayMaterializer({
+    logger,
+    nodePath: process.execPath,
+    entryPath: resolveDurableAttachmentRelayMainPath(),
+    tmuxPath,
+    tmuxSocketForSession: (sessionId) => tmuxSocketPathForSession(dir, sessionId),
+    tmuxNameForSession: tmuxSessionName,
+    logPath: pathResolve(dir, "worker.log"),
+  });
   // WARN at boot if tmux is unavailable — a durable drive will degrade to
   // non-durable here, so a restart ends it `lost` (journal preserved; the `failed`
   // outcome is derived downstream).
@@ -320,6 +333,7 @@ function main(): void {
     logger,
     stuckMs: parseStuckMs(),
     egressControl,
+    materializeExecutionAttachmentRelays,
     ...(loadTmux ? { loadTmux } : {}),
     // The fd3 push channel — the worker is forked with fd3 reserved (4-fd stdio).
     writeFd3: (b) => {

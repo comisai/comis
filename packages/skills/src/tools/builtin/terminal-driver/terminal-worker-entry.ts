@@ -110,10 +110,10 @@ import {
 // worker tests' structural-type imports) is unchanged.
 
 /** Worker dependencies — all injectable for unit tests; production defaults provided. */
-// @optional-field-count: 15 optional fields — TerminalWorkerDeps is the worker's
+// @optional-field-count: 17 optional fields — TerminalWorkerDeps is the worker's
 // dependency-injection contract: EVERY optional is a genuinely-conditional injectable port
 // (spawnPipe/loadTmux/nowMs/envSnapshot/fs/setTimer/clearTimer/createEmulator/buildScopeArgs/
-// scrubChildEnv/buildEgressRelayLaunch/egressControl/writeFd3/stuckMs/bwrapPath) with a
+// scrubChildEnv/buildEgressRelayLaunch/egressControl/materializeExecutionAttachmentRelays/writeFd3/stuckMs/bwrapPath/unsafeDisableSandbox) with a
 // factory default (or daemon-injected), overridden ONLY by a test or the composition root.
 // Tightening any to required would force every call site to fabricate a port it never
 // exercises. The "(a) genuinely conditional" classification, not a cluster-split — one
@@ -171,6 +171,7 @@ export interface TerminalWorkerDeps {
   buildEgressRelayLaunch?: typeof defaultBuildEgressRelayLaunch;
   /** Daemon-injected no-secret egress port (TYPE from @comis/core, NEVER infra). ONLY `network: listed-hosts` materializes it; untouched for none/full. */
   egressControl?: EgressControlPort;
+  materializeExecutionAttachmentRelays?: SpawnPlanComposers["materializeExecutionAttachmentRelays"];
   /** Resolved bwrap path (daemon-detected once). NO default — `undefined` ⇒ fail-closed: no spawn, create reply `ok:false`, session `lost`; never an unjailed fallback. */
   bwrapPath?: string;
   /** Operator opt-out of the jail (`skills.terminal.unsafeDisableSandbox`, daemon-resolved). `true` ⇒ the child spawns DIRECTLY (no bwrap), env-scrub preserved, forced non-durable PTY. NO default — the frame `unsafeDisableSandbox` overrides. A security downgrade for bwrap-less hosts; see {@link SpawnPlanComposers.unsafeDisableSandbox}. */
@@ -260,6 +261,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     scrubChildEnv: deps.scrubChildEnv ?? defaultScrubChildEnv,
     buildEgressRelayLaunch: deps.buildEgressRelayLaunch ?? defaultBuildEgressRelayLaunch,
     egressControl: deps.egressControl,
+    materializeExecutionAttachmentRelays: deps.materializeExecutionAttachmentRelays,
     bwrapPath: deps.bwrapPath,
     unsafeDisableSandbox: deps.unsafeDisableSandbox,
   };
