@@ -47,7 +47,12 @@ export interface ManagedRunContentScope {
 export type ManagedRunCreateOutcome =
   | { readonly kind: "created"; readonly record: ManagedRunRecord }
   | { readonly kind: "identical_replay"; readonly record: ManagedRunRecord }
+  | { readonly kind: "capacity_exceeded" }
   | { readonly kind: "replay_conflict" };
+
+export interface ManagedRunCapacityAdmission {
+  readonly maxActiveRuns: number;
+}
 
 export interface ManagedRunTransitionClaimInput {
   readonly operationId: string;
@@ -158,6 +163,10 @@ export interface ManagedRunReportAppendInput {
   readonly receivedAtMs: number;
   readonly retainedUntilMs: number;
   readonly observedAtMs?: number;
+  readonly rateAdmission?: {
+    readonly sinceMs: number;
+    readonly maxReports: number;
+  };
   readonly attention?: {
     readonly attentionId: string;
     readonly attentionRef: string;
@@ -170,6 +179,7 @@ export interface ManagedRunReportAppendInput {
 export type ManagedRunReportAppendOutcome =
   | { readonly kind: "accepted"; readonly report: ManagedRunReportIndex }
   | { readonly kind: "identical_replay"; readonly report: ManagedRunReportIndex }
+  | { readonly kind: "rate_limited" }
   | { readonly kind: "not_found" }
   | { readonly kind: "scope_mismatch" }
   | { readonly kind: "state_mismatch"; readonly status: ManagedRunStatus }
@@ -443,6 +453,7 @@ export interface ManagedRunGroupPrepareInput {
 export type ManagedRunGroupPrepareOutcome =
   | { readonly kind: "created"; readonly record: ManagedRunGroupRecord }
   | { readonly kind: "identical_replay"; readonly record: ManagedRunGroupRecord }
+  | { readonly kind: "capacity_exceeded" }
   | { readonly kind: "replay_conflict" }
   | { readonly kind: "membership_exceeds_ceiling" }
   | { readonly kind: "scope_mismatch"; readonly managedRunId?: string }
@@ -455,7 +466,10 @@ export interface ManagedRunGroupStorePort {
    * rest invisible, which is indistinguishable from a group that was never
    * prepared — so the transaction is the contract, not an optimization.
    */
-  prepareGroup(input: ManagedRunGroupPrepareInput): Promise<Result<ManagedRunGroupPrepareOutcome, Error>>;
+  prepareGroup(
+    input: ManagedRunGroupPrepareInput,
+    admission?: ManagedRunCapacityAdmission,
+  ): Promise<Result<ManagedRunGroupPrepareOutcome, Error>>;
   /**
    * Derives the roll-up from member run facts at read time. Membership lives on
    * the member rows alone, so there is exactly one source of truth and a group
@@ -468,7 +482,10 @@ export interface ManagedRunGroupStorePort {
 }
 
 export interface ManagedRunStorePort {
-  create(record: ManagedRunRecord): Promise<Result<ManagedRunCreateOutcome, Error>>;
+  create(
+    record: ManagedRunRecord,
+    admission?: ManagedRunCapacityAdmission,
+  ): Promise<Result<ManagedRunCreateOutcome, Error>>;
   get(scope: ManagedRunLookupScope, managedRunId: string): Promise<Result<ManagedRunRecord | undefined, Error>>;
   /** Selects one exact owner-scoped run from either the active or release-reserved authority set. */
   getByExternalRunRef(
@@ -505,14 +522,13 @@ export interface ManagedRunStorePort {
   countByStatus(input: ManagedRunHealthCountInput): Promise<Result<ManagedRunHealthCounts, Error>>;
   /**
    * How many of one service's runs are still non-terminal (every status except
-   * succeeded/failed/cancelled). A content-free scalar the activation coordinator
-   * reads to admit or refuse a new run against a service's concurrency ceiling.
+   * succeeded/failed/cancelled). A content-free scalar for administration and
+   * atomic admission transactions.
    */
   countActiveByService(serviceInstanceId: string): Promise<Result<number, Error>>;
   /**
    * How many reports one run has received at or after `sinceMs`, scoped to the
-   * owning service. A content-free scalar the report bridge reads to enforce a
-   * service's per-run rate ceiling over a rolling window.
+   * owning service. A content-free scalar for administration and diagnostics.
    */
   countReportsSince(
     scope: ManagedRunServiceScope,

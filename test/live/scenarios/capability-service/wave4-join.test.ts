@@ -25,6 +25,10 @@ import { createFixtureRepository, waitForUnixSocket } from "../../../support/cap
 import { getFreePort } from "../../../support/free-port.js";
 import { stopManagedChild } from "../../../support/managed-child-process.js";
 import { createBoundedServiceStderr } from "./service-stderr-buffer.js";
+import {
+  WAVE4_CLAUDE_LAUNCHER_REQUIREMENT,
+  WAVE4_CODEX_LAUNCHER_REQUIREMENT,
+} from "./reviewed-launcher-requirements.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../../..");
@@ -35,12 +39,12 @@ export const MCP_SERVER_NAME = "devcrew";
 export const CONTROL_SECRET_NAME = "WAVE4_CONTROL_BEARER";
 export const PROVIDER_SECRET_NAME = "WAVE4_FIXTURE_PROVIDER_KEY";
 export const CONTROL_SECRET = "wave4-control-bearer-0123456789abcdef";
-const REVIEWED_LAUNCHER = "/usr/local/bin/wave4-codex-launcher";
+const REVIEWED_LAUNCHER = WAVE4_CODEX_LAUNCHER_REQUIREMENT.path;
 const REVIEWED_ALLOW_ID = "codex-confined";
-const REVIEWED_TOKEN = "wave4-reviewed";
-const REVIEWED_CLAUDE_LAUNCHER = "/usr/local/bin/wave4-claude-launcher";
+const REVIEWED_TOKEN = WAVE4_CODEX_LAUNCHER_REQUIREMENT.reviewedToken;
+const REVIEWED_CLAUDE_LAUNCHER = WAVE4_CLAUDE_LAUNCHER_REQUIREMENT.path;
 const REVIEWED_CLAUDE_ALLOW_ID = "claude-confined";
-const REVIEWED_CLAUDE_TOKEN = "wave4-claude-reviewed";
+const REVIEWED_CLAUDE_TOKEN = WAVE4_CLAUDE_LAUNCHER_REQUIREMENT.reviewedToken;
 const MIXED_WORKER_JOIN = process.env["COMIS_WAVE4_MIXED_WORKERS"] === "1";
 const isLiveLinux = process.env["COMIS_LIVE"] === "1" && process.platform === "linux";
 const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;
@@ -388,7 +392,7 @@ export function startInstalledService(input: {
     "--preparation-ttl", "10m",
     "--codex-profile", "codex-reviewed",
     "--codex-executable", input.launcher ?? REVIEWED_LAUNCHER,
-    "--codex-version", "codex-cli 0.147.0",
+    "--codex-version", WAVE4_CODEX_LAUNCHER_REQUIREMENT.version,
     "--codex-model", process.env["COMIS_WAVE4_CODEX_MODEL"] ?? "gpt-5.5",
     "--codex-effort", "high",
     "--codex-terminal-allow-entry", input.terminalAllowEntryId ?? REVIEWED_ALLOW_ID,
@@ -843,7 +847,7 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
         additionalArguments: MIXED_WORKER_JOIN ? [
           "--claude-profile", "claude-reviewed",
           "--claude-executable", REVIEWED_CLAUDE_LAUNCHER,
-          "--claude-version", process.env["COMIS_WAVE4_CLAUDE_VERSION"] ?? "2.1.233 (Claude Code)",
+          "--claude-version", process.env["COMIS_WAVE4_CLAUDE_VERSION"] ?? WAVE4_CLAUDE_LAUNCHER_REQUIREMENT.version,
           "--claude-model", process.env["COMIS_WAVE4_CLAUDE_MODEL"] ?? "claude-opus-4-6",
           "--claude-effort", "high",
           "--claude-terminal-allow-entry", REVIEWED_CLAUDE_ALLOW_ID,

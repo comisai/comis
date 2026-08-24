@@ -207,24 +207,7 @@ export function createManagedRunReportBridge(deps: ManagedRunReportBridgeDeps): 
       if (!REPORTABLE_STATUSES.has(recordResult.value.status)) {
         return rejectReport("state_mismatch", identity);
       }
-      // The service's self-declared per-run rate ceiling: once this run has
-      // already received the cap's worth of reports inside the rolling window,
-      // the next is refused before any private body is written.
       const maxReportsPerMinute = deps.resolveMaxReportsPerMinute?.(identity.serviceInstanceId);
-      if (maxReportsPerMinute !== undefined) {
-        const recentCount = await invoke(() => deps.store.countReportsSince(
-          { kind: "service", serviceInstanceId: identity.serviceInstanceId },
-          identity.managedRunId,
-          receivedAtMs - REPORT_RATE_WINDOW_MS,
-        ));
-        if (!recentCount.ok) {
-          logTransactionFailure(identity, "report-rate");
-          return recentCount;
-        }
-        if (recentCount.value >= maxReportsPerMinute) {
-          return rejectReport("rate_limited", identity);
-        }
-      }
 
       const scope = contentScope(recordResult.value);
       const body: ManagedRunReportBody = { schemaVersion: 1, ...parsed.data.report };
@@ -266,6 +249,14 @@ export function createManagedRunReportBridge(deps: ManagedRunReportBridgeDeps): 
           receivedAtMs,
           retainedUntilMs,
           ...(body.observedAtMs === undefined ? {} : { observedAtMs: body.observedAtMs }),
+          ...(maxReportsPerMinute === undefined
+            ? {}
+            : {
+                rateAdmission: {
+                  sinceMs: receivedAtMs - REPORT_RATE_WINDOW_MS,
+                  maxReports: maxReportsPerMinute,
+                },
+              }),
           ...(body.kind === "attention" || body.kind === "blocked"
             ? {
               attention: {
@@ -296,6 +287,9 @@ export function createManagedRunReportBridge(deps: ManagedRunReportBridgeDeps): 
         }
         if (appended.value.kind === "state_mismatch") {
           return rejectReport("state_mismatch", identity);
+        }
+        if (appended.value.kind === "rate_limited") {
+          return rejectReport("rate_limited", identity);
         }
         return rejectReport("managed_run_not_found", identity);
       }

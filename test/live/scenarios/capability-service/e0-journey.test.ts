@@ -47,10 +47,11 @@ import {
   type RunningService,
   type TaskStatusSnapshot,
 } from "./wave4-join.test.js";
+import { E0_CODEX_LAUNCHER_REQUIREMENT } from "./reviewed-launcher-requirements.js";
 
-const E0_LAUNCHER = "/usr/local/bin/e0-codex-launcher";
+const E0_LAUNCHER = E0_CODEX_LAUNCHER_REQUIREMENT.path;
 const E0_ALLOW_ID = "codex-e0-confined";
-const E0_TOKEN = "e0-reviewed";
+const E0_TOKEN = E0_CODEX_LAUNCHER_REQUIREMENT.reviewedToken;
 const E0_PROFILE = "e0-live";
 const E0_DECISION_ANSWER = "Proceed with the bounded developer intervention.";
 const isFullJourney = process.env["COMIS_LIVE"] === "1"

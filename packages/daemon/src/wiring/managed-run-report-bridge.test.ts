@@ -212,6 +212,46 @@ describe("managed-run report bridge", () => {
     expect(db.prepare("SELECT COUNT(*) AS c FROM managed_run_reports").get()).toEqual({ c: 2 });
   });
 
+  it("returns the original sequence when a rate-limited client retries an accepted report", async () => {
+    const bridge = makeBridge({ resolveMaxReportsPerMinute: () => 1 });
+
+    const accepted = await bridge.ingestReport(makeInput());
+    const replay = await bridge.ingestReport(makeInput());
+
+    expect(accepted).toMatchObject({
+      ok: true,
+      value: { kind: "accepted", report: { sequence: 1 } },
+    });
+    expect(replay).toMatchObject({
+      ok: true,
+      value: { kind: "identical_replay", report: { sequence: 1 } },
+    });
+  });
+
+  it("admits only one of two concurrent reports at a one-report ceiling", async () => {
+    const bridge = makeBridge({ resolveMaxReportsPerMinute: () => 1 });
+
+    const outcomes = await Promise.all([
+      bridge.ingestReport({
+        ...makeInput(),
+        report: { ...makeInput().report, serviceReportId: "service-report_concurrent-a" },
+      }),
+      bridge.ingestReport({
+        ...makeInput(),
+        report: { ...makeInput().report, serviceReportId: "service-report_concurrent-b" },
+      }),
+    ]);
+
+    expect(outcomes.map((outcome) => outcome.ok && outcome.value.kind).sort()).toEqual([
+      "accepted",
+      "rejected",
+    ]);
+    expect(outcomes.some((outcome) => outcome.ok
+      && outcome.value.kind === "rejected"
+      && outcome.value.reasonCode === "rate_limited")).toBe(true);
+    expect(db.prepare("SELECT COUNT(*) AS c FROM managed_run_reports").get()).toEqual({ c: 1 });
+  });
+
   it("accepts reports below the declared per-minute rate", async () => {
     const bridge = makeBridge({ resolveMaxReportsPerMinute: () => 5 });
     const first = await bridge.ingestReport({

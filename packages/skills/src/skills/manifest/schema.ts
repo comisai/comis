@@ -44,12 +44,13 @@ export const OsFieldSchema = z.preprocess((val) => {
 }, z.array(z.string()).optional());
 
 /**
- * Skill prerequisites schema (strict: only bins and env keys accepted).
+ * Skill prerequisites schema.
  * Undefined means no prerequisites; present means the skill declares external dependencies.
  */
 export const SkillRequiresSchema = z.strictObject({
   bins: z.array(z.string()).default([]),
   env: z.array(z.string()).default([]),
+  capabilityServices: z.array(z.string().min(1).max(128)).default([]),
 });
 
 /**

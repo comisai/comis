@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly COMIS_SOURCE=/workspace/comis
-readonly DEV_CREW_SOURCE=/workspace/comis-dev-crew
+readonly COMIS_SOURCE="${COMIS_CONFINEMENT_COMIS_SOURCE:-/workspace/comis}"
+readonly DEV_CREW_SOURCE="${COMIS_CONFINEMENT_DEV_CREW_SOURCE:-/workspace/comis-dev-crew}"
 readonly RUNNER_ROOT=/runner
 readonly COMIS_COPY="${RUNNER_ROOT}/comis"
 readonly JOURNEY_ROOT="${RUNNER_ROOT}/e0-journey"
@@ -11,16 +11,20 @@ readonly DEV_CREW_BIN="${JOURNEY_ROOT}/bin"
 readonly DEV_CREW_COMMIT="${COMIS_DEV_CREW_COMMIT:?the companion revision is required}"
 readonly LIVE_TEST=test/live/scenarios/capability-service/e0-journey.test.ts
 
-if [[ "$(id -u)" -eq 0 || "$(uname -s)" != "Linux" ]]; then
-  echo "the E0 real-Codex journey observation requires an unprivileged Linux runner" >&2
-  exit 1
-fi
 if [[ "$(git -C "${DEV_CREW_SOURCE}" rev-parse HEAD)" != "${DEV_CREW_COMMIT}" ]]; then
   echo "the companion checkout does not match the selected E0 observation revision" >&2
   exit 1
 fi
 if [[ -n "$(git -C "${DEV_CREW_SOURCE}" status --porcelain)" ]]; then
   echo "the companion checkout must be clean before the E0 observation" >&2
+  exit 1
+fi
+if [[ "${COMIS_CONFINEMENT_PREFLIGHT_ONLY:-0}" == "1" ]]; then
+  echo "companion revision verified: ${DEV_CREW_COMMIT}"
+  exit 0
+fi
+if [[ "$(id -u)" -eq 0 || "$(uname -s)" != "Linux" ]]; then
+  echo "the E0 real-Codex journey observation requires an unprivileged Linux runner" >&2
   exit 1
 fi
 if [[ ! -r "${CODEX_HOME}/auth.json" || -w "${CODEX_HOME}/auth.json" ]]; then

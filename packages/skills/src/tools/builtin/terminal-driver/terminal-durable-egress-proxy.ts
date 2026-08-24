@@ -25,6 +25,7 @@ import {
   type EgressMaterializationContext,
   type SystemTimeoutHandle,
 } from "@comis/core";
+import { TERMINAL_PROCESS_ENTRIES } from "./terminal-process-entry-registry.js";
 
 const READY_TIMEOUT_MS = 10_000;
 const DISPOSE_TIMEOUT_MS = 5_000;
@@ -90,7 +91,7 @@ export interface DurableEgressMaterializerDeps {
 
 /** Resolve the compiled detached helper beside this module in every installation layout. */
 export function resolveDurableEgressProxyMainPath(): string {
-  return fileURLToPath(new URL("./terminal-egress-proxy-main.js", import.meta.url));
+  return fileURLToPath(new URL(`./${TERMINAL_PROCESS_ENTRIES.egressProxy.outputFile}`, import.meta.url));
 }
 
 function waitForReady(

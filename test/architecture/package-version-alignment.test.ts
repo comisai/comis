@@ -34,6 +34,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CAPABILITY_SERVICE_GENERATOR_VERSION } from "../../packages/capability-service-sdk/src/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
@@ -153,12 +154,8 @@ describe("capability-service generator provenance", () => {
   const sdkRoot = resolve(PACKAGES_ROOT, "capability-service-sdk");
 
   it("declares the version of the package that actually produces the bundle", () => {
-    const declared = readFileSync(resolve(sdkRoot, "src/constants.ts"), "utf8");
-    const match = declared.match(/CAPABILITY_SERVICE_GENERATOR_VERSION\s*=\s*"([^"]+)"/);
-    expect(match, "generator version constant is declared").not.toBeNull();
-
     const sdkVersion = JSON.parse(readFileSync(resolve(sdkRoot, "package.json"), "utf8")).version;
-    expect(match?.[1]).toBe(sdkVersion);
+    expect(CAPABILITY_SERVICE_GENERATOR_VERSION).toBe(sdkVersion);
   });
 
   it("ships a manifest whose generator identity matches that package", () => {

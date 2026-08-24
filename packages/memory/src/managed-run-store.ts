@@ -351,7 +351,10 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     return ok(resultRecord("claimed", next));
   }
 
-  const createTransaction = db.transaction((record: ManagedRunRecord): Result<ManagedRunCreateOutcome, Error> => {
+  const createTransaction = db.transaction((
+    record: ManagedRunRecord,
+    admission?: { readonly maxActiveRuns: number },
+  ): Result<ManagedRunCreateOutcome, Error> => {
     const parsed = validateManagedRunRecord(record);
     if (!parsed.ok) return parsed;
     const existing = readRecord(record.managedRunId);
@@ -360,6 +363,14 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       return serializeManagedRunRecord(existing.value) === serializeManagedRunRecord(parsed.value)
         ? ok({ kind: "identical_replay", record: existing.value })
         : ok({ kind: "replay_conflict" });
+    }
+    if (admission !== undefined) {
+      if (!Number.isInteger(admission.maxActiveRuns) || admission.maxActiveRuns < 1) {
+        return err(new Error("managed-run capacity admission is invalid"));
+      }
+      const active = administration.countActiveByService(parsed.value.serviceInstanceId);
+      if (!active.ok) return active;
+      if (active.value >= admission.maxActiveRuns) return ok({ kind: "capacity_exceeded" });
     }
     insertRun.run(...managedRunInsertValues(parsed.value));
     return ok({ kind: "created", record: parsed.value });
@@ -397,6 +408,20 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     }
     if (input.receivedAtMs < current.value.updatedAtMs) {
       return err(new Error("managed-run report receipt cannot move time backward"));
+    }
+    if (input.rateAdmission !== undefined) {
+      if (
+        !Number.isInteger(input.rateAdmission.sinceMs)
+        || !Number.isInteger(input.rateAdmission.maxReports)
+        || input.rateAdmission.maxReports < 1
+      ) return err(new Error("managed-run report-rate admission is invalid"));
+      const recent = administration.countReportsSince(
+        scope.serviceInstanceId,
+        input.managedRunId,
+        input.rateAdmission.sinceMs,
+      );
+      if (!recent.ok) return recent;
+      if (recent.value >= input.rateAdmission.maxReports) return ok({ kind: "rate_limited" });
     }
     const sequence = current.value.lastAcceptedReportSequence + 1;
     const candidate = ManagedRunReportIndexSchema.safeParse({
@@ -822,7 +847,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
   }
 
   return Object.freeze({
-    create: (record) => boundary(() => createTransaction.immediate(record)),
+    create: (record, admission) => boundary(() => createTransaction.immediate(record, admission)),
     get: (scope, managedRunId) => boundary(() => {
       const record = readRecord(managedRunId);
       if (!record.ok || record.value === undefined) return record;
@@ -970,7 +995,9 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     getForAdministration: (input) => boundary(() => readRecord(input.managedRunId)),
     countByStatus: (input) => boundary(() => administration.countByStatus(input)),
     countActiveByService: (serviceInstanceId) => boundary(() => administration.countActiveByService(serviceInstanceId)),
-    countReportsSince: (scope, managedRunId, sinceMs) => boundary(() => administration.countReportsSince(scope.serviceInstanceId, managedRunId, sinceMs)),
+    countReportsSince: (scope, managedRunId, sinceMs) => boundary(
+      () => administration.countReportsSince(scope.serviceInstanceId, managedRunId, sinceMs),
+    ),
     listByTraceIds: (input) => boundary(() => administration.listByTraceIds(input)),
     listAttentionForAdministration: (input) => boundary(() => attention.listForAdministration(input)),
     listRecoverable: (input) => boundary((): Result<ManagedRunRecoveryScan, Error> => {

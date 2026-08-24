@@ -43,10 +43,11 @@ import {
   stopDaemon,
   type RunningService,
 } from "./wave4-join.test.js";
+import { E0_CODEX_LAUNCHER_REQUIREMENT } from "./reviewed-launcher-requirements.js";
 
-const MECHANICS_LAUNCHER = "/usr/local/bin/e0-codex-launcher";
+const MECHANICS_LAUNCHER = E0_CODEX_LAUNCHER_REQUIREMENT.path;
 const MECHANICS_ALLOW_ID = "codex-e0-confined";
-const MECHANICS_TOKEN = "e0-reviewed";
+const MECHANICS_TOKEN = E0_CODEX_LAUNCHER_REQUIREMENT.reviewedToken;
 const MECHANICS_PROFILE = "e0-live";
 const isMechanicsGate = process.env["COMIS_E0_MECHANICS"] === "1" && process.platform === "linux";
 const TELEGRAM_CHAT: ChatRef = Object.freeze({ chatId: 424_242 });

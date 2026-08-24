@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -u
 
-readonly REAL_REPORTER=/home/comis/.wave4-tools/devcrew-report
+readonly REAL_REPORTER="${WAVE4_REAL_REPORTER:-/home/comis/.wave4-tools/devcrew-report}"
 readonly REPORTER_LOG="${PWD}/.wave4-reporter.log"
 readonly STDERR_FILE="${PWD}/.wave4-reporter-stderr.$$"
 readonly CANDIDATE_BARRIER_FILE="${PWD}/.wave4-candidate-barrier"

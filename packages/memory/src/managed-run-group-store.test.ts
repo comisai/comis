@@ -10,6 +10,7 @@ import {
 } from "@comis/core";
 import { ensureManagedRunTables } from "./schema-managed-runs.js";
 import { createSqliteManagedRunGroupStore } from "./managed-run-group-store.js";
+import { createSqliteManagedRunStore } from "./managed-run-store.js";
 
 const CONVERSATION_SCOPE = {
   tenantId: "tenant_a",
@@ -136,6 +137,30 @@ describe("createSqliteManagedRunGroupStore grouped preparation", () => {
     expect(created.ok && created.value.kind).toBe("created");
     expect(groupRowCount(db)).toBe(1);
     expect(runRowCount(db)).toBe(2);
+  });
+
+  it("shares atomic service capacity with single-run admission", async () => {
+    const runStore = createSqliteManagedRunStore(db);
+    const groupStore = createSqliteManagedRunGroupStore(db);
+    const single = makeMember({
+      managedRunId: "managed-run_single",
+      managedRunGroupId: undefined,
+    });
+    const groupMember = makeMember({
+      managedRunId: "managed-run_group-member",
+      externalRunRefDigest: "e".repeat(64),
+    });
+
+    const outcomes = await Promise.all([
+      runStore.create(single, { maxActiveRuns: 1 }),
+      groupStore.prepareGroup(prepareInput([groupMember]), { maxActiveRuns: 1 }),
+    ]);
+
+    expect(outcomes.map((outcome) => outcome.ok && outcome.value.kind).sort()).toEqual([
+      "capacity_exceeded",
+      "created",
+    ]);
+    expect(runRowCount(db)).toBe(1);
   });
 
   it("persists nothing when any member is unacceptable", async () => {

@@ -30,7 +30,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vitest";
-import { formatViolations, type ViolationCitation } from "../support/architecture-helpers.js";
+import { parse as parseYaml } from "yaml";
 import { CAPABILITY_SERVICE_BUNDLE_DIGEST } from "../../packages/capability-service-sdk/src/constants.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +40,7 @@ const PROTOCOL_ROOT = resolve(SDK_ROOT, "protocol");
 const CONSTANTS_FILE = resolve(SDK_ROOT, "src/constants.ts");
 const STAGER = resolve(REPO_ROOT, ".github/scripts/stage-capability-protocol-release.mjs");
 const RELEASE_WORKFLOW = ".github/workflows/dockerhub-release.yml";
+const NPM_WORKFLOW = ".github/workflows/npm-publish.yml";
 
 /**
  * The asset basename a consumer pins. DevCrew records the exact download URL in
@@ -47,9 +48,6 @@ const RELEASE_WORKFLOW = ".github/workflows/dockerhub-release.yml";
  * already shipped — treat a change here as a coordinated release-train step.
  */
 const ASSET_PREFIX = "comis-capability-service-protocol";
-const DESIGN_REF =
-  "AGENTS.md — Release and Worktree Hygiene: the capability-service protocol bundle ships as pinned release assets, and the private SDK is never published to npm";
-
 const temporaryDirectories: string[] = [];
 
 afterAll(() => {
@@ -66,6 +64,34 @@ function scratch(prefix: string): string {
 
 function read(rel: string): string {
   return readFileSync(resolve(REPO_ROOT, rel), "utf8");
+}
+
+interface WorkflowStep {
+  readonly name?: string;
+  readonly uses?: string;
+  readonly run?: string;
+  readonly with?: Record<string, unknown>;
+}
+
+interface WorkflowJob {
+  readonly needs?: string | readonly string[];
+  readonly steps?: readonly WorkflowStep[];
+}
+
+interface WorkflowModel {
+  readonly jobs?: Record<string, WorkflowJob>;
+}
+
+function workflow(path: string): WorkflowModel {
+  return parseYaml(read(path)) as WorkflowModel;
+}
+
+function commandTokens(command: string | undefined): string[] {
+  return (command ?? "")
+    .replace(/\\\s+/gu, " ")
+    .trim()
+    .split(/\s+/u)
+    .map((token) => token.replace(/^"|"$/gu, ""));
 }
 
 interface StageResult {
@@ -127,45 +153,28 @@ function manifest(): ProtocolManifest {
 
 describe("capability-service release assets", () => {
   it("attaches the protocol bundle to the release the tag creates", () => {
-    const workflow = read(RELEASE_WORKFLOW);
-    const violations: ViolationCitation[] = [];
+    const releaseJob = workflow(RELEASE_WORKFLOW).jobs?.["github-release"];
+    const steps = releaseJob?.steps ?? [];
+    const stageIndex = steps.findIndex((step) => step.name === "Stage capability-service protocol bundle");
+    const releaseIndex = steps.findIndex((step) => step.uses?.startsWith("softprops/action-gh-release@"));
+    const stageStep = steps[stageIndex];
+    const releaseStep = steps[releaseIndex];
 
-    if (!workflow.includes("stage-capability-protocol-release.mjs")) {
-      violations.push({
-        file: RELEASE_WORKFLOW,
-        line: 0,
-        snippet:
-          "never stages the capability-service protocol bundle — the generated schemas, fixtures, and manifest reach no external consumer",
-      });
-    }
-    // `softprops/action-gh-release` uploads nothing without a `files:` input,
-    // so a staging step alone still ships an assetless release.
-    if (!/^\s*files:/m.test(workflow)) {
-      violations.push({
-        file: RELEASE_WORKFLOW,
-        line: 0,
-        snippet:
-          "the release action declares no `files:` input, so nothing is uploaded even if the bundle was staged",
-      });
-    }
-    if (!workflow.includes(ASSET_PREFIX)) {
-      violations.push({
-        file: RELEASE_WORKFLOW,
-        line: 0,
-        snippet: `does not name the \`${ASSET_PREFIX}\` assets a consumer pins`,
-      });
-    }
-
-    expect(
-      violations,
-      formatViolations({
-        description: "The release ships no capability-service protocol bundle.",
-        violations,
-        suggestedFix:
-          "Stage the bundle with .github/scripts/stage-capability-protocol-release.mjs in the github-release job and pass the staged files to the release action.",
-        designRef: DESIGN_REF,
-      }),
-    ).toEqual([]);
+    expect(releaseJob?.needs).toEqual(["merge-default", "merge-slim", "build-web"]);
+    expect(stageIndex).toBeGreaterThan(-1);
+    expect(releaseIndex).toBeGreaterThan(stageIndex);
+    expect(commandTokens(stageStep?.run)).toEqual([
+      "node",
+      ".github/scripts/stage-capability-protocol-release.mjs",
+      "--tag",
+      "\${GITHUB_REF_NAME}",
+      "--out",
+      "dist-release",
+    ]);
+    expect(String(releaseStep?.with?.["files"] ?? "").trim().split(/\s+/u)).toEqual([
+      `dist-release/${ASSET_PREFIX}-*.tar.gz`,
+      `dist-release/${ASSET_PREFIX}-*.manifest.json`,
+    ]);
   });
 
   it("stages exactly the bundle the SDK pins", () => {
@@ -251,11 +260,22 @@ describe("capability-service release assets", () => {
     const sdk = JSON.parse(readFileSync(resolve(SDK_ROOT, "package.json"), "utf8")) as {
       private?: boolean;
     };
-    const publish = read(".github/workflows/npm-publish.yml");
+    const publishSteps = workflow(NPM_WORKFLOW).jobs?.["publish"]?.steps ?? [];
+    const publishStep = publishSteps.find((step) => step.name === "Publish packages");
 
     // Ratification item 13 defers npm publication of the SDK. `pnpm publish -r`
     // skips a private package, so the release path must not special-case it back in.
     expect(sdk.private).toBe(true);
-    expect(publish).not.toContain("capability-service-sdk");
+    expect(commandTokens(publishStep?.run)).toEqual([
+      "pnpm",
+      "publish",
+      "-r",
+      "--access",
+      "public",
+      "--no-git-checks",
+      "--provenance",
+      "--config.node-linker=hoisted",
+    ]);
+    expect(publishSteps.some((step) => step.with?.["filter"] === "@comis/capability-service-sdk")).toBe(false);
   });
 });

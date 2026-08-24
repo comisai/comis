@@ -103,6 +103,10 @@ export function createSqliteManagedRunGroupStore(db: Database.Database): Managed
   `);
   const memberReadLimit = MANAGED_RUN_GROUP_MAX_MEMBERS + 1;
   const readRun = db.prepare("SELECT managed_run_id FROM managed_runs WHERE managed_run_id = ?");
+  const activeCount = db.prepare(`
+    SELECT COUNT(*) AS count FROM managed_runs
+    WHERE service_instance_id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled')
+  `).pluck();
 
   function loadMembers(managedRunGroupId: string): Result<ManagedRunRecord[], Error> {
     const members: ManagedRunRecord[] = [];
@@ -132,6 +136,7 @@ export function createSqliteManagedRunGroupStore(db: Database.Database): Managed
 
   const prepareTransaction = db.transaction((
     input: ManagedRunGroupPrepareInput,
+    admission?: { readonly maxActiveRuns: number },
   ): Result<ManagedRunGroupPrepareOutcome, Error> => {
     const inputHash = hashCanonical({
       managedRunGroupId: input.managedRunGroupId,
@@ -192,6 +197,16 @@ export function createSqliteManagedRunGroupStore(db: Database.Database): Managed
         return ok({ kind: "member_conflict", managedRunId: member.managedRunId });
       }
     }
+    if (admission !== undefined) {
+      if (!Number.isInteger(admission.maxActiveRuns) || admission.maxActiveRuns < 1) {
+        return err(new Error("managed-run group capacity admission is invalid"));
+      }
+      const current = activeCount.get(input.serviceInstanceId);
+      if (typeof current !== "number") return err(new Error("managed-run active count is unreadable"));
+      if (current + input.members.length > admission.maxActiveRuns) {
+        return ok({ kind: "capacity_exceeded" });
+      }
+    }
 
     insertGroup.run(
       rollup.value.managedRunGroupId,
@@ -210,9 +225,9 @@ export function createSqliteManagedRunGroupStore(db: Database.Database): Managed
   });
 
   return {
-    prepareGroup(input) {
+    prepareGroup(input, admission) {
       try {
-        return Promise.resolve(prepareTransaction(input));
+        return Promise.resolve(prepareTransaction.immediate(input, admission));
       } catch (cause) {
         return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
       }

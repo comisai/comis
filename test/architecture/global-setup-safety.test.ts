@@ -10,6 +10,22 @@ import {
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import rootVitestConfig from "../../vitest.config.js";
+import integrationVitestConfig from "../vitest.config.js";
+import e2eVitestConfig from "../e2e/vitest.config.js";
+import liveVitestConfig from "../live/vitest.config.js";
+
+interface NormalizedVitestConfig {
+  readonly test?: {
+    readonly globalSetup?: string | readonly string[];
+  };
+}
+
+function globalSetups(config: unknown): readonly string[] {
+  const value = (config as NormalizedVitestConfig).test?.globalSetup;
+  if (value === undefined) return [];
+  return typeof value === "string" ? [value] : value;
+}
 
 describe("test artifact cleanup safety", () => {
   let testRoot: string | undefined;
@@ -68,17 +84,18 @@ describe("test artifact cleanup safety", () => {
   });
 
   it("stages one shared model source in every complete test tier", () => {
-    const repoRoot = resolve(import.meta.dirname, "../..");
-    const configPaths = [
-      "vitest.config.ts",
-      "test/vitest.config.ts",
-      "test/e2e/vitest.config.ts",
-      "test/live/vitest.config.ts",
-    ];
+    const configs = [
+      ["unit", rootVitestConfig],
+      ["integration", integrationVitestConfig],
+      ["e2e", e2eVitestConfig],
+      ["live", liveVitestConfig],
+    ] as const;
 
-    for (const relativePath of configPaths) {
-      const source = readFileSync(resolve(repoRoot, relativePath), "utf8");
-      expect(source, relativePath).toContain("global-setup.ts");
+    for (const [name, config] of configs) {
+      expect(
+        globalSetups(config).some((setup) => setup.endsWith("test/support/global-setup.ts")),
+        `${name} resolves the shared global setup`,
+      ).toBe(true);
     }
   });
 

@@ -129,6 +129,7 @@ describe("managed-run grouped two-phase activation", () => {
 
   function makeCoordinator(
     activateGroup: ReturnType<typeof vi.fn>,
+    maxConcurrentRuns?: number,
   ) {
     const store = createSqliteManagedRunStore(db);
     const groupStore = createSqliteManagedRunGroupStore(db);
@@ -137,14 +138,15 @@ describe("managed-run grouped two-phase activation", () => {
       nowMs: () => NOW_MS,
     });
     if (!content.ok) throw content.error;
+    const abandonGroup = vi.fn(async (command) => ok({
+      managedRunGroupId: command.managedRunGroupId,
+      members: [],
+      state: "abandoned" as const,
+      disposition: command.disposition,
+    }));
     const control = {
       activateGroup,
-      abandonGroup: vi.fn(async (command) => ok({
-        managedRunGroupId: command.managedRunGroupId,
-        members: [],
-        state: "abandoned" as const,
-        disposition: command.disposition,
-      })),
+      abandonGroup,
     } as unknown as CapabilityServiceControlPort;
     return {
       store,
@@ -215,7 +217,11 @@ describe("managed-run grouped two-phase activation", () => {
         nowMs: () => NOW_MS,
         eventBus: new TypedEventBus(),
         logger: makeLogger(),
+        ...(maxConcurrentRuns === undefined
+          ? {}
+          : { resolveMaxConcurrentRuns: () => maxConcurrentRuns }),
       }),
+      abandonGroup,
     };
   }
 
@@ -298,6 +304,23 @@ describe("managed-run grouped two-phase activation", () => {
         registrationNonce: "group-registration-nonce_a",
       },
     });
+  });
+
+  it("rejects a group whose members exceed service capacity", async () => {
+    const activateGroup = vi.fn();
+    const harness = makeCoordinator(activateGroup, 1);
+
+    const activated = await harness.coordinator.activatePreparedGroup(makeInput());
+
+    expect(activated).toEqual({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "capacity_exceeded" },
+    });
+    expect(activateGroup).not.toHaveBeenCalled();
+    expect(harness.abandonGroup).toHaveBeenCalledWith(expect.objectContaining({
+      disposition: "reap_safe",
+    }));
+    expect(db.prepare("SELECT COUNT(*) AS count FROM managed_runs").get()).toEqual({ count: 0 });
   });
 
   it("replays a retained partial group as one operation after restart", async () => {

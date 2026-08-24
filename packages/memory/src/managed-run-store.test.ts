@@ -413,6 +413,48 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     expect(db.prepare("SELECT COUNT(*) AS count FROM managed_run_reports").get()).toEqual({ count: 2 });
   });
 
+  it("classifies report replay before applying atomic rate admission", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    const firstInput = reportInput({
+      rateAdmission: { sinceMs: 1_799_999_940_100, maxReports: 1 },
+    });
+
+    const accepted = await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, firstInput);
+    const replay = await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, firstInput);
+    const refused = await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_rate-refused",
+      contentRef: "report-content_rate-refused",
+      contentHash: "e".repeat(64),
+      receivedAtMs: 1_800_000_000_200,
+      retainedUntilMs: 1_802_592_000_200,
+      rateAdmission: { sinceMs: 1_799_999_940_200, maxReports: 1 },
+    }));
+
+    expect(accepted).toMatchObject({ ok: true, value: { kind: "accepted" } });
+    expect(replay).toMatchObject({ ok: true, value: { kind: "identical_replay" } });
+    expect(refused).toEqual({ ok: true, value: { kind: "rate_limited" } });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM managed_run_reports").get()).toEqual({ count: 1 });
+  });
+
+  it("admits one concurrent run when the service capacity is one", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const outcomes = await Promise.all([
+      store.create(makeRecord({ managedRunId: "managed-run_capacity-a" }), { maxActiveRuns: 1 }),
+      store.create(makeRecord({
+        managedRunId: "managed-run_capacity-b",
+        externalRunRefDigest: "e".repeat(64),
+      }), { maxActiveRuns: 1 }),
+    ]);
+
+    expect(outcomes.map((outcome) => outcome.ok && outcome.value.kind).sort()).toEqual([
+      "capacity_exceeded",
+      "created",
+    ]);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM managed_runs").get()).toEqual({ count: 1 });
+  });
+
   it("reads an exact contiguous report range only through the run owner scope", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);

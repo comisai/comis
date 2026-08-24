@@ -368,7 +368,12 @@ export function createManagedRunGroupActivationCoordinator(
     input: ManagedRunGroupActivationInput,
     groupIds: ManagedRunGroupActivationIds,
     members: readonly PreparedMember[],
-  ): Promise<Result<readonly PreparedMember[], Error>> {
+    maxConcurrentRuns?: number,
+  ): Promise<Result<
+    | { readonly kind: "persisted"; readonly members: readonly PreparedMember[] }
+    | { readonly kind: "capacity_exceeded" },
+    Error
+  >> {
     const groupScope = {
       tenantId: input.authority.tenantId,
       agentId: input.authority.agentId,
@@ -397,20 +402,26 @@ export function createManagedRunGroupActivationCoordinator(
       }
       written.push(member);
     }
-    const prepared = await invokeStore(() => deps.groupStore.prepareGroup({
-      operationId: input.operationId,
-      managedRunGroupId: groupIds.managedRunGroupId,
-      serviceInstanceId: input.serviceInstanceId,
-      rootRunId: input.authority.rootRunId,
-      createdAtMs: members[0]?.record.createdAtMs ?? deps.nowMs(),
-      members: members.map((member) => member.record),
-    }));
+    const prepared = await invokeStore(() => deps.groupStore.prepareGroup(
+      {
+        operationId: input.operationId,
+        managedRunGroupId: groupIds.managedRunGroupId,
+        serviceInstanceId: input.serviceInstanceId,
+        rootRunId: input.authority.rootRunId,
+        createdAtMs: members[0]?.record.createdAtMs ?? deps.nowMs(),
+        members: members.map((member) => member.record),
+      },
+      maxConcurrentRuns === undefined ? undefined : { maxActiveRuns: maxConcurrentRuns },
+    ));
     if (!prepared.ok || (prepared.value.kind !== "created" && prepared.value.kind !== "identical_replay")) {
       for (const member of written) await removeDescriptor(member);
       await invokeStore(() => deps.contentStore.deleteGroupActivationDescriptor(
         groupScope,
         groupIds.activationDescriptorRef,
       ));
+      if (prepared.ok && prepared.value.kind === "capacity_exceeded") {
+        return ok({ kind: "capacity_exceeded" });
+      }
       return prepared.ok
         ? err(new Error(`managed-run group durable preparation failed: ${prepared.value.kind}`))
         : prepared;
@@ -427,7 +438,7 @@ export function createManagedRunGroupActivationCoordinator(
         },
       );
     }
-    return ok(members);
+    return ok({ kind: "persisted", members });
   }
 
   async function bindMembers(
@@ -744,15 +755,6 @@ export function createManagedRunGroupActivationCoordinator(
         return ok({ kind: "rejected", reasonCode: "agent_not_allowed" });
       }
       const maxConcurrentRuns = deps.resolveMaxConcurrentRuns?.(input.serviceInstanceId);
-      if (maxConcurrentRuns !== undefined) {
-        const activeCount = await invokeStore(() => deps.store.countActiveByService(input.serviceInstanceId));
-        if (!activeCount.ok) return activeCount;
-        if (activeCount.value + candidates.length > maxConcurrentRuns) {
-          await abandonGroup(input, groupIds, "service_unavailable");
-          emitRejected(input, "capacity_exceeded");
-          return ok({ kind: "rejected", reasonCode: "capacity_exceeded" });
-        }
-      }
       const validated: PreparedMember[] = [];
       for (const member of candidates) {
         const validation = validatePreparedBindingRequests(bindingDeps, bindingInput(member));
@@ -763,12 +765,17 @@ export function createManagedRunGroupActivationCoordinator(
         }
         validated.push({ ...member, validation: validation.value });
       }
-      const persisted = await persistNewMembers(input, groupIds, validated);
+      const persisted = await persistNewMembers(input, groupIds, validated, maxConcurrentRuns);
       if (!persisted.ok) {
         await abandonGroup(input, groupIds, "activation_rejected");
         return persisted;
       }
-      members = [...persisted.value];
+      if (persisted.value.kind === "capacity_exceeded") {
+        await abandonGroup(input, groupIds, "service_unavailable");
+        emitRejected(input, "capacity_exceeded", groupIds.managedRunGroupId);
+        return ok({ kind: "rejected", reasonCode: "capacity_exceeded" });
+      }
+      members = [...persisted.value.members];
     }
 
     return activateDurableGroup(input, groupIds, members, replayed, startedAtMs);

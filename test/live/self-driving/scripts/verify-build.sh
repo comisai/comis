@@ -29,6 +29,7 @@ REPO="${REPO:-$(git rev-parse --show-toplevel)}"
 PKG="${PKG:-$COMIS_HOME/.npm-global/lib/node_modules/comisai}"
 SYMBOL="${1:-}"
 SYMPKG="${2:-}"
+DEPLOY_RECORD_PATH="${COMIS_DEPLOY_RECORD_PATH:-/root/comis-deployed-build}"
 
 fails=0
 pass() { printf '  \033[32mPASS\033[0m  %-12s %s\n' "$1" "$2"; }
@@ -91,9 +92,10 @@ if rig_is_local; then
   fi
   DEPLOY_MS="${dist_ms:-0}"
 else
-  record="$(remote_root 'cat /root/comis-deployed-build 2>/dev/null')"
+  printf -v deploy_record_q '%q' "$DEPLOY_RECORD_PATH"
+  record="$(remote_root "cat $deploy_record_q 2>/dev/null")"
   if [ -z "$record" ]; then
-    fail "provenance" "no /root/comis-deployed-build on the box — deploy with install-vps.sh / deploy-dist.sh"
+    fail "provenance" "no $DEPLOY_RECORD_PATH on the box — deploy with install-vps.sh / deploy-dist.sh"
   else
     box_sha="$(printf '%s' "$record" | awk '{print $1}')"
     if [ "$box_sha" = "$LOCAL_SHA" ]; then
@@ -121,9 +123,10 @@ if rig_is_local; then
   fi
 else
   printf -v service_q '%q' "$SERVICE"
+  printf -v deploy_record_q '%q' "$DEPLOY_RECORD_PATH"
   proc="$({
-    remote_root "SERVICE=$service_q bash -s" <<'REMOTE'
-  stamp=$(awk '{print $NF}' /root/comis-deployed-build 2>/dev/null)
+    remote_root "SERVICE=$service_q DEPLOY_RECORD_PATH=$deploy_record_q bash -s" <<'REMOTE'
+  stamp=$(awk '{print $NF}' "$DEPLOY_RECORD_PATH" 2>/dev/null)
   rec=$(date -d "$stamp" +%s 2>/dev/null || echo 0)
   pid=$(systemctl show "$SERVICE" --property MainPID --value 2>/dev/null)
   if [ -z "$pid" ] || [ "$pid" = 0 ]; then echo "NOPROC"; else

@@ -636,21 +636,7 @@ export function createManagedRunActivationCoordinator(
       emitRejected(input, "agent_not_allowed");
       return ok({ kind: "rejected", reasonCode: "agent_not_allowed" });
     }
-    // Concurrency admission: a service that declares a ceiling is refused a new
-    // run once its non-terminal runs already fill it, before any durable binding.
     const maxConcurrentRuns = deps.resolveMaxConcurrentRuns?.(input.serviceInstanceId);
-    if (maxConcurrentRuns !== undefined) {
-      const activeCount = await invokeStore(() => deps.store.countActiveByService(input.serviceInstanceId));
-      if (!activeCount.ok) {
-        await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
-        return activeCount;
-      }
-      if (activeCount.value >= maxConcurrentRuns) {
-        await abandonPrepared(input, ids, "service_unavailable", "reap_safe");
-        emitRejected(input, "capacity_exceeded");
-        return ok({ kind: "rejected", reasonCode: "capacity_exceeded" });
-      }
-    }
     const validatedBindings = validatePreparedBindingRequests(bindingDeps, input);
     if (!validatedBindings.ok) {
       await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
@@ -717,7 +703,10 @@ export function createManagedRunActivationCoordinator(
       await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
       return body;
     }
-    const created = await invokeStore(() => deps.store.create(record));
+    const created = await invokeStore(() => deps.store.create(
+      record,
+      maxConcurrentRuns === undefined ? undefined : { maxActiveRuns: maxConcurrentRuns },
+    ));
     if (!created.ok) {
       await removeDescriptor(record, ids.activationDescriptorRef);
       await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
@@ -728,6 +717,12 @@ export function createManagedRunActivationCoordinator(
       await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
       emitRejected(input, "replay_conflict", ids.managedRunId);
       return ok({ kind: "rejected", reasonCode: "replay_conflict" });
+    }
+    if (created.value.kind === "capacity_exceeded") {
+      await removeDescriptor(record, ids.activationDescriptorRef);
+      await abandonPrepared(input, ids, "service_unavailable", "reap_safe");
+      emitRejected(input, "capacity_exceeded", ids.managedRunId);
+      return ok({ kind: "rejected", reasonCode: "capacity_exceeded" });
     }
     const durableRecord = created.value.record;
     emitObservationalEventSafely(
