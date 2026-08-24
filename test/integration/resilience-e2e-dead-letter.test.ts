@@ -104,6 +104,16 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     const logger = createMockLogger();
 
     const filePath = join(tmpDir, "dlq-test-1.jsonl");
+    const receiptAwareSendToChannel = vi.fn()
+      .mockResolvedValueOnce(ok({
+        delivered: false as const,
+        status: "rejected" as const,
+      }))
+      .mockResolvedValueOnce(ok({
+        delivered: true as const,
+        status: "accepted" as const,
+        platformMessageId: "message-retried",
+      }));
 
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
@@ -112,6 +122,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       maxAgeMs: 3_600_000,
       eventBus,
       logger,
+      receiptAwareSendToChannel,
     });
 
     // Track dead_letter_delivered events
@@ -147,14 +158,12 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     expect(enqueuedEvents.length).toBe(1);
     expect(enqueuedEvents[0]!.runId).toBe("run-1");
 
-    // First drain: sendToChannel fails -> attemptCount increments, entry stays
-    const failingSendToChannel = vi.fn().mockResolvedValue(false);
-    await dlq.drain(failingSendToChannel);
+    // First drain: an explicit rejection is safe to retry, so the entry stays.
+    const fallbackSendToChannel = vi.fn().mockResolvedValue(true);
+    await dlq.drain(fallbackSendToChannel);
 
-    // sendToChannel now receives an optional 4th argument (metadata/options).
-    // Use arrayContaining-style match via positional args with a trailing
-    // `undefined` so the test is resilient to either signature.
-    expect(failingSendToChannel).toHaveBeenCalledWith(
+    expect(receiptAwareSendToChannel).toHaveBeenNthCalledWith(
+      1,
       "echo",
       "ch1",
       "Task complete: quantum research findings",
@@ -162,16 +171,17 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     );
     expect(dlq.size()).toBe(1); // Still queued (retry not exhausted)
 
-    // Second drain: sendToChannel succeeds -> entry removed, event emitted
-    const succeedingSendToChannel = vi.fn().mockResolvedValue(true);
-    await dlq.drain(succeedingSendToChannel);
+    // Second drain: an accepted receipt removes the entry and emits delivery.
+    await dlq.drain(fallbackSendToChannel);
 
-    expect(succeedingSendToChannel).toHaveBeenCalledWith(
+    expect(receiptAwareSendToChannel).toHaveBeenNthCalledWith(
+      2,
       "echo",
       "ch1",
       "Task complete: quantum research findings",
       undefined,
     );
+    expect(fallbackSendToChannel).not.toHaveBeenCalled();
     expect(dlq.size()).toBe(0); // Entry removed
 
     // Verify announcement:dead_letter_delivered event was emitted
@@ -190,6 +200,10 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     const logger = createMockLogger();
 
     const filePath = join(tmpDir, "dlq-test-2.jsonl");
+    const receiptAwareSendToChannel = vi.fn().mockResolvedValue(ok({
+      delivered: false as const,
+      status: "rejected" as const,
+    }));
 
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
@@ -198,6 +212,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       maxAgeMs: 3_600_000,
       eventBus,
       logger,
+      receiptAwareSendToChannel,
     });
 
     // Enqueue an entry
@@ -214,21 +229,21 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
 
     expect(dlq.size()).toBe(1);
 
-    // First drain: sendToChannel fails -> attemptCount goes to 1 (= maxRetries)
-    const failingSend = vi.fn().mockResolvedValue(false);
-    await dlq.drain(failingSend);
+    // First drain: a proven rejection increments attemptCount to maxRetries.
+    const fallbackSendToChannel = vi.fn().mockResolvedValue(true);
+    await dlq.drain(fallbackSendToChannel);
 
     // Entry is still in queue after first drain (count incremented to 1)
     // and the next drain parks it because attemptCount >= maxRetries.
     expect(dlq.size()).toBe(1);
 
-    // Second drain: entry should be parked before sendToChannel is called.
-    const secondSend = vi.fn().mockResolvedValue(true);
-    await dlq.drain(secondSend);
+    // Second drain: entry is parked before either transport is called again.
+    await dlq.drain(fallbackSendToChannel);
 
-    // Evidence remains durable and sendToChannel is not called again.
+    // Evidence remains durable and the receipt-aware transport is not called again.
     expect(dlq.size()).toBe(1);
-    expect(secondSend).not.toHaveBeenCalled();
+    expect(receiptAwareSendToChannel).toHaveBeenCalledOnce();
+    expect(fallbackSendToChannel).not.toHaveBeenCalled();
 
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "run-2" }),
