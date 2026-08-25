@@ -33,7 +33,10 @@ import type {
  *   (prompt:submitted, session:started/ended/summary, observability:trajectory_degraded)
  * - ChannelEvents: channel, queue, streaming, typing, autoreply, sendpolicy, debounce, priority, retry, ack
  * - InfraEvents: config, plugin, hook, browser, auth, device, diagnostic, media, scheduler, system, metrics
+ * - CapabilityServiceEvents: linked capability-service activation and health transitions
+ * - ManagedRunEvents: managed-run binding, report, attention, evidence, revocation, and recovery transitions
  * - BackgroundRecoveryEvents: protected task-store recovery scan standing state
+ * - SchedulerTaskEvents: scheduler task execution and completion lifecycle
  * - TerminalEvents: interactive terminal-driver session lifecycle (session_state, spawn_failed)
  * - MediaGenerationEvents: image-generation lifecycle (image:requested/generated/delivered/failed)
  * - MediaVisionEvents: vision-analysis lifecycle (media.vision:requested/completed/failed)
