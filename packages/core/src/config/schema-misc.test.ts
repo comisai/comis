@@ -177,7 +177,7 @@ describe("ApprovalsConfigSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.enabled).toBe(false);
-      expect(result.data.defaultMode).toBe("auto");
+      expect(result.data.defaultMode).toBe("require");
       expect(result.data.rules).toEqual([]);
       expect(result.data.defaultTimeoutMs).toBe(300_000);
     }
@@ -207,7 +207,7 @@ describe("ApprovalRuleSchema", () => {
     if (result.success) {
       expect(result.data.mode).toBe("auto");
       expect(result.data.timeoutMs).toBe(300_000);
-      expect(result.data.minTrustLevel).toBe("verified");
+      expect(result.data.minTrustLevel).toBe("admin");
     }
   });
 });
@@ -239,6 +239,18 @@ describe("checkApprovalsConfig", () => {
   it("returns undefined when enabled=false with no rules", () => {
     const config = ApprovalsConfigSchema.parse({ enabled: false });
     expect(checkApprovalsConfig(config)).toBeUndefined();
+  });
+
+  it("names the knob when an enabled policy auto-approves every unmatched action", () => {
+    const config = ApprovalsConfigSchema.parse({ enabled: true, defaultMode: "auto" });
+    const warning = checkApprovalsConfig(config);
+    expect(warning).toBeDefined();
+    expect(warning).toContain("approvals.defaultMode");
+  });
+
+  it("rejects a trust floor outside the runtime trust levels", () => {
+    expect(ApprovalRuleSchema.safeParse({ actionPattern: "exec:*", minTrustLevel: "verified" }).success)
+      .toBe(false);
   });
 });
 
