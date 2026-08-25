@@ -681,23 +681,14 @@ describe("standalone capability-service protocol fixture server", () => {
     }
   });
 
-  it("runs as a test-only process and prints only its socket and credential source", async () => {
+  it("runs through the public package command and prints only its socket and credential source", async () => {
     const directory = temporaryDirectory();
-    const rootPackage = JSON.parse(readFileSync(resolve(REPOSITORY_ROOT, "package.json"), "utf8")) as {
-      scripts?: Record<string, string>;
-    };
-    const daemonPackage = JSON.parse(readFileSync(resolve(REPOSITORY_ROOT, "packages/daemon/package.json"), "utf8")) as {
-      scripts?: Record<string, string>;
-    };
-    expect(rootPackage.scripts?.["capability-service-fixture-host"]).toBe(
-      "pnpm --filter @comis/daemon capability-service-fixture-host",
-    );
-    expect(daemonPackage.scripts?.["capability-service-fixture-host"]).toBe(
-      "node --import tsx src/__tests__/capability-service-protocol-fixture-host-entry.ts",
-    );
-
-    const entryPath = resolve(here, "capability-service-protocol-fixture-host-entry.ts");
-    const child = spawn(process.execPath, ["--import", "tsx", entryPath, "--directory", directory], {
+    const child = spawn("pnpm", [
+      "--silent",
+      "capability-service-fixture-host",
+      "--directory",
+      directory,
+    ], {
       cwd: REPOSITORY_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
     });

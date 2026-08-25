@@ -8,6 +8,7 @@
  * import its validators.
  */
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -132,16 +133,15 @@ describe("capability-service protocol bundle contract", () => {
     expect(umbrella.bundledDependencies).toContain("@comis/capability-service-sdk");
   });
 
-  it("exposes deterministic generation and drift-check commands", () => {
-    const root = readJson<{ scripts?: Record<string, string> }>(resolve(REPO_ROOT, "package.json"));
+  it("executes the public protocol drift check against the committed bundle", () => {
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    const output = execFileSync("pnpm", ["capability-protocol:check"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
 
-    expect(root.scripts?.["capability-protocol:generate"]).toBe(
-      "tsx packages/capability-service-sdk/scripts/generate-protocol.ts",
-    );
-    expect(root.scripts?.["capability-protocol:check"]).toBe(
-      "tsx packages/capability-service-sdk/scripts/generate-protocol.ts --check",
-    );
-    expect(root.scripts?.["validate"]).toContain("pnpm capability-protocol:check");
+    expect(output).toContain(`matches ${manifest.bundleDigest}`);
+    expect(output).toContain(`${manifest.artifacts.length} artifacts`);
   });
 
   it("states one ratified group ceiling on the wire and in the domain", () => {
