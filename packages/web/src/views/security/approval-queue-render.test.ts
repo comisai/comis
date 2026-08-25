@@ -222,15 +222,33 @@ describe("IcApprovalQueue _renderRulesContent — policy sections", () => {
     expect(el.shadowRoot?.innerHTML).toContain("Allowed network hosts");
   });
 
-  it("renders the Approval Mode section with select + timeout input + save button", async () => {
+  it("renders the effective approval policy without a control that cannot write it", async () => {
+    el = document.createElement("ic-approval-queue") as IcApprovalQueue;
+    el.activeSubTab = "rules";
+    el.securityConfig = {};
+    el.approvalsConfig = {
+      enabled: true,
+      defaultMode: "require",
+      rules: [{ actionPattern: "memory.*", mode: "deny", minTrustLevel: "admin" }],
+    };
+    document.body.appendChild(el);
+    await el.updateComplete;
+    const html = el.shadowRoot?.innerHTML ?? "";
+    expect(html).toContain("Approval Policy");
+    expect(html).toContain("memory.*");
+    expect(html).toContain("deny");
+    expect(html).not.toContain("Save Rules");
+  });
+
+  it("reports an unconfigured approval policy rather than an invented default", async () => {
     el = document.createElement("ic-approval-queue") as IcApprovalQueue;
     el.activeSubTab = "rules";
     el.securityConfig = {};
     document.body.appendChild(el);
     await el.updateComplete;
-    expect(el.shadowRoot?.innerHTML).toContain("Approval Mode");
-    expect(el.shadowRoot?.innerHTML).toContain("Save Rules");
-    expect(el.shadowRoot?.querySelector(".number-input")).not.toBeNull();
+    const html = el.shadowRoot?.innerHTML ?? "";
+    expect(html).toContain("Approval Policy");
+    expect(html).not.toContain("Save Rules");
   });
 
   it("hydrates the toggle defaults from securityConfig.actionConfirmation when present", async () => {
@@ -245,16 +263,20 @@ describe("IcApprovalQueue _renderRulesContent — policy sections", () => {
     expect(el.shadowRoot?.querySelectorAll("ic-toggle").length).toBeGreaterThan(0);
   });
 
-  it("renders timeout input value computed as Math.round(_approvalRules.timeoutMs / 1000) seconds", async () => {
+  it("names the trust floor an auto rule needs before it approves without a human", async () => {
     el = document.createElement("ic-approval-queue") as IcApprovalQueue;
     el.activeSubTab = "rules";
     el.securityConfig = {};
+    el.approvalsConfig = {
+      enabled: true,
+      defaultMode: "require",
+      rules: [{ actionPattern: "cron.remove", mode: "auto", minTrustLevel: "admin" }],
+    };
     document.body.appendChild(el);
-    priv(el)._approvalRules = { defaultMode: "manual", timeoutMs: 30_000 };
     await el.updateComplete;
-    const input = el.shadowRoot?.querySelector(".number-input") as HTMLInputElement | null;
-    // 30,000 ms → 30 seconds
-    expect(input?.value).toBe("30");
+    const html = el.shadowRoot?.innerHTML ?? "";
+    expect(html).toContain("cron.remove");
+    expect(html).toContain("admin");
   });
 });
 

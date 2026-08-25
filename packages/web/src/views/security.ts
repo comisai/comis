@@ -36,10 +36,6 @@ interface SecurityConfig {
     subAgentToolGroups?: string[];
     subAgentMcpTools?: string;
   };
-  approvalRules?: {
-    defaultMode: string;
-    timeoutMs: number;
-  };
 }
 
 interface ProviderCacheStats {
@@ -69,7 +65,7 @@ import "./security/event-feed.js";
 import "./security/durable-audit-log.js";
 
 import type { IcSecurityEventFeed } from "./security/event-feed.js";
-import type { IcApprovalQueue } from "./security/approval-queue.js";
+import type { IcApprovalQueue, ApprovalsConfig } from "./security/approval-queue.js";
 import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 type LoadState = "loading" | "loaded" | "error";
@@ -282,6 +278,7 @@ export class IcSecurityView extends LitElement {
 
   // Config data
   @state() private _securityConfig: SecurityConfig = {};
+  @state() private _approvalsConfig: ApprovalsConfig = {};
 
   // Provider health state
   @state() private _providerHealth: ProviderHealthCard[] = [];
@@ -574,11 +571,12 @@ export class IcSecurityView extends LitElement {
 
     try {
       const configResult = await this.rpcClient.call<{
-        config: { security?: SecurityConfig };
+        config: { security?: SecurityConfig; approvals?: ApprovalsConfig };
         sections: string[];
       }>("config.read");
 
       this._securityConfig = configResult.config.security ?? {};
+      this._approvalsConfig = configResult.config.approvals ?? {};
       this._loadState = "loaded";
 
       void this._loadProviderHealth();
@@ -764,6 +762,7 @@ export class IcSecurityView extends LitElement {
           activeSubTab="rules"
           .rpc=${this.rpcClient}
           .securityConfig=${this._securityConfig}
+          .approvalsConfig=${this._approvalsConfig}
         ></ic-approval-queue>`;
       case "pending":
         return html`<ic-approval-queue

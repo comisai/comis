@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { RpcClient } from "../../api/rpc-client.js";
@@ -115,10 +115,23 @@ interface SecurityConfig {
     subAgentToolGroups?: string[];
     subAgentMcpTools?: string;
   };
-  approvalRules?: {
-    defaultMode: string;
-    timeoutMs: number;
-  };
+}
+
+/**
+ * The operator's `approvals` policy as loaded from config.
+ *
+ * Runtime-immutable: the section is edited in the config file and applied on
+ * daemon restart, so this view renders it and never offers to write it.
+ */
+export interface ApprovalsConfig {
+  enabled?: boolean;
+  defaultMode?: string;
+  rules?: Array<{
+    actionPattern: string;
+    mode?: string;
+    timeoutMs?: number;
+    minTrustLevel?: string;
+  }>;
 }
 
 /**
@@ -315,11 +328,11 @@ export class IcApprovalQueue extends LitElement {
 
   @property({ attribute: false }) rpc!: RpcClient;
   @property({ attribute: false }) securityConfig: SecurityConfig = {};
+  @property({ attribute: false }) approvalsConfig: ApprovalsConfig = {};
   @property({ type: String }) activeSubTab: "rules" | "pending" = "pending";
 
   @state() private _pendingApprovals: ScopedApprovalRequest[] = [];
   @state() private _resolvedApprovals: ResolvedApproval[] = [];
-  @state() private _approvalRules: { defaultMode: string; timeoutMs: number } = { defaultMode: "manual", timeoutMs: 0 };
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -329,9 +342,6 @@ export class IcApprovalQueue extends LitElement {
   override updated(changed: Map<string, unknown>): void {
     if (changed.has("rpc") && this.rpc) {
       void this._loadApprovals();
-    }
-    if (changed.has("securityConfig")) {
-      this._approvalRules = this.securityConfig.approvalRules ?? { defaultMode: "manual", timeoutMs: 0 };
     }
   }
 
@@ -564,20 +574,6 @@ export class IcApprovalQueue extends LitElement {
     await this._patchConfig("security.permission", updated);
   }
 
-  private async _saveApprovalRules(): Promise<void> {
-    if (!this.rpc) return;
-    try {
-      await this.rpc.call("config.patch", {
-        section: "security",
-        key: "approvalRules",
-        value: this._approvalRules,
-      });
-      IcToast.show("Approval rules updated", "success");
-    } catch (err) {
-      IcToast.show(err instanceof Error ? err.message : "Failed to update approval rules", "error");
-    }
-  }
-
   private _renderHistoryRow(resolved: ResolvedApproval) {
     const outcomeVariant = resolved.outcome === "approved" ? "success" : "error";
     const classVariant = { low: "success", medium: "warning", high: "error", critical: "error" }[resolved.classification] ?? "default";
@@ -596,13 +592,8 @@ export class IcApprovalQueue extends LitElement {
     const ac = this.securityConfig.actionConfirmation ?? {};
     const a2a = this.securityConfig.agentToAgent ?? {};
     const perm = this.securityConfig.permission ?? {};
-
-    const modeOptions = [
-      { value: "manual", label: "Manual (all require approval)" },
-      { value: "auto-low", label: "Auto-approve low risk" },
-      { value: "auto-medium", label: "Auto-approve low + medium risk" },
-      { value: "auto-all", label: "Auto-approve all (no approvals)" },
-    ];
+    const approvals = this.approvalsConfig ?? {};
+    const rules = approvals.rules ?? [];
 
     return html`
       <div class="policy-section">
@@ -656,25 +647,38 @@ export class IcApprovalQueue extends LitElement {
       </div>
 
       <div class="policy-section">
-        <div class="section-header">Approval Mode</div>
+        <div class="section-header">Approval Policy</div>
         <div class="rules-form">
-          <ic-select label="Default Mode" .value=${this._approvalRules.defaultMode} .options=${modeOptions}
-            @change=${(e: CustomEvent<string>) => { this._approvalRules = { ...this._approvalRules, defaultMode: e.detail }; }}
-          ></ic-select>
+          <span class="form-hint">
+            Edited in the operator config file under <code>approvals</code> and applied on
+            daemon restart. A request reaching the gate is matched against these rules in
+            order; the first match decides it, and an unmatched action falls to the default.
+          </span>
           <div class="form-field">
-            <label class="form-label">Timeout (seconds)</label>
-            <input class="number-input" type="number" min="0"
-              .value=${String(Math.round(this._approvalRules.timeoutMs / 1000))}
-              @change=${(e: Event) => {
-                const val = parseInt((e.target as HTMLInputElement).value, 10);
-                if (!isNaN(val) && val >= 0) {
-                  this._approvalRules = { ...this._approvalRules, timeoutMs: val * 1000 };
-                }
-              }}
-            />
-            <span class="form-hint">0 = no timeout (request waits indefinitely)</span>
+            <label class="form-label">Gate</label>
+            <span>${approvals.enabled ? "Enabled" : "Disabled"}</span>
           </div>
-          <button class="save-btn" @click=${() => this._saveApprovalRules()}>Save Rules</button>
+          <div class="form-field">
+            <label class="form-label">Unmatched actions</label>
+            <span>${approvals.defaultMode ?? "require"}</span>
+          </div>
+          ${rules.length === 0
+            ? html`<span class="form-hint">No rules configured — every gated action is put to a human.</span>`
+            : html`
+              <div class="form-field">
+                <label class="form-label">Rules</label>
+                ${rules.map((rule) => html`
+                  <div class="data-cell" role="row">
+                    <code>${rule.actionPattern}</code>
+                    <ic-tag variant=${rule.mode === "deny" ? "error" : rule.mode === "auto" ? "warning" : "default"}
+                      >${rule.mode ?? "auto"}</ic-tag>
+                    ${(rule.mode ?? "auto") === "auto"
+                      ? html`<span class="form-hint">needs ${rule.minTrustLevel ?? "admin"} trust</span>`
+                      : nothing}
+                  </div>
+                `)}
+              </div>
+            `}
         </div>
       </div>
     `;
