@@ -10,9 +10,14 @@ import {
   CAPABILITY_SERVICE_PROTOCOL_ID,
   CapabilityAbandonResponseSchema,
   CapabilityActivateResponseSchema,
+  CapabilityCancelResponseSchema,
   CapabilityConsumeApprovalResponseSchema,
+  CapabilityGroupAbandonResponseSchema,
+  CapabilityGroupActivateResponseSchema,
+  CapabilityGroupGetHostRollupResponseSchema,
   CapabilityHandshakeResponseSchema,
   CapabilityHealthResponseSchema,
+  CapabilityHeartbeatResponseSchema,
   CapabilityPutEvidenceResponseSchema,
   CapabilityReceiveAttentionResponseResponseSchema,
   CapabilityReleaseResponseSchema,
@@ -129,8 +134,18 @@ function validateResponse(method: CapabilityServiceRequest["method"], response: 
       return CapabilityAbandonResponseSchema.safeParse(response).success;
     case "managedRuns.activate":
       return CapabilityActivateResponseSchema.safeParse(response).success;
+    case "managedRuns.cancel":
+      return CapabilityCancelResponseSchema.safeParse(response).success;
     case "managedRuns.consumeApproval":
       return CapabilityConsumeApprovalResponseSchema.safeParse(response).success;
+    case "managedRunGroups.abandon":
+      return CapabilityGroupAbandonResponseSchema.safeParse(response).success;
+    case "managedRunGroups.activate":
+      return CapabilityGroupActivateResponseSchema.safeParse(response).success;
+    case "managedRunGroups.getHostRollup":
+      return CapabilityGroupGetHostRollupResponseSchema.safeParse(response).success;
+    case "managedRuns.heartbeat":
+      return CapabilityHeartbeatResponseSchema.safeParse(response).success;
     case "managedRuns.putEvidence":
       return CapabilityPutEvidenceResponseSchema.safeParse(response).success;
     case "managedRuns.receiveAttentionResponse":
@@ -161,6 +176,7 @@ export function createCapabilityServiceProtocolFixtureServer(
   const reports = new Map<string, ReportReplay>();
   const workspacePreparationRefs = new Set(options.workspacePreparationRefs ?? []);
   const attachmentPreparationRefs = new Set(options.attachmentPreparationRefs ?? []);
+  const managedRunGroupMembers = new Map<string, readonly string[]>();
   const openSockets = new Set<net.Socket>();
   let acceptedSequence = 0;
   let server: net.Server | undefined;
@@ -209,6 +225,14 @@ export function createCapabilityServiceProtocolFixtureServer(
             activatedAtMs: options.clock.now(),
           },
         };
+      case "managedRuns.cancel":
+        return {
+          jsonrpc: "2.0", id: request.id, result: {
+            managedRunId: request.params.managedRunId,
+            state: "cancelling",
+            acknowledgedAtMs: options.clock.now(),
+          },
+        };
       case "managedRuns.consumeApproval":
         return {
           jsonrpc: "2.0", id: request.id, result: {
@@ -221,6 +245,55 @@ export function createCapabilityServiceProtocolFixtureServer(
             approvedAtMs: options.clock.now(),
             expiresAtMs: options.clock.now() + 900_000,
             consumedAtMs: options.clock.now(),
+          },
+        };
+      case "managedRunGroups.abandon":
+        return {
+          jsonrpc: "2.0", id: request.id, result: {
+            managedRunGroupId: request.params.managedRunGroupId,
+            members: request.params.members.map((member) => ({
+              managedRunId: member.managedRunId,
+              outcome: "completed" as const,
+            })),
+            state: "abandoned",
+            disposition: request.params.disposition,
+          },
+        };
+      case "managedRunGroups.activate":
+        managedRunGroupMembers.set(
+          request.params.managedRunGroupId,
+          request.params.members.map((member) => member.managedRunId),
+        );
+        return {
+          jsonrpc: "2.0", id: request.id, result: {
+            managedRunGroupId: request.params.managedRunGroupId,
+            members: request.params.members.map((member) => ({
+              managedRunId: member.managedRunId,
+              outcome: "completed" as const,
+            })),
+            activatedAtMs: options.clock.now(),
+          },
+        };
+      case "managedRunGroups.getHostRollup": {
+        const memberManagedRunIds = managedRunGroupMembers.get(request.params.managedRunGroupId)
+          ?? ["managed-run_a"];
+        return {
+          jsonrpc: "2.0", id: request.id, result: {
+            managedRunGroupId: request.params.managedRunGroupId,
+            memberManagedRunIds,
+            stateCounts: { active: memberManagedRunIds.length },
+            attentionCount: 0,
+            activeCustodyCount: memberManagedRunIds.length,
+            updatedAtMs: options.clock.now(),
+          },
+        };
+      }
+      case "managedRuns.heartbeat":
+        return {
+          jsonrpc: "2.0", id: request.id, result: {
+            managedRunId: request.params.managedRunId,
+            acceptedAtMs: options.clock.now(),
+            lastHeartbeatAtMs: request.params.observedAtMs,
           },
         };
       case "managedRuns.putEvidence":
@@ -347,6 +420,21 @@ export function createCapabilityServiceProtocolFixtureServer(
         return errorResponse("invalid_params", id);
       }
     }
+    if (parsed.data.method === "managedRunGroups.activate") {
+      for (const member of parsed.data.params.members) {
+        if (
+          workspacePreparationRefs.has(member.externalRunRef)
+            !== (member.workspaceLeaseId !== undefined)
+        ) {
+          return errorResponse("invalid_params", id);
+        }
+        const hasAttachment = member.executionAttachmentId !== undefined
+          && member.attachmentTargetName !== undefined;
+        if (attachmentPreparationRefs.has(member.externalRunRef) !== hasAttachment) {
+          return errorResponse("invalid_params", id);
+        }
+      }
+    }
     if (
       (parsed.data.method === "capabilityServices.handshake" || parsed.data.method === "capabilityServices.health") &&
       parsed.data.params.serviceInstanceId !== options.serviceInstanceId
@@ -360,6 +448,19 @@ export function createCapabilityServiceProtocolFixtureServer(
       return errorResponse("precondition_failed", id);
     }
     if (parsed.data.method === "capabilityServices.health" && !options.activeScopes.includes("health")) {
+      return errorResponse("precondition_failed", id);
+    }
+    if (parsed.data.method === "managedRuns.heartbeat" && !options.activeScopes.includes("health")) {
+      return errorResponse("precondition_failed", id);
+    }
+    if (
+      (
+        parsed.data.method === "managedRunGroups.abandon"
+        || parsed.data.method === "managedRunGroups.activate"
+        || parsed.data.method === "managedRunGroups.getHostRollup"
+      )
+      && !options.activeScopes.includes("managed_run_group")
+    ) {
       return errorResponse("precondition_failed", id);
     }
     if (parsed.data.method === "managedRuns.report" && !options.activeScopes.includes("report")) {

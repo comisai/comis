@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
+  CAPABILITY_SERVICE_BUNDLE_DIGEST,
   CAPABILITY_SERVICE_METHODS,
   CAPABILITY_SERVICE_PROTOCOL_ID,
   CapabilityActivateRequestSchema,
@@ -14,6 +15,8 @@ import {
   CapabilityServiceRequestSchema,
   McpManagedRunGroupResultSchema,
   McpManagedRunResultSchema,
+  PROTOCOL_FIXTURE_SCENARIOS,
+  materializeProtocolFixtureDigest,
 } from "./index.js";
 
 const digest = "a".repeat(64);
@@ -29,6 +32,25 @@ function activateParams(overrides: Readonly<Record<string, unknown>> = {}) {
     ...overrides,
   };
 }
+
+describe("capability-service request catalog", () => {
+  it("accepts one canonical request for every advertised method", () => {
+    const validScenario = PROTOCOL_FIXTURE_SCENARIOS.find((scenario) => scenario.class === "valid");
+    if (!validScenario) throw new Error("Missing valid capability-service fixture scenario");
+    const acceptedMethods = new Set<string>();
+
+    for (const step of validScenario.steps) {
+      if (step.target !== "request") continue;
+      const parsed = CapabilityServiceRequestSchema.safeParse(
+        materializeProtocolFixtureDigest(step.payload, CAPABILITY_SERVICE_BUNDLE_DIGEST),
+      );
+      expect(parsed.success).toBe(true);
+      if (parsed.success) acceptedMethods.add(parsed.data.method);
+    }
+
+    expect([...acceptedMethods].sort()).toEqual([...CAPABILITY_SERVICE_METHODS]);
+  });
+});
 
 describe("capability-service execution-attachment contract", () => {
   it("publishes a service-scoped attention response receive method", () => {

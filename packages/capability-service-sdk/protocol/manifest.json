@@ -22,7 +22,7 @@
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "3fdf1d3854a1f7867c927e63fbd2043e65a14d6e26667300c3d28ae1f2525922"
+      "sha256": "eef3f8a6c00ccbafc0beb80432193f30f5d5365c185f62e38303d507c2616fc7"
     },
     {
       "path": "fixtures/version-mismatch.json",
@@ -173,7 +173,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "dea251a955a4d68faf402aa6977db1b4544737e43aa1f624f39dc359008f6414",
+  "bundleDigest": "1e7f3838bcc08bf9b580375e8afe2a11f5edd14bc944c9968724845e4516ef6d",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",

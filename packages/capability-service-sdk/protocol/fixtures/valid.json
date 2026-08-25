@@ -65,6 +65,129 @@
     {
       "expectation": "accept",
       "payload": {
+        "id": "operation_group_activate",
+        "jsonrpc": "2.0",
+        "method": "managedRunGroups.activate",
+        "params": {
+          "managedRunGroupId": "managed-run-group_a",
+          "members": [
+            {
+              "attachmentTargetName": "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock",
+              "executionAttachmentId": "execution-attachment_group-member-a",
+              "externalRunRef": "external-run_group-member-a",
+              "managedRunId": "managed-run_group-member-a",
+              "registrationNonce": "registration-nonce_group-member-a",
+              "workspaceLeaseId": "workspace-lease_group-member-a"
+            }
+          ],
+          "operationId": "operation_group_activate",
+          "registrationNonce": "group-registration-nonce_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_activate",
+        "jsonrpc": "2.0",
+        "result": {
+          "activatedAtMs": 1800000000000,
+          "managedRunGroupId": "managed-run-group_a",
+          "members": [
+            {
+              "managedRunId": "managed-run_group-member-a",
+              "outcome": "completed"
+            }
+          ]
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "group-activate-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_rollup",
+        "jsonrpc": "2.0",
+        "method": "managedRunGroups.getHostRollup",
+        "params": {
+          "managedRunGroupId": "managed-run-group_a",
+          "operationId": "operation_group_rollup"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_rollup",
+        "jsonrpc": "2.0",
+        "result": {
+          "activeCustodyCount": 1,
+          "attentionCount": 0,
+          "managedRunGroupId": "managed-run-group_a",
+          "memberManagedRunIds": [
+            "managed-run_group-member-a"
+          ],
+          "stateCounts": {
+            "active": 1
+          },
+          "updatedAtMs": 1800000000000
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "group-get-host-rollup-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_abandon",
+        "jsonrpc": "2.0",
+        "method": "managedRunGroups.abandon",
+        "params": {
+          "disposition": "preserve",
+          "managedRunGroupId": "managed-run-group_a",
+          "members": [
+            {
+              "externalRunRef": "external-run_group-member-a",
+              "managedRunId": "managed-run_group-member-a",
+              "registrationNonce": "registration-nonce_group-member-a"
+            }
+          ],
+          "operationId": "operation_group_abandon",
+          "reason": "owner_cancelled",
+          "registrationNonce": "group-registration-nonce_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_abandon",
+        "jsonrpc": "2.0",
+        "result": {
+          "disposition": "preserve",
+          "managedRunGroupId": "managed-run-group_a",
+          "members": [
+            {
+              "managedRunId": "managed-run_group-member-a",
+              "outcome": "completed"
+            }
+          ],
+          "state": "abandoned"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "group-abandon-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
         "id": "operation_handshake",
         "jsonrpc": "2.0",
         "method": "capabilityServices.handshake",
@@ -295,6 +418,35 @@
     {
       "expectation": "accept",
       "payload": {
+        "id": "operation_cancel",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.cancel",
+        "params": {
+          "managedRunId": "managed-run_a",
+          "operationId": "operation_cancel",
+          "reason": "owner_cancelled"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_cancel",
+        "jsonrpc": "2.0",
+        "result": {
+          "acknowledgedAtMs": 1800000000000,
+          "managedRunId": "managed-run_a",
+          "state": "cancelling"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "cancel-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
         "id": "operation_release",
         "jsonrpc": "2.0",
         "method": "managedRuns.release",
@@ -424,6 +576,35 @@
       },
       "schemaExpectation": "accept",
       "target": "health-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_heartbeat",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.heartbeat",
+        "params": {
+          "managedRunId": "managed-run_a",
+          "observedAtMs": 1800000000000,
+          "operationId": "operation_heartbeat"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_heartbeat",
+        "jsonrpc": "2.0",
+        "result": {
+          "acceptedAtMs": 1800000000010,
+          "lastHeartbeatAtMs": 1800000000000,
+          "managedRunId": "managed-run_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "heartbeat-response"
     },
     {
       "expectation": "accept",

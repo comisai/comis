@@ -187,6 +187,119 @@ describe("standalone capability-service protocol fixture server", () => {
         },
       });
 
+      const cancel = await callSocket(socketPath, authenticatedFrame(request(
+        "operation_cancel",
+        "managedRuns.cancel",
+        {
+          operationId: "operation_cancel",
+          managedRunId: "managed-run_a",
+          reason: "owner_cancelled",
+        },
+      )));
+      expect(cancel).toEqual({
+        jsonrpc: "2.0",
+        id: "operation_cancel",
+        result: {
+          managedRunId: "managed-run_a",
+          state: "cancelling",
+          acknowledgedAtMs: NOW_MS,
+        },
+      });
+
+      const heartbeat = await callSocket(socketPath, authenticatedFrame(request(
+        "operation_heartbeat",
+        "managedRuns.heartbeat",
+        {
+          operationId: "operation_heartbeat",
+          managedRunId: "managed-run_a",
+          observedAtMs: NOW_MS - 10,
+        },
+      )));
+      expect(heartbeat).toEqual({
+        jsonrpc: "2.0",
+        id: "operation_heartbeat",
+        result: {
+          managedRunId: "managed-run_a",
+          acceptedAtMs: NOW_MS,
+          lastHeartbeatAtMs: NOW_MS - 10,
+        },
+      });
+
+      const groupActivate = await callSocket(socketPath, authenticatedFrame(request(
+        "operation_group_activate",
+        "managedRunGroups.activate",
+        {
+          operationId: "operation_group_activate",
+          managedRunGroupId: "managed-run-group_a",
+          registrationNonce: "group-registration-nonce_a",
+          members: [{
+            managedRunId: "managed-run_group-member-a",
+            externalRunRef: "external-run_a",
+            registrationNonce: "registration-nonce_a",
+            workspaceLeaseId: "workspace-lease_group-member-a",
+            executionAttachmentId: "execution-attachment_group-member-a",
+            attachmentTargetName: `attachment-${"b".repeat(32)}.sock`,
+          }],
+        },
+      )));
+      expect(groupActivate).toEqual({
+        jsonrpc: "2.0",
+        id: "operation_group_activate",
+        result: {
+          managedRunGroupId: "managed-run-group_a",
+          members: [{ managedRunId: "managed-run_group-member-a", outcome: "completed" }],
+          activatedAtMs: NOW_MS,
+        },
+      });
+
+      const groupRollup = await callSocket(socketPath, authenticatedFrame(request(
+        "operation_group_rollup",
+        "managedRunGroups.getHostRollup",
+        {
+          operationId: "operation_group_rollup",
+          managedRunGroupId: "managed-run-group_a",
+        },
+      )));
+      expect(groupRollup).toEqual({
+        jsonrpc: "2.0",
+        id: "operation_group_rollup",
+        result: {
+          managedRunGroupId: "managed-run-group_a",
+          memberManagedRunIds: ["managed-run_group-member-a"],
+          stateCounts: { active: 1 },
+          attentionCount: 0,
+          activeCustodyCount: 1,
+          updatedAtMs: NOW_MS,
+        },
+      });
+
+      const groupAbandon = await callSocket(socketPath, authenticatedFrame(request(
+        "operation_group_abandon",
+        "managedRunGroups.abandon",
+        {
+          operationId: "operation_group_abandon",
+          managedRunGroupId: "managed-run-group_a",
+          registrationNonce: "group-registration-nonce_a",
+          members: [{
+            managedRunId: "managed-run_group-member-a",
+            externalRunRef: "external-run_a",
+            registrationNonce: "registration-nonce_a",
+          }],
+          reason: "owner_cancelled",
+          disposition: "preserve",
+        },
+      )));
+      expect(groupAbandon).toEqual({
+        jsonrpc: "2.0",
+        id: "operation_group_abandon",
+        result: {
+          managedRunGroupId: "managed-run-group_a",
+          members: [{ managedRunId: "managed-run_group-member-a", outcome: "completed" }],
+          state: "abandoned",
+          disposition: "preserve",
+        },
+      });
+
       const report = await callSocket(socketPath, authenticatedFrame(request(
         "operation_report",
         "managedRuns.report",

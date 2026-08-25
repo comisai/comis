@@ -557,6 +557,8 @@ export const CapabilityServiceRequestSchema = z.discriminatedUnion("method", [
   CapabilityActivateRequestSchema,
   CapabilityCancelRequestSchema,
   CapabilityConsumeApprovalRequestSchema,
+  CapabilityGroupAbandonRequestSchema,
+  CapabilityGroupActivateRequestSchema,
   CapabilityHandshakeRequestSchema,
   CapabilityHeartbeatRequestSchema,
   CapabilityHealthRequestSchema,

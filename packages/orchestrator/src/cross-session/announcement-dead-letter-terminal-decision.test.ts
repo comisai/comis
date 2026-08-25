@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -62,6 +63,23 @@ describe("announcement terminal decisions", () => {
   it("rejects malformed terminal decision and retirement record shapes", () => {
     const created = createTerminalDecisionRecord(owner, "delivered", 10);
     if (!created.ok) throw created.error;
+    const malformedProducer = {
+      kind: "tool_result",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      conversationRef: ConversationRefSchema.parse(`cv_${"c".repeat(43)}`),
+      toolCallId: "tool-call-a",
+    };
+    const completionKeyDigests = ["b".repeat(64)];
+    const malformedRetirement = {
+      recordType: "terminal_retirement",
+      id: `retirement:${createHash("sha256")
+        .update(JSON.stringify({ producer: malformedProducer, completionKeyDigests }), "utf8")
+        .digest("hex")}`,
+      producer: malformedProducer,
+      completionKeyDigests,
+      preparedAt: 1,
+    };
 
     for (const invalid of [
       null,
@@ -82,7 +100,7 @@ describe("announcement terminal decisions", () => {
     ]) {
       expect(isAnnouncementTerminalDecisionRecord(invalid)).toBe(false);
     }
-    for (const invalid of [null, [], {}, {
+    for (const invalid of [null, [], {}, malformedRetirement, {
       recordType: "terminal_retirement",
       id: `retirement:${"a".repeat(64)}`,
       producer: { kind: "graph", tenantId: "tenant_a", graphId: "" },
@@ -387,6 +405,7 @@ describe("announcement terminal decisions", () => {
       agentId: "agent_a",
       conversationRef: ConversationRefSchema.parse(`cv_${"c".repeat(43)}`),
       toolCallId: "tool-call-a",
+      operationId: "operation-a",
     };
     const graphProducer = {
       kind: "graph" as const,

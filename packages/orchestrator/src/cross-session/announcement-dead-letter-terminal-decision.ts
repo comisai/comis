@@ -10,8 +10,9 @@ import type {
   QuarantinedInvalidAnnouncementRecord,
   QuarantineReleaseOutcome,
 } from "@comis/core";
-import { ConversationRefSchema, safePath, systemNowMs } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import { isAnnouncementRetirementProducer } from "./announcement-dead-letter-guards.js";
 import { announcementRecoveryKey } from "./announcement-dead-letter-identity.js";
 import { MAX_DEAD_LETTER_ROW_BYTES } from "./announcement-dead-letter-invalid.js";
 
@@ -318,36 +319,12 @@ export function isAnnouncementTerminalRetirementRecord(
     || !Number.isFinite(record.preparedAt)
   ) return false;
   const producer = record.producer as Record<string, unknown>;
-  if (!isRetirementProducer(producer)) return false;
+  if (!isAnnouncementRetirementProducer(producer)) return false;
   const expectedId = retirementIntentId(
-    producer as unknown as AnnouncementRetirementProducer,
+    producer,
     record.completionKeyDigests as string[],
   );
   return expectedId.ok && expectedId.value === record.id;
-}
-
-function isRetirementProducer(
-  producer: Record<string, unknown>,
-): producer is Record<string, unknown> & AnnouncementRetirementProducer {
-  if (typeof producer.tenantId !== "string" || producer.tenantId.length === 0) return false;
-  switch (producer.kind) {
-    case "session":
-      return typeof producer.agentId === "string"
-        && producer.agentId.length > 0
-        && ConversationRefSchema.safeParse(producer.conversationRef).success
-        && typeof producer.checkpointId === "string"
-        && producer.checkpointId.length > 0;
-    case "tool_result":
-      return typeof producer.agentId === "string"
-        && producer.agentId.length > 0
-        && ConversationRefSchema.safeParse(producer.conversationRef).success
-        && typeof producer.toolCallId === "string"
-        && producer.toolCallId.length > 0;
-    case "graph":
-      return typeof producer.graphId === "string" && producer.graphId.length > 0;
-    default:
-      return false;
-  }
 }
 
 export function createAnnouncementTerminalDecisionStore(
@@ -854,7 +831,7 @@ export function createAnnouncementTerminalDecisionStore(
       if (
         completionKeys.length === 0
         || completionKeys.some((key) => typeof key !== "string" || key.length === 0)
-        || !isRetirementProducer(producer as unknown as Record<string, unknown>)
+        || !isAnnouncementRetirementProducer(producer)
       ) {
         return err(new Error("Announcement terminal decision retirement intent is invalid"));
       }

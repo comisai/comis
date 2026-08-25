@@ -6,9 +6,14 @@ import {
   CAPABILITY_SERVICE_PROTOCOL_ID,
   CapabilityAbandonResponseSchema,
   CapabilityActivateResponseSchema,
+  CapabilityCancelResponseSchema,
   CapabilityConsumeApprovalResponseSchema,
+  CapabilityGroupAbandonResponseSchema,
+  CapabilityGroupActivateResponseSchema,
+  CapabilityGroupGetHostRollupResponseSchema,
   CapabilityHandshakeResponseSchema,
   CapabilityHealthResponseSchema,
+  CapabilityHeartbeatResponseSchema,
   CapabilityPutEvidenceResponseSchema,
   CapabilityReceiveAttentionResponseResponseSchema,
   CapabilityReleaseResponseSchema,
@@ -46,9 +51,14 @@ export interface CapabilityServiceProtocolFixtureHost {
 const RESPONSE_SCHEMAS = {
   "abandon-response": CapabilityAbandonResponseSchema,
   "activate-response": CapabilityActivateResponseSchema,
+  "cancel-response": CapabilityCancelResponseSchema,
   "error-response": CapabilityServiceErrorResponseSchema,
+  "group-abandon-response": CapabilityGroupAbandonResponseSchema,
+  "group-activate-response": CapabilityGroupActivateResponseSchema,
+  "group-get-host-rollup-response": CapabilityGroupGetHostRollupResponseSchema,
   "handshake-response": CapabilityHandshakeResponseSchema,
   "health-response": CapabilityHealthResponseSchema,
+  "heartbeat-response": CapabilityHeartbeatResponseSchema,
   "consume-approval-response": CapabilityConsumeApprovalResponseSchema,
   "put-evidence-response": CapabilityPutEvidenceResponseSchema,
   "receive-attention-response": CapabilityReceiveAttentionResponseResponseSchema,
@@ -172,6 +182,23 @@ function validateRequest(
       && parsed.data.params.attachmentTargetName !== undefined;
     if (requestedAttachment !== undefined && requestedAttachment !== hasAttachment) {
       return reject("invalid_params");
+    }
+  }
+  if (parsed.data.method === "managedRunGroups.activate") {
+    for (const member of parsed.data.params.members) {
+      const requestedWorkspace = preparationWorkspaceRequests.get(member.externalRunRef);
+      if (
+        requestedWorkspace !== undefined
+        && requestedWorkspace !== (member.workspaceLeaseId !== undefined)
+      ) {
+        return reject("invalid_params");
+      }
+      const requestedAttachment = preparationAttachmentRequests.get(member.externalRunRef);
+      const hasAttachment = member.executionAttachmentId !== undefined
+        && member.attachmentTargetName !== undefined;
+      if (requestedAttachment !== undefined && requestedAttachment !== hasAttachment) {
+        return reject("invalid_params");
+      }
     }
   }
 
