@@ -250,6 +250,14 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Generate the reviewed Go fixture from the current protocol
+        run: |
+          comis_commit="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+          node .github/scripts/prepare-capability-service-fixture.mjs \
+            --source-root "$GITHUB_WORKSPACE" \
+            --source-commit "$comis_commit" \
+            --fixture-root "$GITHUB_WORKSPACE/comis-dev-crew"
+
       - name: Install system dependencies (ffmpeg, bubblewrap)
         # ffmpeg/ffprobe drive the media-conversion skill; bubblewrap is the
         # OS-level exec sandbox. Missing tools make the daemon emit startup
