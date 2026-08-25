@@ -83,6 +83,7 @@ import { setupChildProcessCleanup } from "./setup-child-process-cleanup.js";
 // Agent-scoped rpcCall factory (the _capabilities injection point)
 // extracted to setup-tools-capabilities.ts (file-size cap).
 import { makeCreateAgentRpcCall } from "./setup-tools-capabilities.js";
+import { createMcpImageResultPolicy } from "./setup-tools-mcp-images.js";
 // Descriptor registry on the `./platform-tools` subpath. Replaces the
 // prior inline 38-call enumeration of `createXTool(agentRpc, ...)`
 // factories.
@@ -415,7 +416,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // in scope — stamps the timestamp and does the emit. Payload carries only
       // sizes + identifiers, never the truncated content.
       (e) => eventBus.emit("mcp:server:result_truncated", { ...e, timestamp: systemNowMs() }),
-      privateMetadataBridge, approvalGate,
+      privateMetadataBridge, approvalGate, createMcpImageResultPolicy(skillsLogger),
     );
     return agentMcpTools;
   }
