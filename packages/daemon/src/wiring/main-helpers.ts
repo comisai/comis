@@ -19,7 +19,7 @@ import {
   formatSessionKey,
   conversationScopeToSessionKey,
 } from "@comis/core";
-import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, RootRunIdResolver, ComisLogger, TypedEventBus } from "@comis/core";
+import type { ImageGenerationPort, OAuthTokenManager, ClockPort, AppConfig, VideoGenerationPort, RootRunIdResolver, ComisLogger, TypedEventBus } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createFileStateTracker, createImageGenRateLimiter } from "@comis/skills";
 import { createLeaseManager, type LeaseManager } from "@comis/infra";
@@ -194,6 +194,35 @@ export function createBoundedAutonomyWiring(deps: {
  * restores into the in-memory ApprovalGate, then deletes the files.
  * Best-effort on JSON parse failure: log warn + unlink.
  */
+/**
+ * Build the approval gate from operator config.
+ *
+ * Every getter reads through `container.config` on each call so a config
+ * reload is observed; `approvals` is fully defaulted by its schema, so no
+ * call-site fallback is needed or wanted — a literal here could only drift
+ * from the schema it is meant to mirror.
+ */
+export function createConfiguredApprovalGate(deps: {
+  eventBus: TypedEventBus;
+  getApprovals: () => AppConfig["approvals"];
+  clock: ClockPort;
+  timers: TimerPort;
+  fingerprintSecret: string;
+  daemonLogger: LoggingResult["daemonLogger"];
+}): ReturnType<typeof createApprovalGate> {
+  return createApprovalGate({
+    eventBus: deps.eventBus,
+    getTimeoutMs: () => deps.getApprovals().defaultTimeoutMs,
+    getDenialCacheTtlMs: () => deps.getApprovals().denialCacheTtlMs,
+    getBatchApprovalTtlMs: () => deps.getApprovals().batchApprovalTtlMs,
+    getPolicy: deps.getApprovals,
+    clock: deps.clock,
+    timers: deps.timers,
+    fingerprintSecret: deps.fingerprintSecret,
+    logger: deps.daemonLogger,
+  });
+}
+
 export function restoreApprovalState(deps: {
   approvalGate: ReturnType<typeof createApprovalGate>;
   dataDir: string;

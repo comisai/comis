@@ -12,7 +12,6 @@
 import {
   bootstrap,
   loadEnvFile,
-  createApprovalGate,
   createAuditAggregator,
   createConfigGitManager,
   parseConfigPaths,
@@ -180,7 +179,7 @@ import {
 } from "./wiring/daemon-entrypoint.js";
 import { wireHealthLogging } from "./health-metrics.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint, wirePostAgentsCleanup, createBootDeadLetterRecoveryObserver } from "./wiring/main-helpers.js";
+import { createConfiguredApprovalGate, restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint, wirePostAgentsCleanup, createBootDeadLetterRecoveryObserver } from "./wiring/main-helpers.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
@@ -1825,16 +1824,13 @@ async function bootAgents(
   const interactiveCallbackSigningSecret = resolveInteractiveCallbackSigningSecret(secretStore, daemonLogger);
 
   // 6.6.8.6. Approval gate (moved before channels for chat command interception)
-  const approvalGate = createApprovalGate({
+  const approvalGate = createConfiguredApprovalGate({
     eventBus: container.eventBus,
-    getTimeoutMs: () => container.config.approvals?.defaultTimeoutMs ?? 30_000,
-    getDenialCacheTtlMs: () => container.config.approvals?.denialCacheTtlMs ?? 60_000,
-    getBatchApprovalTtlMs: () => container.config.approvals?.batchApprovalTtlMs ?? 30_000,
-    getPolicy: () => container.config.approvals,
-    clock,                // wall-clock reads
-    timers,               // setTimeout scheduling
+    getApprovals: () => container.config.approvals,
+    clock,
+    timers,
     fingerprintSecret: interactiveCallbackSigningSecret,
-    logger: daemonLogger, // Approval cache hit/miss debug logging
+    daemonLogger,
   });
 
   // 6.6.8.6.1 + 6.6.8.6.2. Restore pending approvals + approval cache from previous session
