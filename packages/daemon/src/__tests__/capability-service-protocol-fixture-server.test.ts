@@ -690,6 +690,11 @@ describe("standalone capability-service protocol fixture server", () => {
       directory,
     ], {
       cwd: REPOSITORY_ROOT,
+      // Own process group. The public command reaches the host through two
+      // nested package-manager processes, and `pnpm` does not forward a signal
+      // to its grandchild on every platform, so signalling the group reaches the
+      // host itself instead of depending on that forwarding.
+      detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -742,12 +747,16 @@ describe("standalone capability-service protocol fixture server", () => {
         result: { protocolId: CAPABILITY_SERVICE_PROTOCOL_ID, bundleDigest: BUNDLE_DIGEST },
       });
 
-      child.kill("SIGTERM");
-      expect(await childExit(child)).toEqual({ code: 0, signal: null });
-      expect(existsSync(ready.socketPath)).toBe(false);
-      expect(existsSync(ready.credentialSource.path)).toBe(false);
+      // `child` is the package-manager wrapper, not the fixture host, so its own
+      // exit disposition reports how the wrapper died rather than whether the
+      // host shut down cleanly. Assert the contract the host owns instead: its
+      // SIGTERM handler removes the credential and closes the socket, and a host
+      // that is killed outright leaves both behind.
+      signalProcessGroup(child, "SIGTERM");
+      await childExit(child);
+      await expect(untilRemoved([ready.socketPath, ready.credentialSource.path])).resolves.toEqual([]);
     } finally {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      if (child.exitCode === null && child.signalCode === null) signalProcessGroup(child, "SIGKILL");
     }
   }, 20_000);
 });
@@ -770,6 +779,26 @@ function firstOutputLine(child: ChildProcess, observe: (chunk: string) => void):
       rejectLine(new Error(`fixture host exited before readiness: code=${String(code)} signal=${String(signal)}`));
     });
   });
+}
+
+function signalProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    // The group is already gone, or this platform refused the group signal; fall
+    // back to the direct child so a stray process is never left running.
+    child.kill(signal);
+  }
+}
+
+async function untilRemoved(paths: readonly string[], timeoutMs = 10_000): Promise<string[]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const remaining = paths.filter((path) => existsSync(path));
+    if (remaining.length === 0 || Date.now() >= deadline) return remaining;
+    await new Promise((settle) => setTimeout(settle, 25));
+  }
 }
 
 function childExit(child: ChildProcess): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
