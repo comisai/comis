@@ -67,6 +67,7 @@ export {
   classifyMcpErrorType,
 } from "./bridge/mcp-tool-bridge.js";
 export { createManagedMcpPrivateMetadataBridge } from "./bridge/managed-mcp-private-metadata.js";
+export type { McpImageResultPolicy, McpImageDroppedEvent } from "./bridge/mcp-result-images.js";
 
 // Prompt processor
 export {

@@ -36,6 +36,7 @@ import type {
 } from "../integrations/mcp-client/index.js";
 import { sanitizeMcpToolResult } from "../../tools/integrations/mcp-result-sanitizer.js";
 import { truncateJsonAware } from "./json-truncate.js";
+import { collectMcpImageBlocks, type McpImageResultPolicy } from "./mcp-result-images.js";
 
 // ---------------------------------------------------------------------------
 // Diagnostic logger interface
@@ -326,6 +327,10 @@ export function sanitizeMcpToolName(qualifiedName: string): string {
  * @param approvalGate - Existing host approval subsystem. Operator-classified
  *   destructive managed tools fail closed when the gate is unavailable and
  *   reach the external service only after an affirmative resolution.
+ * @param imageResults - Host policy for `image` content blocks in tool results:
+ *   the sanitizer every block must pass before it becomes model-visible, the
+ *   per-call cap, and a content-free drop callback. Absent ⇒ image blocks are
+ *   dropped with a notice in the text result (never silently).
  * @returns AgentTool instances ready for the agent executor
  */
 export function mcpToolsToAgentTools(
@@ -347,6 +352,7 @@ export function mcpToolsToAgentTools(
   }) => void,
   privateMetadataBridge?: McpPrivateMetadataBridge,
   approvalGate?: ApprovalGate,
+  imageResults?: McpImageResultPolicy,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   /** Log the content shape of an execute() return value for content-loss diagnosis. */
@@ -366,6 +372,7 @@ export function mcpToolsToAgentTools(
         hasDetails: !!result.details,
         firstBlockType: firstBlock?.type,
         firstBlockTextLen: firstBlock?.type === "text" ? (firstBlock as { text: string }).text.length : undefined,
+        imageBlockCount: result.content?.filter((block) => block.type === "image").length ?? 0,
         isError,
       },
       "MCP bridge execute() result shape",
@@ -623,10 +630,22 @@ export function mcpToolsToAgentTools(
           });
         }
 
-        const successResult = {
-          content: [{ type: "text" as const, text: textParts || "Tool returned no text content" }],
-          details: { success: true },
-        };
+        // Image blocks are sanitized, capped, and prefixed with a runtime-authored
+        // notice (mcp-result-images.ts). Text stays first so it survives context
+        // pruning; when the server returned images only, the notice is the first
+        // block, so "no text content" never masks an image result.
+        const images = await collectMcpImageBlocks(value.content, imageResults, {
+          server: serverName,
+          tool: tool.name,
+          traceId: tryGetContext()?.traceId ?? "",
+        });
+        const content: AgentToolResult<{ success: boolean }>["content"] = [];
+        if (textParts) content.push({ type: "text", text: textParts });
+        else if (!images.notice) content.push({ type: "text", text: "Tool returned no text content" });
+        if (images.notice) content.push({ type: "text", text: images.notice });
+        content.push(...images.images);
+
+        const successResult = { content, details: { success: true } };
         logResult(successResult, _toolCallId, sanitizedName, false);
         return successResult;
       },

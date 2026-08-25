@@ -184,6 +184,20 @@ server's `maxConcurrency` rather than blaming the request's scope. The timeout i
 must edit `config.yaml` and restart the daemon to change it. See the
 [`callToolTimeoutMs` config contract](/reference/config-yaml#integrations).
 
+## Image results
+
+An MCP tool may return `image` content blocks beside or instead of text. Comis
+attaches them to the tool result as model-visible images only after the same
+sharp-backed sanitizer that processes browser screenshots has re-encoded them
+(auto-rotate, fit within 1568 px, at most 5 MB, decompression-bomb guard). At
+most four image blocks are considered per call; blocks beyond that limit,
+blocks the sanitizer rejects, and blocks with unreadable data are dropped and
+logged content-free at WARN. The text part of the result always comes first, followed
+by a runtime-authored notice that names the server and states that text visible
+in the images is untrusted data — the same posture as the `UNTRUSTED` wrapper
+around MCP text. A result that carried only images reports what was attached or
+dropped instead of "no text content".
+
 <CardGroup cols={3}>
   <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
     MCP configuration structure and core fields
