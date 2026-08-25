@@ -84,6 +84,12 @@ describe.skipIf(!canRunManagedGitJail())("managed linked-worktree Git jail", () 
       });
 
       expect(committed.status, committed.stderr).toBe(0);
+      expect(readFileSync(sharedRef, "utf8")).toBe(sharedRefBefore);
+      expect(readFileSync(join(commonDir, "config"), "utf8")).toBe(sharedConfigBefore);
+      expect(readFileSync(join(gitDir, "index"))).toEqual(sharedIndexBefore);
+      expect(readFileSync(siblingSentinel, "utf8")).toBe("shared sibling state\n");
+      expect(existsSync(join(workspace, "shared-hook-ran"))).toBe(false);
+
       const privateHead = readFileSync(join(mounts.value.privateCommon.sourcePath, "refs", "heads", "task-a"), "utf8").trim();
       expect(privateHead).not.toBe(sharedRefBefore.trim());
       expect(execFileSync("git", [
@@ -95,11 +101,6 @@ describe.skipIf(!canRunManagedGitJail())("managed linked-worktree Git jail", () 
       ]);
       expect(execFileSync("git", ["-C", repository, "rev-parse", "task-a-promoted"], { encoding: "utf8" }).trim())
         .toBe(privateHead);
-      expect(readFileSync(sharedRef, "utf8")).toBe(sharedRefBefore);
-      expect(readFileSync(join(commonDir, "config"), "utf8")).toBe(sharedConfigBefore);
-      expect(readFileSync(join(gitDir, "index"))).toEqual(sharedIndexBefore);
-      expect(readFileSync(siblingSentinel, "utf8")).toBe("shared sibling state\n");
-      expect(existsSync(join(workspace, "shared-hook-ran"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
