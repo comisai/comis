@@ -50,7 +50,7 @@ export function restoreApprovalState(deps: {
   daemonLogger: LoggingResult["daemonLogger"];
 }): void {
   const { approvalGate, dataDir, containerDataDir, daemonLogger } = deps;
-  // 6.6.8.6.1. Restore pending approvals from previous restart
+  // Pending approvals the previous process serialized on shutdown.
   const approvalRestorePath = safePath(containerDataDir || dataDir, "restart-approvals.json");
   if (existsSync(approvalRestorePath)) {
     try {
@@ -70,7 +70,7 @@ export function restoreApprovalState(deps: {
     }
   }
 
-  // 6.6.8.6.2. Restore approval cache from previous session
+  // The approval cache, so a batch approved before restart is not re-prompted.
   const approvalCacheRestorePath = safePath(containerDataDir || dataDir, "restart-approval-cache.json");
   if (existsSync(approvalCacheRestorePath)) {
     try {
