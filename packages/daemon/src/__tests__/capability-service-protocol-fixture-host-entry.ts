@@ -86,6 +86,8 @@ async function run(): Promise<Result<void>> {
       "workspace_lease",
       "terminal_events",
       "execution_attachment",
+      "managed_run_group",
+      "approval_receipt",
     ],
     attachmentPreparationRefs: ["external-run_a"],
     bundleDigest: digest.value,
