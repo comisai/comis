@@ -733,7 +733,17 @@ describe("standalone capability-service protocol fixture server", () => {
           bundleDigest: BUNDLE_DIGEST,
           operationId: "operation_process_handshake",
           serviceInstanceId: SERVICE_INSTANCE_ID,
-          requestedScopes: ["health", "report"],
+          requestedScopes: [
+            "health",
+            "attention_response",
+            "evidence",
+            "report",
+            "workspace_lease",
+            "terminal_events",
+            "execution_attachment",
+            "managed_run_group",
+            "approval_receipt",
+          ],
         },
       ), bearer));
       expect(response).toMatchObject({
