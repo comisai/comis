@@ -299,8 +299,8 @@ importers:
         specifier: 6.2.4
         version: 6.2.4
       mailparser:
-        specifier: 3.9.14
-        version: 3.9.14
+        specifier: 3.9.16
+        version: 3.9.16
       nodemailer:
         specifier: '>=9.0.1'
         version: 9.0.3
@@ -670,8 +670,8 @@ importers:
         specifier: 11.5.2
         version: 11.5.2
       mailparser:
-        specifier: 3.9.14
-        version: 3.9.14
+        specifier: 3.9.16
+        version: 3.9.16
       music-metadata:
         specifier: '>=11.12.3'
         version: 11.13.0
@@ -3122,8 +3122,8 @@ packages:
   '@zone-eu/mailsplit@5.4.12':
     resolution: {integrity: sha512-w7Gy+NvjZ0MiXm8F6zfjImAqcTONKDImgWVBjDKQVFUXWuz3VFM5levNArkL2M877ajql5+bkS2pDV56injlmg==}
 
-  '@zone-eu/mailsplit@5.4.14':
-    resolution: {integrity: sha512-rz0FQOhN3Vq1XrSeSSa9+dPcaFbBxmQPjiZm6zS9oxdVHV7rOWIAYX3yP2YAUf0qBncY8CI+NogzPCmMVrMXcw==}
+  '@zone-eu/mailsplit@5.4.15':
+    resolution: {integrity: sha512-c7ZpxauvF4AEkDJlKDYO7iMUtMuqJMBnDWNff1cyx+d7zaBVR3iFEmXhNHOVoMmVyVF3pTZLsLIJsEFKDldOAA==}
 
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
@@ -3522,9 +3522,9 @@ packages:
   deep-is@0.1.4:
     resolution: {integrity: sha512-oIPzksmTg4/MriiaYGO+okXDT7ztn/w3Eptv/+gSIdMdKsJo0u4CfYNFJPy+4SKMuCqGw2wxnA+URMg3t8a/bQ==}
 
-  deepmerge-ts@7.1.5:
-    resolution: {integrity: sha512-HOJkrhaYsweh+W+e74Yn7YStZOilkoPb6fycpwNLKzSPtruFs48nYis0zy5yJz1+ktUhHxoRDJ27RQAWLIJVJw==}
-    engines: {node: '>=16.0.0'}
+  deepmerge-ts@8.0.2:
+    resolution: {integrity: sha512-uqbvqLUMrc6p0MO+WBRtTxY55hmyh94WRwI5a++PZe54X+bfVh59FSN7uWCBCW1CCVjzjnrwzfI8zidE2obMMw==}
+    engines: {node: '>=16.9.0'}
 
   default-browser-id@5.0.1:
     resolution: {integrity: sha512-x1VCxdX4t+8wVfd1so/9w+vQ4vx7lKd2Qp5tDRutErwmR85OgmfX7RlLRMWafRMY7hbEiXIbudNrjOAPa/hL8Q==}
@@ -4196,8 +4196,8 @@ packages:
   html-escaper@3.0.3:
     resolution: {integrity: sha512-RuMffC89BOWQoY0WKGpIhn5gX3iI54O6nRA0yC124NYVtzjmFWBIiFd8M0x+ZdX0P9R4lADg1mgP8C7PxGOWuQ==}
 
-  html-to-text@10.0.0:
-    resolution: {integrity: sha512-2OH59Gtprdczel+7Rxgpz9hGVJREaf8Lt1H4kZwWHpEn70VQKRuMNGsb2eDbwaTzrYzb0hheiOG1P7Dim0B4dQ==}
+  html-to-text@10.0.1:
+    resolution: {integrity: sha512-GiVhRI1BatGARSCmlXWNCjDT0cWrwBWoeduLoV0WSKAgaV/wa+hUWy5LiQLUs4UwiUrE52ZCMfBGiKD87TDPrg==}
     engines: {node: '>=20.19.0'}
 
   htmlparser2@10.1.0:
@@ -4552,8 +4552,8 @@ packages:
   libmime@5.3.8:
     resolution: {integrity: sha512-ZrCY+Q66mPvasAfjsQ/IgahzoBvfE1VdtGRpo1hwRB1oK3wJKxhKA3GOcd2a6j7AH5eMFccxK9fBoCpRZTf8ng==}
 
-  libmime@5.4.1:
-    resolution: {integrity: sha512-0wHGhsofo9IdQPenr3BBHXuxcwMq4atFUTsZ9Ogc1OvI5h4rUdDIrBQEN9JHjCXfDMrE59LUMJWsTD82wTYk8A==}
+  libmime@5.4.2:
+    resolution: {integrity: sha512-+IQnCOdPiufGBkOii+Ze8F7iniyBzOwvWDbn1DyExBpc9pT2B3IEMQi7GUc/PpqhNUh/sr1SG9UXDITQoR0VIA==}
 
   libqp@2.1.1:
     resolution: {integrity: sha512-0Wd+GPz1O134cP62YU2GTOPNA7Qgl09XwCqM5zpBv87ERCXdfDtyKXvV7c9U22yWJh44QZqBocFnXN11K96qow==}
@@ -4741,8 +4741,8 @@ packages:
   magicast@0.5.3:
     resolution: {integrity: sha512-pVKE4UdSQ7DvHzivsCIFx2BJn1mHG6KsyrFcaxFx6tONdneEuThrDx0Cj3AMg58KyN4pzYT+LHOotxDQDjNvkw==}
 
-  mailparser@3.9.14:
-    resolution: {integrity: sha512-3QD6TRXcyXtq2NCuyA2AEjqmallQkyxYmZI9GMCIvQDCaB9Uc034WUI1x8RUBYFnk5+p7h14JEz4O/lrxQmttw==}
+  mailparser@3.9.16:
+    resolution: {integrity: sha512-TvbU4YMEDLPkDIft/oUTjjV5PvoR/mj9gw+zzNP6SHJHxBd9FsRWP+rDt80a1wOJ4dKyNesRrYATZ+n0RKyDtw==}
 
   make-dir@4.0.0:
     resolution: {integrity: sha512-hXdUTZYIVOt1Ex//jAQi+wTZZpUpwBj/0QsOzqegb3rGMMeJiSEu5xLHnYfBrRV4RH2+OCSOO95Is/7x1WJ4bw==}
@@ -8185,10 +8185,10 @@ snapshots:
       libmime: 5.3.8
       libqp: 2.1.1
 
-  '@zone-eu/mailsplit@5.4.14':
+  '@zone-eu/mailsplit@5.4.15':
     dependencies:
       libbase64: 1.3.0
-      libmime: 5.4.1
+      libmime: 5.4.2
       libqp: 2.1.1
 
   abort-controller@3.0.0:
@@ -8556,7 +8556,7 @@ snapshots:
 
   deep-is@0.1.4: {}
 
-  deepmerge-ts@7.1.5: {}
+  deepmerge-ts@8.0.2: {}
 
   default-browser-id@5.0.1: {}
 
@@ -9372,10 +9372,10 @@ snapshots:
 
   html-escaper@3.0.3: {}
 
-  html-to-text@10.0.0:
+  html-to-text@10.0.1:
     dependencies:
       '@selderee/plugin-htmlparser2': 0.12.0(selderee@0.12.0)
-      deepmerge-ts: 7.1.5
+      deepmerge-ts: 8.0.2
       dom-serializer: 2.0.0
       htmlparser2: 10.1.0
       selderee: 0.12.0
@@ -9733,7 +9733,7 @@ snapshots:
       libbase64: 1.3.0
       libqp: 2.1.1
 
-  libmime@5.4.1:
+  libmime@5.4.2:
     dependencies:
       encoding-japanese: 2.2.0
       iconv-lite: 0.7.3
@@ -9905,14 +9905,14 @@ snapshots:
       '@babel/types': 7.29.7
       source-map-js: 1.2.1
 
-  mailparser@3.9.14:
+  mailparser@3.9.16:
     dependencies:
-      '@zone-eu/mailsplit': 5.4.14
+      '@zone-eu/mailsplit': 5.4.15
       encoding-japanese: 2.2.0
       he: 1.2.0
-      html-to-text: 10.0.0
+      html-to-text: 10.0.1
       iconv-lite: 0.7.3
-      libmime: 5.4.1
+      libmime: 5.4.2
       linkify-it: 5.0.2
       nodemailer: 9.0.3
       punycode.js: 2.3.1

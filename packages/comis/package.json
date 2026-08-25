@@ -255,7 +255,7 @@
     "json-rpc-2.0": "1.7.1",
     "linkedom": "0.18.13",
     "lru-cache": "11.5.2",
-    "mailparser": "3.9.14",
+    "mailparser": "3.9.16",
     "music-metadata": "11.12.3",
     "node-llama-cpp": "3.18.1",
     "nodemailer": "9.0.1",
