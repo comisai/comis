@@ -2363,24 +2363,27 @@ describe("operator approval policy", () => {
   });
 
   it("lets a deny rule override an approval still held in the batch cache", async () => {
-    const policyGate = gateWithPolicy(policy());
+    let current = policy();
+    const policyGate = createApprovalGate({
+      eventBus,
+      clock: testClock,
+      timers: testTimers,
+      getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+      getPolicy: () => current,
+    });
+
+    // Prime the batch-approval cache with a real operator approval.
     const first = policyGate.requestApproval(makeRequest({ action: "agents.restart" }));
     policyGate.resolveApproval(policyGate.pending()[0]!.requestId, true, "operator-1");
     await first;
     await expect(policyGate.requestApproval(makeRequest({ action: "agents.restart" })))
       .resolves.toMatchObject({ approvedBy: "system:cached-approval" });
-    policyGate.dispose();
 
-    const denyingGate = gateWithPolicy(
-      policy({ rules: [{ actionPattern: "agents.restart", mode: "deny" }] }),
-    );
-    const cachedFirst = denyingGate.requestApproval(makeRequest({ action: "agents.restart" }));
-    denyingGate.resolveApproval(denyingGate.pending()[0]!.requestId, true, "operator-1");
-    await cachedFirst;
+    current = policy({ rules: [{ actionPattern: "agents.restart", mode: "deny" }] });
 
-    await expect(denyingGate.requestApproval(makeRequest({ action: "agents.restart" })))
+    await expect(policyGate.requestApproval(makeRequest({ action: "agents.restart" })))
       .resolves.toMatchObject({ approved: false, approvedBy: "system:policy-rule" });
-    denyingGate.dispose();
+    policyGate.dispose();
   });
 
   it("applies a matching rule's timeout to the pending request", () => {

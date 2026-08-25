@@ -1213,7 +1213,7 @@ async function bootFoundation(
   }
 
   // 3.5. Startup config warnings
-  const approvalsWarning = checkApprovalsConfig(container.config.approvals ?? { enabled: false, defaultMode: "auto" as const, rules: [], defaultTimeoutMs: 30_000, waitTimeoutMs: 60_000 });
+  const approvalsWarning = checkApprovalsConfig(container.config.approvals);
   if (approvalsWarning) {
     daemonLogger.warn({ hint: "Set approvals.enabled: true or remove unused rules", errorKind: "config" as const }, approvalsWarning);
   }
@@ -1830,6 +1830,7 @@ async function bootAgents(
     getTimeoutMs: () => container.config.approvals?.defaultTimeoutMs ?? 30_000,
     getDenialCacheTtlMs: () => container.config.approvals?.denialCacheTtlMs ?? 60_000,
     getBatchApprovalTtlMs: () => container.config.approvals?.batchApprovalTtlMs ?? 30_000,
+    getPolicy: () => container.config.approvals,
     clock,                // wall-clock reads
     timers,               // setTimeout scheduling
     fingerprintSecret: interactiveCallbackSigningSecret,

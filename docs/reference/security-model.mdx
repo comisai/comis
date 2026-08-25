@@ -329,10 +329,11 @@ pre-flight, install-detour overrides, and configured high-risk terminal session
 creation. It is not automatically placed in front of every tool or RPC method.
 
 <Warning>
-The schemas accept `security.actionConfirmation`, `approvals.defaultMode`, and
-`approvals.rules`, but there is currently no general execution rule evaluator
-that applies them across actions. Only an explicit call to
-`ApprovalGate.requestApproval()` creates a human approval pause.
+`approvals.defaultMode` and `approvals.rules` are evaluated inside the gate, so
+they decide what a guarded action does — they do not place a gate in front of an
+unguarded one. Only an explicit call to `ApprovalGate.requestApproval()` reaches
+the policy at all, and `security.actionConfirmation` is a separate setting with
+no rule evaluator.
 </Warning>
 
 <Info>
@@ -896,8 +897,8 @@ Top-level `approvals` configuration.
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `approvals.enabled` | `boolean` | `false` | Wire the gate into supported execution paths |
-| `approvals.defaultMode` | `"auto"` \| `"require"` \| `"deny"` | `"auto"` | Schema value; no general runtime evaluator currently consumes it |
-| `approvals.rules` | `ApprovalRule[]` | `[]` | Schema values; no general runtime evaluator currently consumes them |
+| `approvals.defaultMode` | `"auto"` \| `"require"` \| `"deny"` | `"require"` | Decision for actions no rule matches |
+| `approvals.rules` | `ApprovalRule[]` | `[]` | Ordered rules; first matching `actionPattern` wins |
 | `approvals.defaultTimeoutMs` | `number` | `300000` (5 min) | Pending approval request timeout |
 | `approvals.denialCacheTtlMs` | `number` | `60000` | Explicit-denial cache TTL |
 | `approvals.batchApprovalTtlMs` | `number` | `30000` | Explicit-approval cache TTL; `0` disables it |

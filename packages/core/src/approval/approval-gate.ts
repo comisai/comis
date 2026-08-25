@@ -17,7 +17,9 @@ import type {
   SerializedApprovalCacheEntry,
 } from "../domain/approval-request.js";
 import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
+import type { ApprovalsConfig } from "../config/schema-approvals.js";
 import { createApprovalHmac, snapshotApprovalParams } from "./approval-fingerprint.js";
+import { evaluateApprovalPolicy } from "./approval-policy.js";
 import { mintApprovalShortId } from "./approval-short-id.js";
 
 /**
@@ -32,6 +34,11 @@ export interface ApprovalGateDeps {
   readonly getDenialCacheTtlMs?: () => number;
   /** Returns the batch approval cache TTL in ms (reads from config.approvals.batchApprovalTtlMs). Defaults to 30000 if not provided. Returns 0 to disable. */
   readonly getBatchApprovalTtlMs?: () => number;
+  /**
+   * Returns the operator approval policy (reads from config.approvals). When absent,
+   * every request reaching the gate prompts a human — the fail-closed outcome.
+   */
+  readonly getPolicy?: () => Pick<ApprovalsConfig, "defaultMode" | "rules">;
   /** Wall-clock + monotonic time reads. */
   readonly clock: ClockPort;
   /** setTimeout/setInterval scheduling. */
@@ -417,6 +424,31 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     const cacheKey = cacheKeyResult.value;
     const requestInput = captured.value;
 
+    // Operator policy is evaluated BEFORE the caches so a deny rule outranks an
+    // approval still held from an earlier prompt.
+    const policy = deps.getPolicy?.();
+    const decision = policy
+      ? evaluateApprovalPolicy(policy, {
+          action: requestInput.action,
+          trustLevel: requestInput.trustLevel,
+        })
+      : undefined;
+    if (decision && decision.mode !== "require") {
+      const approved = decision.mode === "auto";
+      const matched = decision.matchedPattern;
+      const resolution: ApprovalResolution = {
+        requestId: randomUUID(),
+        approved,
+        approvedBy: "system:policy-rule",
+        reason: matched === undefined
+          ? `${approved ? "Approved" : "Denied"} by approvals.defaultMode for ${requestInput.action}`
+          : `${approved ? "Approved" : "Denied"} by approval rule "${matched}" for ${requestInput.action}`,
+        resolvedAt: deps.clock.now(),
+      };
+      emitObservationalEventSafely(deps, "approval:resolved", { ...resolution });
+      return Promise.resolve(resolution);
+    }
+
     // Check approval cache BEFORE denial cache: a recent approval overrides an older denial.
     const ttlMs = deps.getBatchApprovalTtlMs?.() ?? 30_000;
     if (ttlMs > 0) {
@@ -471,7 +503,12 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     // Mint the callback-safe short id. The gate is the sole minter;
     // callers never supply it (it is Omit-ted from the requestApproval input).
     const shortId = mintApprovalShortId();
-    const timeoutMs = deps.getTimeoutMs();
+    // A matching rule's timeout governs the prompt it produced; 0 means "no rule
+    // timeout", so the configured default still applies.
+    const ruleTimeoutMs = decision?.timeoutMs;
+    const timeoutMs = ruleTimeoutMs !== undefined && ruleTimeoutMs > 0
+      ? ruleTimeoutMs
+      : deps.getTimeoutMs();
     const createdAt = deps.clock.now();
 
     const request: ApprovalRequest = Object.freeze({
