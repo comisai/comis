@@ -90,6 +90,11 @@ The Approval Rules tab provides toggles and editors for controlling what your ag
 - **Allowed filesystem paths** -- directories the system is permitted to read or write
 - **Allowed network hosts** -- servers the system is permitted to connect to
 
+**Approval Policy** (read-only)
+- Shows whether the gate is enabled, what happens to an action no rule matches, and the
+  ordered rule list with each rule's mode and, for auto-approval, its trust floor
+- `approvals` is runtime-immutable: edit it in the config file and restart the daemon
+
 ### Pending Approvals Tab
 
 The Pending Approvals tab shows a queue of actions waiting for human approval. Each entry describes:
@@ -127,13 +132,11 @@ The History section shows a table of past approval decisions for reference. Each
 
 ### Rules
 
-The Rules section exposes action-confirmation, agent-to-agent, Node permission,
-and approval-mode settings. Treat the approval-mode editor as configuration
-surface, not proof that an action is guarded. The current runtime has no
-general evaluator that applies a default approval mode to every action.
-Operator-backed confirmation occurs only when a supported execution path calls
-the approval gate. Use the Pending Queue to verify that each critical path
-actually created a request.
+The Rules section exposes editable action-confirmation, agent-to-agent, and Node
+permission settings, plus the read-only approval policy. The rules decide requests
+that reach the gate; they do not place a gate in front of a path that never submits
+one, so the policy is not proof that an action is guarded. Use the Pending Queue to
+verify that each critical path actually created a request.
 
 ## Common Tasks
 

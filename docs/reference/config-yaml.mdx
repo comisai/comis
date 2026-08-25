@@ -1713,8 +1713,8 @@ gate. Enabling this section does not wrap every action, tool, or RPC method.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `false` | Wire the approval gate into supported execution paths |
-| `defaultMode` | `enum` | `"auto"` | Schema value for unmatched actions; no general runtime evaluator currently consumes it |
-| `rules` | `ApprovalRule[]` | `[]` | Schema values; no general runtime evaluator currently consumes them |
+| `defaultMode` | `enum` | `"require"` | Decision for actions no rule matches. `"auto"` makes the rule list a denylist: unmatched actions proceed unprompted |
+| `rules` | `ApprovalRule[]` | `[]` | Ordered rules; the first whose `actionPattern` matches the action wins |
 | `defaultTimeoutMs` | `number` | `300000` | Approval request timeout in ms (5 min) |
 | `denialCacheTtlMs` | `number` | `60000` | How long denied actions are cached before re-prompting (ms). Set to 0 to disable denial caching. |
 | `batchApprovalTtlMs` | `number` | `30000` | How long approved actions are cached for automatic re-approval in batch operations (ms). Set to 0 to disable batch approval caching. |
@@ -1725,16 +1725,17 @@ gate. Enabling this section does not wrap every action, tool, or RPC method.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `actionPattern` | `string` | _(required)_ | Pattern matching action types |
-| `mode` | `enum` | `"auto"` | Approval mode: `auto`, `require`, `deny` |
-| `timeoutMs` | `number` | `300000` | Timeout for human approval (0 = no timeout) |
-| `minTrustLevel` | `enum` | `"verified"` | Trust level for auto-approve: `untrusted`, `basic`, `verified`, `admin` |
+| `actionPattern` | `string` | _(required)_ | Action pattern; `*` matches any run of characters, every other character is literal, and the match is anchored |
+| `mode` | `enum` | `"auto"` | Decision when the pattern matches: `auto`, `require`, `deny` |
+| `timeoutMs` | `number` | _(unset)_ | Timeout for the prompt a `require` rule produces. Omit to keep `defaultTimeoutMs`; must be positive when set |
+| `minTrustLevel` | `enum` | `"admin"` | Trust a requester must reach for an `auto` rule to approve: `guest`, `user`, `admin`. Below the floor the action is put to a human |
 
 <Warning>
-  `defaultMode`, `rules`, and `security.actionConfirmation` are not a universal
-  action-policy engine. Only an explicit `ApprovalGate.requestApproval()` call
-  creates a human approval pause. See [Approvals](/security/approvals) for the
-  currently guarded paths and runtime configuration.
+  Rules narrow what reaches a human; they are not a universal action-policy
+  engine. A rule is consulted only where an execution path already calls
+  `ApprovalGate.requestApproval()`, so a rule cannot add a gate to an unguarded
+  path — and `security.actionConfirmation` is a separate setting. See
+  [Approvals](/security/approvals) for the currently guarded paths.
 </Warning>
 
 </Accordion>

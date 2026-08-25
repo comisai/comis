@@ -490,7 +490,7 @@ describe("IcSecurityView", () => {
     expect(headers![0].textContent).toContain("Action Confirmation");
     expect(headers![1].textContent).toContain("Agent-to-Agent Policy");
     expect(headers![2].textContent).toContain("Permissions");
-    expect(headers![3].textContent).toContain("Approval Mode");
+    expect(headers![3].textContent).toContain("Approval Policy");
   });
 
   it("rules tab has toggles for action confirmation and agent-to-agent", async () => {

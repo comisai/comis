@@ -177,10 +177,10 @@ These items strengthen your security posture significantly. They are important f
     disables the approval cache so each request is decided on its own.
 
     Enabling approvals does **not**, by itself, gate every destructive operation:
-    there is no general rule evaluator that classifies arbitrary actions (such as a
-    file deletion) and forwards them to the gate, and the `approvals.rules` /
-    `approvals.defaultMode` fields are accepted by the schema without being
-    evaluated. After enabling, verify each path that matters to you -- a pending
+    nothing classifies an arbitrary action (such as a file deletion) and forwards it
+    to the gate. `approvals.rules` and `approvals.defaultMode` decide requests that
+    already reach the gate -- they cannot add one to a path that never submits a
+    request. After enabling, verify each path that matters to you -- a pending
     request is the only proof that a path reached the gate. See
     [Approvals](/security/approvals) for which fields take effect.
 

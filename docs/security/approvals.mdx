@@ -159,19 +159,51 @@ The settings currently consumed by the runtime approval gate are:
 | Setting | Default | Runtime effect |
 |---------|---------|----------------|
 | `approvals.enabled` | `false` | Wires the gate into supported execution paths. |
+| `approvals.defaultMode` | `"require"` | Decides an action no rule matches. |
+| `approvals.rules` | `[]` | Ordered rules; the first matching `actionPattern` decides. |
 | `approvals.defaultTimeoutMs` | `300000` | Sets the pending request timeout. |
 | `approvals.denialCacheTtlMs` | `60000` | Sets the explicit-denial cache TTL. |
 | `approvals.batchApprovalTtlMs` | `30000` | Sets the explicit-approval cache TTL; `0` disables it. |
 
-The schema also accepts `approvals.defaultMode`, `approvals.rules`, and
-`security.actionConfirmation`. There is currently no general execution rule
-evaluator that applies those values across tools or forwards classified actions
-to the approval gate. Do not rely on those fields to guard an action unless the
-specific execution path documents and implements their use.
+### Rules
+
+A request that reaches the gate is matched against `approvals.rules` in order,
+and the first rule whose `actionPattern` matches the action decides it:
+
+- `deny` resolves the request as denied without prompting. A deny rule is
+  evaluated before the approval cache, so it also overrides an approval still
+  held from an earlier prompt.
+- `auto` resolves the request as approved without prompting — but only for a
+  requester whose trust reaches the rule's `minTrustLevel` (default `admin`).
+  Below that floor the action is put to a human instead.
+- `require` prompts a human, using the rule's `timeoutMs` when the rule sets one
+  and `defaultTimeoutMs` otherwise.
+
+When no rule matches, `defaultMode` decides. It defaults to `require` because
+the gate is only reached for actions already classified as needing a human;
+setting it to `auto` turns the rule list into a denylist and lets every
+unmatched action proceed unprompted.
+
+Rules narrow what reaches a human on paths that already call the gate. They
+cannot add a gate to a path that never submits a request, and
+`security.actionConfirmation` is a separate setting with no rule evaluator.
+Because `approvals` is a runtime-immutable section, rules are edited in the
+config file and applied on daemon restart — no RPC or dashboard control writes
+them.
 
 ```yaml title="~/.comis/config.yaml"
 approvals:
   enabled: true
+  defaultMode: require
+  rules:
+    - actionPattern: "memory.*"
+      mode: deny
+    - actionPattern: "cron.remove"
+      mode: auto
+      minTrustLevel: admin
+    - actionPattern: "system.exec"
+      mode: require
+      timeoutMs: 60000
   defaultTimeoutMs: 300000
   denialCacheTtlMs: 60000
   batchApprovalTtlMs: 0

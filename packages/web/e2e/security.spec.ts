@@ -46,10 +46,13 @@ const SECURITY_CONFIG = {
       enabled: true,
       dbPath: "secrets.db",
     },
-    approvalRules: {
-      defaultMode: "manual",
-      timeoutMs: 300000,
-    },
+  },
+  approvals: {
+    enabled: true,
+    defaultMode: "require",
+    rules: [
+      { actionPattern: "memory.*", mode: "deny", timeoutMs: 300000, minTrustLevel: "admin" },
+    ],
   },
   gateway: {
     auth: {

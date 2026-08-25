@@ -8,6 +8,8 @@ import { TypedEventBus } from "../event-bus/bus.js";
 import type { EventMap } from "../event-bus/events.js";
 import type { ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "../domain/approval-request.js";
 import { ConversationRefSchema } from "../domain/conversation-scope.js";
+import { ApprovalsConfigSchema } from "../config/schema-approvals.js";
+import type { ApprovalsConfig } from "../config/schema-approvals.js";
 import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -2283,5 +2285,135 @@ describe("approval lifecycle subscriber isolation", () => {
     expect(restoredGate.pending()).toHaveLength(1);
     expect(laterObserver).toHaveBeenCalledOnce();
     restoredGate.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operator approval policy
+// ---------------------------------------------------------------------------
+
+describe("operator approval policy", () => {
+  function gateWithPolicy(policy: ApprovalsConfig): ApprovalGate {
+    return createApprovalGate({
+      eventBus,
+      clock: testClock,
+      timers: testTimers,
+      getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+      getPolicy: () => policy,
+    });
+  }
+
+  function policy(overrides: Partial<ApprovalsConfig> = {}): ApprovalsConfig {
+    return ApprovalsConfigSchema.parse({ enabled: true, ...overrides });
+  }
+
+  it("denies a matching action without ever prompting an operator", async () => {
+    const prompted = vi.fn();
+    eventBus.on("approval:requested", prompted);
+    const policyGate = gateWithPolicy(
+      policy({ rules: [{ actionPattern: "agents.*", mode: "deny" }] }),
+    );
+
+    await expect(policyGate.requestApproval(makeRequest({ action: "agents.restart" })))
+      .resolves.toMatchObject({ approved: false, approvedBy: "system:policy-rule" });
+    expect(prompted).not.toHaveBeenCalled();
+    expect(policyGate.pending()).toEqual([]);
+    policyGate.dispose();
+  });
+
+  it("auto-approves a matching action for a requester that meets the trust floor", async () => {
+    const prompted = vi.fn();
+    eventBus.on("approval:requested", prompted);
+    const policyGate = gateWithPolicy(
+      policy({ rules: [{ actionPattern: "agents.restart", mode: "auto", minTrustLevel: "user" }] }),
+    );
+
+    await expect(
+      policyGate.requestApproval(makeRequest({ action: "agents.restart", trustLevel: "user" })),
+    ).resolves.toMatchObject({ approved: true, approvedBy: "system:policy-rule" });
+    expect(prompted).not.toHaveBeenCalled();
+    policyGate.dispose();
+  });
+
+  it("prompts an operator when an auto rule matches but the requester is below its trust floor", () => {
+    const prompted = vi.fn();
+    eventBus.on("approval:requested", prompted);
+    const policyGate = gateWithPolicy(
+      policy({ rules: [{ actionPattern: "agents.restart", mode: "auto", minTrustLevel: "admin" }] }),
+    );
+
+    policyGate.requestApproval(makeRequest({ action: "agents.restart", trustLevel: "guest" }));
+
+    expect(prompted).toHaveBeenCalledOnce();
+    expect(policyGate.pending()).toHaveLength(1);
+    policyGate.dispose();
+  });
+
+  it("prompts an operator for an action no rule matches", () => {
+    const prompted = vi.fn();
+    eventBus.on("approval:requested", prompted);
+    const policyGate = gateWithPolicy(
+      policy({ rules: [{ actionPattern: "memory.*", mode: "auto", minTrustLevel: "guest" }] }),
+    );
+
+    policyGate.requestApproval(makeRequest({ action: "system.exec" }));
+
+    expect(prompted).toHaveBeenCalledOnce();
+    policyGate.dispose();
+  });
+
+  it("lets a deny rule override an approval still held in the batch cache", async () => {
+    let current = policy();
+    const policyGate = createApprovalGate({
+      eventBus,
+      clock: testClock,
+      timers: testTimers,
+      getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+      getPolicy: () => current,
+    });
+
+    // Prime the batch-approval cache with a real operator approval.
+    const first = policyGate.requestApproval(makeRequest({ action: "agents.restart" }));
+    policyGate.resolveApproval(policyGate.pending()[0]!.requestId, true, "operator-1");
+    await first;
+    await expect(policyGate.requestApproval(makeRequest({ action: "agents.restart" })))
+      .resolves.toMatchObject({ approvedBy: "system:cached-approval" });
+
+    current = policy({ rules: [{ actionPattern: "agents.restart", mode: "deny" }] });
+
+    await expect(policyGate.requestApproval(makeRequest({ action: "agents.restart" })))
+      .resolves.toMatchObject({ approved: false, approvedBy: "system:policy-rule" });
+    policyGate.dispose();
+  });
+
+  it("keeps the configured default timeout when a matching rule sets none", () => {
+    const policyGate = gateWithPolicy(
+      policy({ rules: [{ actionPattern: "system.exec", mode: "require" }] }),
+    );
+
+    policyGate.requestApproval(makeRequest({ action: "system.exec" }));
+
+    expect(policyGate.pending()[0]!.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
+    policyGate.dispose();
+  });
+
+  it("applies a matching rule's timeout to the pending request", () => {
+    const policyGate = gateWithPolicy(
+      policy({ rules: [{ actionPattern: "system.exec", mode: "require", timeoutMs: 1234 }] }),
+    );
+
+    policyGate.requestApproval(makeRequest({ action: "system.exec" }));
+
+    expect(policyGate.pending()[0]!.timeoutMs).toBe(1234);
+    policyGate.dispose();
+  });
+
+  it("prompts an operator when no policy is supplied to the gate", () => {
+    const prompted = vi.fn();
+    eventBus.on("approval:requested", prompted);
+
+    gate.requestApproval(makeRequest({ action: "system.exec" }));
+
+    expect(prompted).toHaveBeenCalledOnce();
   });
 });
