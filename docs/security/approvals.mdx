@@ -176,7 +176,8 @@ and the first rule whose `actionPattern` matches the action decides it:
 - `auto` resolves the request as approved without prompting — but only for a
   requester whose trust reaches the rule's `minTrustLevel` (default `admin`).
   Below that floor the action is put to a human instead.
-- `require` prompts a human, using the rule's `timeoutMs` when it is non-zero.
+- `require` prompts a human, using the rule's `timeoutMs` when the rule sets one
+  and `defaultTimeoutMs` otherwise.
 
 When no rule matches, `defaultMode` decides. It defaults to `require` because
 the gate is only reached for actions already classified as needing a human;

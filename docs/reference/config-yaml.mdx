@@ -1727,7 +1727,7 @@ gate. Enabling this section does not wrap every action, tool, or RPC method.
 |-----|------|---------|-------------|
 | `actionPattern` | `string` | _(required)_ | Action pattern; `*` matches any run of characters, every other character is literal, and the match is anchored |
 | `mode` | `enum` | `"auto"` | Decision when the pattern matches: `auto`, `require`, `deny` |
-| `timeoutMs` | `number` | `300000` | Timeout for the prompt a `require` rule produces (0 = use `defaultTimeoutMs`) |
+| `timeoutMs` | `number` | _(unset)_ | Timeout for the prompt a `require` rule produces. Omit to keep `defaultTimeoutMs`; must be positive when set |
 | `minTrustLevel` | `enum` | `"admin"` | Trust a requester must reach for an `auto` rule to approve: `guest`, `user`, `admin`. Below the floor the action is put to a human |
 
 <Warning>

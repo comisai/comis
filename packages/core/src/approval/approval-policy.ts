@@ -42,9 +42,12 @@ export interface ApprovalPolicyDecision {
  * so `file.read` does not match `file.read_secret`.
  */
 function matchesPattern(actionPattern: string, action: string): boolean {
+  // Split on the wildcard first, so escaping a segment can never produce a
+  // sequence the expansion then reinterprets.
   const expanded = actionPattern
-    .replace(REGEXP_METACHARACTERS, "\\$&")
-    .replaceAll("\\*", ".*");
+    .split("*")
+    .map((segment) => segment.replace(REGEXP_METACHARACTERS, "\\$&"))
+    .join(".*");
   return new RegExp(`^${expanded}$`).test(action);
 }
 

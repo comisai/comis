@@ -2386,6 +2386,17 @@ describe("operator approval policy", () => {
     policyGate.dispose();
   });
 
+  it("keeps the configured default timeout when a matching rule sets none", () => {
+    const policyGate = gateWithPolicy(
+      policy({ rules: [{ actionPattern: "system.exec", mode: "require" }] }),
+    );
+
+    policyGate.requestApproval(makeRequest({ action: "system.exec" }));
+
+    expect(policyGate.pending()[0]!.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
+    policyGate.dispose();
+  });
+
   it("applies a matching rule's timeout to the pending request", () => {
     const policyGate = gateWithPolicy(
       policy({ rules: [{ actionPattern: "system.exec", mode: "require", timeoutMs: 1234 }] }),

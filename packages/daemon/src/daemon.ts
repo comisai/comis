@@ -1214,7 +1214,7 @@ async function bootFoundation(
   // 3.5. Startup config warnings
   const approvalsWarning = checkApprovalsConfig(container.config.approvals);
   if (approvalsWarning) {
-    daemonLogger.warn({ hint: "Set approvals.enabled: true or remove unused rules", errorKind: "config" as const }, approvalsWarning);
+    daemonLogger.warn({ hint: approvalsWarning.hint, errorKind: "config" as const }, approvalsWarning.message);
   }
 
   // 3.6. Validate PROVIDER_OVERRIDES vs live pi-ai catalog (fire-and-forget).

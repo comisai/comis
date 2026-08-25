@@ -206,9 +206,16 @@ describe("ApprovalRuleSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.mode).toBe("auto");
-      expect(result.data.timeoutMs).toBe(300_000);
       expect(result.data.minTrustLevel).toBe("admin");
+      // Absent, so the gate keeps approvals.defaultTimeoutMs rather than
+      // overriding it with a value the operator never wrote.
+      expect(result.data.timeoutMs).toBeUndefined();
     }
+  });
+
+  it("rejects a rule timeout of zero rather than accepting an unusable request timeout", () => {
+    expect(ApprovalRuleSchema.safeParse({ actionPattern: "exec:*", timeoutMs: 0 }).success)
+      .toBe(false);
   });
 });
 
@@ -223,9 +230,9 @@ describe("checkApprovalsConfig", () => {
       rules: [{ actionPattern: "exec:*" }],
     });
     const warning = checkApprovalsConfig(config);
-    expect(warning).toBeDefined();
-    expect(warning).toContain("1 rule(s) configured");
-    expect(warning).toContain("approvals.enabled is false");
+    expect(warning?.message).toContain("1 rule(s) configured");
+    expect(warning?.message).toContain("approvals.enabled is false");
+    expect(warning?.hint).toContain("approvals.enabled");
   });
 
   it("returns undefined when enabled=true with rules", () => {
@@ -244,8 +251,10 @@ describe("checkApprovalsConfig", () => {
   it("names the knob when an enabled policy auto-approves every unmatched action", () => {
     const config = ApprovalsConfigSchema.parse({ enabled: true, defaultMode: "auto" });
     const warning = checkApprovalsConfig(config);
-    expect(warning).toBeDefined();
-    expect(warning).toContain("approvals.defaultMode");
+    expect(warning?.message).toContain("approvals.defaultMode");
+    // The hint must fit this failure, not the disabled-approvals one.
+    expect(warning?.hint).toContain("approvals.defaultMode");
+    expect(warning?.hint).not.toContain("approvals.enabled");
   });
 
   it("rejects a trust floor outside the runtime trust levels", () => {

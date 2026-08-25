@@ -20,8 +20,8 @@ export const ApprovalRuleSchema = z.strictObject({
     actionPattern: z.string().min(1),
     /** Approval mode: auto-approve, require-human, deny (default: "auto") */
     mode: z.enum(["auto", "require", "deny"]).default("auto"),
-    /** Timeout in milliseconds for human approval (0 = no timeout, default: 300000) */
-    timeoutMs: z.number().int().nonnegative().default(300_000),
+    /** Timeout for the prompt a "require" rule produces; omit to keep approvals.defaultTimeoutMs */
+    timeoutMs: z.number().int().positive().optional(),
     /** Trust level a requester must reach for an "auto" rule to approve without a human (default: "admin") */
     minTrustLevel: UserTrustLevelSchema.default("admin"),
   });
@@ -53,17 +53,32 @@ export type ApprovalsConfig = z.infer<typeof ApprovalsConfigSchema>;
 /** Inferred approval rule type. */
 export type ApprovalRule = z.infer<typeof ApprovalRuleSchema>;
 
+/** A misconfiguration and the recovery that fits it. */
+export interface ApprovalsConfigWarning {
+  readonly message: string;
+  readonly hint: string;
+}
+
 /**
- * Check for potentially misconfigured approvals.
- * Returns a warning message when the configuration does not enforce what it appears to.
- * Returns undefined if configuration is consistent.
+ * Check for approvals settings that do not enforce what they appear to.
+ *
+ * Each branch carries its own hint: a warning about the wrong knob costs an
+ * operator the same time as no warning at all.
+ *
+ * Returns undefined if the configuration is consistent.
  */
-export function checkApprovalsConfig(config: ApprovalsConfig): string | undefined {
+export function checkApprovalsConfig(config: ApprovalsConfig): ApprovalsConfigWarning | undefined {
   if (!config.enabled && config.rules.length > 0) {
-    return `Approvals have ${config.rules.length} rule(s) configured but approvals.enabled is false — rules will not be evaluated. Set approvals.enabled: true or remove the rules.`;
+    return {
+      message: `Approvals have ${config.rules.length} rule(s) configured but approvals.enabled is false — rules will not be evaluated.`,
+      hint: "Set approvals.enabled: true, or remove the rules.",
+    };
   }
   if (config.enabled && config.defaultMode === "auto") {
-    return `Approvals are enabled but approvals.defaultMode is "auto" — every action no rule matches is approved without a human. Set approvals.defaultMode: "require" to ask, or keep "auto" only if the rule list is a deliberate denylist.`;
+    return {
+      message: `Approvals are enabled but approvals.defaultMode is "auto" — every action no rule matches is approved without a human.`,
+      hint: `Set approvals.defaultMode: "require" to ask, or keep "auto" only if the rule list is a deliberate denylist.`,
+    };
   }
   return undefined;
 }

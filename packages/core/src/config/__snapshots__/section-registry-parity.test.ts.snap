@@ -20707,16 +20707,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("app
             "type": "string"
           },
           "timeoutMs": {
-            "default": 300000,
+            "exclusiveMinimum": 0,
             "maximum": 9007199254740991,
-            "minimum": 0,
             "type": "integer"
           }
         },
         "required": [
           "actionPattern",
           "mode",
-          "timeoutMs",
           "minTrustLevel"
         ],
         "type": "object"
@@ -32489,16 +32487,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "string"
               },
               "timeoutMs": {
-                "default": 300000,
+                "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
-                "minimum": 0,
                 "type": "integer"
               }
             },
             "required": [
               "actionPattern",
               "mode",
-              "timeoutMs",
               "minTrustLevel"
             ],
             "type": "object"
