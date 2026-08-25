@@ -91,6 +91,7 @@ export {
   tmuxSocketPathForSession,
   createTerminalEgressProxy,
   prepareAgentTerminalWorkspace,
+  prepareManagedWorkspaceGit,
   matchAllowEntry,
   buildDirectSpawn,
   // The per-session caps factory — the daemon constructs ONE shared
@@ -128,6 +129,7 @@ export {
   // comis-<id>` — the re-attach + backstop probe (exit 0 ⇒ alive).
   buildTmuxHasSessionArgv,
   buildTmuxKillArgv,
+  buildTmuxPanePidArgv,
   type SessionDescriptor,
   type ReattachDecision,
   type SessionDescriptorStorePort,
@@ -164,6 +166,12 @@ export {
   type LoopGuardDeps,
   type TerminalToolDeps,
   type TerminalEventBus,
+  type ManagedTerminalBindingResolver,
+  type ManagedTerminalBinding,
+  type ManagedTerminalBindOutcome,
+  type ManagedTerminalReleaseOutcome,
+  type TerminalRootProcessIdentity,
+  type ManagedTerminalEventSink,
   // The decoded fd3 push-channel frame the daemon's onTerminalEvent hook
   // re-publishes onto the TypedEventBus (the 3rd emit-hook site).
   type TerminalEventFrame,

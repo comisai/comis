@@ -258,6 +258,8 @@ export interface ChannelManagerDeps {
    * button callbacks fall through to the normal pipeline.
    */
   interactiveCallbackRouter?: InteractiveCallbackRouter;
+  /** Owner-scoped durable attention reply binding before ordinary chat activation. */
+  managedAttentionReplies: import("@comis/core").ManagedAttentionReplyPort | undefined;
   /** Handle general slash commands via command handler. */
   handleSlashCommand?: (
     text: string,

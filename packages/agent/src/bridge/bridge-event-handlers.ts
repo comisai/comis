@@ -49,13 +49,15 @@ export type RuntimeToolGuard =
   | "step_limit"
   | "background_task_capacity"
   | "mcp_queue_contention"
-  | "spawn_ceiling";
+  | "spawn_ceiling"
+  | "managed_mcp_authority";
 
 const STEP_LIMIT_TOOL_GUARD = /\bstep limit reached\b.*\bblocking tool execution\b/i;
 const BACKGROUND_TASK_CAPACITY_GUARD = /\[background_capacity\]\s+background task capacity reached:/i;
 const MCP_QUEUE_CONTENTION_GUARD =
   /\[mcp_queue_contention\]\s+integrations\.mcp\.servers\[\]\s+entry\b.*\bmcp tool\b/i;
 const SPAWN_CEILING_GUARD = /\[spawn_ceiling\]\s+sub-agent spawn rejected:/i;
+const MANAGED_MCP_AUTHORITY_GUARD = /\[managed_mcp_authority\]\s+/i;
 
 /** Identify failures produced by the local execution guard before the tool boundary. */
 export function classifyRuntimeToolGuard(errorText: string | undefined): RuntimeToolGuard | undefined {
@@ -64,6 +66,7 @@ export function classifyRuntimeToolGuard(errorText: string | undefined): Runtime
   if (BACKGROUND_TASK_CAPACITY_GUARD.test(errorText)) return "background_task_capacity";
   if (MCP_QUEUE_CONTENTION_GUARD.test(errorText)) return "mcp_queue_contention";
   if (SPAWN_CEILING_GUARD.test(errorText)) return "spawn_ceiling";
+  if (MANAGED_MCP_AUTHORITY_GUARD.test(errorText)) return "managed_mcp_authority";
   return undefined;
 }
 

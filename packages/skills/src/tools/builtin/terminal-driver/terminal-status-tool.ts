@@ -1,27 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * terminal-status-tool -- the REAL `terminal_session_status` AgentTool. This was the
- * lone `not_implemented` stub, promoted to a classifier-backed, owner-scoped tool.
+ * Classifier-backed, owner-scoped `terminal_session_status` tool.
  *
- * It lives in its own module (NOT in `terminal-tools.ts`, which sits at the 800-line
- * cap) and is modeled VERBATIM on `createTerminalSessionReadTool`: a read-only,
- * owner-scoped factory that takes {@link TerminalToolDeps}, derives the calling origin
- * per-call via `resolveOwner(deps)`, forwards to `registry.status`, and returns a
- * `jsonResult`. `terminal-tools-stubs.ts` re-exports this so the public surface +
- * the import path are unchanged.
+ * The factory derives the calling origin with `resolveOwner(deps)`, delegates to
+ * `registry.status`, and returns a `jsonResult`. Cross-owner and retired sessions
+ * receive the minimal not-found view, so classifier state never crosses owner
+ * boundaries. Classification remains in the worker and the registry exchanges a
+ * `status` frame with it.
  *
- * Owner-scoping is INHERITED from `registry.status`'s contract: a
- * cross-owner / killed session returns the not-found minimal view (`exited`, not
- * parked) — never another owner's classifier state. The classifier stays
- * single-homed in the worker (the registry round-trips a `status` frame).
- *
- * never-export: `terminal_session_status` is registered
- * `mcpExportPolicy:"never-export"` in `tool-metadata-registry.ts` — inherited from
- * that registration; this factory adds NO export annotation of its own.
- *
- * INFRA-FREE: value-imports ONLY `@comis/core` (via the shared tool helpers + the
- * owner derivation) + the local sibling types — never the infra or observability
- * packages, never a raw clock (the daemon injects `deps.nowMs`).
+ * The tool metadata registry assigns `mcpExportPolicy: "never-export"`. Runtime
+ * dependencies are limited to the core tool helpers and local terminal-driver
+ * contracts; the daemon supplies `deps.nowMs`.
  *
  * @module
  */

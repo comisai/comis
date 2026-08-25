@@ -42,6 +42,8 @@ import {
   sharedConversationFinished,
   telegramInboundGuid,
   telegramInjectAddressingError,
+  telegramEmulatorChatError,
+  telegramInjectionIdentityError,
   trajectoryBaselineLineCount,
   trajectoryTurnEnded,
   wireContainsAssistantReply,
@@ -129,6 +131,17 @@ if (process.env.INJECT_OPTS) {
 // from the SAME trusted sender = card 2, with SHARED memory + trusted origin + no cross-sender recall
 // pollution / no per-sender priming). Default: fromUserId == chatId.
 const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
+const injectionIdentityError = telegramInjectionIdentityError(Number(chatId), fromUser);
+if (injectionIdentityError !== undefined) {
+  console.error(`drive.mjs: ${injectionIdentityError}`);
+  process.exit(2);
+}
+const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
+const emulatorChatError = telegramEmulatorChatError(Number(chatId), emu.groups);
+if (emulatorChatError !== undefined) {
+  console.error(`drive.mjs: ${emulatorChatError}`);
+  process.exit(2);
+}
 // Guard the #2 mis-invocation: a sender the daemon will REFUSE at ingress.
 // `channels.telegram.allowFrom` is an ingress allowlist, so a message from an unlisted sender is
 // dropped before any turn starts. The emulator still accepts the injection and returns an inboundId,
@@ -223,7 +236,6 @@ for (const signal of ['exit', 'SIGINT', 'SIGTERM']) {
 await acquireLock();
 
 const sharedConversation = Number(chatId) < 0;
-const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
 const base = emu.apiRoot;
 const tenantId = process.env.TENANT_ID || 'default';
 const agentId = process.env.AGENT_ID || 'default';

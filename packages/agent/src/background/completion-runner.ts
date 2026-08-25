@@ -1,32 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { randomUUID } from "node:crypto";
 import { err, fromPromise, isSilentResponse, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
-  createDeliveryOrigin,
-  createResolvedRequestContext,
   conversationScopeToSessionKey,
   emitObservationalEventSafely,
   formatSessionKey,
-  RequestContextSchema,
-  runWithContext,
   systemNowMs,
   toSafeErrorLogString,
-  type BackgroundTaskOrigin,
   type ComisLogger,
-  type EventMap,
   type NormalizedMessage,
-  type RequestContext,
-  type ResolvedRequestContextSeed,
   type SessionKey,
   type SessionQueryScope,
   type SessionStoreError,
-  type TurnActivityContext,
-  type TurnOutcome,
   type TypedEventBus,
+  type WorkspacePolicySnapshot,
 } from "@comis/core";
 import type { AgentExecutor } from "../executor/types.js";
+import {
+  createContinuationExecutionEngine,
+  createContinuationRequestContext,
+  type ContinuationActivityCoordinator,
+  type ContinuationActivityCoordinatorFactory,
+} from "../continuation/continuation-engine.js";
 import { formatCompletionAnnouncement } from "./completion-formatter.js";
 import { createCompletionRecovery } from "./completion-recovery.js";
 import type { BackgroundTaskManager } from "./background-task-manager.js";
@@ -35,6 +31,7 @@ import type {
   BackgroundCompletionDeliveryOutcome,
   BackgroundContinuationOutbox,
   BackgroundFinalizedResultRecoveryInput,
+  BackgroundTaskOrigin,
 } from "./background-task-types.js";
 
 export interface BackgroundCompletionRunner {
@@ -45,23 +42,20 @@ export interface RunnerSessionStore {
   loadByRef(scope: SessionQueryScope, conversationRef: BackgroundTaskOrigin["conversationRef"]): Result<unknown | undefined, SessionStoreError>;
 }
 
-export interface BackgroundActivityCoordinator {
-  start(ctx: TurnActivityContext): void;
-  finalize(outcome: TurnOutcome): Promise<void>;
-  dispose(): void;
-}
-
-export type BackgroundActivityCoordinatorFactory = (
-  ctx: TurnActivityContext,
-) => BackgroundActivityCoordinator;
+export type BackgroundActivityCoordinator = ContinuationActivityCoordinator;
+export type BackgroundActivityCoordinatorFactory = ContinuationActivityCoordinatorFactory;
 
 export interface BackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
   getExecutor: (agentId: string) => AgentExecutor;
-  assembleToolsForAgent?: (
+  assembleToolsForAgent: (
     agentId: string,
     options?: { sessionKey?: SessionKey },
   ) => Promise<AgentTool[]>;
+  resolveWorkspacePolicy(
+    agentId: string,
+    policyHash: string,
+  ): Promise<Result<WorkspacePolicySnapshot, Error>>;
   sessionStore: RunnerSessionStore;
   taskManager:
     Pick<
@@ -101,179 +95,21 @@ export interface BackgroundCompletionRunnerDeps {
   logger: ComisLogger;
 }
 
-function createReentryContext(
-  origin: BackgroundTaskOrigin,
-  parsedKey: SessionKey,
-): Result<RequestContext, Error> {
-  const built = tryCatch(() => {
-    const persistedTrace = RequestContextSchema.shape.traceId.safeParse(origin.traceId);
-    const traceId = persistedTrace.success ? persistedTrace.data : randomUUID();
-    const deliveryOrigin = createDeliveryOrigin(origin.deliveryOrigin);
-    const seed: ResolvedRequestContextSeed = {
-      tenantId: origin.turnScope.conversation.tenantId,
-      userId: parsedKey.userId,
-      sessionKey: parsedKey,
-      agentId: origin.turnScope.conversation.agentId,
-      traceId,
-      startedAt: systemNowMs(),
-      // Continue with the immutable authority resolved for the originating
-      // turn. Ambient context must neither escalate nor demote delayed work.
-      trustLevel: origin.trustLevel,
-      // A completion announcement is runtime-generated context, not fresh user
-      // evidence for durable learning.
-      learningEligible: false,
-      channelType: deliveryOrigin.channelType,
-      deliveryOrigin,
-      turnScope: origin.turnScope,
-    };
-    return seed;
-  });
-  if (!built.ok) return built;
-  return createResolvedRequestContext(built.value);
-}
-
 export function createBackgroundCompletionRunner(
   deps: BackgroundCompletionRunnerDeps,
 ): BackgroundCompletionRunner {
   const log = deps.logger.child({ submodule: "background-completion-runner" });
   let stopped = false;
   let inflight: Promise<void> = Promise.resolve();
-  const retainedActivity = new Set<{ dispose(): void }>();
-
-  function createActivityContext(
-    origin: BackgroundTaskOrigin,
-    sessionKey: string,
-    traceId: string,
-    inboundMessageId: string,
-  ): TurnActivityContext {
-    const endpoint = origin.turnScope.endpoint;
-    const chatType = endpoint.conversationKind === "direct" ? "direct" as const : "group" as const;
-    return {
-      agentId: origin.turnScope.conversation.agentId,
-      sessionKey,
-      traceId,
-      channelType: endpoint.channelType,
-      channelKey: endpoint.conversationId,
-      chatType,
-      inboundMessageId,
-      ...(endpoint.threadId === undefined ? {} : { threadId: endpoint.threadId }),
-      rendererKey: `${origin.turnScope.conversation.agentId}:${endpoint.channelType}:${endpoint.conversationId}`,
-    };
-  }
-
-  function startActivity(
-    ctx: TurnActivityContext,
-  ): { executionSettled(): Promise<void>; dispose(): void } | undefined {
-    if (deps.activityCoordinatorFactory === undefined) return undefined;
-    const built = tryCatch(() => {
-      const coordinator = deps.activityCoordinatorFactory?.(ctx);
-      if (coordinator === undefined) return undefined;
-      coordinator.start(ctx);
-      return coordinator;
-    });
-    if (!built.ok || built.value === undefined) {
-      log.warn(
-        {
-          agentId: ctx.agentId,
-          sessionKey: ctx.sessionKey,
-          traceId: ctx.traceId,
-          hint: "Inspect the background activity coordinator factory; continuation execution proceeds without live activity rendering",
-          errorKind: "internal" as const,
-        },
-        "Background completion activity subscription failed",
-      );
-      return undefined;
-    }
-
-    const coordinator = built.value;
-    const pendingApprovals = new Set<string>();
-    let executionHasSettled = false;
-    let finalized = false;
-    let finalizePromise: Promise<void> | undefined;
-
-    const removeListeners = (): void => {
-      deps.eventBus.off("approval:requested", onApprovalRequested);
-      deps.eventBus.off("approval:resolved", onApprovalResolved);
-    };
-    const dispose = (): void => {
-      if (finalized) return;
-      finalized = true;
-      removeListeners();
-      retainedActivity.delete(lease);
-      coordinator.dispose();
-    };
-    const finalize = async (): Promise<void> => {
-      if (finalizePromise !== undefined) return finalizePromise;
-      finalized = true;
-      removeListeners();
-      retainedActivity.delete(lease);
-      const invoked = tryCatch(() => coordinator.finalize({
-        kind: "silent",
-        reason: "NO_REPLY",
-      }));
-      if (!invoked.ok) {
-        coordinator.dispose();
-        log.warn(
-          {
-            agentId: ctx.agentId,
-            sessionKey: ctx.sessionKey,
-            traceId: ctx.traceId,
-            hint: "Inspect the originating channel activity renderer; background approval controls may require manual cleanup",
-            errorKind: "platform" as const,
-          },
-          "Background completion activity finalization failed",
-        );
-        return;
-      }
-      finalizePromise = fromPromise(invoked.value).then((settled) => {
-        if (!settled.ok) {
-          coordinator.dispose();
-          log.warn(
-            {
-              agentId: ctx.agentId,
-              sessionKey: ctx.sessionKey,
-              traceId: ctx.traceId,
-              hint: "Inspect the originating channel activity renderer; background approval controls may require manual cleanup",
-              errorKind: "platform" as const,
-            },
-            "Background completion activity finalization failed",
-          );
-        }
-      });
-      return finalizePromise;
-    };
-    const onApprovalRequested = (request: EventMap["approval:requested"]): void => {
-      if (
-        request.agentId === ctx.agentId
-        && request.sessionKey === ctx.sessionKey
-        && request.traceId === ctx.traceId
-      ) {
-        pendingApprovals.add(request.requestId);
-      }
-    };
-    const onApprovalResolved = (resolution: EventMap["approval:resolved"]): void => {
-      if (!pendingApprovals.delete(resolution.requestId)) return;
-      if (executionHasSettled && pendingApprovals.size === 0) {
-        const closing = finalize();
-        inflight = inflight.then(() => closing).catch(() => undefined);
-        suppressError(closing, "background completion approval activity finalization");
-      }
-    };
-    const lease = {
-      async executionSettled(): Promise<void> {
-        executionHasSettled = true;
-        if (pendingApprovals.size === 0) {
-          await finalize();
-          return;
-        }
-        retainedActivity.add(lease);
-      },
-      dispose,
-    };
-    deps.eventBus.on("approval:requested", onApprovalRequested);
-    deps.eventBus.on("approval:resolved", onApprovalResolved);
-    return lease;
-  }
+  const continuationEngine = createContinuationExecutionEngine({
+    eventBus: deps.eventBus,
+    getExecutor: deps.getExecutor,
+    assembleToolsForAgent: deps.assembleToolsForAgent,
+    ...(deps.activityCoordinatorFactory === undefined
+      ? {}
+      : { activityCoordinatorFactory: deps.activityCoordinatorFactory }),
+    logger: deps.logger,
+  });
 
   function emitRoutingOutcome(
     taskId: string,
@@ -333,14 +169,14 @@ export function createBackgroundCompletionRunner(
     deliverPersistedOutbox,
   });
 
-  const onCompleted = (data: { agentId: string; taskId: string; toolName: string; durationMs: number; origin: BackgroundTaskOrigin; timestamp: number }) => {
+  const onCompleted = (data: { taskId: string }) => {
     if (stopped) return;
     const promise = handleEvent(data.taskId, "completed");
     inflight = inflight.then(() => promise).catch(() => undefined);
     suppressError(promise, "background completion handler (completed)");
   };
 
-  const onFailed = (data: { agentId: string; taskId: string; toolName: string; error: string; durationMs: number; origin: BackgroundTaskOrigin; timestamp: number }) => {
+  const onFailed = (data: { taskId: string }) => {
     if (stopped) return;
     const promise = handleEvent(data.taskId, "failed");
     inflight = inflight.then(() => promise).catch(() => undefined);
@@ -500,7 +336,35 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    const reentryContext = createReentryContext(origin, parsedKey);
+    const policyInvocation = tryCatch(() => deps.resolveWorkspacePolicy(
+      agentId,
+      origin.workspacePolicyHash,
+    ));
+    const policySettled = policyInvocation.ok
+      ? await fromPromise(policyInvocation.value)
+      : policyInvocation;
+    const policy = policySettled.ok ? policySettled.value : policySettled;
+    if (!policy.ok) {
+      log.warn({
+        taskId,
+        agentId,
+        traceId: origin.traceId ?? undefined,
+        hint: "Restore the recorded immutable workspace policy snapshot before retrying the continuation",
+        errorKind: "precondition" as const,
+      }, "Background completion workspace policy is unavailable");
+      await fallbackForTask(
+        task.id,
+        agentId,
+        task.toolName,
+        `Background task "${task.toolName}" completed, but its recorded workspace policy is unavailable.`,
+      );
+      return;
+    }
+    const reentryContext = createContinuationRequestContext(
+      origin,
+      parsedKey,
+      origin.workspacePolicyHash,
+    );
     if (!reentryContext.ok) {
       log.warn(
         {
@@ -541,16 +405,24 @@ export function createBackgroundCompletionRunner(
         traceId: reentryContext.value.traceId,
       },
     };
-    const activity = startActivity(createActivityContext(
-      origin,
+    const executionResult = await continuationEngine.execute({
+      continuationId: task.continuationExecutionId,
+      source: "background_task",
+      sourceId: task.id,
+      agentId,
+      authority: origin,
+      requestContext: reentryContext.value,
+      sessionKey: parsedKey,
       formattedSessionKey,
-      reentryContext.value.traceId,
-      syntheticMsg.id,
-    ));
-
-    const scopedInvocation = tryCatch(() => runWithContext(
-      reentryContext.value,
-      async () => {
+      message: syntheticMsg,
+      journalKey: task.continuationExecutionId,
+      workspacePolicyHash: origin.workspacePolicyHash,
+      workspacePolicySnapshot: policy.value,
+      capturedCapabilityCeiling: {
+        toolIds: origin.capturedToolIds,
+        viewHash: origin.capturedCapabilityViewHash,
+      },
+      beforeExecute: () => {
         log.debug(
           {
             taskId,
@@ -573,123 +445,86 @@ export function createBackgroundCompletionRunner(
           traceId: reentryContext.value.traceId,
           timestamp: systemNowMs(),
         });
-
-        // One turn per event. Existing session lock orders concurrent calls.
-        const executor = tryCatch(() => deps.getExecutor(agentId));
-        if (!executor.ok) return executor;
-        const toolAssembly = deps.assembleToolsForAgent
-          ? await fromPromise(deps.assembleToolsForAgent(agentId, { sessionKey: parsedKey }))
-          : undefined;
-        if (toolAssembly !== undefined && !toolAssembly.ok) return toolAssembly;
-        let finalizedOutbox: BackgroundContinuationOutbox | undefined;
-        const execution = tryCatch(() => executor.value.execute(
-          syntheticMsg,
-          parsedKey,
-          toolAssembly?.value,
-          undefined,
-          agentId,
-          undefined,
-          undefined,
-          {
-            operationType: "interactive",
-            responseLocalePolicy: origin.responseLocalePolicy,
-            suppressFinalResponseAfterOutboundDelivery: {
-              channelType: origin.deliveryOrigin.channelType,
-              channelId: origin.deliveryOrigin.channelId,
-            },
-            finalizedResultJournalKey: task.continuationExecutionId,
-            onJournalFinalizedResult: async (finalized) => {
-              const persisted = deps.taskManager.persistFinalizedResult(
-                taskId,
-                {
-                  response: finalized.response,
-                  executionId: finalized.executionId,
-                  cleanupRequired: finalized.finishReason === "session_reset",
-                },
-                ["execution_claimed", "executing"],
-              );
-              if (!persisted.ok) return Promise.reject(persisted.error);
-            },
-            onProviderStart: () => {
-              const current = deps.taskManager.getTask(taskId);
-              if (current?.dispatchState === "executing") return ok(undefined);
-              const executing = commitState(taskId, "executing", ["execution_claimed"]);
-              return executing.ok && executing.value
-                ? ok(undefined)
-                : err(executing.ok
-                  ? new Error("Background continuation provider start claim was not acquired")
-                  : executing.error);
-            },
-            onFinalizedResult: async (finalized, phase) => {
-              const outbox: BackgroundContinuationOutbox = {
-                kind: "continuation",
-                response: finalized.response,
-                executionId: finalized.executionId,
-                idempotencyKey: `background-continuation:${task.continuationExecutionId}`,
-                deliveryProtection: deps.deliveryProtection,
-              };
-              if (phase === "cleanup_pending") {
-                const persisted = deps.taskManager.persistCleanupPendingOutbox(
-                  taskId,
-                  outbox,
-                  ["execution_claimed", "executing"],
-                );
-                if (!persisted.ok) return Promise.reject(persisted.error);
-                finalizedOutbox = outbox;
-                return;
-              }
-              const current = deps.taskManager.getTask(taskId);
-              if (current?.dispatchState === "cleanup_pending") {
-                if (isSilentResponse(finalized.response)) {
-                  const delivered = commitState(taskId, "delivered", ["cleanup_pending"]);
-                  if (!delivered.ok) return Promise.reject(delivered.error);
-                  if (!delivered.value) {
-                    return Promise.reject(new Error("Background continuation cleanup terminal state was not claimable"));
-                  }
-                  return;
-                }
-                const ready = commitState(taskId, "ready_to_deliver", ["cleanup_pending"]);
-                if (!ready.ok) return Promise.reject(ready.error);
-                if (!ready.value) {
-                  return Promise.reject(new Error("Background continuation cleanup handoff was not claimable"));
-                }
-                finalizedOutbox = outbox;
-                return;
-              }
-              if (isSilentResponse(finalized.response)) {
-                const delivered = commitState(
-                  taskId,
-                  "delivered",
-                  ["execution_claimed", "executing"],
-                );
-                if (!delivered.ok) return Promise.reject(delivered.error);
-                if (!delivered.value) {
-                  return Promise.reject(new Error("Background continuation terminal state was not claimable"));
-                }
-                return;
-              }
-              const persisted = deps.taskManager.persistContinuationOutbox(
-                taskId,
-                outbox,
-                ["execution_claimed", "executing"],
-              );
-              if (!persisted.ok) return Promise.reject(persisted.error);
-              finalizedOutbox = outbox;
-            },
-          },
-        ));
-        if (!execution.ok) return execution;
-        const settled = await fromPromise(execution.value);
-        return settled.ok
-          ? ok({ result: settled.value, finalizedOutbox })
-          : settled;
       },
-    ));
-    const scopedResult = scopedInvocation.ok
-      ? await fromPromise(scopedInvocation.value)
-      : scopedInvocation;
-    await activity?.executionSettled();
-    const executionResult = scopedResult.ok ? scopedResult.value : scopedResult;
+      hooks: {
+        onJournalFinalizedResult: async (finalized) => {
+          const persisted = deps.taskManager.persistFinalizedResult(
+            taskId,
+            {
+              response: finalized.response,
+              executionId: finalized.executionId,
+              cleanupRequired: finalized.finishReason === "session_reset",
+            },
+            ["execution_claimed", "executing"],
+          );
+          if (!persisted.ok) return Promise.reject(persisted.error);
+        },
+        onProviderStart: () => {
+          const current = deps.taskManager.getTask(taskId);
+          if (current?.dispatchState === "executing") return ok(undefined);
+          const executing = commitState(taskId, "executing", ["execution_claimed"]);
+          return executing.ok && executing.value
+            ? ok(undefined)
+            : err(executing.ok
+              ? new Error("Background continuation provider start claim was not acquired")
+              : executing.error);
+        },
+        onFinalizedResult: async (finalized, phase) => {
+          const outbox: BackgroundContinuationOutbox = {
+            kind: "continuation",
+            response: finalized.response,
+            executionId: finalized.executionId,
+            idempotencyKey: `background-continuation:${task.continuationExecutionId}`,
+            deliveryProtection: deps.deliveryProtection,
+          };
+          if (phase === "cleanup_pending") {
+            const persisted = deps.taskManager.persistCleanupPendingOutbox(
+              taskId,
+              outbox,
+              ["execution_claimed", "executing"],
+            );
+            if (!persisted.ok) return Promise.reject(persisted.error);
+            return outbox;
+          }
+          const current = deps.taskManager.getTask(taskId);
+          if (current?.dispatchState === "cleanup_pending") {
+            if (isSilentResponse(finalized.response)) {
+              const delivered = commitState(taskId, "delivered", ["cleanup_pending"]);
+              if (!delivered.ok) return Promise.reject(delivered.error);
+              if (!delivered.value) {
+                return Promise.reject(new Error("Background continuation cleanup terminal state was not claimable"));
+              }
+              return;
+            }
+            const ready = commitState(taskId, "ready_to_deliver", ["cleanup_pending"]);
+            if (!ready.ok) return Promise.reject(ready.error);
+            if (!ready.value) {
+              return Promise.reject(new Error("Background continuation cleanup handoff was not claimable"));
+            }
+            return outbox;
+          }
+          if (isSilentResponse(finalized.response)) {
+            const delivered = commitState(
+              taskId,
+              "delivered",
+              ["execution_claimed", "executing"],
+            );
+            if (!delivered.ok) return Promise.reject(delivered.error);
+            if (!delivered.value) {
+              return Promise.reject(new Error("Background continuation terminal state was not claimable"));
+            }
+            return;
+          }
+          const persisted = deps.taskManager.persistContinuationOutbox(
+            taskId,
+            outbox,
+            ["execution_claimed", "executing"],
+          );
+          if (!persisted.ok) return Promise.reject(persisted.error);
+          return outbox;
+        },
+      },
+    });
     if (!executionResult.ok) {
       log.warn(
         {
@@ -743,7 +578,7 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    const outbox = executionResult.value.finalizedOutbox
+    const outbox = executionResult.value.finalizedValue
       ?? deps.taskManager.getTask(taskId)?.continuationOutbox;
     if (outbox === undefined) {
       log.warn(
@@ -946,8 +781,7 @@ export function createBackgroundCompletionRunner(
       deps.eventBus.off("background_task:failed", onFailed);
       // Wait for any in-flight handler to settle before returning.
       await inflight;
-      for (const activity of retainedActivity) activity.dispose();
-      retainedActivity.clear();
+      await continuationEngine.shutdown();
     },
   };
 }

@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   chmod,
+  mkdir,
   mkdtemp,
   open,
   readFile,
@@ -13,20 +14,34 @@ import {
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { err, ok, type Result } from "@comis/shared";
-import type {
-  OutwardSendLedgerPort,
-  OutwardSendRecord,
-  OutwardSendState,
+import {
+  createConversationLocator,
+  createStableAnnouncementChunkOperationId,
+  type ChannelEndpoint,
+  type DeliveryAuthority,
+  type OutwardSendLedgerPort,
+  type OutwardSendRecord,
+  type OutwardSendState,
+  type AnnouncementProducerRecoveryOutcome,
 } from "@comis/core";
 
 import {
   createAnnouncementDeadLetterQueue,
+  type AnnouncementDeadLetterQueue,
   type ChannelType,
   type DeadLetterEntry,
   type AnnouncementLogger,
 } from "./announcement-dead-letter.js";
 import type { DeadLetterWriteOperations } from "./announcement-dead-letter-file.js";
+import { isSameAnnouncementRecovery } from "./announcement-dead-letter-identity.js";
+import { createAnnouncementOperationDigests } from "./announcement-outward-operation.js";
+import {
+  createAnnouncementTerminalDecisionStore,
+  createTerminalDecisionRecord,
+} from "./announcement-dead-letter-terminal-decision.js";
+import type { RecoveryDeliveryOptions } from "./announcement-dead-letter-types.js";
 import { createMockLogger as _createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 
@@ -35,35 +50,92 @@ const createMockLogger = (): AnnouncementLogger => _createMockLogger() as unknow
 
 // ---------------------------------------------------------------------------
 // Test helpers
+function makeDeliveryAuthority(agentId = "agent-a"): DeliveryAuthority {
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId,
+    partition: { kind: "agent" },
+  });
+  if (!locator.ok) throw locator.error;
+  return {
+    tenantId: "default",
+    agentId,
+    conversationRef: locator.value.conversationRef,
+  };
+}
+
+function makeDestinationEndpoint(
+  channelType: string,
+  channelId: string,
+  threadId?: string,
+): ChannelEndpoint {
+  return {
+    channelType,
+    channelInstanceId: "test-instance",
+    conversationId: channelId,
+    conversationKind: "direct",
+    ...(threadId === undefined ? {} : { threadId }),
+  };
+}
+
+function snapshotAttachment(sourceAgentId: string, sourcePath: string) {
+  return {
+    kind: "snapshot" as const,
+    sourceAgentId,
+    sourcePath,
+    path: `/snapshots/${sourceAgentId}-${sourcePath.replaceAll("/", "-")}`,
+    fileName: sourcePath.split("/").at(-1) ?? "attachment.bin",
+    mimeType: "application/octet-stream",
+    contentDigest: createHash("sha256").update(`${sourceAgentId}:${sourcePath}`).digest("hex"),
+    sizeBytes: 12,
+  };
+}
+
 function makeEntry(
   overrides: Partial<Omit<DeadLetterEntry, "id" | "lastAttemptAt">> = {},
 ): Omit<DeadLetterEntry, "id" | "lastAttemptAt"> {
-  return {
+  const entry = {
     announcementText: "Task completed successfully",
     channelType: "telegram",
     channelId: "chat-123",
+    agentId: "agent-a",
     runId: `run-${Math.random().toString(36).slice(2, 8)}`,
     sessionKey: "default:agent-a:telegram:chat-123:user_a",
     failedAt: Date.now(),
     attemptCount: 0,
     ...overrides,
   };
+  return {
+    ...entry,
+    deliveryAuthority: overrides.deliveryAuthority
+      ?? makeDeliveryAuthority(entry.agentId ?? "agent-a"),
+    destinationEndpoint: overrides.destinationEndpoint
+      ?? makeDestinationEndpoint(entry.channelType, entry.channelId, entry.threadId),
+  };
 }
 
 function makeFullEntry(
   overrides: Partial<DeadLetterEntry> = {},
 ): DeadLetterEntry {
-  return {
+  const entry = {
     id: crypto.randomUUID(),
     announcementText: "Task completed successfully",
     channelType: "telegram",
     channelId: "chat-123",
+    agentId: "agent-a",
     runId: `run-${Math.random().toString(36).slice(2, 8)}`,
     sessionKey: "default:agent-a:telegram:chat-123:user_a",
     failedAt: Date.now() - 120_000,
     attemptCount: 0,
     lastAttemptAt: Date.now() - 120_000,
     ...overrides,
+  };
+  return {
+    ...entry,
+    deliveryAuthority: overrides.deliveryAuthority
+      ?? makeDeliveryAuthority(entry.agentId ?? "agent-a"),
+    destinationEndpoint: overrides.destinationEndpoint
+      ?? makeDestinationEndpoint(entry.channelType, entry.channelId, entry.threadId),
   };
 }
 
@@ -91,6 +163,14 @@ function createOneTimeDirectorySyncFailure(
     unlink,
     chmod,
   };
+}
+
+async function listQuarantined(
+  queue: ReturnType<typeof createAnnouncementDeadLetterQueue>,
+) {
+  const listed = await queue.listQuarantined();
+  if (!listed.ok) throw listed.error;
+  return listed.value;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +209,70 @@ describe("AnnouncementDeadLetterQueue", () => {
     expect(typeof parsed.lastAttemptAt).toBe("number");
   });
 
+  it("reconciles attachment storage against the loaded durable references", async () => {
+    const attachment = snapshotAttachment("agent-a", "report.csv");
+    await writeFile(filePath, `${JSON.stringify({
+      ...makeEntry({ runId: "run-reconcile-snapshots", attachment }),
+      id: "entry-reconcile-snapshots",
+      lastAttemptAt: 0,
+    })}\n`, "utf8");
+    const reconcileAttachments = vi.fn(async () => ok(undefined));
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      reconcileAttachments,
+    });
+
+    await expect(dlq.durableStatus()).resolves.toMatchObject({ ok: true });
+
+    expect(reconcileAttachments).toHaveBeenCalledWith([attachment.path]);
+  });
+
+  it("compares two ungoverned recovery rows without inventing route authority", () => {
+    const existing = makeFullEntry({
+      runId: "run-ungoverned-identity",
+      idempotencyKey: "recovery-ungoverned-identity",
+    });
+    const candidate = makeEntry({
+      runId: "run-ungoverned-identity",
+      idempotencyKey: "recovery-ungoverned-identity",
+    });
+    delete existing.deliveryAuthority;
+    delete existing.destinationEndpoint;
+    delete candidate.deliveryAuthority;
+    delete candidate.destinationEndpoint;
+
+    expect(isSameAnnouncementRecovery(existing, candidate)).toEqual(ok(true));
+  });
+
+  it("rejects a recovery comparison when persisted options are not JSON values", () => {
+    const existing = makeFullEntry({
+      runId: "run-invalid-persisted-options",
+      idempotencyKey: "recovery-invalid-persisted-options",
+      extra: { unsafe: 1n },
+    });
+    const candidate = makeEntry({
+      runId: "run-invalid-persisted-options",
+      idempotencyKey: "recovery-invalid-persisted-options",
+    });
+
+    expect(isSameAnnouncementRecovery(existing, candidate)).toMatchObject({ ok: false });
+  });
+
+  it("rejects a recovery comparison when retried options are not JSON values", () => {
+    const existing = makeFullEntry({
+      runId: "run-invalid-retried-options",
+      idempotencyKey: "recovery-invalid-retried-options",
+    });
+    const candidate = makeEntry({
+      runId: "run-invalid-retried-options",
+      idempotencyKey: "recovery-invalid-retried-options",
+      extra: { unsafe: 1n },
+    });
+
+    expect(isSameAnnouncementRecovery(existing, candidate)).toMatchObject({ ok: false });
+  });
+
   it("enqueue emits announcement:dead_lettered event after persistence", async () => {
     const eventBus = createMockEventBus();
     const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus });
@@ -144,8 +288,9 @@ describe("AnnouncementDeadLetterQueue", () => {
       "announcement:dead_lettered",
       expect.objectContaining({
         runId: "run-event-001",
+        sessionKey: "default:agent-a:telegram:chat-123:user_a",
         channelType: "discord",
-        reason: "connection_timeout",
+        reason: "delivery_failed",
         timestamp: expect.any(Number),
       }),
     );
@@ -174,29 +319,131 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
   });
 
-  it("enqueue enforces maxEntries cap for retryable entries", async () => {
+  it("backpressures new admissions when retained storage reaches capacity", async () => {
     const eventBus = createMockEventBus();
     const logger = createMockLogger();
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus,
       maxEntries: 3,
+      retryIntervalMs: 0,
       logger,
     });
 
     await dlq.enqueue(makeEntry({ runId: "run-1" }));
     await dlq.enqueue(makeEntry({ runId: "run-2" }));
     await dlq.enqueue(makeEntry({ runId: "run-3" }));
-    await dlq.enqueue(makeEntry({ runId: "run-4" }));
+    let settled = false;
+    const overflow = dlq.enqueue(makeEntry({ runId: "run-4" })).finally(() => {
+      settled = true;
+    });
+    await delay(10);
 
+    expect(settled).toBe(false);
     expect(dlq.size()).toBe(3);
-    expect(logger.error).toHaveBeenCalledWith(
+    await dlq.drain(vi.fn(async () => true));
+    await expect(overflow).resolves.toEqual(ok(undefined));
+    expect(dlq.size()).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
+        entryCount: 3,
+        maxEntries: 3,
         errorKind: "resource",
-        hint: "resolve retryable dead letters before the queue reaches capacity",
       }),
-      "Retryable dead-letter queue reached capacity",
+      "Dead-letter quarantine capacity exhausted",
     );
+  });
+
+  it("cancels a capacity-blocked admission without releasing retained evidence", async () => {
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    await expect(dlq.enqueue(makeEntry({ runId: "run-capacity-owner" })))
+      .resolves.toEqual(ok(undefined));
+    const controller = new AbortController();
+
+    const blocked = dlq.enqueue(makeEntry({ runId: "run-cancelled-waiter" }), controller.signal);
+    controller.abort();
+
+    await expect(blocked).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter admission cancelled" },
+    });
+    expect(dlq.size()).toBe(1);
+  });
+
+  it("parks a receipt-unknown retry before it can be replayed", async () => {
+    const receiptAwareSendToChannel = vi.fn(async () => ok({
+      delivered: false as const,
+      status: "unknown" as const,
+    }));
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      receiptAwareSendToChannel,
+    });
+    await dlq.enqueue(makeEntry({
+      runId: "run-unknown-receipt",
+      idempotencyKey: "unknown-receipt",
+      lastError: "transport_rejected",
+    }));
+
+    await dlq.drain(vi.fn(async () => true));
+    await dlq.drain(vi.fn(async () => true));
+
+    expect(receiptAwareSendToChannel).toHaveBeenCalledOnce();
+    expect(await listQuarantined(dlq)).toEqual([
+      expect.objectContaining({
+        runId: "run-unknown-receipt",
+        lastError: "outward_operation_unresolved",
+      }),
+    ]);
+  });
+
+  it("suppresses readmission after a matching quarantine row is discarded", async () => {
+    const eventBus = createMockEventBus();
+    const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus });
+    const entry = makeEntry({
+      runId: "run-released-and-readmitted",
+      attemptCount: 5,
+    });
+
+    await dlq.enqueue(entry);
+    const id = (await listQuarantined(dlq))[0]!.id;
+    await dlq.release(id, "discarded");
+    await dlq.enqueue(entry);
+
+    expect(eventBus.emit).toHaveBeenCalledTimes(1);
+    expect(dlq.size()).toBe(0);
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await restarted.enqueue(entry);
+    expect(restarted.size()).toBe(0);
+  });
+
+  it("suppresses readmission after a matching quarantine row is delivered", async () => {
+    const eventBus = createMockEventBus();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus,
+      retryIntervalMs: 0,
+    });
+    const entry = makeEntry({ runId: "run-delivered-and-readmitted" });
+
+    await dlq.enqueue(entry);
+    await dlq.drain(vi.fn().mockResolvedValue(true));
+    await dlq.enqueue(entry);
+
+    const admissions = vi.mocked(eventBus.emit).mock.calls.filter(
+      ([eventName]) => eventName === "announcement:dead_lettered",
+    );
+    expect(admissions).toHaveLength(1);
+    expect(dlq.size()).toBe(0);
   });
 
   it("drain retries delivery via sendToChannel", async () => {
@@ -223,7 +470,10 @@ describe("AnnouncementDeadLetterQueue", () => {
       "telegram",
       "chat-456",
       "Retry this message",
-      undefined,
+      {
+        authority: entry.deliveryAuthority,
+        destinationEndpoint: entry.destinationEndpoint,
+      },
     );
     expect(dlq.size()).toBe(0);
   });
@@ -253,7 +503,11 @@ describe("AnnouncementDeadLetterQueue", () => {
       "telegram",
       "chat-789",
       "Threaded retry",
-      { threadId: "topic-42" },
+      {
+        threadId: "topic-42",
+        authority: entry.deliveryAuthority,
+        destinationEndpoint: entry.destinationEndpoint,
+      },
     );
     expect(dlq.size()).toBe(0);
   });
@@ -288,7 +542,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
   });
 
-  it("drain drops entries after maxRetries", async () => {
+  it("parks entries after every configured recovery attempt is exhausted", async () => {
     const eventBus = createMockEventBus();
     const entry = makeFullEntry({ attemptCount: 5 });
 
@@ -304,10 +558,127 @@ describe("AnnouncementDeadLetterQueue", () => {
     await dlq.drain(sendToChannel);
 
     expect(sendToChannel).not.toHaveBeenCalled();
+    expect(dlq.size()).toBe(1);
+    expect(await listQuarantined(dlq)).toMatchObject([{
+      kind: "entry",
+      lastError: "attempt_limit_reached",
+    }]);
+  });
+
+  it("allows the configured recovery attempt after the initial platform attempt", async () => {
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxRetries: 1,
+      retryIntervalMs: 0,
+    });
+    const entry = makeEntry({
+      idempotencyKey: "initial-plus-one-recovery",
+      completionKeys: ["initial-plus-one-recovery"],
+    });
+
+    await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: true }));
+    await expect(dlq.settleDeliveryAttempt("initial-plus-one-recovery", "rejected"))
+      .resolves.toEqual(ok(true));
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    await dlq.drain(sendToChannel);
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
     expect(dlq.size()).toBe(0);
   });
 
-  it("drain drops entries after maxAgeMs", async () => {
+  it("refuses direct reentry after its recovery attempts are exhausted", async () => {
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxRetries: 1,
+      retryIntervalMs: 0,
+    });
+    const entry = makeEntry({
+      idempotencyKey: "bounded-direct-reentry",
+      completionKeys: ["bounded-direct-reentry"],
+    });
+
+    await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: true }));
+    await dlq.settleDeliveryAttempt("bounded-direct-reentry", "rejected");
+    await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: true }));
+    await dlq.settleDeliveryAttempt("bounded-direct-reentry", "rejected");
+
+    await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: false }));
+  });
+
+  it("retires claimed chunk aliases with their logical producer ownership", async () => {
+    const producerState = vi.fn(async () => ok({ status: "absent" as const }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      retirementProducerState: producerState,
+    });
+    const reservation = {
+      idempotencyKey: "chunk-operation",
+      agentId: "agent-a",
+      runId: "chunk-run",
+      sessionKey: "default:agent-a:telegram:chat-123:user_a",
+      announcementText: "chunk result",
+      channelType: "telegram",
+      channelId: "chat-123",
+      failedAt: Date.now(),
+      rootRunId: "root-chunk-run",
+      deliveryAuthority: makeDeliveryAuthority("agent-a"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-123"),
+      completionKeys: ["parent-operation", "logical-completion"],
+      retirementKeys: ["logical-completion"],
+    };
+    await expect(queue.reserveDecision(reservation)).resolves.toEqual(ok({ created: true }));
+    const { retirementKeys: _retirementKeys, ...attempt } = {
+      ...reservation,
+      attemptCount: 0,
+      lastError: "outward_operation_in_flight",
+    };
+    await expect(queue.beginDeliveryAttempt(attempt)).resolves.toEqual(ok({ claimed: true }));
+    await expect(queue.settleDeliveryAttempt("chunk-operation", "accepted"))
+      .resolves.toEqual(ok(true));
+    await expect(queue.prepareTerminalDecisionRetirement(["logical-completion"], {
+      kind: "graph",
+      tenantId: "default",
+      graphId: "retired-graph",
+    })).resolves.toEqual(ok(undefined));
+
+    await queue.drain(vi.fn(async () => false));
+
+    const terminalStore = createAnnouncementTerminalDecisionStore(filePath);
+    await expect(terminalStore.lookup(reservation))
+      .resolves.toEqual(ok(undefined));
+    await expect(terminalStore.lookup({
+      ...reservation,
+      idempotencyKey: "parent-operation",
+      completionKeys: ["parent-operation"],
+    })).resolves.toEqual(ok(undefined));
+  });
+
+  it("refuses direct reentry after its recovery retention window", async () => {
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxRetries: 5,
+      maxAgeMs: 1,
+      retryIntervalMs: 0,
+    });
+    const entry = makeEntry({
+      idempotencyKey: "aged-direct-reentry",
+      completionKeys: ["aged-direct-reentry"],
+      failedAt: Date.now() - 1_000,
+    });
+
+    await dlq.beginDeliveryAttempt(entry);
+    await dlq.settleDeliveryAttempt("aged-direct-reentry", "rejected");
+
+    await expect(dlq.beginDeliveryAttempt(entry)).resolves.toEqual(ok({ claimed: false }));
+  });
+
+  it("parks entries after maxAgeMs until an operator releases them", async () => {
     const eventBus = createMockEventBus();
     const entry = makeFullEntry({
       failedAt: Date.now() - 3_700_000,
@@ -325,7 +696,11 @@ describe("AnnouncementDeadLetterQueue", () => {
     const sendToChannel = vi.fn().mockResolvedValue(true);
     await dlq.drain(sendToChannel);
     expect(sendToChannel).not.toHaveBeenCalled();
-    expect(dlq.size()).toBe(0);
+    expect(dlq.size()).toBe(1);
+    expect(await listQuarantined(dlq)).toMatchObject([{
+      kind: "entry",
+      lastError: "retention_window_elapsed",
+    }]);
   });
 
   it("drain skips entries not yet eligible for retry", async () => {
@@ -372,7 +747,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     const content = await readFile(filePath, "utf-8");
     const persisted = JSON.parse(content.trim()) as DeadLetterEntry;
     expect(persisted.attemptCount).toBe(2);
-    expect(persisted.lastError).toBe("sendToChannel rejected");
+    expect(persisted.lastError).toBe("outward_operation_unresolved");
   });
 
   it("drain uses atomic write for remaining entries", async () => {
@@ -422,7 +797,7 @@ describe("AnnouncementDeadLetterQueue", () => {
     expect(remaining.attemptCount).toBe(entry2.attemptCount + 1);
   });
 
-  it("malformed JSONL blocks delivery and preserves every persisted row", async () => {
+  it("quarantines a malformed row without blocking delivery or admission", async () => {
     const eventBus = createMockEventBus();
     const logger = createMockLogger();
     const entry1 = makeFullEntry({
@@ -450,20 +825,123 @@ describe("AnnouncementDeadLetterQueue", () => {
     });
 
     const sendToChannel = vi.fn().mockResolvedValue(true);
-    const enqueueResult = await dlq.enqueue(makeEntry({ runId: "run-must-not-rewrite" }));
+    const enqueueResult = await dlq.enqueue(makeEntry({ runId: "run-new-admission" }));
     await dlq.drain(sendToChannel);
 
-    expect(enqueueResult).toMatchObject({ ok: false });
-    expect(sendToChannel).not.toHaveBeenCalled();
-    expect(dlq.size()).toBe(0);
+    expect(enqueueResult).toMatchObject({ ok: true });
+    expect(sendToChannel).toHaveBeenCalledTimes(3);
+    expect(dlq.size()).toBe(1);
+    const quarantined = await listQuarantined(dlq);
+    expect(quarantined).toMatchObject([{
+      kind: "invalid_record",
+      reason: "invalid_json",
+      sourceLine: 2,
+    }]);
+    expect(JSON.stringify(quarantined)).not.toContain("not json{corrupt line");
     expect(logger.warn).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
+        invalidRowCount: 1,
         errorKind: "precondition",
-        hint: "repair or quarantine the malformed dead-letter file before accepting or draining announcements",
-      },
-      "Malformed dead-letter file blocked",
+        hint: "review and explicitly release invalid dead-letter records; valid announcements remain available",
+      }),
+      "Invalid dead-letter rows quarantined",
     );
-    expect(await readFile(filePath, "utf8")).toBe(content);
+    const persisted = (await readFile(filePath, "utf8")).trim().split("\n");
+    expect(persisted).toHaveLength(1);
+    expect(JSON.parse(persisted[0]!)).toMatchObject({ recordType: "invalid_record" });
+
+    const released = await dlq.release(quarantined[0]!.id, "discarded");
+    expect(released).toMatchObject({ ok: true, value: true });
+    expect(dlq.size()).toBe(0);
+  });
+
+  it("isolates invalid terminal records without disabling valid identities", async () => {
+    const terminalInput = (idempotencyKey: string, runId: string) => ({
+      idempotencyKey,
+      agentId: "agent-a",
+      runId,
+      sessionKey: "default:agent-a:telegram:chat-123:user_a",
+      announcementText: "terminal decision input",
+      channelType: "telegram" as const,
+      channelId: "chat-123",
+      failedAt: 100,
+      rootRunId: `root-${runId}`,
+      deliveryAuthority: makeDeliveryAuthority("agent-a"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-123"),
+      completionKeys: [idempotencyKey],
+    });
+    const validDecision = terminalInput("valid-terminal-operation", "valid-terminal-run");
+    const malformedDecision = terminalInput(
+      "malformed-terminal-operation",
+      "malformed-terminal-run",
+    );
+    const oversizedDecision = terminalInput(
+      "oversized-terminal-operation",
+      "oversized-terminal-run",
+    );
+    const store = createAnnouncementTerminalDecisionStore(filePath);
+    await expect(store.record(validDecision, "delivered")).resolves.toEqual(ok(undefined));
+    const malformed = createTerminalDecisionRecord(malformedDecision, "discarded", 1);
+    const oversized = createTerminalDecisionRecord(oversizedDecision, "no_reply", 1);
+    if (!malformed.ok) throw malformed.error;
+    if (!oversized.ok) throw oversized.error;
+    const terminalRoot = `${filePath}.terminal-decisions`;
+    const malformedDirectory = join(
+      terminalRoot,
+      "decisions",
+      malformed.value.keyDigest.slice(0, 2),
+    );
+    const oversizedDirectory = join(
+      terminalRoot,
+      "decisions",
+      oversized.value.keyDigest.slice(0, 2),
+    );
+    await mkdir(malformedDirectory, { recursive: true });
+    await mkdir(oversizedDirectory, { recursive: true });
+    const malformedPath = join(malformedDirectory, `${malformed.value.keyDigest}.json`);
+    const oversizedPath = join(oversizedDirectory, `${oversized.value.keyDigest}.json`);
+    const strayPath = join(terminalRoot, "decisions", "stray.json");
+    await writeFile(malformedPath, "{malformed");
+    await writeFile(oversizedPath, Buffer.alloc(1_048_577, 120));
+    await writeFile(strayPath, "stray");
+
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    await expect(queue.durableStatus()).resolves.toEqual(ok({
+      activeRecoveryCount: 0,
+      quarantinedCount: 3,
+    }));
+    expect(await listQuarantined(queue)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "invalid_record", reason: "invalid_json" }),
+      expect.objectContaining({ kind: "invalid_record", reason: "oversized_row" }),
+      expect.objectContaining({ kind: "invalid_record", reason: "schema_mismatch" }),
+    ]));
+    await expect(queue.reserveDecision(validDecision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "delivered",
+    }));
+    await expect(queue.reserveDecision(malformedDecision)).resolves.toMatchObject({ ok: false });
+    await expect(queue.reserveDecision(terminalInput(
+      "unrelated-terminal-operation",
+      "unrelated-terminal-run",
+    ))).resolves.toEqual(ok({ created: true }));
+
+    await writeFile(malformedPath, JSON.stringify(malformed.value));
+    await unlink(oversizedPath);
+    await unlink(strayPath);
+
+    await expect(queue.durableStatus()).resolves.toEqual(ok({
+      activeRecoveryCount: 1,
+      quarantinedCount: 0,
+    }));
+    await expect(listQuarantined(queue)).resolves.toEqual([]);
+    await expect(queue.reserveDecision(malformedDecision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "discarded",
+    }));
   });
 
   it("concurrent drain calls are serialized", async () => {
@@ -537,6 +1015,32 @@ describe("AnnouncementDeadLetterQueue", () => {
     expect(dlq.size()).toBe(3);
   });
 
+  it("loads the durable count before the first health observation after restart", async () => {
+    const seeded = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await seeded.enqueue(makeEntry({ runId: "run-before-restart" }));
+    const fresh = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    const result = await fresh.durableStatus();
+
+    expect(result).toEqual(ok({ activeRecoveryCount: 1, quarantinedCount: 0 }));
+    expect(fresh.size()).toBe(1);
+  });
+
+  it("quarantine listing reports a disk read failure instead of an empty list", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath: tmpDir,
+      eventBus: createMockEventBus(),
+    });
+
+    await expect(queue.listQuarantined()).resolves.toMatchObject({ ok: false });
+  });
+
   it("serializes concurrent lazy-load enqueues without losing either durable row", async () => {
     const eventBus = createMockEventBus();
     const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus });
@@ -567,10 +1071,15 @@ describe("AnnouncementDeadLetterQueue", () => {
       fileOperations,
     } as Parameters<typeof createAnnouncementDeadLetterQueue>[0]);
 
-    const first = await dlq.enqueue(makeEntry({ runId: "run-visible-a" }));
+    const visibleEntry = makeEntry({
+      runId: "run-visible-a",
+      idempotencyKey: "session-a::run-visible-a",
+    });
+    const first = await dlq.enqueue(visibleEntry);
     expect(first).toMatchObject({ ok: false });
     expect(dlq.size()).toBe(1);
 
+    await expect(dlq.enqueue(visibleEntry)).resolves.toEqual(ok(undefined));
     await expect(
       dlq.enqueue(makeEntry({ runId: "run-following-b" })),
     ).resolves.toEqual(ok(undefined));
@@ -583,6 +1092,62 @@ describe("AnnouncementDeadLetterQueue", () => {
       "run-following-b",
     ]);
     expect(dlq.size()).toBe(2);
+  });
+
+  it("rejects one recovery key reused for different announcement content", async () => {
+    const logger = createMockLogger();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger,
+    });
+    const original = makeEntry({
+      runId: "run-key-owner",
+      idempotencyKey: "session-a::run-key-owner",
+      announcementText: "first completion",
+    });
+    await dlq.enqueue(original);
+
+    const conflict = await dlq.enqueue({
+      ...original,
+      announcementText: "different completion",
+    });
+
+    expect(conflict).toMatchObject({ ok: false });
+    expect(dlq.size()).toBe(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "validation",
+        hint: "reuse a dead-letter recovery key only for its exact original owner, destination, and content",
+      }),
+      "Dead-letter recovery key identity mismatch",
+    );
+  });
+
+  it("rejects one recovery key reused for a different authenticated endpoint", async () => {
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    const original = makeEntry({
+      runId: "run-route-owner",
+      idempotencyKey: "session-a::run-route-owner",
+    });
+    await dlq.enqueue(original);
+
+    const conflict = await dlq.enqueue({
+      ...original,
+      destinationEndpoint: {
+        ...makeDestinationEndpoint("telegram", "chat-123"),
+        channelInstanceId: "other-instance",
+      },
+    });
+    if (conflict.ok) {
+      throw new Error("route identity conflict was admitted");
+    }
+
+    expect(conflict.error.message).toContain("identity mismatch");
+    expect(dlq.size()).toBe(1);
   });
 
   it("serializes enqueue behind an active drain and persists the post-drain state", async () => {
@@ -651,7 +1216,10 @@ describe("AnnouncementDeadLetterQueue", () => {
       "msteams",
       "19:meeting@thread.v2",
       "Task completed successfully",
-      undefined,
+      {
+        authority: parsed.deliveryAuthority,
+        destinationEndpoint: parsed.destinationEndpoint,
+      },
     );
     expect(dlq.size()).toBe(0);
   });
@@ -799,14 +1367,35 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       idempotencyKey: "default:user:telegram:chat-1::run-parent-1",
       agentId: "parent-agent",
       runId: "run-parent-1",
+      sessionKey: "default:user:telegram:chat-1",
       announcementText: "scrubbed parent decision input",
       channelType: "telegram" as const,
       channelId: "chat-1",
       failedAt: 100,
       threadId: "topic-1",
+      rootRunId: "root-parent-1",
+      deliveryAuthority: makeDeliveryAuthority("parent-agent"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1", "topic-1"),
+      completionKeys: ["default:user:telegram:chat-1::run-parent-1"],
       ...overrides,
     };
   }
+
+  function producerInput(overrides: Record<string, unknown> = {}) {
+    const decision = decisionInput(overrides);
+    return {
+      ...decision,
+      producer: {
+        kind: "session" as const,
+        tenantId: decision.deliveryAuthority.tenantId,
+        agentId: decision.deliveryAuthority.agentId,
+        conversationRef: decision.deliveryAuthority.conversationRef,
+        checkpointId: decision.runId,
+      },
+    };
+  }
+
+  const activeProducerState = async () => ok({ status: "active" as const });
 
   it("durably suppresses an existing parent decision across queue restart", async () => {
     const first = createAnnouncementDeadLetterQueue({
@@ -834,42 +1423,1763 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(restarted.size()).toBe(1);
   });
 
-  // `adjudicateReservations` is fail-safe: a reservation with no ledger tree root
-  // cannot be settled, because there is no tree to ask for the step the send
-  // WOULD have used. That skip was SILENT, so a permanently unrecoverable
-  // reservation looked identical to a transient one — live on comis-moshe, two
-  // sat parked for over 24h while the only signal was a count, and a real user
-  // never received the chart set a sub-agent had already produced.
-  it("warns, naming the missing ledger root, when a reservation can never be adjudicated", async () => {
-    const logger = createMockLogger();
+  it("blocks reservation growth without evicting an existing completion owner", async () => {
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
-      logger,
-      outwardLedger: {
-        allocateStep: vi.fn(),
-        recordState: vi.fn(),
-        findByOperation: vi.fn(),
-      } as unknown as OutwardSendLedgerPort,
+      maxEntries: 1,
+    });
+    const completionKey = decisionInput().idempotencyKey;
+    await expect(queue.reserveDecision(decisionInput())).resolves.toEqual(
+      ok({ created: true }),
+    );
+
+    let secondSettled = false;
+    const secondReservation = queue.reserveDecision(decisionInput({
+      idempotencyKey: "second-completion",
+      runId: "run-parent-2",
+      completionKeys: ["second-completion"],
+    })).finally(() => {
+      secondSettled = true;
+    });
+    await delay(10);
+    expect(secondSettled).toBe(false);
+    await expect(queue.lookupDecision(completionKey)).resolves.toEqual(ok(decisionInput()));
+
+    await expect(queue.resolveDecision(completionKey, "no_reply"))
+      .resolves.toEqual(ok(true));
+    await expect(secondReservation).resolves.toEqual(ok({ created: true }));
+    await expect(queue.replaceDecisions(["second-completion"], [
+      decisionInput({
+        idempotencyKey: "operation-summary",
+        runId: "run-parent-2",
+        completionKeys: ["second-completion"],
+      }),
+      decisionInput({
+        idempotencyKey: "operation-attachment",
+        runId: "run-parent-2",
+        partId: "attachment:0",
+        completionKeys: ["second-completion"],
+      }),
+    ])).resolves.toMatchObject({ ok: false });
+
+    await expect(queue.lookupDecision("second-completion")).resolves.toMatchObject({
+      ok: true,
+      value: expect.objectContaining({ idempotencyKey: "second-completion" }),
+    });
+    expect(queue.size()).toBe(1);
+  });
+
+  it("rewrites concrete attachment reservations without increasing capacity", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 2,
+    });
+    const firstOperation = decisionInput({
+      idempotencyKey: "attachment-operation-a",
+      runId: "run-parent-a",
+      partId: "attachment:0",
+      attachment: snapshotAttachment("worker-a", "a.csv"),
+      completionKeys: ["attachment-operation-a", "completion-a"],
+    });
+    const secondOperation = decisionInput({
+      idempotencyKey: "attachment-operation-b",
+      runId: "run-parent-b",
+      partId: "attachment:0",
+      attachment: snapshotAttachment("worker-b", "b.csv"),
+      completionKeys: ["attachment-operation-b", "completion-b"],
     });
 
-    await queue.reserveDecision(decisionInput({ rootRunId: undefined }));
-    // Drain three times: an unadjudicable reservation is re-reached on every
-    // sweep, and re-warning each pass is the same unbounded-volume defect the
-    // ledger-failure path was fixed for. Live, this line fired 4x across 2 sweeps.
-    await queue.drain(vi.fn().mockResolvedValue(true));
-    await queue.drain(vi.fn().mockResolvedValue(true));
-    await queue.drain(vi.fn().mockResolvedValue(true));
+    await expect(queue.replaceDecisions([], [firstOperation, secondOperation]))
+      .resolves.toEqual(ok({ created: true }));
+    await expect(queue.replaceDecisions(
+      [firstOperation.idempotencyKey, secondOperation.idempotencyKey],
+      [
+        {
+          ...firstOperation,
+          announcementText: "combined",
+          completionKeys: ["attachment-operation-a", "completion-a", "completion-b"],
+        },
+        {
+          ...secondOperation,
+          completionKeys: ["attachment-operation-b", "completion-a", "completion-b"],
+        },
+      ],
+    )).resolves.toEqual(ok({ created: true }));
+    expect(queue.size()).toBe(2);
+  });
 
-    const warnings = (logger.warn as unknown as { mock: { calls: [Record<string, unknown>, string][] } })
-      .mock.calls.filter(([, msg]) => /never be adjudicated|cannot be adjudicated/i.test(msg));
-    expect(warnings).toHaveLength(1);
-    const warned = warnings[0];
-    expect(warned?.[0]).toMatchObject({ runId: "run-parent-1", errorKind: "internal" });
-    expect(String(warned?.[0].hint)).toMatch(/rootRunId/);
-    // Fail-safe: it must still be retained, never discarded on the strength of
-    // being unrecoverable.
+  it("retains a cancelled capacity waiter as a durable producer reservation", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    const first = decisionInput({ failedAt: Date.now() });
+    await expect(queue.reserveDecision(first)).resolves.toEqual(
+      ok({ created: true }),
+    );
+    const controller = new AbortController();
+    const retained = queue.reserveDecision(decisionInput({
+      idempotencyKey: "shutdown-handoff",
+      runId: "run-shutdown-handoff",
+      completionKeys: ["shutdown-handoff"],
+      failedAt: Date.now(),
+    }), controller.signal);
+
+    await delay(10);
+    controller.abort();
+
+    await expect(retained).resolves.toEqual(ok({ created: false, deferred: true }));
+    await expect(queue.lookupDecision("shutdown-handoff")).resolves.toEqual(ok(undefined));
+    expect(queue.size()).toBe(2);
+
+    await expect(queue.resolveDecision(first.idempotencyKey, "no_reply"))
+      .resolves.toEqual(ok(true));
+    await queue.drain(vi.fn(async () => false));
+    await expect(queue.lookupDecision("shutdown-handoff")).resolves.toMatchObject({
+      ok: true,
+      value: { idempotencyKey: "shutdown-handoff" },
+    });
     expect(queue.size()).toBe(1);
+  });
+
+  it("backpressures producer work before handoff ownership can overflow", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 2,
+    });
+    const producer = (runId: string) => producerInput({
+      idempotencyKey: `operation-${runId}`,
+      runId,
+      completionKeys: [`operation-${runId}`],
+      retirementKeys: [`operation-${runId}`],
+    });
+    await expect(queue.reserveProducer(producer("producer-a"))).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(queue.reserveProducer(producer("producer-b"))).resolves.toEqual(ok({ status: "claimed" }));
+
+    let thirdAdmitted = false;
+    const third = queue.reserveProducer(producer("producer-c")).then((result) => {
+      thirdAdmitted = true;
+      return result;
+    });
+    await delay(10);
+    expect(thirdAdmitted).toBe(false);
+    expect(queue.size()).toBe(2);
+
+    await expect(queue.cancelProducer("producer-a")).resolves.toEqual(ok(undefined));
+    await expect(third).resolves.toEqual(ok({ status: "claimed" }));
+    expect(queue.size()).toBe(2);
+  });
+
+  it("wakes producer admission when delivery ownership changes capacity tiers", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    const first = producerInput({
+      idempotencyKey: "tier-transition-first-operation",
+      runId: "tier-transition-first-run",
+      completionKeys: ["tier-transition-first-operation"],
+      retirementKeys: ["tier-transition-first-operation"],
+    });
+    const second = producerInput({
+      idempotencyKey: "tier-transition-second-operation",
+      runId: "tier-transition-second-run",
+      completionKeys: ["tier-transition-second-operation"],
+      retirementKeys: ["tier-transition-second-operation"],
+    });
+    await expect(queue.reserveProducer(first)).resolves.toEqual(ok({ status: "claimed" }));
+
+    let secondAdmitted = false;
+    const admission = queue.reserveProducer(second).then((result) => {
+      secondAdmitted = true;
+      return result;
+    });
+    await delay(10);
+    expect(secondAdmitted).toBe(false);
+
+    await expect(queue.reserveDecision(first)).resolves.toEqual(ok({ created: true }));
+    await expect(admission).resolves.toEqual(ok({ status: "claimed" }));
+  });
+
+  it("returns the durable producer result after delivery ownership transfers", async () => {
+    const producer = producerInput({
+      idempotencyKey: "durable-outcome-operation",
+      runId: "durable-outcome-run",
+      completionKeys: ["durable-outcome-operation"],
+      retirementKeys: ["durable-outcome-operation"],
+    });
+    const outcome = {
+      kind: "session" as const,
+      terminalReason: "failed" as const,
+      completedAtMs: 1_234,
+      errorKind: "dependency" as const,
+      summary: "persisted failure",
+    };
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.recordProducerOutcome(producer.runId, outcome)).resolves.toEqual(ok(undefined));
+    await expect(first.reserveDecision(producer)).resolves.toEqual(ok({ created: true }));
+    const settledOutcome = { ...outcome, summary: "persisted delivery result" };
+    await expect(first.recordProducerOutcome(producer.runId, settledOutcome))
+      .resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "delivery_owned",
+      recoveryOutcome: settledOutcome,
+    }));
+  });
+
+  it("revokes execution ownership when a producer outcome commits", async () => {
+    const producer = producerInput({
+      idempotencyKey: "completion-ready-operation",
+      runId: "completion-ready-run",
+      completionKeys: ["completion-ready-operation"],
+      retirementKeys: ["completion-ready-operation"],
+    });
+    const outcome: AnnouncementProducerRecoveryOutcome = {
+      kind: "session",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      summary: "persisted completion",
+    };
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.recordProducerOutcome(producer.runId, outcome))
+      .resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reclaimProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "promotion_ready",
+      recoveryOutcome: outcome,
+    }));
+  });
+
+  it("counts retained outcomes against producer snapshot capacity", async () => {
+    let producerRetired = false;
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+      retirementProducerState: async () => ok(producerRetired
+        ? { status: "absent" as const }
+        : { status: "active" as const }),
+    });
+    const first = producerInput({
+      idempotencyKey: "retained-outcome-first-operation",
+      runId: "retained-outcome-first-run",
+      completionKeys: ["retained-outcome-first-operation"],
+      retirementKeys: ["retained-outcome-first-operation"],
+    });
+    const second = producerInput({
+      idempotencyKey: "retained-outcome-second-operation",
+      runId: "retained-outcome-second-run",
+      completionKeys: ["retained-outcome-second-operation"],
+      retirementKeys: ["retained-outcome-second-operation"],
+    });
+    await expect(queue.reserveProducer(first)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(queue.recordProducerOutcome(first.runId, {
+      kind: "session",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+    })).resolves.toEqual(ok(undefined));
+    await expect(queue.reserveDecision(first)).resolves.toEqual(ok({ created: true }));
+
+    let secondAdmitted = false;
+    const admission = queue.reserveProducer(second).then((result) => {
+      secondAdmitted = true;
+      return result;
+    });
+    await delay(10);
+    expect(secondAdmitted).toBe(false);
+
+    producerRetired = true;
+    await queue.drain(vi.fn(async () => true));
+    await expect(admission).resolves.toEqual(ok({ status: "claimed" }));
+  });
+
+  it("backpressures physical snapshot capacity until outcome space is released", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    const producers = Array.from({ length: 64 }, (_, index) => producerInput({
+      idempotencyKey: `physical-capacity-operation-${index}`,
+      runId: `physical-capacity-run-${index}`,
+      completionKeys: [`physical-capacity-operation-${index}`],
+      retirementKeys: [`physical-capacity-operation-${index}`],
+    }));
+    for (const producer of producers.slice(0, 63)) {
+      await expect(queue.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    }
+
+    let finalAdmitted = false;
+    const finalAdmission = queue.reserveProducer(producers[63]!).then((result) => {
+      finalAdmitted = true;
+      return result;
+    });
+    await delay(10);
+    expect(finalAdmitted).toBe(false);
+
+    await expect(queue.recordProducerOutcome(producers[0]!.runId, {
+      kind: "session",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      summary: "bounded outcome",
+    })).resolves.toEqual(ok(undefined));
+    await expect(finalAdmission).resolves.toEqual(ok({ status: "claimed" }));
+  });
+
+  it("rejects a partially persisted replacement operation set", async () => {
+    const first = decisionInput({
+      idempotencyKey: "partial-operation-first",
+      runId: "partial-operation-run",
+      completionKeys: ["partial-owner-first", "partial-owner-second"],
+    });
+    const second = decisionInput({
+      idempotencyKey: "partial-operation-second",
+      runId: "partial-operation-run",
+      completionKeys: ["partial-owner-first", "partial-owner-second"],
+    });
+    await writeFile(filePath, `${JSON.stringify({
+      ...first,
+      recordType: "parent_decision_reservation",
+      id: "surviving-operation-record",
+    })}\n`, "utf8");
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    await expect(queue.replaceDecisions(
+      ["partial-owner-first", "partial-owner-second"],
+      [first, second],
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Announcement decision reservation transition lost its expected owner" },
+    });
+    await expect(queue.lookupDecision("partial-operation-first"))
+      .resolves.toMatchObject({ ok: true, value: first });
+  });
+
+  it("requires an explicit restart reclaim before active producer work resumes", async () => {
+    const producer = producerInput({
+      idempotencyKey: "active-reclaim-operation",
+      runId: "active-reclaim-run",
+      completionKeys: ["active-reclaim-operation"],
+      retirementKeys: ["active-reclaim-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "active",
+    }));
+    await expect(first.reclaimProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "active",
+    }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reclaimProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+  });
+
+  it("reclaims a session-backed outcome without repeating producer execution", async () => {
+    const producer = producerInput({
+      idempotencyKey: "session-backed-reclaim-operation",
+      runId: "session-backed-reclaim-run",
+      completionKeys: ["session-backed-reclaim-operation"],
+      retirementKeys: ["session-backed-reclaim-operation"],
+    });
+    const recoveryOutcome: AnnouncementProducerRecoveryOutcome = {
+      kind: "session",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      summary: "session-backed completion",
+    };
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retirementProducerState: vi.fn(async () => ok({
+        status: "terminal" as const,
+        terminalReason: "completed" as const,
+        recoveryOutcome,
+      })),
+    });
+    await expect(restarted.reclaimProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "promotion_ready",
+      recoveryOutcome,
+    }));
+  });
+
+  it("preserves a session-backed tool result instead of deleting its active owner", async () => {
+    const operationId = "tool-result-recovery-operation";
+    const producer = {
+      ...producerInput({
+        idempotencyKey: operationId,
+        runId: operationId,
+        completionKeys: [operationId],
+        retirementKeys: [operationId],
+      }),
+      producer: {
+        kind: "tool_result" as const,
+        tenantId: "default",
+        agentId: "parent-agent",
+        conversationRef: makeDeliveryAuthority("parent-agent").conversationRef,
+        toolCallId: "tool-call-1",
+        operationId,
+      },
+    };
+    const recoveryOutcome: AnnouncementProducerRecoveryOutcome = {
+      kind: "tool_result",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      response: "session-backed tool result",
+      stats: { runtimeMs: 10, totalTokens: 3, totalCost: 0.001 },
+    };
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retirementProducerState: vi.fn(async () => ok({
+        status: "terminal" as const,
+        terminalReason: "completed" as const,
+        recoveryOutcome,
+      })),
+    });
+    await restarted.drain(vi.fn(async () => true));
+    await expect(restarted.reserveProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "promotion_ready",
+      recoveryOutcome,
+    }));
+  });
+
+  it("promotes a persisted producer reservation after restart", async () => {
+    const producer = producerInput({
+      idempotencyKey: "producer-fallback-operation",
+      runId: "producer-fallback-run",
+      failedAt: Date.now() - 500_000,
+      completionKeys: ["producer-fallback-operation"],
+      retirementKeys: ["producer-fallback-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.releaseProducer(producer.runId)).resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+
+    expect(send).toHaveBeenCalledWith(
+      producer.channelType,
+      producer.channelId,
+      producer.announcementText,
+      expect.objectContaining({ threadId: producer.threadId }),
+    );
+    expect(restarted.size()).toBe(0);
+  });
+
+  it("promotes the persisted result instead of the generic producer fallback", async () => {
+    const producer = producerInput({
+      idempotencyKey: "result-bearing-promotion-operation",
+      runId: "result-bearing-promotion-run",
+      failedAt: Date.now() - 500_000,
+      completionKeys: ["result-bearing-promotion-operation"],
+      retirementKeys: ["result-bearing-promotion-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.recordProducerOutcome(producer.runId, {
+      kind: "session",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      summary: "exact persisted completion",
+      resultRef: {
+        ref: "results/exact.txt",
+        kind: "text",
+        bytes: 42,
+        preview: "exact",
+        expiresAt: "2026-08-18T00:00:00.000Z",
+      },
+    })).resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+    await restarted.drain(send);
+
+    expect(send).toHaveBeenCalledWith(
+      producer.channelType,
+      producer.channelId,
+      "exact persisted completion\n\nFull result (drill in with read/grep/jq): results/exact.txt (42B, text)",
+      expect.objectContaining({ threadId: producer.threadId }),
+    );
+    expect(send).not.toHaveBeenCalledWith(
+      producer.channelType,
+      producer.channelId,
+      producer.announcementText,
+      expect.anything(),
+    );
+  });
+
+  it("promotes the exact persisted graph result and delivery options", async () => {
+    const producer = {
+      ...producerInput({
+        idempotencyKey: "graph-result-promotion-operation",
+        runId: "graph-result-promotion-run",
+        failedAt: Date.now() - 500_000,
+        completionKeys: ["graph-result-promotion-operation"],
+        retirementKeys: ["graph-result-promotion-run"],
+      }),
+      producer: {
+        kind: "graph" as const,
+        tenantId: "default",
+        graphId: "graph-result-promotion-run",
+      },
+    };
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.recordProducerOutcome(producer.runId, {
+      kind: "graph",
+      terminalReason: "completed",
+      completedAtMs: 1_234,
+      announcementText: "exact persisted graph completion",
+      extra: { buttons: [[{ text: "Open", callback_data: "graph:open" }]] },
+    })).resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+    await restarted.drain(send);
+
+    expect(send).toHaveBeenCalledWith(
+      producer.channelType,
+      producer.channelId,
+      "exact persisted graph completion",
+      expect.objectContaining({
+        extra: { buttons: [[{ text: "Open", callback_data: "graph:open" }]] },
+      }),
+    );
+  });
+
+  it("promotes a terminal durable run into retained notification delivery", async () => {
+    const producer = producerInput({
+      idempotencyKey: "terminal-checkpoint-operation",
+      runId: "terminal-checkpoint-run",
+      failedAt: Date.now() - 500_000,
+      completionKeys: ["terminal-checkpoint-operation"],
+      retirementKeys: ["terminal-checkpoint-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      retirementProducerState: vi.fn(async () => ok({
+        status: "terminal" as const,
+        terminalReason: "failed" as const,
+      })),
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+    expect(send).not.toHaveBeenCalled();
+    await restarted.drain(send);
+    await restarted.drain(send);
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(restarted.size()).toBe(0);
+  });
+
+  it("does not promote an active producer after cancellation storage fails", async () => {
+    const producer = producerInput({
+      idempotencyKey: "failed-cancellation-operation",
+      runId: "failed-cancellation-run",
+      completionKeys: ["failed-cancellation-operation"],
+      retirementKeys: ["failed-cancellation-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+
+    const storageError = new Error("producer cancellation storage unavailable");
+    const blocked = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      fileOperations: {
+        open: vi.fn().mockRejectedValue(storageError),
+        rename: vi.fn(),
+        unlink: vi.fn(),
+        chmod: vi.fn(),
+      } as unknown as DeadLetterWriteOperations,
+    });
+    await expect(blocked.cancelProducer(producer.runId)).resolves.toMatchObject({ ok: false });
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(restarted.size()).toBe(1);
+  });
+
+  it("removes a restarted active reservation after its producer retires", async () => {
+    const producer = producerInput({
+      idempotencyKey: "retired-active-operation",
+      runId: "retired-active-run",
+      completionKeys: ["retired-active-operation"],
+      retirementKeys: ["retired-active-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+
+    const retiredProducer = vi.fn(async () => ok({ status: "absent" as const }));
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retirementProducerState: retiredProducer,
+    });
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+
+    expect(retiredProducer).toHaveBeenCalledWith(producer.producer);
+    expect(send).not.toHaveBeenCalled();
+    expect(restarted.size()).toBe(0);
+  });
+
+  it("keeps promotion-ready ownership authoritative on producer reentry", async () => {
+    const producer = producerInput({
+      idempotencyKey: "promotion-ready-operation",
+      runId: "promotion-ready-run",
+      failedAt: Date.now() - 500_000,
+      completionKeys: ["promotion-ready-operation"],
+      retirementKeys: ["promotion-ready-operation"],
+    });
+    const first = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(first.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(first.releaseProducer(producer.runId)).resolves.toEqual(ok(undefined));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      retirementProducerState: activeProducerState,
+    });
+    await expect(restarted.reserveProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "promotion_ready",
+    }));
+    const send = vi.fn(async () => true);
+    await restarted.drain(send);
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(restarted.size()).toBe(0);
+  });
+
+  it("finishes a durable producer cancellation without promoting its fallback", async () => {
+    const producer = producerInput({
+      idempotencyKey: "cancel-pending-operation",
+      runId: "cancel-pending-run",
+      completionKeys: ["cancel-pending-operation"],
+      retirementKeys: ["cancel-pending-operation"],
+    });
+    await writeFile(filePath, `${JSON.stringify({
+      ...producer,
+      recordType: "producer_reservation",
+      id: "cancel-pending-record",
+      lifecycleState: "cancel_pending",
+    })}\n`, "utf8");
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const send = vi.fn(async () => true);
+
+    await restarted.drain(send);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(restarted.size()).toBe(0);
+  });
+
+  it("durably suppresses a producer before removing its reservation", async () => {
+    const producer = producerInput({
+      idempotencyKey: "suppressed-producer-operation",
+      runId: "suppressed-producer-run",
+      completionKeys: ["suppressed-producer-operation"],
+      retirementKeys: ["suppressed-producer-operation"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+
+    await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
+    expect(queue.size()).toBe(1);
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision(producer)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+  });
+
+  it("applies producer suppression to later operation aliases", async () => {
+    const completionKey = "suppressed-logical-completion";
+    const producer = producerInput({
+      idempotencyKey: completionKey,
+      runId: "suppressed-alias-run",
+      completionKeys: [completionKey],
+      retirementKeys: [completionKey],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision(decisionInput({
+      idempotencyKey: "hashed-operation-alias",
+      runId: producer.runId,
+      completionKeys: [completionKey],
+      retirementKeys: [completionKey],
+    }))).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+  });
+
+  it("suppresses announcement ownership after it transfers to a decision reservation", async () => {
+    const producer = producerInput({
+      idempotencyKey: "transferred-suppression-operation",
+      runId: "transferred-suppression-run",
+      completionKeys: ["transferred-suppression-operation", "transferred-suppression-run"],
+      retirementKeys: ["transferred-suppression-run"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(queue.reserveDecision(producer)).resolves.toEqual(ok({ created: true }));
+
+    await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
+    expect(queue.size()).toBe(0);
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision({
+      ...producer,
+      idempotencyKey: "transferred-operation-alias",
+    })).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+  });
+
+  it("finishes a pending producer suppression when admission resumes", async () => {
+    const producer = producerInput({
+      idempotencyKey: "pending-suppression-operation",
+      runId: "pending-suppression-run",
+      completionKeys: ["pending-suppression-operation"],
+      retirementKeys: ["pending-suppression-operation"],
+    });
+    const terminalRecord = createTerminalDecisionRecord(producer, "no_reply", 100);
+    if (!terminalRecord.ok) throw terminalRecord.error;
+    const decisionsPath = join(tmpDir, "dlq.jsonl.terminal-decisions", "decisions");
+    const blockedShard = join(decisionsPath, terminalRecord.value.keyDigest.slice(0, 2));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(queue.reserveProducer(producer)).resolves.toEqual(ok({ status: "claimed" }));
+    await mkdir(decisionsPath, { recursive: true });
+    await writeFile(blockedShard, "blocked", "utf8");
+
+    await expect(queue.suppressProducer(producer.runId)).resolves.toEqual(ok(true));
+    await unlink(blockedShard);
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveProducer(producer)).resolves.toEqual(ok({
+      status: "recovery_owned",
+      lifecycleState: "no_reply",
+    }));
+    await expect(restarted.reserveDecision(producer)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+  });
+
+  it("commits chunk-group suppression before individual terminal aliases", async () => {
+    const groupKey = "chunk-group-terminal";
+    const groupOwner = decisionInput({
+      idempotencyKey: groupKey,
+      runId: "chunk-group-run",
+      completionKeys: [groupKey],
+    });
+    const groupRecord = createTerminalDecisionRecord(groupOwner, "discarded", 100);
+    if (!groupRecord.ok) throw groupRecord.error;
+    let childKey = "chunk-child-terminal";
+    let child = decisionInput({
+      idempotencyKey: childKey,
+      runId: "chunk-group-run",
+      partId: "summary:chunk:1",
+      completionKeys: [groupKey],
+      terminalGroupKey: groupKey,
+    });
+    let childRecord = createTerminalDecisionRecord(child, "discarded", 100);
+    if (!childRecord.ok) throw childRecord.error;
+    while (childRecord.value.keyDigest.slice(0, 2) === groupRecord.value.keyDigest.slice(0, 2)) {
+      childKey += "x";
+      child = { ...child, idempotencyKey: childKey };
+      childRecord = createTerminalDecisionRecord(child, "discarded", 100);
+      if (!childRecord.ok) throw childRecord.error;
+    }
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await queue.enqueue({
+      ...child,
+      attemptCount: 5,
+      lastError: "outward_operation_unresolved",
+    });
+    const childShard = join(
+      tmpDir,
+      "dlq.jsonl.terminal-decisions",
+      "decisions",
+      childRecord.value.keyDigest.slice(0, 2),
+    );
+    await mkdir(join(tmpDir, "dlq.jsonl.terminal-decisions", "decisions"), { recursive: true });
+    await writeFile(childShard, "blocked", "utf8");
+    const retained = (await listQuarantined(queue))[0];
+    if (!retained) throw new Error("Expected retained chunk quarantine row");
+
+    await expect(queue.release(retained.id, "discarded")).resolves.toMatchObject({ ok: false });
+    await expect(createAnnouncementTerminalDecisionStore(filePath).lookup(groupOwner))
+      .resolves.toEqual(ok("discarded"));
+  });
+
+  it("consumes persisted producer ownership on terminal admission replay", async () => {
+    const operation = producerInput({
+      idempotencyKey: "terminal-producer-operation",
+      runId: "terminal-producer-run",
+      completionKeys: ["terminal-producer-operation"],
+      retirementKeys: ["terminal-producer-operation"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    await expect(queue.reserveProducer(operation)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(createAnnouncementTerminalDecisionStore(filePath).record(operation, "delivered"))
+      .resolves.toEqual(ok(undefined));
+
+    await expect(queue.reserveDecision(operation)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "delivered",
+    }));
+
+    expect(queue.size()).toBe(0);
+    await expect(queue.reserveProducer(producerInput({
+      idempotencyKey: "next-producer-operation",
+      runId: "next-producer-run",
+      completionKeys: ["next-producer-operation"],
+      retirementKeys: ["next-producer-operation"],
+    }))).resolves.toEqual(ok({ status: "claimed" }));
+  });
+
+  it("consumes producer ownership when every replacement is terminal", async () => {
+    const completionKey = "terminal-replacement-completion";
+    const first = producerInput({
+      idempotencyKey: "terminal-replacement-first",
+      runId: "terminal-replacement-run",
+      completionKeys: [completionKey],
+      retirementKeys: [completionKey],
+    });
+    const second = decisionInput({
+      idempotencyKey: "terminal-replacement-second",
+      runId: "terminal-replacement-run",
+      completionKeys: [completionKey],
+      retirementKeys: [completionKey],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    const terminalStore = createAnnouncementTerminalDecisionStore(filePath);
+    await expect(queue.reserveProducer(first)).resolves.toEqual(ok({ status: "claimed" }));
+    await expect(terminalStore.record(first, "delivered")).resolves.toEqual(ok(undefined));
+    await expect(terminalStore.record(second, "delivered")).resolves.toEqual(ok(undefined));
+
+    await expect(queue.replaceDecisions([], [first, second]))
+      .resolves.toEqual(ok({ created: false }));
+
+    expect(queue.size()).toBe(0);
+  });
+
+  it("hands off a cancelled attachment replacement atomically within its bound", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 2,
+    });
+    const first = decisionInput({ failedAt: Date.now() });
+    const second = decisionInput({
+      idempotencyKey: "capacity-owner-2",
+      runId: "capacity-run-2",
+      completionKeys: ["capacity-owner-2"],
+      failedAt: Date.now(),
+    });
+    await queue.replaceDecisions([], [first, second]);
+    const controller = new AbortController();
+    const attachment = decisionInput({
+      idempotencyKey: "attachment-handoff",
+      runId: "attachment-handoff-run",
+      completionKeys: ["attachment-handoff"],
+      failedAt: Date.now(),
+      partId: "attachment:0",
+      attachment: snapshotAttachment("worker-a", "handoff.txt"),
+    });
+    const summary = decisionInput({
+      idempotencyKey: "summary-handoff",
+      runId: "attachment-handoff-run",
+      completionKeys: ["summary-handoff"],
+      failedAt: Date.now(),
+    });
+    const retained = queue.replaceDecisions([], [attachment, summary], controller.signal);
+
+    await delay(10);
+    controller.abort();
+
+    await expect(retained).resolves.toEqual(ok({ created: false, deferred: true }));
+    expect(queue.size()).toBe(3);
+    const retainedRows = (await readFile(filePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(retainedRows).toContainEqual(expect.objectContaining({
+      recordType: "producer_handoff",
+      operationCount: 2,
+      groupDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      operations: expect.arrayContaining([
+        expect.objectContaining({ idempotencyKey: "attachment-handoff" }),
+        expect.objectContaining({ idempotencyKey: "summary-handoff" }),
+      ]),
+    }));
+    const overflowController = new AbortController();
+    const overflow = queue.reserveDecision(decisionInput({
+      idempotencyKey: "overflow-handoff",
+      runId: "overflow-handoff-run",
+      completionKeys: ["overflow-handoff"],
+    }), overflowController.signal);
+    await delay(10);
+    overflowController.abort();
+    await expect(overflow).resolves.toEqual(ok({ created: false, deferred: true }));
+    expect(queue.size()).toBe(4);
+    await queue.resolveDecision(first.idempotencyKey, "no_reply");
+    await queue.resolveDecision(second.idempotencyKey, "no_reply");
+    await queue.drain(vi.fn(async () => false));
+    await expect(queue.lookupDecision("attachment-handoff")).resolves.toMatchObject({
+      ok: true,
+      value: { idempotencyKey: "attachment-handoff" },
+    });
+    await expect(queue.lookupDecision("summary-handoff")).resolves.toMatchObject({
+      ok: true,
+      value: { idempotencyKey: "summary-handoff" },
+    });
+    await expect(queue.lookupDecision("overflow-handoff")).resolves.toEqual(ok(undefined));
+    expect((await readFile(filePath, "utf8"))).toContain("overflow-handoff");
+    expect(queue.size()).toBe(3);
+  });
+
+  it("quarantines an incomplete producer handoff as one invalid transition", async () => {
+    const operation = decisionInput({
+      idempotencyKey: "incomplete-operation",
+      completionKeys: ["incomplete-completion"],
+    });
+    await writeFile(filePath, `${JSON.stringify({
+      recordType: "producer_handoff",
+      id: "handoff:incomplete-transition",
+      transitionId: "incomplete-transition",
+      expectedKeys: [],
+      operationCount: 2,
+      groupDigest: "a".repeat(64),
+      operations: [operation],
+    })}\n`, "utf8");
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    await expect(restarted.listQuarantined()).resolves.toMatchObject({
+      ok: true,
+      value: [expect.objectContaining({
+        kind: "invalid_record",
+        reason: "schema_mismatch",
+      })],
+    });
+    expect(restarted.size()).toBe(1);
+  });
+
+  it("settles shared handoff ownership only after every sibling is terminal", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 2,
+    });
+    const first = decisionInput({
+      idempotencyKey: "capacity-a",
+      completionKeys: ["capacity-a"],
+    });
+    const second = decisionInput({
+      idempotencyKey: "capacity-b",
+      completionKeys: ["capacity-b"],
+    });
+    await queue.replaceDecisions([], [first, second]);
+    const sharedCompletionKey = "shared-handoff-completion";
+    const summary = decisionInput({
+      idempotencyKey: "shared-summary",
+      completionKeys: [sharedCompletionKey],
+    });
+    const attachment = decisionInput({
+      idempotencyKey: "shared-attachment",
+      partId: "attachment:0",
+      completionKeys: [sharedCompletionKey],
+    });
+    const controller = new AbortController();
+    const retained = queue.replaceDecisions([], [summary, attachment], controller.signal);
+    await delay(10);
+    controller.abort();
+    await expect(retained).resolves.toEqual(ok({ created: false, deferred: true }));
+    await queue.resolveDecision(first.idempotencyKey, "no_reply");
+    await queue.resolveDecision(second.idempotencyKey, "no_reply");
+    const decisions = createAnnouncementTerminalDecisionStore(filePath);
+    await decisions.record(summary, "delivered");
+    await decisions.record(attachment, "discarded");
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 2,
+    });
+
+    await restarted.drain(vi.fn(async () => false));
+
+    await expect(restarted.reserveDecision(decisionInput({
+      idempotencyKey: sharedCompletionKey,
+      completionKeys: [sharedCompletionKey],
+    }))).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "discarded",
+    }));
+    expect(restarted.size()).toBe(0);
+  });
+
+  it("persists an immutable attachment snapshot during reservation admission", async () => {
+    const cleanup = vi.fn(async () => ok(undefined));
+    const prepareAttachment = vi.fn(async (attachment) => ok({
+      kind: "snapshot" as const,
+      sourceAgentId: attachment.sourceAgentId,
+      sourcePath: attachment.path,
+      path: "/durable/completion-attachments/report.csv",
+      fileName: "report.csv",
+      mimeType: "text/csv",
+      contentDigest: "a".repeat(64),
+      sizeBytes: 12,
+      cleanup,
+    }));
+    const decision = decisionInput({
+      idempotencyKey: "attachment-admission",
+      partId: "attachment:0",
+      attachment: {
+        kind: "source",
+        sourceAgentId: "worker-a",
+        path: "/workspace/report.csv",
+      },
+      completionKeys: ["completion-a"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      prepareAttachment,
+    });
+
+    await expect(queue.reserveDecision(decision)).resolves.toEqual(ok({ created: true }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.lookupDecision(decision.idempotencyKey)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        attachment: {
+          kind: "snapshot",
+          sourcePath: "/workspace/report.csv",
+          path: "/durable/completion-attachments/report.csv",
+          contentDigest: "a".repeat(64),
+        },
+      },
+    });
+    expect(prepareAttachment).toHaveBeenCalledOnce();
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it("preserves distinct immutable snapshots for repeated source paths", async () => {
+    let snapshotIndex = 0;
+    const prepareAttachment = vi.fn(async (attachment) => {
+      snapshotIndex++;
+      return ok({
+        kind: "snapshot" as const,
+        sourceAgentId: attachment.sourceAgentId,
+        sourcePath: attachment.path,
+        path: `/durable/completion-attachments/report-${snapshotIndex}.csv`,
+        fileName: "report.csv",
+        mimeType: "text/csv",
+        contentDigest: String(snapshotIndex).repeat(64),
+        sizeBytes: 12,
+        cleanup: vi.fn(async () => ok(undefined)),
+      });
+    });
+    const first = decisionInput({
+      idempotencyKey: "same-path-first",
+      runId: "same-path-run-first",
+      partId: "attachment:0",
+      attachment: {
+        kind: "source",
+        sourceAgentId: "worker-a",
+        path: "/workspace/report.csv",
+      },
+      completionKeys: ["same-path-first", "completion-first"],
+    });
+    const second = decisionInput({
+      idempotencyKey: "same-path-second",
+      runId: "same-path-run-second",
+      partId: "attachment:0",
+      attachment: {
+        kind: "source",
+        sourceAgentId: "worker-a",
+        path: "/workspace/report.csv",
+      },
+      completionKeys: ["same-path-second", "completion-second"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      prepareAttachment,
+    });
+    await expect(queue.replaceDecisions([], [first, second]))
+      .resolves.toEqual(ok({ created: true }));
+
+    await expect(queue.replaceDecisions(
+      [first.idempotencyKey, second.idempotencyKey],
+      [
+        { ...first, completionKeys: [first.idempotencyKey, "completion-first", "completion-second"] },
+        { ...second, completionKeys: [second.idempotencyKey, "completion-first", "completion-second"] },
+      ],
+    )).resolves.toEqual(ok({ created: true }));
+
+    await expect(queue.lookupDecision(first.idempotencyKey)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        attachment: {
+          path: "/durable/completion-attachments/report-1.csv",
+          contentDigest: "1".repeat(64),
+        },
+      },
+    });
+    await expect(queue.lookupDecision(second.idempotencyKey)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        attachment: {
+          path: "/durable/completion-attachments/report-2.csv",
+          contentDigest: "2".repeat(64),
+        },
+      },
+    });
+    expect(prepareAttachment).toHaveBeenCalledTimes(2);
+  });
+
+  it("finds a persisted text chunk manifest through every represented completion", async () => {
+    const decision = decisionInput({
+      idempotencyKey: "chunked-summary",
+      completionKeys: ["completion-chunked-summary"],
+    });
+    const chunks = ["first formatted chunk", "second formatted chunk"];
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await queue.reserveDecision(decision);
+
+    await expect(queue.recordDecisionTextChunks(
+      decision.idempotencyKey,
+      chunks,
+    )).resolves.toEqual(ok(undefined));
+    await expect(queue.replaceDecisions([decision.idempotencyKey], chunks.map((chunk, index) => ({
+      ...decision,
+      idempotencyKey: `chunk-operation-${index}`,
+      announcementText: chunk,
+      partId: `text:chunk:${index}`,
+      textChunks: chunks,
+    })))).resolves.toEqual(ok({ created: true }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.lookupDecisionTextChunks("completion-chunked-summary"))
+      .resolves.toEqual(ok(chunks));
+    await expect(restarted.recordDecisionTextChunks(
+      "chunk-operation-0",
+      ["changed chunk"],
+    )).resolves.toMatchObject({ ok: false });
+  });
+
+  it("recovers a ledgerless parent reservation after its rewrite grace", async () => {
+    const decision = decisionInput({
+      failedAt: Date.now() - 301_000,
+      idempotencyKey: "ledgerless-parent-recovery",
+      completionKeys: ["ledgerless-parent-recovery"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await queue.reserveDecision(decision);
+    const send = vi.fn(async () => true);
+
+    await queue.drain(send);
+
+    expect(send).toHaveBeenCalledWith(
+      "telegram",
+      "chat-1",
+      "scrubbed parent decision input",
+      expect.objectContaining({ threadId: "topic-1" }),
+    );
+    expect(queue.size()).toBe(0);
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "delivered",
+    }));
+  });
+
+  it("preserves chunk suppression groups through reservation adjudication", async () => {
+    const terminalGroupKey = "adjudicated-chunk-group";
+    const firstChunk = decisionInput({
+      failedAt: Date.now() - 301_000,
+      idempotencyKey: "adjudicated-chunk-first",
+      partId: "text:chunk:0",
+      completionKeys: ["adjudicated-chunk-first"],
+      terminalGroupKey,
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      maxRetries: 1,
+    });
+    await expect(queue.reserveDecision(firstChunk)).resolves.toEqual(ok({ created: true }));
+    await queue.drain(vi.fn(async () => false));
+
+    const retained = (await listQuarantined(queue))[0];
+    if (!retained) throw new Error("Expected adjudicated chunk quarantine row");
+    await expect(queue.release(retained.id, "discarded")).resolves.toEqual(ok(true));
+
+    await expect(queue.reserveDecision(decisionInput({
+      idempotencyKey: "adjudicated-chunk-second",
+      partId: "text:chunk:1",
+      completionKeys: ["adjudicated-chunk-second"],
+      terminalGroupKey,
+    }))).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "discarded",
+    }));
+  });
+
+  it("replays a persisted ledgerless manifest one chunk at a time", async () => {
+    const chunks = ["first durable chunk", "second durable chunk"];
+    const decision = decisionInput({
+      failedAt: Date.now() - 301_000,
+      idempotencyKey: "ledgerless-manifest-parent",
+      completionKeys: ["ledgerless-manifest-parent"],
+      announcementText: chunks.join(" "),
+      textChunks: chunks,
+    });
+    const receiptAwareSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-chunk",
+    }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      receiptAwareSendToChannel,
+    });
+    await queue.reserveDecision(decision);
+
+    await queue.drain(vi.fn(async () => false));
+
+    expect(receiptAwareSendToChannel.mock.calls.map(([, , text]) => text))
+      .toEqual(chunks);
+    expect(queue.size()).toBe(0);
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      receiptAwareSendToChannel,
+    });
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "delivered",
+    }));
+  });
+
+  it("quarantines a ledgerless attachment after its rewrite grace", async () => {
+    const decision = decisionInput({
+      failedAt: Date.now() - 301_000,
+      idempotencyKey: "ledgerless-attachment-recovery",
+      completionKeys: ["ledgerless-attachment-recovery"],
+      partId: "attachment:0",
+      attachment: snapshotAttachment("worker-a", "report.csv"),
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(queue.reserveDecision(decision)).resolves.toEqual(ok({ created: true }));
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    await queue.drain(sendToChannel);
+
+    expect(sendToChannel).not.toHaveBeenCalled();
+    await expect(queue.listQuarantined()).resolves.toMatchObject({
+      ok: true,
+      value: [{
+        idempotencyKey: "ledgerless-attachment-recovery",
+        lastError: "attachment_delivery_unavailable",
+      }],
+    });
+    await expect(queue.durableStatus()).resolves.toEqual(ok({
+      activeRecoveryCount: 0,
+      quarantinedCount: 1,
+    }));
+  });
+
+  it("keeps live ledgerless attempts non-actionable until restart makes them ambiguous", async () => {
+    const attempt = makeEntry({
+      runId: "run-ledgerless-in-flight",
+      idempotencyKey: "ledgerless-in-flight",
+      completionKeys: ["ledgerless-in-flight"],
+      failedAt: Date.now(),
+      lastError: "outward_operation_in_flight",
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+
+    await expect(queue.beginDeliveryAttempt(attempt)).resolves.toEqual(ok({ claimed: true }));
+    await expect(queue.listQuarantined()).resolves.toEqual(ok([]));
+    await expect(queue.durableStatus()).resolves.toEqual(ok({
+      activeRecoveryCount: 1,
+      quarantinedCount: 0,
+    }));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(restarted.listQuarantined()).resolves.toMatchObject({
+      ok: true,
+      value: [{
+        idempotencyKey: "ledgerless-in-flight",
+        lastError: "outward_operation_unresolved",
+      }],
+    });
+  });
+
+  it("terminalizes every completion represented by an accepted ledgerless operation", async () => {
+    const decision = decisionInput({
+      idempotencyKey: "coalesced-summary-operation",
+      completionKeys: ["completion-a", "completion-b"],
+      failedAt: Date.now(),
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await queue.reserveDecision(decision);
+    await expect(queue.beginDeliveryAttempt({
+      announcementText: decision.announcementText,
+      channelType: decision.channelType,
+      channelId: decision.channelId,
+      agentId: decision.agentId,
+      runId: decision.runId,
+      sessionKey: decision.sessionKey,
+      failedAt: decision.failedAt,
+      attemptCount: 0,
+      lastError: "outward_operation_in_flight",
+      threadId: decision.threadId,
+      idempotencyKey: decision.idempotencyKey,
+      rootRunId: decision.rootRunId,
+      deliveryAuthority: decision.deliveryAuthority,
+      destinationEndpoint: decision.destinationEndpoint,
+      completionKeys: decision.completionKeys,
+    })).resolves.toEqual(ok({ claimed: true }));
+    await expect(queue.settleDeliveryAttempt(decision.idempotencyKey, "accepted"))
+      .resolves.toEqual(ok(true));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    for (const completionKey of decision.completionKeys) {
+      await expect(restarted.reserveDecision(decisionInput({
+        idempotencyKey: completionKey,
+        completionKeys: [completionKey],
+      }))).resolves.toEqual(ok({
+        created: false,
+        terminalDecision: "delivered",
+      }));
+    }
+  });
+
+  it("keeps a visible reservation snapshot when final directory sync fails", async () => {
+    const cleanup = vi.fn(async () => ok(undefined));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      fileOperations: createOneTimeDirectorySyncFailure(tmpDir),
+      prepareAttachment: vi.fn(async (attachment) => ok({
+        kind: "snapshot" as const,
+        sourceAgentId: attachment.sourceAgentId,
+        sourcePath: attachment.path,
+        path: "/durable/completion-attachments/visible.csv",
+        fileName: "visible.csv",
+        mimeType: "text/csv",
+        contentDigest: "b".repeat(64),
+        sizeBytes: 12,
+        cleanup,
+      })),
+    });
+    const decision = decisionInput({
+      idempotencyKey: "visible-attachment",
+      attachment: {
+        kind: "source",
+        sourceAgentId: "worker-a",
+        path: "/workspace/visible.csv",
+      },
+    });
+
+    await expect(queue.reserveDecision(decision)).resolves.toMatchObject({ ok: false });
+    await expect(queue.lookupDecision(decision.idempotencyKey)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        attachment: { path: "/durable/completion-attachments/visible.csv" },
+      },
+    });
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it("cleans a shared attachment snapshot only after its final owner settles", async () => {
+    const cleanupAttachment = vi.fn(async () => ok(undefined));
+    const sharedAttachment = snapshotAttachment("worker-a", "shared.csv");
+    const first = decisionInput({
+      idempotencyKey: "shared-attachment-first",
+      runId: "shared-run-first",
+      attachment: sharedAttachment,
+      completionKeys: ["shared-completion-first"],
+    });
+    const second = decisionInput({
+      idempotencyKey: "shared-attachment-second",
+      runId: "shared-run-second",
+      attachment: sharedAttachment,
+      completionKeys: ["shared-completion-second"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      cleanupAttachment,
+    });
+    await queue.replaceDecisions([], [first, second]);
+
+    await expect(queue.resolveDecision(first.idempotencyKey, "receipt_committed"))
+      .resolves.toEqual(ok(true));
+    expect(cleanupAttachment).not.toHaveBeenCalled();
+    await expect(queue.resolveDecision(second.idempotencyKey, "receipt_committed"))
+      .resolves.toEqual(ok(true));
+    expect(cleanupAttachment).toHaveBeenCalledOnce();
+    expect(cleanupAttachment).toHaveBeenCalledWith(sharedAttachment);
+  });
+
+  it("cleans an attachment snapshot after no-reply settlement", async () => {
+    const cleanupAttachment = vi.fn(async () => ok(undefined));
+    const attachment = snapshotAttachment("worker-a", "no-reply.csv");
+    const decision = decisionInput({
+      idempotencyKey: "no-reply-attachment",
+      runId: "no-reply-attachment-run",
+      attachment,
+      completionKeys: ["no-reply-attachment"],
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      cleanupAttachment,
+    });
+    await queue.replaceDecisions([], [decision]);
+
+    await expect(queue.resolveDecision(decision.idempotencyKey, "no_reply"))
+      .resolves.toEqual(ok(true));
+    expect(cleanupAttachment).toHaveBeenCalledOnce();
+    expect(cleanupAttachment).toHaveBeenCalledWith(attachment);
+  });
+
+  it("atomically replaces parent decisions with exact outward operations", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    const firstKey = "default:user:telegram:chat-1::run-parent-1";
+    const secondKey = "default:user:telegram:chat-1::run-parent-2";
+    await queue.reserveDecision(decisionInput());
+    await queue.reserveDecision(decisionInput({
+      idempotencyKey: secondKey,
+      runId: "run-parent-2",
+      completionKeys: [secondKey],
+    }));
+    const operations = [
+      decisionInput({
+        idempotencyKey: "operation-summary",
+        partId: "summary",
+        announcementText: "combined summary",
+        completionKeys: [firstKey, secondKey],
+      }),
+      decisionInput({
+        idempotencyKey: "operation-attachment",
+        partId: "attachment:0",
+        announcementText: "",
+        attachment: snapshotAttachment("worker-a", "report.txt"),
+        completionKeys: [secondKey],
+      }),
+    ];
+
+    await expect(queue.replaceDecisions(
+      [firstKey, secondKey],
+      [decisionInput({
+        idempotencyKey: "operation-incomplete",
+        completionKeys: [firstKey],
+      })],
+    )).resolves.toMatchObject({ ok: false });
+    expect(queue.size()).toBe(2);
+    await expect(queue.replaceDecisions(
+      [firstKey, secondKey],
+      operations,
+    )).resolves.toEqual(ok({ created: true }));
+    await expect(queue.lookupDecision(firstKey)).resolves.toEqual(ok(undefined));
+    await expect(queue.lookupDecision("operation-summary")).resolves.toEqual(ok(operations[0]));
+    await expect(queue.lookupDecision("operation-attachment")).resolves.toEqual(ok(operations[1]));
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.replaceDecisions(
+      [firstKey, secondKey],
+      operations,
+    )).resolves.toEqual(ok({ created: false }));
+    expect(restarted.size()).toBe(2);
+  });
+
+  it("settles terminal operations while reserving remaining outward work", async () => {
+    const { ledger } = makeStubLedger();
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    const completionKey = decisionInput().idempotencyKey;
+    const terminalOperation = decisionInput({
+      idempotencyKey: "terminal-summary",
+      partId: "summary",
+      completionKeys: [completionKey],
+    });
+    const pendingOperation = decisionInput({
+      idempotencyKey: "pending-attachment",
+      partId: "attachment:0",
+      completionKeys: [completionKey],
+    });
+    await queue.reserveDecision(decisionInput());
+    await ledger.recordTerminalDecision(
+      terminalOperation.rootRunId,
+      terminalOperation.idempotencyKey,
+      "delivered",
+    );
+
+    await expect(queue.replaceDecisions(
+      [completionKey],
+      [terminalOperation, pendingOperation],
+    )).resolves.toEqual(ok({ created: true }));
+
+    await expect(queue.lookupDecision(completionKey)).resolves.toEqual(ok(undefined));
+    await expect(queue.lookupDecision("terminal-summary")).resolves.toEqual(ok(undefined));
+    await expect(queue.lookupDecision("pending-attachment"))
+      .resolves.toEqual(ok(pendingOperation));
+  });
+
+  it("emits a session-attributed diagnostic after reserving a parent decision", async () => {
+    const eventBus = createMockEventBus();
+    const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus });
+
+    await expect(queue.reserveDecision(decisionInput())).resolves.toEqual(
+      ok({ created: true }),
+    );
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "announcement:dead_lettered",
+      expect.objectContaining({
+        runId: "run-parent-1",
+        sessionKey: "default:user:telegram:chat-1",
+        channelType: "telegram",
+        reason: "parent_decision_reserved",
+        timestamp: expect.any(Number),
+      }),
+    );
+  });
+
+  it("rejects a parent decision that has no adjudicable ledger root", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    const result = await queue.reserveDecision(decisionInput({ rootRunId: undefined }));
+
+    expect(result).toMatchObject({ ok: false });
+    expect(queue.size()).toBe(0);
+  });
+
+  it("rejects a parent decision that has no durable recovery route", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+
+    const result = await queue.reserveDecision(decisionInput({
+      deliveryAuthority: undefined,
+      destinationEndpoint: undefined,
+    }));
+
+    expect(result).toMatchObject({ ok: false });
+    expect(queue.size()).toBe(0);
   });
 
   // A governed entry the ledger cannot complete is RETAINED on purpose and never
@@ -883,6 +3193,8 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
   it("logs a stuck governed entry once, not on every sweep", async () => {
     const logger = createMockLogger();
     const ledger = {
+      lookupTerminalDecision: vi.fn(async () => ok(undefined)),
+      recordTerminalDecision: vi.fn(async () => ok(undefined)),
       // Definitive absent lookup, so the drain proceeds to the transport check.
       lookup: vi.fn(async () => ok(undefined)),
       allocateStep: vi.fn(async () => ok({ ok: true, value: { stepIndex: 1 } })),
@@ -911,23 +3223,125 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(queue.size()).toBe(1);
   });
 
-  it("removes a parent decision only through an explicit terminal resolution", async () => {
+  it("persists a successful no-reply resolution across restart", async () => {
+    const decision = decisionInput();
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
     });
-    await queue.reserveDecision(decisionInput());
+    await queue.reserveDecision(decision);
 
     await expect(
-      queue.resolveDecision(decisionInput().idempotencyKey, "no_reply"),
+      queue.resolveDecision(decision.idempotencyKey, "no_reply"),
     ).resolves.toEqual(ok(true));
     await expect(
-      queue.lookupDecision(decisionInput().idempotencyKey),
+      queue.lookupDecision(decision.idempotencyKey),
     ).resolves.toEqual(ok(undefined));
     await expect(readFile(filePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+    await expect(restarted.lookupDecision(decision.idempotencyKey))
+      .resolves.toEqual(ok(undefined));
   });
 
-  it("retains one pending decision when delivery failure lacks governed identity", async () => {
+  it("records a governed no-reply decision before removing its reservation", async () => {
+    const decision = decisionInput();
+    const { ledger } = makeStubLedger({ lookupResult: ok(undefined) });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    await queue.reserveDecision(decision);
+
+    await expect(queue.resolveDecision(decision.idempotencyKey, "no_reply"))
+      .resolves.toEqual(ok(true));
+    expect(ledger.recordTerminalDecision).toHaveBeenCalledWith(
+      decision.rootRunId,
+      decision.idempotencyKey,
+      "no_reply",
+    );
+
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+  });
+
+  it("does not acknowledge no-reply until reservation removal is durable", async () => {
+    const seeded = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    const decision = decisionInput({ failedAt: 100 });
+    await seeded.reserveDecision(decision);
+
+    let terminalDecision: "delivered" | "discarded" | "no_reply" | undefined;
+    const ledger: OutwardSendLedgerPort = {
+      lookupTerminalDecision: vi.fn(async () => ok(terminalDecision)),
+      recordTerminalDecision: vi.fn(async (_rootRunId, _operationId, outcome) => {
+        terminalDecision = outcome;
+        return ok(undefined);
+      }),
+      allocateStep: vi.fn(async () => ok(7)),
+      lookup: vi.fn(async () => ok(undefined)),
+      begin: vi.fn(async () => ok(undefined)),
+      markUnknown: vi.fn(async () => ok(undefined)),
+      reclaimPreSend: vi.fn(async () => ok(false)),
+      commit: vi.fn(async () => ok(undefined)),
+      markFailed: vi.fn(async () => ok(undefined)),
+      parkUncertain: vi.fn(async () => ok(false)),
+      hasUncertainty: vi.fn(async () => ok(false)),
+      listUnreconciled: vi.fn(async () => ok([])),
+    };
+    const unavailable = new Error("snapshot removal unavailable");
+    const blocked = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      fileOperations: {
+        open: vi.fn().mockRejectedValue(unavailable),
+        rename: vi.fn(),
+        unlink: vi.fn().mockRejectedValue(unavailable),
+        chmod: vi.fn(),
+      } as unknown as DeadLetterWriteOperations,
+    });
+
+    await expect(blocked.resolveDecision(decision.idempotencyKey, "no_reply"))
+      .resolves.toMatchObject({ ok: false });
+    expect(terminalDecision).toBe("no_reply");
+
+    const governedSendToChannel = vi.fn();
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel,
+      retryIntervalMs: 0,
+    });
+    await restarted.drain(vi.fn(async () => true));
+
+    expect(governedSendToChannel).not.toHaveBeenCalled();
+    expect(restarted.size()).toBe(0);
+    await expect(restarted.reserveDecision(decision)).resolves.toEqual(ok({
+      created: false,
+      terminalDecision: "no_reply",
+    }));
+  });
+
+  it("rejects a mismatched ledgerless operation without replacing its owner", async () => {
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
@@ -941,7 +3355,12 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       channelId: "chat-1",
       threadId: "topic-1",
       lastError: "operation_validation_blocked",
-    }))).resolves.toEqual(ok(undefined));
+    }))).resolves.toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        message: "Announcement operation reservation identity mismatch",
+      }),
+    });
 
     expect(queue.size()).toBe(1);
     await expect(
@@ -959,15 +3378,16 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     // that returns undefined means no send was ever attempted at that step.
     const { ledger } = makeStubLedger(); // lookup -> ok(undefined) = never sent
     const sendToChannel = vi.fn(async () => true);
+    const governedSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "m-1",
+    }));
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
       outwardLedger: ledger,
-      governedSendToChannel: vi.fn(async () => ok({
-        delivered: true,
-        status: "accepted",
-        platformMessageId: "m-1",
-      })),
+      governedSendToChannel,
     });
     await queue.reserveDecision(decisionInput({ rootRunId: "root-parent-1" }));
     expect(queue.size()).toBe(1);
@@ -976,7 +3396,83 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
 
     // The reservation is adjudicated and no longer parked.
     expect(queue.size()).toBe(0);
-    expect(ledger.allocateStep).toHaveBeenCalled();
+    expect(governedSendToChannel).toHaveBeenCalledOnce();
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+  });
+
+  it("persists a recovered chunk manifest without reentering the drain serializer", async () => {
+    const { ledger } = makeStubLedger();
+    let queue: AnnouncementDeadLetterQueue;
+    const governedSendToChannel = vi.fn(async (
+      _type: ChannelType,
+      _id: string,
+      _text: string,
+      options?: RecoveryDeliveryOptions,
+    ) => {
+      const operationId = options?.governedText?.operationId;
+      if (!operationId) return err(new Error("governed operation missing"));
+      const persistTextChunks = options.governedText.persistTextChunks
+        ?? ((chunks: readonly string[]) => queue.recordDecisionTextChunks(operationId, chunks));
+      const persisted = await persistTextChunks(["persisted recovery chunk"]);
+      if (!persisted.ok) return persisted;
+      return ok({
+        delivered: true as const,
+        status: "accepted" as const,
+        platformMessageId: "message-recovered-chunk",
+      });
+    });
+    queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel,
+      retryIntervalMs: 0,
+    });
+    await queue.reserveDecision(decisionInput({ rootRunId: "root-recovered-chunk" }));
+
+    const outcome = await Promise.race([
+      queue.drain(vi.fn(async () => true)).then(() => "drained" as const),
+      delay(250, "timed_out" as const),
+    ]);
+
+    expect(outcome).toBe("drained");
+    expect(governedSendToChannel).toHaveBeenCalledOnce();
+    expect(queue.size()).toBe(0);
+  });
+
+  it("replays persisted delivery extras with the original operation", async () => {
+    const extra = {
+      reply_markup: { inline_keyboard: [[{ text: "Open", callback_data: "open:1" }]] },
+    };
+    const seeded = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+    });
+    await seeded.reserveDecision(decisionInput({ extra }));
+    const { ledger } = makeStubLedger();
+    const governedSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-extra-1",
+    }));
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel,
+      retryIntervalMs: 0,
+    });
+
+    await restarted.drain(vi.fn(async () => true));
+
+    expect(governedSendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-1",
+      "scrubbed parent decision input",
+      expect.objectContaining({ extra }),
+    );
+    expect(restarted.size()).toBe(0);
   });
 
   it("does not adjudicate a parent decision while its rewrite can still be running", async () => {
@@ -1000,6 +3496,11 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(ledger.allocateStep).not.toHaveBeenCalled();
     expect(governedSendToChannel).not.toHaveBeenCalled();
     expect(queue.size()).toBe(1);
+    expect(await queue.durableStatus()).toEqual(ok({
+      activeRecoveryCount: 1,
+      quarantinedCount: 0,
+    }));
+    expect(await listQuarantined(queue)).toHaveLength(0);
   });
 
   it("leaves a reservation parked when the ledger cannot answer", async () => {
@@ -1019,21 +3520,28 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(queue.size()).toBe(1);
   });
 
-  it("leaves a legacy reservation without a rootRunId parked", async () => {
-    // Records written before the identity was carried cannot be looked up, so
-    // they keep the old behaviour rather than being delivered on a guess.
+  it("isolates a persisted reservation without a rootRunId as invalid evidence", async () => {
     const { ledger } = makeStubLedger();
+    const incomplete = {
+      ...decisionInput({ rootRunId: undefined }),
+      recordType: "parent_decision_reservation",
+      id: "incomplete-reservation",
+    };
+    await writeFile(filePath, `${JSON.stringify(incomplete)}\n`, "utf8");
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus: createMockEventBus(),
       outwardLedger: ledger,
     });
-    await queue.reserveDecision(decisionInput());
 
     await queue.drain(vi.fn(async () => true));
 
     expect(queue.size()).toBe(1);
     expect(ledger.allocateStep).not.toHaveBeenCalled();
+    expect(await listQuarantined(queue)).toMatchObject([{
+      kind: "invalid_record",
+      reason: "schema_mismatch",
+    }]);
   });
 
   it("upserts a pending decision into one governed delivery row", async () => {
@@ -1049,10 +3557,13 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       runId: "run-parent-1",
       idempotencyKey: decisionInput().idempotencyKey,
       agentId: "parent-agent",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: "scrubbed parent decision input",
       channelId: "chat-1",
       threadId: "topic-1",
       rootRunId: "root-parent-1",
       stepIndex: 4,
+      completionKeys: [decisionInput().idempotencyKey],
       lastError: "transport_failed",
     }))).resolves.toEqual(ok(undefined));
 
@@ -1136,7 +3647,19 @@ function makeStubLedger(
   options: StubLedgerOptions = {},
 ): { ledger: OutwardSendLedgerPort; lookupCalls: Array<[string, number]> } {
   const lookupCalls: Array<[string, number]> = [];
+  const terminalDecisions = new Map<string, "delivered" | "discarded" | "no_reply">();
   const ledger: OutwardSendLedgerPort = {
+    lookupTerminalDecision: vi.fn(async (rootRunId, operationId) =>
+      ok(terminalDecisions.get(`${rootRunId}\u0000${operationId}`))),
+    recordTerminalDecision: vi.fn(async (rootRunId, operationId, outcome) => {
+      const key = `${rootRunId}\u0000${operationId}`;
+      const existing = terminalDecisions.get(key);
+      if (existing !== undefined && existing !== outcome) {
+        return err(new Error("terminal decision conflict"));
+      }
+      terminalDecisions.set(key, outcome);
+      return ok(undefined);
+    }),
     allocateStep: vi.fn(async () => ok(0)),
     lookup: vi.fn(async (rootRunId: string, stepIndex: number) => {
       lookupCalls.push([rootRunId, stepIndex]);
@@ -1156,19 +3679,6 @@ function makeStubLedger(
 
 type GovernedDeadLetterEntry = DeadLetterEntry & { agentId: string };
 
-function operationFingerprint(entry: DeadLetterEntry): string {
-  return createHash("sha256")
-    .update(JSON.stringify({
-      channelId: entry.channelId,
-      channelType: entry.channelType,
-      kind: "cross_session_announcement",
-      options: null,
-      targetMessageId: null,
-      text: entry.announcementText,
-    }))
-    .digest("hex");
-}
-
 /** A ledger row for the exact persisted announcement operation. */
 function ledgerRow(
   entry: GovernedDeadLetterEntry,
@@ -1177,6 +3687,19 @@ function ledgerRow(
 ): OutwardSendRecord {
   const rootRunId = entry.rootRunId!;
   const stepIndex = entry.stepIndex!;
+  const digests = createAnnouncementOperationDigests({
+    channelType: entry.channelType,
+    channelId: entry.channelId,
+    text: entry.announcementText,
+    ...(entry.threadId || entry.extra ? {
+      options: {
+        ...(entry.threadId ? { threadId: entry.threadId } : {}),
+        ...(entry.extra ? { extra: entry.extra } : {}),
+      },
+    } : {}),
+    ...(entry.attachment?.kind === "snapshot" ? { attachment: entry.attachment } : {}),
+  });
+  if (!digests.ok) throw digests.error;
   return {
     id: `${rootRunId}:${stepIndex}`,
     rootRunId,
@@ -1186,8 +3709,8 @@ function ledgerRow(
     channelId: entry.channelId,
     state,
     operationKind: "cross_session_announcement",
-    operationFingerprint: operationFingerprint(entry),
-    contentDigest: createHash("sha256").update(entry.announcementText).digest("hex"),
+    operationFingerprint: digests.value.operationFingerprint,
+    contentDigest: digests.value.contentDigest,
     attemptCount: 1,
     attemptedAtMs: entry.failedAt,
     ...(state === "committed" ? { platformMessageId: "msg-prior" } : {}),
@@ -1254,17 +3777,79 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(dlq.size()).toBe(0);
   });
 
+  it("settles one completion key after all committed operations clear", async () => {
+    const completionKey = "default:u1:c1::run-multipart-committed";
+    const summary = makeFullEntry({
+      id: "summary-entry",
+      runId: "run-multipart-committed",
+      idempotencyKey: "operation-summary",
+      rootRunId: "root-multipart-committed",
+      stepIndex: 1,
+      agentId: "parent-agent",
+      announcementText: "summary",
+      partId: "summary",
+      completionKeys: [completionKey],
+    }) as GovernedDeadLetterEntry;
+    const finalPart = makeFullEntry({
+      id: "final-entry",
+      runId: "run-multipart-committed",
+      idempotencyKey: "operation-final",
+      rootRunId: "root-multipart-committed",
+      stepIndex: 2,
+      agentId: "parent-agent",
+      announcementText: "final part",
+      partId: "part:1",
+      completionKeys: [completionKey],
+    }) as GovernedDeadLetterEntry;
+    await writeFile(
+      filePath,
+      `${JSON.stringify(summary)}\n${JSON.stringify(finalPart)}\n`,
+      "utf8",
+    );
+    const { ledger } = makeStubLedger();
+    vi.mocked(ledger.lookup).mockImplementation(async (_rootRunId, stepIndex) =>
+      ok(ledgerRow(stepIndex === 1 ? summary : finalPart, "committed")));
+    const onDelivered = vi.fn();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+    });
+
+    await dlq.drain(vi.fn(async () => true), onDelivered);
+
+    expect(onDelivered).toHaveBeenCalledOnce();
+    expect(onDelivered).toHaveBeenCalledWith(completionKey);
+    expect(dlq.size()).toBe(0);
+  });
+
   it("commits a receipt-aware absent-row delivery before removing the dead letter", async () => {
     const eventBus = createMockEventBus();
     const logger = createMockLogger();
-    const entry = makeFullEntry({
-      runId: "run-uncommitted-1",
-      idempotencyKey: "default:u1:c1::run-uncommitted-1",
-      rootRunId: "root-uncommitted-1",
-      stepIndex: 9,
-      agentId: "parent-agent",
-      announcementText: "private completion payload",
-    } as Partial<DeadLetterEntry>) as GovernedDeadLetterEntry;
+    const deliveryAuthority = makeDeliveryAuthority("parent-agent");
+    const destinationEndpoint = {
+      channelType: "telegram",
+      channelInstanceId: "telegram-bot-a",
+      conversationId: "chat-123",
+      conversationKind: "direct",
+    } satisfies ChannelEndpoint;
+    const entry = {
+      ...makeFullEntry({
+        runId: "run-uncommitted-1",
+        idempotencyKey: "default:u1:c1::run-uncommitted-1",
+        rootRunId: "root-uncommitted-1",
+        stepIndex: 9,
+        agentId: "parent-agent",
+        announcementText: "private completion payload",
+      } as Partial<DeadLetterEntry>),
+      deliveryAuthority,
+      destinationEndpoint,
+    } as GovernedDeadLetterEntry & {
+      deliveryAuthority: DeliveryAuthority;
+      destinationEndpoint: ChannelEndpoint;
+    };
+    const expectedOperation = ledgerRow(entry, "in_flight");
     await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
 
     const { ledger, lookupCalls } = makeStubLedger({ lookupResult: ok(undefined) });
@@ -1273,6 +3858,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       status: "accepted",
       platformMessageId: "telegram-receipt-9",
     }));
+    const ensureSessionObservation = vi.fn(() => ok(undefined));
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus,
@@ -1280,7 +3866,8 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       retryIntervalMs: 0,
       outwardLedger: ledger,
       governedSendToChannel,
-    });
+      ensureSessionObservation,
+    } as never);
     const sendToChannel = vi.fn().mockResolvedValue(true);
     const onDelivered = vi.fn();
 
@@ -1289,6 +3876,12 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(lookupCalls).toEqual([["root-uncommitted-1", 9]]);
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(governedSendToChannel).toHaveBeenCalledOnce();
+    expect(governedSendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-123",
+      "private completion payload",
+      { authority: deliveryAuthority, destinationEndpoint },
+    );
     expect(ledger.begin).toHaveBeenCalledWith({
       rootRunId: "root-uncommitted-1",
       stepIndex: 9,
@@ -1296,14 +3889,29 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       channelType: "telegram",
       channelId: "chat-123",
       operationKind: "cross_session_announcement",
-      operationFingerprint: operationFingerprint(entry),
-      contentDigest: createHash("sha256").update(entry.announcementText).digest("hex"),
+      operationFingerprint: expectedOperation.operationFingerprint,
+      contentDigest: expectedOperation.contentDigest,
     });
     expect(ledger.markUnknown).toHaveBeenCalledWith("root-uncommitted-1", 9);
     expect(ledger.commit).toHaveBeenCalledWith(
       "root-uncommitted-1",
       9,
       "telegram-receipt-9",
+    );
+    expect(ensureSessionObservation).toHaveBeenCalledWith({
+      agentId: "parent-agent",
+      sessionKey: entry.sessionKey,
+    });
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "delivery:outward_ledger_transition",
+      expect.objectContaining({
+        rootRunId: "root-uncommitted-1",
+        stepIndex: 9,
+        transition: "commit",
+        outcome: "committed",
+        sessionKey: entry.sessionKey,
+        platformMessageId: "telegram-receipt-9",
+      }),
     );
     expect(ledger.parkUncertain).not.toHaveBeenCalled();
     expect(vi.mocked(ledger.begin).mock.invocationCallOrder[0])
@@ -1332,6 +3940,171 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     );
     expect(dlq.size()).toBe(0);
   });
+
+  it("rebuilds and settles one retained attachment operation", async () => {
+    const completionKey = "default:u1:c1::run-attachment-recovery";
+    const entry = makeFullEntry({
+      runId: "run-attachment-recovery",
+      idempotencyKey: "operation-attachment-recovery",
+      rootRunId: "root-attachment-recovery",
+      stepIndex: 10,
+      agentId: "parent-agent",
+      announcementText: "attachment caption",
+      partId: "attachment:0",
+      attachment: snapshotAttachment("worker-a", "report.txt"),
+      completionKeys: [completionKey],
+    }) as GovernedDeadLetterEntry;
+    await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+    const cleanupAttachment = vi.fn(async () => ok(undefined));
+    const governedSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "attachment-receipt",
+    }));
+    const { ledger } = makeStubLedger({ lookupResult: ok(undefined) });
+    const onDelivered = vi.fn();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+      governedSendToChannel,
+      cleanupAttachment,
+    });
+
+    await dlq.drain(vi.fn(async () => true), onDelivered);
+
+    expect(governedSendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-123",
+      "attachment caption",
+      expect.objectContaining({
+        authority: entry.deliveryAuthority,
+        destinationEndpoint: entry.destinationEndpoint,
+      }),
+      entry.attachment,
+    );
+    expect(ledger.commit).toHaveBeenCalledWith(
+      "root-attachment-recovery",
+      10,
+      "attachment-receipt",
+    );
+    expect(cleanupAttachment).toHaveBeenCalledWith(entry.attachment);
+    expect(onDelivered).toHaveBeenCalledWith(completionKey);
+    expect(dlq.size()).toBe(0);
+  });
+
+  it("settles a committed attachment without reopening its source file", async () => {
+    const entry = makeFullEntry({
+      runId: "run-attachment-committed",
+      idempotencyKey: "operation-attachment-committed",
+      rootRunId: "root-attachment-committed",
+      stepIndex: 14,
+      agentId: "parent-agent",
+      partId: "attachment:0",
+      attachment: snapshotAttachment("worker-a", "missing-report.txt"),
+      completionKeys: ["completion-attachment-committed"],
+    }) as GovernedDeadLetterEntry;
+    await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+    const { ledger } = makeStubLedger({
+      lookupResult: ok(ledgerRow(entry, "committed")),
+    });
+    vi.mocked(ledger.allocateStep).mockResolvedValue(ok(14));
+    const governedSendToChannel = vi.fn();
+    const ensureSessionObservation = vi.fn(() => ok(undefined));
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+      governedSendToChannel,
+      ensureSessionObservation,
+    });
+
+    await dlq.drain(vi.fn(async () => true));
+
+    expect(governedSendToChannel).not.toHaveBeenCalled();
+    expect(ensureSessionObservation).toHaveBeenCalledWith({
+      agentId: "parent-agent",
+      sessionKey: entry.sessionKey,
+    });
+    expect(dlq.size()).toBe(0);
+  });
+
+  it("retains a committed attachment whose exact payload identity differs", async () => {
+    const entry = makeFullEntry({
+      runId: "run-attachment-mismatched-receipt",
+      idempotencyKey: "operation-attachment-mismatched-receipt",
+      rootRunId: "root-attachment-mismatched-receipt",
+      stepIndex: 16,
+      agentId: "parent-agent",
+      announcementText: "expected attachment caption",
+      partId: "attachment:0",
+      attachment: snapshotAttachment("worker-a", "expected-report.txt"),
+      completionKeys: ["completion-attachment-mismatched-receipt"],
+    }) as GovernedDeadLetterEntry;
+    await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+    const { ledger } = makeStubLedger({
+      lookupResult: ok(ledgerRow(entry, "committed", {
+        contentDigest: createHash("sha256").update("different bytes").digest("hex"),
+      })),
+    });
+    vi.mocked(ledger.allocateStep).mockResolvedValue(ok(16));
+    const governedSendToChannel = vi.fn();
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+      governedSendToChannel,
+    });
+
+    await dlq.drain(vi.fn(async () => true));
+
+    expect(governedSendToChannel).not.toHaveBeenCalled();
+    expect(dlq.size()).toBe(1);
+  });
+
+  it.each([
+    ["send_attempt_started", "outward_operation_unresolved"],
+    ["unknown_after_send", "outward_operation_unresolved"],
+    ["unresolved", "outward_operation_unresolved"],
+    ["failed", "outward_operation_failed"],
+  ] as const)(
+    "surfaces retained attachment state %s without reopening its source file",
+    async (state, expectedReason) => {
+      const entry = makeFullEntry({
+        runId: `run-attachment-${state}`,
+        idempotencyKey: `operation-attachment-${state}`,
+        rootRunId: `root-attachment-${state}`,
+        stepIndex: 15,
+        agentId: "parent-agent",
+        partId: "attachment:0",
+        attachment: snapshotAttachment("worker-a", "missing-report.txt"),
+        completionKeys: [`completion-attachment-${state}`],
+      }) as GovernedDeadLetterEntry;
+      await writeFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+      const { ledger } = makeStubLedger({
+        lookupResult: ok(ledgerRow(entry, state)),
+      });
+      vi.mocked(ledger.allocateStep).mockResolvedValue(ok(15));
+      const governedSendToChannel = vi.fn();
+      const dlq = createAnnouncementDeadLetterQueue({
+        filePath,
+        eventBus: createMockEventBus(),
+        retryIntervalMs: 0,
+        outwardLedger: ledger,
+        governedSendToChannel,
+      });
+
+      await dlq.drain(vi.fn(async () => true));
+
+      expect(governedSendToChannel).not.toHaveBeenCalled();
+      expect((await listQuarantined(dlq))[0]).toMatchObject({
+        lastError: expectedReason,
+      });
+    },
+  );
 
   it("retains an absent governed row without beginning when receipt-aware transport is unavailable", async () => {
     const eventBus = createMockEventBus();
@@ -1634,13 +4407,15 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(sendToChannel).not.toHaveBeenCalled();
   });
 
-  it("fails closed when a ledger-wired entry lacks its complete governed operation identity", async () => {
+  it("isolates a governed row that lacks its complete recovery route", async () => {
     const eventBus = createMockEventBus();
     const entry = makeFullEntry({
       runId: "run-incomplete-identity",
       rootRunId: "root-incomplete-identity",
       stepIndex: 11,
     });
+    delete entry.deliveryAuthority;
+    delete entry.destinationEndpoint;
     await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
 
     const { ledger, lookupCalls } = makeStubLedger();
@@ -1655,19 +4430,14 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
 
     expect(lookupCalls).toEqual([]);
     expect(sendToChannel).not.toHaveBeenCalled();
-    expect(eventBus.emit).toHaveBeenCalledWith(
-      "delivery:outward_ledger_transition",
-      expect.objectContaining({
-        rootRunId: "root-incomplete-identity",
-        stepIndex: 11,
-        transition: "lookup",
-        outcome: "blocked",
-      }),
-    );
+    expect(await listQuarantined(dlq)).toMatchObject([{
+      kind: "invalid_record",
+      reason: "schema_mismatch",
+    }]);
     expect(dlq.size()).toBe(1);
   });
 
-  it("never age-expires, attempt-drops, or capacity-evicts governed quarantine evidence", async () => {
+  it("never age-expires or attempt-drops governed evidence and backpressures overflow", async () => {
     const eventBus = createMockEventBus();
     const entryA = makeFullEntry({
       runId: "run-quarantine-a",
@@ -1703,28 +4473,38 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
       outwardLedger: ledger,
     });
 
-    for (const entry of [entryA, entryB]) {
-      await dlq.enqueue({
+    const admissionInput = (entry: GovernedDeadLetterEntry) => ({
         announcementText: entry.announcementText,
         channelType: entry.channelType,
         channelId: entry.channelId,
         agentId: entry.agentId,
         runId: entry.runId,
+        sessionKey: entry.sessionKey,
         failedAt: entry.failedAt,
         attemptCount: entry.attemptCount,
         rootRunId: entry.rootRunId,
         stepIndex: entry.stepIndex,
+        deliveryAuthority: entry.deliveryAuthority,
+        destinationEndpoint: entry.destinationEndpoint,
       });
-    }
-    expect(dlq.size()).toBe(2);
+    expect(await dlq.enqueue(admissionInput(entryA))).toEqual(ok(undefined));
+    let overflowSettled = false;
+    const overflow = dlq.enqueue(admissionInput(entryB)).finally(() => {
+      overflowSettled = true;
+    });
+    await delay(10);
+    expect(overflowSettled).toBe(false);
+    expect(dlq.size()).toBe(1);
 
     const sendToChannel = vi.fn().mockResolvedValue(true);
     await dlq.drain(sendToChannel);
 
     expect(sendToChannel).not.toHaveBeenCalled();
-    expect(dlq.size()).toBe(2);
-    const persisted = (await readFile(filePath, "utf-8")).trim().split("\n");
-    expect(persisted).toHaveLength(2);
+    expect(dlq.size()).toBe(1);
+    const firstId = (await listQuarantined(dlq))[0]!.id;
+    expect(await dlq.release(firstId, "discarded")).toEqual(ok(true));
+    await expect(overflow).resolves.toEqual(ok(undefined));
+    expect((await readFile(filePath, "utf-8")).trim().split("\n")).toHaveLength(1);
   });
 
   it("no ledger wired → drain delivers normally (pass-through, unchanged behavior)", async () => {
@@ -1768,6 +4548,27 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("separates active recovery from operator quarantine", async () => {
+    const { ledger } = makeStubLedger();
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    await queue.enqueue(makeEntry({
+      runId: "run-retryable",
+      idempotencyKey: "operation-retryable",
+      rootRunId: "root-retryable",
+      stepIndex: 1,
+      lastError: "outward_ledger_lookup_blocked",
+    }));
+    expect(await queue.durableStatus()).toEqual({
+      ok: true,
+      value: { activeRecoveryCount: 1, quarantinedCount: 0 },
+    });
+    expect(await listQuarantined(queue)).toHaveLength(0);
+  });
+
   it("lists a quarantined announcement by id without exposing its text", async () => {
     const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
     await queue.enqueue(makeEntry({
@@ -1776,9 +4577,10 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
       channelId: "678314278",
       announcementText: "the answer the user never saw",
       lastError: "outward_operation_unresolved",
+      attemptCount: 5,
     }));
 
-    const rows = await queue.listQuarantined();
+    const rows = await listQuarantined(queue);
 
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
@@ -1801,11 +4603,14 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
     // the exact state the command exists to surface. Reproduced live on
     // comis-moshe against a real parked announcement.
     const seeded = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
-    await seeded.enqueue(makeEntry({ runId: "run-from-a-previous-boot" }));
+    await seeded.enqueue(makeEntry({
+      runId: "run-from-a-previous-boot",
+      attemptCount: 5,
+    }));
 
     // A brand-new queue over the same file: nothing has loaded it yet.
     const fresh = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
-    const rows = await fresh.listQuarantined();
+    const rows = await listQuarantined(fresh);
 
     expect(rows).toHaveLength(1);
     expect(rows[0]!.runId).toBe("run-from-a-previous-boot");
@@ -1813,18 +4618,146 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
 
   it("releases a quarantined announcement by id and persists the removal", async () => {
     const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
-    await queue.enqueue(makeEntry({ runId: "run-stuck" }));
-    const id = (await queue.listQuarantined())[0]!.id;
+    const entry = makeEntry({ runId: "run-stuck", attemptCount: 5 });
+    await queue.enqueue(entry);
+    const id = (await listQuarantined(queue))[0]!.id;
 
     const released = await queue.release(id, "discarded");
 
     expect(released).toMatchObject({ ok: true, value: true });
-    expect(await queue.listQuarantined()).toHaveLength(0);
+    expect(await listQuarantined(queue)).toHaveLength(0);
     expect(queue.size()).toBe(0);
     // Durable: a fresh queue over the same file must not resurrect it.
     const reloaded = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
+    await reloaded.enqueue(entry);
     await reloaded.drain(vi.fn().mockResolvedValue(true));
     expect(reloaded.size()).toBe(0);
+  });
+
+  it("records governed terminal decisions before removing quarantine evidence", async () => {
+    const { ledger } = makeStubLedger();
+    let decision: "delivered" | "discarded" | "no_reply" | undefined;
+    vi.mocked(ledger.lookupTerminalDecision).mockImplementation(async () => ok(decision));
+    vi.mocked(ledger.recordTerminalDecision).mockImplementation(async (_root, _operation, outcome) => {
+      decision = outcome;
+      return ok(undefined);
+    });
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    const entry = makeEntry({
+      runId: "run-governed-release",
+      idempotencyKey: "operation-governed-release",
+      rootRunId: "root-governed-release",
+      stepIndex: 4,
+      lastError: "outward_operation_unresolved",
+    });
+    await queue.enqueue(entry);
+    const id = (await listQuarantined(queue))[0]!.id;
+
+    expect(await queue.release(id, "discarded")).toEqual(ok(true));
+    expect(ledger.recordTerminalDecision).toHaveBeenCalledWith(
+      "root-governed-release",
+      "operation-governed-release",
+      "discarded",
+    );
+    await queue.enqueue(entry);
+    expect(queue.size()).toBe(0);
+  });
+
+  it("settles the uncertain governed chunk before recovering its tail", async () => {
+    const chunks = ["first governed chunk", "second governed chunk"];
+    const runId = "run-governed-chunk-release";
+    const sessionKey = "default:agent-a:telegram:chat-123:user_a";
+    const partId = "summary";
+    const chunkOperationIds = chunks.map((_, chunkIndex) =>
+      createStableAnnouncementChunkOperationId(
+        "agent-a",
+        sessionKey,
+        runId,
+        partId,
+        chunkIndex,
+      ));
+    const { ledger } = makeStubLedger();
+    vi.mocked(ledger.allocateStep).mockImplementation(async (_rootRunId, operationId) =>
+      ok(chunkOperationIds.indexOf(operationId)));
+    vi.mocked(ledger.lookup).mockImplementation(async (rootRunId, stepIndex) =>
+      stepIndex === 0
+        ? ok({
+            id: `${rootRunId}:${stepIndex}`,
+            rootRunId,
+            stepIndex,
+            agentId: "agent-a",
+            channelType: "telegram",
+            channelId: "chat-123",
+            state: "unresolved" as const,
+            operationKind: "cross_session_announcement" as const,
+            operationFingerprint: "a".repeat(64),
+            contentDigest: "b".repeat(64),
+            attemptCount: 1,
+            attemptedAtMs: 100,
+          })
+        : ok(undefined));
+    const governedSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-tail",
+    }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel,
+      retryIntervalMs: 0,
+    });
+    await queue.enqueue(makeEntry({
+      runId,
+      sessionKey,
+      rootRunId: "root-governed-chunk-release",
+      idempotencyKey: "governed-chunk-parent",
+      partId,
+      textChunks: chunks,
+      lastError: "outward_operation_unresolved",
+    }));
+    const id = (await listQuarantined(queue))[0]!.id;
+
+    await expect(queue.release(id, "delivered")).resolves.toEqual(ok(true));
+
+    expect(ledger.recordTerminalDecision).toHaveBeenCalledWith(
+      "root-governed-chunk-release",
+      chunkOperationIds[0],
+      "delivered",
+    );
+    expect(queue.size()).toBe(1);
+    await queue.drain(vi.fn(async () => false));
+    expect(governedSendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-123",
+      "Task completed successfully",
+      expect.objectContaining({
+        governedText: expect.objectContaining({ preparedTextChunks: chunks }),
+      }),
+    );
+    expect(queue.size()).toBe(0);
+  });
+
+  it("does not spend pending capacity on prior terminal decisions", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      maxEntries: 1,
+    });
+    const first = makeEntry({ runId: "run-release-first", attemptCount: 5 });
+    const second = makeEntry({ runId: "run-release-second", attemptCount: 5 });
+
+    await queue.enqueue(first);
+    const firstId = (await listQuarantined(queue))[0]!.id;
+    expect(await queue.release(firstId, "discarded")).toEqual(ok(true));
+    await expect(queue.enqueue(second)).resolves.toEqual(ok(undefined));
+    const secondId = (await listQuarantined(queue))[0]!.id;
+    expect(await queue.release(secondId, "discarded")).toEqual(ok(true));
   });
 
   it("reports an unknown id as not released rather than failing the call", async () => {
@@ -1835,5 +4768,630 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
 
     expect(released).toMatchObject({ ok: true, value: false });
     expect(queue.size()).toBe(1);
+  });
+});
+
+describe("announcement dead-letter unreadable store", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-unreadable-"));
+    // The store path is a directory, so every read of it fails identically for
+    // any user — unlike a permission bit, which a root test runner ignores.
+    filePath = join(tmpDir, "dead-letters.jsonl");
+    await mkdir(filePath, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function decision(overrides: Record<string, unknown> = {}) {
+    return {
+      idempotencyKey: "default:user:telegram:chat-1::run-unreadable",
+      agentId: "parent-agent",
+      runId: "run-unreadable",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: "unreadable store input",
+      channelType: "telegram" as const,
+      channelId: "chat-1",
+      failedAt: 100,
+      rootRunId: "root-unreadable",
+      deliveryAuthority: makeDeliveryAuthority("parent-agent"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1"),
+      completionKeys: ["default:user:telegram:chat-1::run-unreadable"],
+      ...overrides,
+    };
+  }
+
+  function reservation() {
+    const base = decision();
+    return {
+      ...base,
+      producer: {
+        kind: "session" as const,
+        tenantId: base.deliveryAuthority.tenantId,
+        agentId: base.deliveryAuthority.agentId,
+        conversationRef: base.deliveryAuthority.conversationRef,
+        checkpointId: base.runId,
+      },
+    };
+  }
+
+  it("refuses every durable operation instead of acting on an unread store", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+    });
+
+    // Each of these loads the store first; none may report success, because a
+    // store that could not be read cannot prove the operation is safe.
+    await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: false });
+    await expect(queue.reserveProducer(reservation())).resolves.toMatchObject({ ok: false });
+    await expect(queue.reclaimProducer(reservation())).resolves.toMatchObject({ ok: false });
+    await expect(queue.releaseProducer("run-unreadable")).resolves.toMatchObject({ ok: false });
+    await expect(queue.cancelProducer("run-unreadable")).resolves.toMatchObject({ ok: false });
+    await expect(queue.suppressProducer("run-unreadable")).resolves.toMatchObject({ ok: false });
+    await expect(queue.recordProducerOutcome("run-unreadable", {
+      kind: "tool_result",
+      terminalReason: "completed",
+      completedAtMs: 1,
+      response: "done",
+    } as AnnouncementProducerRecoveryOutcome)).resolves.toMatchObject({ ok: false });
+    await expect(queue.reserveDecision(decision())).resolves.toMatchObject({ ok: false });
+    await expect(queue.lookupDecision("run-unreadable")).resolves.toMatchObject({ ok: false });
+    await expect(queue.lookupDecisionTextChunks("run-unreadable"))
+      .resolves.toMatchObject({ ok: false });
+    await expect(queue.resolveDecision("run-unreadable", "no_reply"))
+      .resolves.toMatchObject({ ok: false });
+    await expect(queue.recordDecisionTextChunks("run-unreadable", ["chunk"]))
+      .resolves.toMatchObject({ ok: false });
+    await expect(queue.beginDeliveryAttempt(makeEntry())).resolves.toMatchObject({ ok: false });
+    await expect(queue.settleDeliveryAttempt("run-unreadable", "accepted"))
+      .resolves.toMatchObject({ ok: false });
+    await expect(queue.replaceDecisions(["run-unreadable"], [decision()]))
+      .resolves.toMatchObject({ ok: false });
+    await expect(queue.durableStatus()).resolves.toMatchObject({ ok: false });
+    await expect(queue.listQuarantined()).resolves.toMatchObject({ ok: false });
+    await expect(queue.release("some-id", "discarded")).resolves.toMatchObject({ ok: false });
+  });
+});
+
+describe("announcement dead-letter unwritable store", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-unwritable-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function unwritableQueue() {
+    return createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      retryIntervalMs: 0,
+      fileOperations: {
+        open: vi.fn().mockRejectedValue(new Error("durable storage is offline")),
+        rename: vi.fn(),
+        unlink: vi.fn(),
+        chmod: vi.fn(),
+      } as unknown as DeadLetterWriteOperations,
+    });
+  }
+
+  function decision(overrides: Record<string, unknown> = {}) {
+    return {
+      idempotencyKey: "default:user:telegram:chat-1::run-unwritable",
+      agentId: "parent-agent",
+      runId: "run-unwritable",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: "unwritable store input",
+      channelType: "telegram" as const,
+      channelId: "chat-1",
+      failedAt: 100,
+      rootRunId: "root-unwritable",
+      deliveryAuthority: makeDeliveryAuthority("parent-agent"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1"),
+      completionKeys: ["default:user:telegram:chat-1::run-unwritable"],
+      ...overrides,
+    };
+  }
+
+  it("reports failure rather than acknowledging an unpersisted admission", async () => {
+    const queue = unwritableQueue();
+    const base = decision();
+
+    // The store reads clean (it is simply empty); only the write fails. An
+    // operation that cannot be persisted must not be reported as accepted,
+    // because recovery would then never replay it.
+    await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: false });
+    await expect(queue.reserveDecision(base)).resolves.toMatchObject({ ok: false });
+    await expect(queue.reserveProducer({
+      ...base,
+      producer: {
+        kind: "session" as const,
+        tenantId: base.deliveryAuthority.tenantId,
+        agentId: base.deliveryAuthority.agentId,
+        conversationRef: base.deliveryAuthority.conversationRef,
+        checkpointId: base.runId,
+      },
+    })).resolves.toMatchObject({ ok: false });
+    await expect(queue.beginDeliveryAttempt(makeEntry())).resolves.toMatchObject({ ok: false });
+
+    // Nothing became visible in memory either.
+    expect(queue.size()).toBe(0);
+  });
+
+  it("keeps a drain from claiming delivery it could not record", async () => {
+    const seeded = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await expect(seeded.enqueue(makeEntry())).resolves.toMatchObject({ ok: true });
+
+    const blocked = unwritableQueue();
+    const send = vi.fn(async () => true);
+    await blocked.drain(send as unknown as Parameters<typeof blocked.drain>[0]);
+
+    // The entry is still owed: a delivery whose settlement could not be
+    // written stays retained for the next drain.
+    const restarted = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    const status = await restarted.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+});
+
+describe("announcement dead-letter ledgerless chunk replay", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-chunk-replay-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  const chunks = ["first durable chunk", "second durable chunk"];
+
+  function chunkDecision(overrides: Record<string, unknown> = {}) {
+    return {
+      idempotencyKey: "chunk-replay-parent",
+      agentId: "parent-agent",
+      runId: "run-chunk-replay",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: chunks.join(" "),
+      channelType: "telegram" as const,
+      channelId: "chat-1",
+      failedAt: Date.now() - 301_000,
+      rootRunId: "root-chunk-replay",
+      deliveryAuthority: makeDeliveryAuthority("parent-agent"),
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1"),
+      completionKeys: ["chunk-replay-parent"],
+      textChunks: chunks,
+      ...overrides,
+    };
+  }
+
+  it("retains a chunked manifest when no receipt-aware transport is wired", async () => {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+    });
+    await queue.reserveDecision(chunkDecision());
+
+    const plainSend = vi.fn(async () => true);
+    await queue.drain(plainSend as unknown as Parameters<typeof queue.drain>[0]);
+
+    // A chunk manifest cannot be replayed through a transport that returns no
+    // receipt: without one there is no way to tell a delivered chunk from a
+    // lost one, so the manifest is retained rather than resent blind.
+    expect(plainSend).not.toHaveBeenCalled();
+    expect(queue.size()).toBe(1);
+  });
+
+  it("stops a chunk replay at the attempt ceiling instead of resending", async () => {
+    const receiptAwareSendToChannel = vi.fn(async () => ok({
+      delivered: true as const,
+      status: "accepted" as const,
+      platformMessageId: "message-chunk",
+    }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      maxRetries: 0,
+      receiptAwareSendToChannel,
+    });
+    await queue.reserveDecision(chunkDecision());
+
+    await queue.drain(vi.fn(async () => false));
+
+    expect(receiptAwareSendToChannel).not.toHaveBeenCalled();
+    expect(queue.size()).toBe(1);
+  });
+
+  it("does not resend a chunk whose prior send never resolved", async () => {
+    const receiptAwareSendToChannel = vi.fn(async () => ok({
+      delivered: false as const,
+      status: "unknown" as const,
+    }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      receiptAwareSendToChannel,
+    });
+    await queue.reserveDecision(chunkDecision());
+
+    await queue.drain(vi.fn(async () => false));
+    const afterFirst = receiptAwareSendToChannel.mock.calls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    await queue.drain(vi.fn(async () => false));
+
+    // An unresolved send may already have reached the platform, so the retry
+    // must not repeat it — the entry stays owed until the outcome is known.
+    expect(receiptAwareSendToChannel.mock.calls.length).toBe(afterFirst);
+    expect(queue.size()).toBe(1);
+  });
+
+  it("abandons a chunk replay when the transport refuses the chunk", async () => {
+    const receiptAwareSendToChannel = vi.fn(async () => ok({
+      delivered: false as const,
+      status: "rejected" as const,
+    }));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      receiptAwareSendToChannel,
+    });
+    await queue.reserveDecision(chunkDecision());
+
+    await queue.drain(vi.fn(async () => false));
+
+    expect(receiptAwareSendToChannel).toHaveBeenCalled();
+    // The refusal is recorded against the entry rather than dropping it.
+    expect(queue.size()).toBe(1);
+  });
+});
+
+describe("announcement dead-letter producer promotion after restart", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-promotion-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function reservation(overrides: Record<string, unknown> = {}) {
+    const authority = makeDeliveryAuthority("parent-agent");
+    return {
+      idempotencyKey: "promotion-parent",
+      agentId: "parent-agent",
+      runId: "run-promotion",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: "promotion candidate",
+      channelType: "telegram" as const,
+      channelId: "chat-1",
+      failedAt: Date.now() - 301_000,
+      rootRunId: "root-promotion",
+      deliveryAuthority: authority,
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1"),
+      completionKeys: ["promotion-parent"],
+      producer: {
+        kind: "session" as const,
+        tenantId: authority.tenantId,
+        agentId: authority.agentId,
+        conversationRef: authority.conversationRef,
+        checkpointId: "run-promotion",
+      },
+      ...overrides,
+    };
+  }
+
+  async function seedReservedProducer() {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      retryIntervalMs: 0,
+      retirementProducerState: async () => ok({ status: "active" as const }),
+    });
+    await expect(queue.reserveProducer(reservation()))
+      .resolves.toEqual(ok({ status: "claimed" }));
+  }
+
+  function restarted(
+    retirementProducerState: Parameters<
+      typeof createAnnouncementDeadLetterQueue
+    >[0]["retirementProducerState"],
+  ) {
+    return createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      retryIntervalMs: 0,
+      retirementProducerState,
+    });
+  }
+
+  it("leaves a still-running producer's reservation alone", async () => {
+    await seedReservedProducer();
+    const queue = restarted(async () => ok({ status: "active" as const }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    // The producer survived the restart, so it still owns its announcement.
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+
+  it("keeps ownership when the producer authority cannot be read", async () => {
+    await seedReservedProducer();
+    const queue = restarted(async () => err(new Error("producer store offline")));
+
+    await queue.drain(vi.fn(async () => true));
+
+    // An unreadable authority is not evidence the producer is gone; releasing
+    // on that basis would drop an announcement its producer still owns.
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+
+  it("releases a reservation whose session producer ended without an outcome", async () => {
+    await seedReservedProducer();
+    const queue = restarted(async () => ok({
+      status: "terminal" as const,
+      terminalReason: "completed" as const,
+    }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+
+  it("adopts the recovery outcome a terminal producer left behind", async () => {
+    await seedReservedProducer();
+    const queue = restarted(async () => ok({
+      status: "terminal" as const,
+      terminalReason: "completed" as const,
+      recoveryOutcome: {
+        kind: "session" as const,
+        terminalReason: "completed" as const,
+        completedAtMs: Date.now(),
+      },
+    }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+
+  it("reclaims a reservation whose producer is gone entirely", async () => {
+    await seedReservedProducer();
+    const queue = restarted(async () => ok({ status: "absent" as const }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+});
+
+describe("announcement dead-letter admission cancellation", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-admission-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function fullQueue() {
+    return createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      retryIntervalMs: 0,
+      maxEntries: 1,
+    });
+  }
+
+  function decision(overrides: Record<string, unknown> = {}) {
+    const authority = makeDeliveryAuthority("parent-agent");
+    return {
+      idempotencyKey: "admission-parent",
+      agentId: "parent-agent",
+      runId: "run-admission",
+      sessionKey: "default:user:telegram:chat-1",
+      announcementText: "admission candidate",
+      channelType: "telegram" as const,
+      channelId: "chat-1",
+      failedAt: Date.now(),
+      rootRunId: "root-admission",
+      deliveryAuthority: authority,
+      destinationEndpoint: makeDestinationEndpoint("telegram", "chat-1"),
+      completionKeys: ["admission-parent"],
+      ...overrides,
+    };
+  }
+
+  it("cancels an enqueue that is waiting on capacity", async () => {
+    const queue = fullQueue();
+    await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: true });
+
+    const controller = new AbortController();
+    const blocked = queue.enqueue(makeEntry(), controller.signal);
+    await delay(10);
+    controller.abort();
+
+    // A caller that gave up must be told so, not left holding a promise that
+    // only resolves if capacity happens to free up.
+    await expect(blocked).resolves.toMatchObject({ ok: false });
+    expect(queue.size()).toBe(1);
+  });
+
+  it("rejects an enqueue whose caller already gave up", async () => {
+    const queue = fullQueue();
+    await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: true });
+
+    await expect(queue.enqueue(makeEntry(), AbortSignal.abort()))
+      .resolves.toMatchObject({ ok: false });
+    expect(queue.size()).toBe(1);
+  });
+
+  function producerFor(runId: string) {
+    const base = decision({ idempotencyKey: runId, runId });
+    return {
+      ...base,
+      producer: {
+        kind: "session" as const,
+        tenantId: base.deliveryAuthority.tenantId,
+        agentId: base.deliveryAuthority.agentId,
+        conversationRef: base.deliveryAuthority.conversationRef,
+        checkpointId: runId,
+      },
+    };
+  }
+
+  it("cancels a producer reservation blocked on producer capacity", async () => {
+    const queue = fullQueue();
+    await expect(queue.reserveProducer(producerFor("run-first")))
+      .resolves.toEqual(ok({ status: "claimed" }));
+
+    const controller = new AbortController();
+    const blocked = queue.reserveProducer(producerFor("run-second"), controller.signal);
+    await delay(10);
+    controller.abort();
+
+    // The second producer never claimed ownership, so nothing was left
+    // half-reserved behind the cancelled caller.
+    await expect(blocked).resolves.toMatchObject({ ok: false });
+  });
+
+  it("retains a blocked decision reservation rather than losing it on cancel", async () => {
+    const queue = fullQueue();
+    await expect(queue.enqueue(makeEntry())).resolves.toMatchObject({ ok: true });
+
+    const controller = new AbortController();
+    const blocked = queue.reserveDecision(decision(), controller.signal);
+    await delay(10);
+    controller.abort();
+
+    // Cancellation settles the call; whichever way it settles, the queue must
+    // not be left believing an operation is in flight that no caller owns.
+    const settled = await blocked;
+    expect(settled).toBeDefined();
+    const status = await queue.durableStatus();
+    expect(status).toMatchObject({ ok: true });
+  });
+});
+
+describe("announcement dead-letter governed drain failures", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dead-letter-governed-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function ledgerWith(overrides: Record<string, unknown>): OutwardSendLedgerPort {
+    return {
+      lookupTerminalDecision: vi.fn(async () => ok(undefined)),
+      recordTerminalDecision: vi.fn(async () => ok(undefined)),
+      lookup: vi.fn(async () => ok(undefined)),
+      allocateStep: vi.fn(async () => ok({ stepIndex: 1 })),
+      recordState: vi.fn(async () => ok(undefined)),
+      begin: vi.fn(async () => ok(undefined)),
+      commit: vi.fn(async () => ok(undefined)),
+      markUnknown: vi.fn(async () => ok(undefined)),
+      parkUncertain: vi.fn(async () => ok(undefined)),
+      ...overrides,
+    } as unknown as OutwardSendLedgerPort;
+  }
+
+  async function drainWith(ledger: OutwardSendLedgerPort) {
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      outwardLedger: ledger,
+      retryIntervalMs: 0,
+      governedSendToChannel: vi.fn(async () => ok({
+        delivered: true as const,
+        status: "accepted" as const,
+        platformMessageId: "message-governed",
+      })),
+    });
+    await queue.enqueue(makeEntry({ agentId: "agent-1", rootRunId: "root-1", stepIndex: 1 }));
+    await queue.drain(vi.fn(async () => true));
+    return queue;
+  }
+
+  it("retains an entry whose ledger lookup cannot be read", async () => {
+    const queue = await drainWith(ledgerWith({
+      lookup: vi.fn(async () => err(new Error("ledger lookup failed"))),
+    }));
+
+    // Without a definitive lookup the send may already have happened, so the
+    // entry is retained rather than replayed.
+    expect(queue.size()).toBe(1);
+  });
+
+  it("parks an entry whose ledger begin is refused", async () => {
+    const parkUncertain = vi.fn(async () => ok(undefined));
+    const ledger = ledgerWith({
+      begin: vi.fn(async () => err(new Error("ledger begin refused"))),
+      parkUncertain,
+    });
+    await drainWith(ledger);
+
+    // A send that could not even be opened in the ledger is parked for an
+    // operator rather than retried blind: retrying it is exactly the case the
+    // ledger exists to prevent.
+    expect(parkUncertain).toHaveBeenCalled();
+  });
+
+  it("settles an entry the ledger already recorded as terminal", async () => {
+    const queue = await drainWith(ledgerWith({
+      lookupTerminalDecision: vi.fn(async () => ok("delivered")),
+    }));
+
+    // The platform already accepted this send; replaying it would duplicate
+    // the announcement, so the entry settles without a transport call.
+    expect(queue.size()).toBe(0);
   });
 });

@@ -6,9 +6,10 @@ icon: "hexagon"
 
 Comis follows hexagonal architecture (ports and adapters). The core domain defines port interfaces that describe what the system needs. Adapter packages implement those interfaces with platform-specific code. This separation means you can swap implementations (e.g., replace SQLite memory with PostgreSQL) without touching the core, and the core compiles without knowing which adapters exist.
 
-All 16 packages follow this boundary model. Dependency direction is inward:
+All 17 packages follow this boundary model. Dependency direction is inward:
 runtime and adapter packages depend on core contracts, while core does not
-depend on their implementations.
+depend on their implementations. The [Packages](/developer-guide/packages)
+reference owns the package inventory and roles.
 
 ## Hexagonal Pattern
 

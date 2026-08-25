@@ -39,6 +39,7 @@ function makeScope(overrides: Partial<TerminalScope> = {}): TerminalScope {
     filesystem: "workspace",
     network: "none",
     credentialPaths: [],
+    ephemeralWritablePaths: [],
     uid: "dedicated",
     ...overrides,
   };

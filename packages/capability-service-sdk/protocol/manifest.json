@@ -1,0 +1,579 @@
+{
+  "artifacts": [
+    {
+      "path": "fixtures/altered-replay.json",
+      "sha256": "beb75f5df4cd59939aa315a1b6ebac4abd3fca4fabb8cc0d1db629d9c61c19e8"
+    },
+    {
+      "path": "fixtures/boundary-size.json",
+      "sha256": "626884b173c1e4beaa55dd2d954df04aa1f2eb6726983fd969256d86bcffb914"
+    },
+    {
+      "path": "fixtures/digest-mismatch.json",
+      "sha256": "f6b39663e222594f4a976dc7607c3a5076902b277ed587c74b384d4bb0a418d2"
+    },
+    {
+      "path": "fixtures/invalid.json",
+      "sha256": "fbd13bcac897c4bd6e36b1310b05610680516982d0e6472a1a31a32ed97e8bc7"
+    },
+    {
+      "path": "fixtures/unknown-field.json",
+      "sha256": "06eacdfe1645a28362d9e9175d33eca520b2523d2918cda34eaa889b307ef129"
+    },
+    {
+      "path": "fixtures/valid.json",
+      "sha256": "eef3f8a6c00ccbafc0beb80432193f30f5d5365c185f62e38303d507c2616fc7"
+    },
+    {
+      "path": "fixtures/version-mismatch.json",
+      "sha256": "541abec8bf811a8e4c1641e84ffbe2ac9062cc3cbeface1120667e433641ec50"
+    },
+    {
+      "path": "schemas/abandon.request.schema.json",
+      "sha256": "091a32b4545142ee14c4feeb8d7e0eabf67b1508e3dcdfac43681603312d5345"
+    },
+    {
+      "path": "schemas/abandon.response.schema.json",
+      "sha256": "fcc4f0260462193df3aca4e03e469bf72c6a7005ca94bc1a1329f8cf35eb4186"
+    },
+    {
+      "path": "schemas/activate.request.schema.json",
+      "sha256": "e4327e61071bb22161b878280a35ed0ed8b64426eb1b1e7e7cf0dd8b12fd34b3"
+    },
+    {
+      "path": "schemas/activate.response.schema.json",
+      "sha256": "a7f3a5b4c128ef5bbcab0f7c68d50f040dbbd1f179ed467fc3c144998e6e9428"
+    },
+    {
+      "path": "schemas/cancel.request.schema.json",
+      "sha256": "7a77756d42759a15aea2838a6249223fe72abd85462c6bf929fe1e21aa67838a"
+    },
+    {
+      "path": "schemas/cancel.response.schema.json",
+      "sha256": "48fb5349a94df39e9774ba1fde1322e674f5a13a5b4690b68e1608dc4644ad6b"
+    },
+    {
+      "path": "schemas/consumeApproval.request.schema.json",
+      "sha256": "a0b3dfd5d14ea6833508d4a6dd4acf5177d7c4237fa1e02d1bce2b6a3c2b4d1f"
+    },
+    {
+      "path": "schemas/consumeApproval.response.schema.json",
+      "sha256": "0b74d5cf5cbfd4f95f051a899b548009691246d6f7d63215edee0e30eab5d6fd"
+    },
+    {
+      "path": "schemas/error-response.schema.json",
+      "sha256": "072e5adc20191294b68bbea18015d2e97279174344385bb0982a5af25b5e3c45"
+    },
+    {
+      "path": "schemas/external-run-ref.schema.json",
+      "sha256": "6ce7c2e98c72c234146c75606a1d2d02f2616d2bc71f03bac9098d055038e201"
+    },
+    {
+      "path": "schemas/groupAbandon.request.schema.json",
+      "sha256": "840fc4e67554b346900f0027d508cc91a2a6ed8e6dc2bc0fc03b09ef860e6b08"
+    },
+    {
+      "path": "schemas/groupAbandon.response.schema.json",
+      "sha256": "3c03fde3774b7cc5b9226b5bb8208d2d2ec7823c5bee432bd128fb70cb555a87"
+    },
+    {
+      "path": "schemas/groupActivate.request.schema.json",
+      "sha256": "db226c6d11d520ff017ceb2c5a59f7c4cf6b35055aeb079d0c754dc62fe270bd"
+    },
+    {
+      "path": "schemas/groupActivate.response.schema.json",
+      "sha256": "4422378fd160161bb35b24b6de7dd2453007612d13e3afc7d61e118c54dc03f5"
+    },
+    {
+      "path": "schemas/groupGetHostRollup.request.schema.json",
+      "sha256": "b8263f842897b20436fe696454af26805aee7d2f11a7e32e42bb29236d5221c6"
+    },
+    {
+      "path": "schemas/groupGetHostRollup.response.schema.json",
+      "sha256": "776e551013c77e3ce528000975b88227f7792b8cddce3ec1a70edcdf24117493"
+    },
+    {
+      "path": "schemas/handshake.request.schema.json",
+      "sha256": "d6a09973cd4409546938e00e3dc457a99623e3c47373e32025cf759ce92d7416"
+    },
+    {
+      "path": "schemas/handshake.response.schema.json",
+      "sha256": "2f916b6b4acc5915e00b5f00edc0a51b4d5b7dfe7474c9522c45a0bbb34c833a"
+    },
+    {
+      "path": "schemas/health.request.schema.json",
+      "sha256": "157b0d0bddf1820e0b0a29a3871ba64a333088ca840a25a55c9dc972c6a67ed5"
+    },
+    {
+      "path": "schemas/health.response.schema.json",
+      "sha256": "3cd00c4f53ef90872e2f457463304294b47aa8dfe29f3db3eda603e5cedac420"
+    },
+    {
+      "path": "schemas/heartbeat.request.schema.json",
+      "sha256": "28f205692cf1fa46c5725584616e06985a73918fd9b4d3653824f78ce365dc4a"
+    },
+    {
+      "path": "schemas/heartbeat.response.schema.json",
+      "sha256": "2d75b63503abc048c0d1320e061a527a7b315807a5f7bef5749897cb30da214c"
+    },
+    {
+      "path": "schemas/mcp-call-context.schema.json",
+      "sha256": "29182a032f4c166b8cfab1a94c4759d5c4659cf44c9a6f3d12572e6fd4d70df3"
+    },
+    {
+      "path": "schemas/mcp-managed-run-group-result.schema.json",
+      "sha256": "bd75b01507b17e69cf024a53ce7ab5530836b0c5b7ef26f3e70cf3164eb375d1"
+    },
+    {
+      "path": "schemas/mcp-managed-run-result.schema.json",
+      "sha256": "723db95fc054ee1a98fe711e3169a9f08c8b96781af0a8f5f7e1b3d86608f64c"
+    },
+    {
+      "path": "schemas/putEvidence.request.schema.json",
+      "sha256": "3cf77e302b8d7672cbc91bb22bf72d6e0ae9aa3da2efe392b21ba125f9111124"
+    },
+    {
+      "path": "schemas/putEvidence.response.schema.json",
+      "sha256": "fdfa7cc260ceb54bc087c68df1de4dbc1b3ddcf6bcc929467783d61c793a9f82"
+    },
+    {
+      "path": "schemas/receiveAttentionResponse.request.schema.json",
+      "sha256": "bc63c3ca6896ba6b1eac52eeb882cc85f1253dae6bed40322975bc459dec9dd9"
+    },
+    {
+      "path": "schemas/receiveAttentionResponse.response.schema.json",
+      "sha256": "e3bd5f6af256437ac902739e6915fe5982a7ca6e4cdb343bf2f29db3231cba26"
+    },
+    {
+      "path": "schemas/release.request.schema.json",
+      "sha256": "cbaaea81b7d3b536c71e2ce595fc550eaa1e3c511621ee5a3c8ed099e12a6633"
+    },
+    {
+      "path": "schemas/release.response.schema.json",
+      "sha256": "f54e2e8ad9bf84bfcc2dd6d8d328caff1767012f46ff2a36eb5aafe66aaf929a"
+    },
+    {
+      "path": "schemas/report.request.schema.json",
+      "sha256": "0401f97d2d39f1ba2b16be699cb5b0cf278147d87b39ca5403b909c849c3f0e6"
+    },
+    {
+      "path": "schemas/report.response.schema.json",
+      "sha256": "d01e2ceee491c4a3099da2b3320f00f017f9f5df01ed1d13cd3e3f1b5936eb0a"
+    },
+    {
+      "path": "schemas/service-instance-id.schema.json",
+      "sha256": "7d204815e2afb9119ff08ea392d0989867b083b83625c755e429343c0994cc58"
+    },
+    {
+      "path": "schemas/terminalEvent.request.schema.json",
+      "sha256": "22658b31e86c157cd58e47870112e72aa0396520a0b9ba8ef0c0b1401faea911"
+    },
+    {
+      "path": "schemas/terminalEvent.response.schema.json",
+      "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
+    }
+  ],
+  "bundleDigest": "1e7f3838bcc08bf9b580375e8afe2a11f5edd14bc944c9968724845e4516ef6d",
+  "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
+  "errorKinds": [
+    "bundle_digest_mismatch",
+    "deadline_exceeded",
+    "internal_error",
+    "invalid_params",
+    "invalid_request",
+    "method_not_found",
+    "precondition_failed",
+    "protocol_mismatch",
+    "rate_limited",
+    "replay_conflict",
+    "size_limit_exceeded",
+    "unauthorized_instance"
+  ],
+  "errors": [
+    {
+      "code": -32012,
+      "kind": "bundle_digest_mismatch",
+      "retryable": false
+    },
+    {
+      "code": -32017,
+      "kind": "deadline_exceeded",
+      "retryable": true
+    },
+    {
+      "code": -32603,
+      "kind": "internal_error",
+      "retryable": true
+    },
+    {
+      "code": -32602,
+      "kind": "invalid_params",
+      "retryable": false
+    },
+    {
+      "code": -32600,
+      "kind": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": -32601,
+      "kind": "method_not_found",
+      "retryable": false
+    },
+    {
+      "code": -32018,
+      "kind": "precondition_failed",
+      "retryable": false
+    },
+    {
+      "code": -32011,
+      "kind": "protocol_mismatch",
+      "retryable": false
+    },
+    {
+      "code": -32016,
+      "kind": "rate_limited",
+      "retryable": true
+    },
+    {
+      "code": -32014,
+      "kind": "replay_conflict",
+      "retryable": false
+    },
+    {
+      "code": -32015,
+      "kind": "size_limit_exceeded",
+      "retryable": false
+    },
+    {
+      "code": -32013,
+      "kind": "unauthorized_instance",
+      "retryable": false
+    }
+  ],
+  "fixtureDigestToken": "__BUNDLE_DIGEST__",
+  "generator": {
+    "command": "pnpm capability-protocol:generate",
+    "package": "@comis/capability-service-sdk",
+    "version": "1.0.64"
+  },
+  "limits": {
+    "maxEvidenceBytes": 1048576,
+    "maxGroupMembers": 16,
+    "maxInFlightRequests": 32,
+    "maxLineBytes": 1441792,
+    "maxReportBytes": 16384,
+    "maxRequestBytes": 1441792,
+    "maxResponseBytes": 65536,
+    "reportRetentionDays": 30
+  },
+  "mcpMeta": {
+    "callContextKey": "comis.callContext",
+    "managedRunResultKey": "comis.managedRun"
+  },
+  "methodCatalog": [
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "capabilityServices.handshake",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/handshake.request.schema.json",
+      "requiredServiceScope": null,
+      "responseSchema": "schemas/handshake.response.schema.json",
+      "semanticInvariants": [
+        "exact-protocol-identifier",
+        "exact-bundle-digest",
+        "requested-scopes-must-be-active"
+      ]
+    },
+    {
+      "callerClass": "both",
+      "classification": "read",
+      "direction": "bidirectional",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "capabilityServices.health",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/health.request.schema.json",
+      "requiredServiceScope": "health",
+      "responseSchema": "schemas/health.response.schema.json",
+      "semanticInvariants": [
+        "exact-protocol-identifier",
+        "exact-bundle-digest"
+      ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRunGroups.abandon",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/groupAbandon.request.schema.json",
+      "requiredServiceScope": "managed_run_group",
+      "responseSchema": "schemas/groupAbandon.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "request-names-every-prepared-member-exactly-once",
+        "response-names-every-member-exactly-once",
+        "partial-reap-reports-per-member-outcomes-not-one-group-result"
+      ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRunGroups.activate",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/groupActivate.request.schema.json",
+      "requiredServiceScope": "managed_run_group",
+      "responseSchema": "schemas/groupActivate.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "response-names-every-member-exactly-once",
+        "partial-activation-reports-per-member-outcomes-not-one-group-result",
+        "members-share-one-host-scope"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "read",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRunGroups.getHostRollup",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/groupGetHostRollup.request.schema.json",
+      "requiredServiceScope": "managed_run_group",
+      "responseSchema": "schemas/groupGetHostRollup.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "owning-service-instance-only",
+        "counts-are-derived-from-member-run-facts",
+        "roll-up-carries-no-domain-workflow-vocabulary"
+      ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.abandon",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/abandon.request.schema.json",
+      "requiredServiceScope": null,
+      "responseSchema": "schemas/abandon.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "disposition-defines-unbound-preparation-cleanup",
+        "response-confirms-unbound-preparation-terminal-transition"
+      ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.activate",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/activate.request.schema.json",
+      "requiredServiceScope": null,
+      "responseSchema": "schemas/activate.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "present-iff-the-preparation-requested-a-workspace",
+        "attachment-fields-present-iff-the-preparation-requested-an-attachment"
+      ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.cancel",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/cancel.request.schema.json",
+      "requiredServiceScope": null,
+      "responseSchema": "schemas/cancel.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "cancellation-is-idempotent-for-an-already-terminal-run",
+        "host-names-the-reason-and-never-the-service-disposition"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.consumeApproval",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/consumeApproval.request.schema.json",
+      "requiredServiceScope": "approval_receipt",
+      "responseSchema": "schemas/consumeApproval.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "owning-service-instance-and-managed-run-only",
+        "approval-request-and-mcp-operation-must-match-host-binding",
+        "grant-must-be-unexpired-and-approved",
+        "identical-consume-replay-returns-the-original-receipt",
+        "altered-or-second-consume-is-rejected"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.heartbeat",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/heartbeat.request.schema.json",
+      "requiredServiceScope": "health",
+      "responseSchema": "schemas/heartbeat.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "owning-service-instance-only",
+        "observation-time-advances-strictly-forward",
+        "terminal-run-refuses-further-liveness",
+        "liveness-carries-no-run-state"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.putEvidence",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/putEvidence.request.schema.json",
+      "requiredServiceScope": "evidence",
+      "responseSchema": "schemas/putEvidence.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "evidence-ref-identical-replay-returns-original-result",
+        "evidence-ref-altered-replay-is-rejected",
+        "content-hash-must-match-decoded-private-body",
+        "adapter-verification-requires-configured-kind",
+        "host-verification-is-reserved"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.receiveAttentionResponse",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/receiveAttentionResponse.request.schema.json",
+      "requiredServiceScope": "attention_response",
+      "responseSchema": "schemas/receiveAttentionResponse.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "owning-service-instance-only",
+        "external-key-must-name-an-open-attention-request",
+        "private-response-remains-content-store-confined-until-delivery",
+        "identical-receive-replay-returns-the-original-response"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.release",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/release.request.schema.json",
+      "requiredServiceScope": "workspace_lease",
+      "responseSchema": "schemas/release.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "owning-service-instance-only",
+        "managed-run-workspace-lease-must-match",
+        "terminal-and-attachment-revocation-precedes-lease-release",
+        "release-time-is-idempotency-bound"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.report",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/report.request.schema.json",
+      "requiredServiceScope": "report",
+      "responseSchema": "schemas/report.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "utf8-report-content-bytes-at-most-max-report-bytes",
+        "service-report-id-identical-replay-returns-original-sequence",
+        "service-report-id-altered-replay-is-rejected"
+      ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.terminalEvent",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/terminalEvent.request.schema.json",
+      "requiredServiceScope": null,
+      "responseSchema": "schemas/terminalEvent.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "terminal-run-workspace-lease-must-match",
+        "owning-service-instance-only",
+        "transition-carries-identifiers-only"
+      ]
+    }
+  ],
+  "methods": [
+    "capabilityServices.handshake",
+    "capabilityServices.health",
+    "managedRunGroups.abandon",
+    "managedRunGroups.activate",
+    "managedRunGroups.getHostRollup",
+    "managedRuns.abandon",
+    "managedRuns.activate",
+    "managedRuns.cancel",
+    "managedRuns.consumeApproval",
+    "managedRuns.heartbeat",
+    "managedRuns.putEvidence",
+    "managedRuns.receiveAttentionResponse",
+    "managedRuns.release",
+    "managedRuns.report",
+    "managedRuns.terminalEvent"
+  ],
+  "protocolId": "comis.capability-service/1"
+}

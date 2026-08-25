@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve as resolvePath } from "node:path";
 import { AppConfigSchema } from "@comis/core";
 import {
+  resolveGatewayTokens,
   resolveModelHealthMultilingual,
   buildImageHandlerDeps,
   buildMediaVisionBundle,
@@ -25,6 +26,112 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // ---------------------------------------------------------------------------
 
 type Config = BootContext["container"]["config"];
+
+function gatewayTokenDeps(input: {
+  configuredSecret?: string;
+  fallbackSecret?: string;
+}): Parameters<typeof resolveGatewayTokens>[0] {
+  const config = AppConfigSchema.parse({
+    gateway: {
+      tokens: [
+        {
+          id: "default",
+          ...(input.configuredSecret === undefined
+            ? {}
+            : {
+                secret: {
+                  source: "env",
+                  provider: "comis",
+                  id: "COMIS_GATEWAY_TOKEN",
+                },
+              }),
+          scopes: ["rpc"],
+        },
+      ],
+    },
+  }) as unknown as Config;
+  if (input.configuredSecret !== undefined) {
+    (config.gateway.tokens[0] as { secret?: unknown }).secret = input.configuredSecret;
+  }
+  return {
+    container: {
+      config,
+      secretManager: {
+        get: vi.fn((name: string) =>
+          name === "GATEWAY_TOKEN_DEFAULT" ? input.fallbackSecret : undefined,
+        ),
+      },
+    } as unknown as BootContext["container"],
+    daemonLogger: { warn: vi.fn(), error: vi.fn() } as unknown as BootContext["daemonLogger"],
+  };
+}
+
+describe("resolveGatewayTokens post-resolution validation", () => {
+  it("accepts a resolved SecretRef value at the minimum length", () => {
+    const secret = "a".repeat(32);
+    const result = resolveGatewayTokens(
+      gatewayTokenDeps({ configuredSecret: secret }),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      value: [{ id: "default", secret, scopes: ["rpc"] }],
+    });
+  });
+
+  it("rejects a short configured SecretRef value without exposing it", () => {
+    const secret = "short-secret";
+    const deps = gatewayTokenDeps({ configuredSecret: secret });
+    const result = resolveGatewayTokens(deps) as unknown as { ok: boolean; error?: Error };
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain("gateway.tokens[0].secret");
+    expect(result.error?.message).toContain("token 'default'");
+    expect(result.error?.message).toContain(`${secret.length} characters`);
+    expect(result.error?.message).not.toContain(secret);
+    expect(deps.daemonLogger.error).toHaveBeenCalledWith(
+      { hint: result.error?.message, errorKind: "config" },
+      "Gateway token resolution failed",
+    );
+  });
+
+  it("rejects a short token-id fallback without replacing it ephemerally", () => {
+    const secret = "small-fallback";
+    const deps = gatewayTokenDeps({ fallbackSecret: secret });
+    const result = resolveGatewayTokens(deps) as unknown as {
+      ok: boolean;
+      error?: Error;
+    };
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain("GATEWAY_TOKEN_DEFAULT");
+    expect(result.error?.message).toContain(`${secret.length} characters`);
+    expect(result.error?.message).not.toContain(secret);
+    expect(deps.daemonLogger.warn).not.toHaveBeenCalled();
+    expect(deps.daemonLogger.error).toHaveBeenCalledWith(
+      { hint: result.error?.message, errorKind: "config" },
+      "Gateway token resolution failed",
+    );
+  });
+
+  it("generates an ephemeral token only when no value exists", () => {
+    const deps = gatewayTokenDeps({});
+    const result = resolveGatewayTokens(deps);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toHaveLength(1);
+      expect(result.value[0]?.secret).toHaveLength(64);
+    }
+    expect(deps.daemonLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        envVar: "GATEWAY_TOKEN_DEFAULT",
+        errorKind: "config",
+      }),
+      expect.stringContaining("auto-generated"),
+    );
+  });
+});
 
 /** A fully-defaulted config, then the embedding/memory blocks overridden. */
 function configWith(overrides: {

@@ -157,6 +157,7 @@ export type { LifecycleOutcome } from "./execution/execution-lifecycle-outcome.j
 export * from "./cross-session/cross-session-sender.js";
 export * from "./cross-session/announcement-batcher.js";
 export * from "./cross-session/announcement-dead-letter.js";
+export { isAnnouncementProducerRecoveryOutcome } from "./cross-session/announcement-dead-letter-file.js";
 export * from "./cross-session/announcement-outward-operation.js";
 
 // Interactive approval router. The single server-side authority

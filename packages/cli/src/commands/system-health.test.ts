@@ -564,6 +564,100 @@ describe("comis system-health table view renders the autonomy block and omits it
   });
 });
 
+describe("comis system-health table view renders the capabilityServices block and omits it when absent", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  // Counts + closed reason codes + one opaque run id ONLY. Populated so the
+  // render's Capability line + the copy-pasteable `comis managed-runs explain`
+  // drill-down both fire.
+  const REPORT_WITH_CAPABILITY = {
+    ...FAKE_REPORT,
+    capabilityServices: {
+      runs: { total: 13, degraded: 5, degradedRate: 5 / 13 },
+      services: { total: 3, degraded: 2 },
+      topReasonCodes: [
+        { code: "service_state_unavailable", count: 3 },
+        { code: "failure_verified", count: 2 },
+      ],
+      worstManagedRunId: "managed-run_worst",
+    },
+  };
+
+  it("renders the 'Capability:' line + the copy-pasteable `comis managed-runs explain` drill-down when present", async () => {
+    const client: RpcClient = {
+      call: () => Promise.resolve(REPORT_WITH_CAPABILITY),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerSystemHealthCommand(program);
+    await program.parseAsync(["node", "test", "system-health"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Capability:");
+    expect(output).toContain("13 managed run(s)");
+    expect(output).toContain("5 degraded");
+    expect(output).toContain("services=3");
+    expect(output).toContain("service_state_unavailable=3");
+    expect(output).toContain("failure_verified=2");
+    expect(output).toContain("comis managed-runs explain managed-run_worst");
+    expect(output).not.toContain("undefined");
+  });
+
+  it("OMITS the block entirely when report.capabilityServices is absent (no managed-run activity / offline)", async () => {
+    const { client } = captureClient();
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerSystemHealthCommand(program);
+    await program.parseAsync(["node", "test", "system-health"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Sessions");
+    expect(output).not.toContain("Capability:");
+  });
+
+  it("OMITS the worst-run drill-down when the block is present but worstManagedRunId is absent", async () => {
+    const noWorst = {
+      ...REPORT_WITH_CAPABILITY,
+      capabilityServices: {
+        runs: { total: 4, degraded: 0, degradedRate: 0 },
+        services: { total: 1, degraded: 0 },
+        topReasonCodes: [],
+      },
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(noWorst),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerSystemHealthCommand(program);
+    await program.parseAsync(["node", "test", "system-health"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Capability:");
+    expect(output).toContain("4 managed run(s)");
+    expect(output).not.toContain("comis managed-runs explain");
+  });
+});
+
 describe("registerSystemHealthCommand registers a command named 'system-health', DISTINCT from 'health'", () => {
   it("adds a 'system-health' command (the remote admin RPC) — NOT 'health' (the local doctor)", () => {
     const program = createTestProgram();

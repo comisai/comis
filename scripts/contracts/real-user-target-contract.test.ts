@@ -66,7 +66,11 @@ describe("real-user target source claims", () => {
       const manifest = parseSkillManifest(source);
       expect(manifest.ok, `${label}: ${manifest.ok ? "" : manifest.error.message}`).toBe(true);
       if (!manifest.ok) continue;
-      expect(manifest.value.comis?.requires, label).toEqual({ bins: [], env: [] });
+      expect(manifest.value.comis?.requires, label).toEqual({
+        bins: [],
+        env: [],
+        capabilityServices: [],
+      });
     }
     expect(target).toContain(
       "`deep-research` declares an empty `comis.requires` (dependency-free); every skill with external requirements declares its own `comis.requires`",

@@ -21,6 +21,7 @@
  * @module
  */
 import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
+import { isManagedRunTrajectoryEvent, translateManagedRunPayload } from "./translate-managed-run-payload.js";
 import { translateCacheBreakPayload } from "./translate-cache-break-payload.js";
 import { translateImagePayload } from "./translate-image-payload.js";
 import { translateOrchestrationPayload } from "./translate-orchestration-payload.js";
@@ -44,6 +45,7 @@ export function translatePayload(
   rawPayload: unknown,
 ): Record<string, unknown> {
   const payload = rawPayload as Record<string, unknown>;
+  if (isManagedRunTrajectoryEvent(eventName)) return translateManagedRunPayload(eventName, payload);
   switch (eventName) {
     case "tool:started":
       return {
@@ -308,8 +310,8 @@ export function translatePayload(
       return translateCacheBreakPayload(payload);
 
     // ---- Authoring / sub-agent orchestration ---- delegated to translate-orchestration-payload.ts (file-size split; content-free + envelope-stripped — closed enums + numbers/booleans + a run id ONLY, never a graph body, the synthesis INTENT TEXT, or the steer MESSAGE BODY).
-    // Three sub-agent-lifecycle events (sandbox-downgrade
-    // refusal / dead-lettered delivery / per-node budget breach) join the SAME content-free,
+    // Sub-agent-lifecycle events (sandbox-downgrade refusal / missing route /
+    // per-node budget breach) join the SAME content-free,
     // orchestration-translator-delegated group.
     // capability:audited joins the orchestration-translator group (content-free: caps/tool-NAME/decision/lease-root ids ONLY, never args/body/secret).
     case "pipeline:authored":
@@ -325,8 +327,6 @@ export function translatePayload(
     case "subagent:routed_child_preserved":
     case "subagent:background_processes_abandoned":
     case "security:sandbox_downgrade_refused":
-    case "subagent:delivery_deadlettered":
-    case "subagent:delivery_retried": // The self-healing transient retry (sibling of delivery_deadlettered) — content-free {runId, channelType, attempt, transient}
     case "subagent:delivery_skipped": // Terminal result had no route — content-free {runId, reason}.
     case "subagent:budget_exceeded":
     case "capability:audited":
@@ -988,9 +988,7 @@ export function translatePayload(
       return translateVoicePayload(eventName, payload);
 
     default: {
-      // Exhaustiveness — switch covers every TrajectoryBridgedEventName.
-      // If a new bridge entry is added without a translator, TypeScript
-      // flags this branch.
+      // Exhaustiveness: covers every non-managed-run TrajectoryBridgedEventName (a missing translator fails TS here).
       const _exhaustive: never = eventName;
       void _exhaustive;
       return payload;

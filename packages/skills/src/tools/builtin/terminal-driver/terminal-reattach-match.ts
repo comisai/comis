@@ -58,6 +58,7 @@ import type { ChannelEndpoint } from "@comis/core";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
 import type { SessionOwner } from "./terminal-session-owner.js";
+import type { TerminalRootProcessIdentity } from "./terminal-managed-binding.js";
 
 // ---------------------------------------------------------------------------
 // The durable session descriptor — the persisted IDENTITY that survives a
@@ -119,6 +120,10 @@ export interface SessionDescriptor {
   durable: boolean;
   /** Creation wall-clock (ms) — for the resumed session's wall-clock cap. */
   createdAt: number;
+  managedRunId?: string;
+  workspaceLeaseId?: string;
+  serviceInstanceId?: string;
+  rootProcessIdentity?: TerminalRootProcessIdentity;
 }
 
 /**
@@ -128,7 +133,7 @@ export interface SessionDescriptor {
  */
 export type ReattachDecision =
   | { action: "reattach"; descriptor: SessionDescriptor }
-  | { action: "failed"; sessionId: string; reason: "tmux_session_gone" }
+  | { action: "failed"; sessionId: string; reason: "tmux_session_gone" | "managed_root_identity_unavailable" | "managed_root_identity_mismatch" }
   | { action: "fallback_nondurable"; sessionId: string };
 
 /** The content-free sessionId to carry on the failed/fallback branches (never throws). */
@@ -147,19 +152,23 @@ function safeSessionId(d: SessionDescriptor | undefined): string {
  *      probe a falsy name).
  *   3. Durable + a well-formed name → probe `isTmuxAlive(tmuxName)` inside try/catch:
  *      - the probe THROWS → `failed` (the SAFE direction — never re-attach on doubt).
- *      - the probe returns truthy → `reattach` (the session survived).
+ *      - the probe returns truthy → continue to managed identity verification.
  *      - the probe returns falsy → `failed`/`tmux_session_gone` (genuinely gone — the
  *        caller preserves the journal SEPARATELY; nothing is deleted here).
+ *   4. A managed session must resolve the same pane PID and process-start identity that
+ *      the descriptor recorded. Missing or mismatched identity fails closed.
  *
  * NEVER re-attaches on doubt: a false `reattach` double-drives. The decision issues
  * no create frame — it only signals re-attach; the worker backend does the no-double-create.
  *
  * @param d - The persisted descriptor recovered on boot (untrusted after a crash).
  * @param isTmuxAlive - The injected `has-session` liveness probe (exit 0 ⇒ true ⇒ alive).
+ * @param resolveTmuxRootProcessIdentity - The injected current pane identity resolver.
  */
 export function reattachDecision(
   d: SessionDescriptor,
   isTmuxAlive: (name: string, socket?: string) => boolean,
+  resolveTmuxRootProcessIdentity?: (name: string, socket?: string) => TerminalRootProcessIdentity | undefined,
 ): ReattachDecision {
   const sessionId = safeSessionId(d);
 
@@ -167,6 +176,17 @@ export function reattachDecision(
   // short-circuit. The probe is irrelevant for a session that is not re-attachable.
   if (d?.durable !== true) {
     return { action: "fallback_nondurable", sessionId };
+  }
+
+  // A managed descriptor is written before the create acknowledgement so a host
+  // crash cannot orphan a surviving tmux pane. Until the acknowledgement supplies
+  // and persists the root PID/start identity, that descriptor is intentionally
+  // incomplete: preserve it for reconciliation, but never claim a safe re-attach.
+  const hasManagedBinding = d.managedRunId !== undefined
+    || d.workspaceLeaseId !== undefined
+    || d.serviceInstanceId !== undefined;
+  if (hasManagedBinding && d.rootProcessIdentity === undefined) {
+    return { action: "failed", sessionId, reason: "managed_root_identity_unavailable" };
   }
 
   // (2) Durable but no usable re-attach key → unrecoverable identity. Never probe a falsy
@@ -187,9 +207,23 @@ export function reattachDecision(
     return { action: "failed", sessionId, reason: "tmux_session_gone" };
   }
 
-  return alive
-    ? { action: "reattach", descriptor: d } // survived the restart → re-attach, identity verbatim
-    : { action: "failed", sessionId, reason: "tmux_session_gone" }; // genuinely gone (journal kept by caller)
+  if (!alive) return { action: "failed", sessionId, reason: "tmux_session_gone" };
+  if (hasManagedBinding) {
+    let currentIdentity: TerminalRootProcessIdentity | undefined;
+    try {
+      currentIdentity = resolveTmuxRootProcessIdentity?.(name, d.tmuxSocket);
+    } catch {
+      currentIdentity = undefined;
+    }
+    if (
+      currentIdentity === undefined
+      || currentIdentity.pid !== d.rootProcessIdentity?.pid
+      || currentIdentity.startIdentity !== d.rootProcessIdentity.startIdentity
+    ) {
+      return { action: "failed", sessionId, reason: "managed_root_identity_mismatch" };
+    }
+  }
+  return { action: "reattach", descriptor: d };
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +270,7 @@ function isScope(v: unknown): v is TerminalScope {
   const uidOk = s.uid === "dedicated" || s.uid === "daemon";
   if (!fsOk || !netOk || !uidOk) return false;
   if (!Array.isArray(s.credentialPaths) || !s.credentialPaths.every((p) => typeof p === "string")) return false;
+  if (!Array.isArray(s.ephemeralWritablePaths) || !s.ephemeralWritablePaths.every((p) => typeof p === "string" && (p === "~" || p.startsWith("~/") || p.startsWith("/")))) return false;
   if (s.paths !== undefined && !(Array.isArray(s.paths) && s.paths.every((p) => typeof p === "string"))) return false;
   if (s.hosts !== undefined && !(Array.isArray(s.hosts) && s.hosts.every((h) => typeof h === "string"))) return false;
   return true;
@@ -313,6 +348,25 @@ export function deserializeDescriptor(raw: unknown): SessionDescriptor | undefin
     return undefined;
   }
 
+  const hasManagedIdentity = r.managedRunId !== undefined
+    || r.workspaceLeaseId !== undefined
+    || r.serviceInstanceId !== undefined
+    || r.rootProcessIdentity !== undefined;
+  if (hasManagedIdentity) {
+    if (
+      !isNonEmptyString(r.managedRunId)
+      || !isNonEmptyString(r.workspaceLeaseId)
+      || !isNonEmptyString(r.serviceInstanceId)
+    ) return undefined;
+    if (r.rootProcessIdentity !== undefined) {
+      if (r.rootProcessIdentity === null || typeof r.rootProcessIdentity !== "object") return undefined;
+      const identity = r.rootProcessIdentity as Record<string, unknown>;
+      if (!Number.isSafeInteger(identity.pid) || (identity.pid as number) <= 0 || !isNonEmptyString(identity.startIdentity)) {
+        return undefined;
+      }
+    }
+  }
+
   const descriptor: SessionDescriptor = {
     sessionId: r.sessionId,
     tmuxName: r.tmuxName,
@@ -328,6 +382,15 @@ export function deserializeDescriptor(raw: unknown): SessionDescriptor | undefin
   }
   if (r.tmuxSocket !== undefined) {
     descriptor.tmuxSocket = r.tmuxSocket;
+  }
+  if (hasManagedIdentity) {
+    descriptor.managedRunId = r.managedRunId as string;
+    descriptor.workspaceLeaseId = r.workspaceLeaseId as string;
+    descriptor.serviceInstanceId = r.serviceInstanceId as string;
+    if (r.rootProcessIdentity !== undefined) {
+      const identity = r.rootProcessIdentity as { pid: number; startIdentity: string };
+      descriptor.rootProcessIdentity = { pid: identity.pid, startIdentity: identity.startIdentity };
+    }
   }
   // `originEndpoint` is optional AND drop-on-malformed — a deliberate DIVERGENCE from the
   // reject-the-descriptor posture above. `scope`/`tmuxSocket` reject because dropping them

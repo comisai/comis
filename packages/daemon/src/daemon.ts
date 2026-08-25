@@ -9,7 +9,6 @@
  *
  * @module
  */import { assertProactiveFailureIsSupported, proactiveNotArmedLogFields, proactiveNotArmedMessage, EMPTY_PROACTIVE_HANDLES } from "./wiring/proactive-degrade.js";
-
 import {
   bootstrap,
   loadEnvFile,
@@ -20,8 +19,6 @@ import {
   envSubset,
   createInjectionRateLimiter,
   checkApprovalsConfig,
-  formatSessionKey,
-  conversationScopeToSessionKey,
   safePath,
   resolveConfigSecretRefs,
   validateMemoryWrite,
@@ -36,6 +33,7 @@ import {
   type WrapExternalContentOptions,
   verifyWorkspacePolicySnapshot,
   type WorkspacePolicySnapshot,
+  type CapabilityServiceContributionRegistration,
 } from "@comis/core";
 // Runtime adapter factories are constructed at this composition root.
 import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/infra";
@@ -77,6 +75,9 @@ import {
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
+  setupManagedRunContinuations,
+  createManagedRunContinuationDelivery,
+  createManagedAttentionReplyBinder,
   createBackgroundRecoveryRecorder,
   setupTerminalWake,
   setupMcp,
@@ -88,37 +89,40 @@ import {
   setupBroker,
   acquireDataDirLock,
   releaseDataDirLock,
+  buildManagedRunOperatorContext,
+  definitionForInstance,
+  MANAGED_RUN_HEARTBEAT_MAX_AGE_MS,
+  setupCapabilityServices,
 } from "./wiring/index.js";
 import { resolveEffectiveTrajectoryConfig } from "./wiring/trajectory-runtime-config.js";
+import { ensureEncryptedCanarySecret, hasBootstrapSecret } from "./wiring/bootstrap-secret.js";
 import { SENSITIVE_EXACT_KEYS, SENSITIVE_PREFIXES, buildMergedEnv } from "./wiring/env-scrub.js";
 import {
   createActiveRunRegistry,
   createBackgroundSessionResolver,
+  createContinuationExecutionEngine,
+  readExecutionResultJournal,
   clearSessionState,
   createGeminiCacheManager,
-  createSessionTrackerRegistry,
   createFilesystemWorkspacePolicyAdapter,
   evaluateViableFloorForAgent,
   probeAllOllamaProviders,
   seedDefaultDagTemplates,
   validateProviderOverrides,
-  wireGeminiCacheCleanup,
-  wireMcpDisconnectCleanup,
-  wireSessionStateCleanup,
   type AgentBootWindowInfo,
   type GeminiCacheManager,
   type ServedWindowComparison,
-  type SessionTrackerRegistry,
 } from "@comis/agent";
 import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-tooling.js";
 import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-bundled-skills.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir, type AppConfig } from "@comis/core";
 import { createWorkspacePolicyResolveDir } from "./wiring/workspace-policy-resolve-dir.js";
+import { resolveCapturedWorkspacePolicy } from "./wiring/workspace-policy-snapshot-resolution.js";
 import { createSchedulerCorePortBindings } from "./wiring/scheduler-core-port-bindings.js";
 import { setupProactiveSchedulers } from "./wiring/setup-proactive-schedulers.js";
 import { closePartialBootSchedulerAdmission } from "./wiring/daemon-utils.js";
-import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
+import { detectSandboxProvider } from "@comis/skills";
 import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry, createOrchestrateReplayRespawn } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
 import { buildOrchestrateRepairResolver } from "./wiring/setup-tools-orchestrate-repair.js"; // the class-gated one-shot orchestrate repair-seam resolver (daemon-minted, injected into setupTools)
@@ -138,7 +142,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels, countUnresolvedModels, countPricingGaps, countMediaCredentialGaps, anyAgentExecSandboxDisabled, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost, countToolDeadlineCollisions} from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels, countUnresolvedModels, countPricingGaps, countMediaCredentialGaps, collectSandboxRelaxations, isLoopbackHost, countToolDeadlineCollisions} from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -146,11 +150,11 @@ import { createTokenTracker } from "./observability/token-tracker.js";
 import { createTracingLogger } from "./observability/trace-logger.js";
 import { setupChannelHealthLogging } from "./observability/channel-health-logger.js";
 import { createProcessMonitor } from "./process/process-monitor.js";
-import { ok, err, suppressError } from "@comis/shared";
+import { ok, err } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
 import { exportSessionBundleFromKey } from "./export-session-bundle.js";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve as pathResolve } from "node:path";
@@ -176,7 +180,7 @@ import {
 } from "./wiring/daemon-entrypoint.js";
 import { wireHealthLogging } from "./health-metrics.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint, wirePostAgentsCleanup, createBootDeadLetterRecoveryObserver } from "./wiring/main-helpers.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
@@ -197,6 +201,10 @@ export const DEFAULT_CONFIG_PATHS = [
   safePath(safePath(os.homedir(), ".comis"), "config.local.yaml"),
 ];
 
+const LINKED_CAPABILITY_SERVICE_CONTRIBUTIONS = Object.freeze(
+  [] satisfies CapabilityServiceContributionRegistration[],
+);
+
 // util.inspect depth/breakLength deepening for Anthropic SDK debug logs —
 // extracted to wiring/apply-inspect-defaults.ts to keep this composition root
 // ≤3000 lines. Imported for the boot call site in main() AND re-exported so
@@ -215,51 +223,6 @@ export { runPreflightDoctor };
 // (SENSITIVE_PREFIXES / SENSITIVE_EXACT_KEYS / buildMergedEnv), imported above to
 // keep this composition root within its architecture line cap.
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Agents helpers
-// ---------------------------------------------------------------------------
-// Agent-stage helpers assemble session-scoped cleanup and state registries.
-// ---------------------------------------------------------------------------
-
-/**
- * Wire post-setupAgents cleanup listeners: session:expired releases
- * sessionTrackerRegistry, Gemini cache disposal, and MCP disconnect cleanup.
- * Schedules an orphan-cache cleanup pass for any stale comis:* caches.
- */
-function wirePostAgentsCleanup(deps: {
-  eventBus: BootContext["container"]["eventBus"];
-  geminiCacheManager: GeminiCacheManager;
-  daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-}): SessionTrackerRegistry<ReturnType<typeof createFileStateTracker>> {
-  const { eventBus, geminiCacheManager, daemonLogger } = deps;
-  // Clean up all session-scoped state on session expiry
-  wireSessionStateCleanup(eventBus);
-  // Per-session FileStateTracker pool -- keeps the LLM's file read state alive
-  // across turns. Registered trackers are released on session:expired.
-  const sessionTrackerRegistry = createSessionTrackerRegistry(createFileStateTracker);
-  eventBus.on("session:expired", (payload) => {
-    const displayKey = conversationScopeToSessionKey(payload.conversationScope);
-    if (displayKey.ok) sessionTrackerRegistry.release(formatSessionKey(displayKey.value));
-  });
-  // Dispose Gemini cache on session expiry (fire-and-forget)
-  wireGeminiCacheCleanup(eventBus, geminiCacheManager);
-  // Clean up orphaned comis:* caches from previous daemon runs
-  suppressError(
-    geminiCacheManager.cleanupOrphaned().then((result) => {
-      if (result.ok && (result.value.deleted > 0 || result.value.skipped > 0)) {
-        daemonLogger.info(
-          { deleted: result.value.deleted, skipped: result.value.skipped },
-          "Gemini cache: orphan cleanup complete",
-        );
-      }
-    }),
-    "gemini-cache-orphan-cleanup",
-  );
-  // Clean up discovery state when MCP servers disconnect or remove tools
-  wireMcpDisconnectCleanup(eventBus);
-  return sessionTrackerRegistry;
-}
 
 // ---------------------------------------------------------------------------
 // Channels helpers
@@ -299,9 +262,10 @@ function buildChannelManagerDeps(deps: {
   assembleToolsForAgent: (agentId: string, options?: import("./wiring/setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
   getInboundMessageIdResolver: () => InboundMessageIdResolver | undefined;
   getSessionTracker: () => import("./notification/session-tracker.js").SessionTracker | undefined;
+  managedAttentionReplies: import("@comis/core").ManagedAttentionReplyPort;
   msTeamsConversationStore?: import("@comis/core").MsTeamsConversationStorePort; // → bootstrapAdapters → createMsTeamsPlugin
 }): Parameters<typeof setupChannels>[0] {
-  const { agents, assembleToolsForAgent, getInboundMessageIdResolver, getSessionTracker, msTeamsConversationStore } = deps;
+  const { agents, assembleToolsForAgent, getInboundMessageIdResolver, getSessionTracker, managedAttentionReplies, msTeamsConversationStore } = deps;
   const {
     container, executors, defaultAgentId, agentsConfig, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber, voiceSelection,
@@ -423,6 +387,7 @@ function buildChannelManagerDeps(deps: {
       recordCurrentSessionEndpoint(getSessionTracker);
     },
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
+    managedAttentionReplies,
     piSessionAdapters, costTrackers, deliveryQueue,
     // The outbound → trajectory binding (same callback the
     // delivery-queue drain receives) so the DIRECT ack path in createDeliveryService
@@ -445,8 +410,10 @@ function buildGraphCoordinatorDeps(deps: {
     subAgentRunner: ReturnType<typeof setupCrossSession>["subAgentRunner"];
     sendToChannel: ReturnType<typeof setupCrossSession>["sendToChannel"];
     sendGovernedAnnouncement: ReturnType<typeof setupCrossSession>["sendGovernedAnnouncement"];
+    sendRecoverableAnnouncement: ReturnType<typeof setupCrossSession>["sendRecoverableAnnouncement"];
     announceToParent: ReturnType<typeof setupCrossSession>["announceToParent"];
     announcementBatcher: ReturnType<typeof setupCrossSession>["announcementBatcher"];
+    deadLetterQueue: ReturnType<typeof setupCrossSession>["deadLetterQueue"];
     commandQueue: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
     assembleToolsForAgent: ReturnType<typeof setupTools>["assembleToolsForAgent"];
     nodeTypeRegistry: ReturnType<typeof createNodeTypeRegistry>;
@@ -502,7 +469,9 @@ function buildGraphCoordinatorDeps(deps: {
     ...(channels.sendGovernedAnnouncement
       ? { sendGovernedAnnouncement: channels.sendGovernedAnnouncement }
       : {}),
+    ...(channels.sendRecoverableAnnouncement ? { sendRecoverableAnnouncement: channels.sendRecoverableAnnouncement } : {}),
     announceToParent: channels.announceToParent,
+    ...(channels.deadLetterQueue ? { announcementDeadLetterQueue: channels.deadLetterQueue } : {}),
     batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
     maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? graphDefaults.maxConcurrency,
     maxResultLength: a2aSec.graphMaxResultLength as number | undefined, maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
@@ -735,6 +704,8 @@ function buildRpcDispatchDeps(deps: {
   // video.status read-handler deps (undefined when disabled) —
   // reads the SAME agent-scoped store the poller writes. Spread below (guard pins it).
   const videoStatusHandlerDeps = buildVideoStatusHandlerDeps(c);
+  // Operator-only read model over installed capability services; undefined when none is configured (the handlers then say so rather than showing an empty result).
+  const managedRuns = buildManagedRunOperatorContext({ platform: c.capabilityServices, clock: c.clock, heartbeatMaxAgeMs: MANAGED_RUN_HEARTBEAT_MAX_AGE_MS });
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
   const removeFromTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["removeFromTokenStore"] = (id) => {
@@ -760,6 +731,9 @@ function buildRpcDispatchDeps(deps: {
   // L3 destroy for session.reset_conversation — without it, runtime session state resurrects the conversation the reset was meant to forget.
   const conversationReset = createConversationReset({ lcdStore: c.lcdStore, sessionStore: g.sessionStoreBridge, piSessionAdapters: c.piSessionAdapters, logger: c.logger });
   return {
+    managedRuns,
+    // Durable managed-run store: system-health capabilityServices block (countByStatus) + obs.explain session→managed-run linkage (listByTraceIds). Same object the operator read model reads.
+    managedRunReads: c.capabilityServices.store,
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     getAgentCronAuthoringConfig: c.getAgentCronAuthoringConfig,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers,
@@ -1036,21 +1010,13 @@ async function bootFoundation(
   // "encrypted"|"file"|"env". NEVER writes key material before this check.
   const storageMode = _preReadStorageMode(requestedConfigPaths);
 
-  // Step 2: Write master key ONLY when storageMode is "encrypted".
-  // file/env modes create NO key material on first boot.
+  // Step 2: Write the master key only for encrypted storage. The canary waits
+  // until the store opens; file/env modes create no first-boot key material.
   if (storageMode === "encrypted") {
-    _writeMasterKeyIfAbsent(dataDir);
-    // Generate the exfiltration-canary seed on the same gate. Without it the canary token derives
-    // from tenantId+agentId — stable but PREDICTABLE to anyone who knows those, so the canary can be
-    // recognised and stepped around. Idempotent: never rotates an existing value, because rotating
-    // would invalidate every canary already embedded in prior outbound content. Deliberately NOT
-    // written in file/env mode, preserving the boot invariant that those modes create no key
-    // material on first boot.
-    _writeCanarySecretIfAbsent(dataDir);
+    if (!hasBootstrapSecret(process.env, "SECRETS_MASTER_KEY")) _writeMasterKeyIfAbsent(dataDir);
     // loadEnvFile below picks up the freshly-written key from the .env file,
     // so selectSecretStore can read SECRETS_MASTER_KEY from process.env.
   }
-
   loadEnvFile(envPath);
 
   // 0.5. Select secret store by mode, merge with env, scrub process.env.
@@ -1091,6 +1057,14 @@ async function bootFoundation(
   if (selected.kind === "encrypted") {
     secretsCrypto = selected.secretsCrypto;
     secretsDb = selected.secretsDb;
+  }
+
+  if (storageMode === "encrypted") {
+    const canaryBootstrap = ensureEncryptedCanarySecret(secretStore, process.env, () => {
+      _writeCanarySecretIfAbsent(dataDir);
+      loadEnvFile(envPath);
+    });
+    if (!canaryBootstrap.ok) throw new Error(`Failed to prepare CANARY_SECRET for encrypted storage: ${canaryBootstrap.error.message}`);
   }
 
   // Build mergedEnv (store-wins) + stage-1 scrub.
@@ -1465,6 +1439,25 @@ async function bootFoundation(
     seedBundledSkills(defaultSeedBundledSkillsDeps(bundledSkillsRoot, safePath(dataDir, "skills"), agentLogger));
   }
 
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- canonicalizes the already-validated daemon data directory before confined capability-service path checks
+  const capabilityServiceDataDir = realpathSync(container.config.dataDir || dataDir);
+  const capabilityServicesResult = await setupCapabilityServices({
+    contributions: overrides.capabilityServiceContributions
+      ?? LINKED_CAPABILITY_SERVICE_CONTRIBUTIONS,
+    config: container.config.capabilityServices,
+    db,
+    dataDir: capabilityServiceDataDir,
+    secretManager: container.secretManager,
+    eventBus: container.eventBus,
+    logger: daemonLogger,
+    clock,
+    timers,
+  });
+  if (!capabilityServicesResult.ok) {
+    throw new Error(`Capability-service platform setup failed: ${capabilityServicesResult.error.message}`);
+  }
+  const capabilityServices = capabilityServicesResult.value;
+
   // Mutate boot with all Group A foundation fields. The 2 forward-ref slots
   // (channelPluginsRef, bgNotifyRef) were eagerly initialized by
   // createEmptyBootContext(); here we wire the bgNotifyFn closure that reads
@@ -1484,6 +1477,7 @@ async function bootFoundation(
     contextPipelineCollector,
     processMonitor,
     bindLearningCredentialResolver, disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
+    capabilityServices,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
     embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, outcomeStore, learnedSkillStore, learnedSkillSurfaceRegistry, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence,
@@ -1964,6 +1958,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     agentsConfig: agents, toolCapabilityPorts, mcpClientManager,
     linkRunner, rpcCall, approvalGate,
     deliveryQueue, wakeGateRunnerRef, singleAgentDeps,
+    capabilityServices,
     // The concrete LCD ContextStorePort (createLcdStore),
     // populated on the BootContext by bootFoundation's setupMemory Object.assign.
     // Threaded into setupTools so assembleToolsForAgent wires the dag-mode ctx_*
@@ -1982,6 +1977,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
   //     setupChannels are not invoked during setupChannels itself).
   const sessionTrackerSlot: { current?: import("./notification/session-tracker.js").SessionTracker } = {};
   const inboundMessageIdResolverSlot: { current?: InboundMessageIdResolver } = {};
+  const managedAttentionReplies = createManagedAttentionReplyBinder({
+    store: capabilityServices.store, contentStore: capabilityServices.contentStore,
+    configuredServiceInstanceIds: new Set(capabilityServices.plan.orderedInstances.map(({ serviceInstanceId }) => serviceInstanceId)),
+  });
 
   // 6.6.8.4.1. Sandbox + image generation providers (HOISTED before setupTools
   // because setupTools consumes both as direct inputs).
@@ -2066,6 +2065,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle, namespacePreflightOk, // degrade the orchestrate surface + lease mint when the host cannot build the jail (no silent unjailed fallback)
     memoryCostFeaturesEnabled: container.config.memory.enabled !== false,
+    capabilityServices,
+    clock: boot.clock,
     // Durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
@@ -2147,6 +2148,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
       assembleToolsForAgent,
       getInboundMessageIdResolver: () => inboundMessageIdResolverSlot.current,
       getSessionTracker: () => sessionTrackerSlot.current,
+      managedAttentionReplies,
     }),
   );
   channelPluginsRef.ref = channelPlugins;
@@ -2198,12 +2200,90 @@ async function bootChannels(boot: BootContext): Promise<void> {
     eventBus: container.eventBus, getExecutor: handle.getExecutor, sessionStore,
     resolveSessionManager: (agentId) => handle.piSessionAdapters.get(agentId),
     assembleToolsForAgent, adaptersByType, deliveryService,
+    resolveWorkspacePolicy: async (agentId, policyHash) => {
+      const loaded = await resolveCapturedWorkspacePolicy(container.workspacePolicyPort, agentId, policyHash);
+      if (loaded === undefined || !loaded.ok) {
+        return err(new Error("The captured immutable workspace policy snapshot is unavailable"));
+      }
+      const verified = verifyWorkspacePolicySnapshot(loaded.value);
+      if (
+        !verified.ok
+        || loaded.value.agentId !== agentId
+        || loaded.value.combinedHash !== policyHash
+      ) {
+        return err(new Error("The captured immutable workspace policy snapshot does not match the background continuation"));
+      }
+      return ok(loaded.value);
+    },
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
     ...(activityCoordinatorFactory === undefined ? {} : { activityCoordinatorFactory }),
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     resolveMaxBackgroundHops: (agentId) => resolveAgentBackgroundTasksConfig(agents, agentId).maxBackgroundHops,
     logger: daemonLogger,
   });
+  const managedContinuationEngine = createContinuationExecutionEngine({
+    eventBus: container.eventBus, getExecutor: handle.getExecutor,
+    assembleToolsForAgent,
+    resolveCurrentCapabilityViewHash: () => capabilityServices.runtime.getActiveView().viewHash,
+    ...(activityCoordinatorFactory === undefined ? {} : { activityCoordinatorFactory }),
+    logger: daemonLogger,
+  });
+  const managedRunContinuationsResult = await setupManagedRunContinuations({
+    eventBus: container.eventBus,
+    store: capabilityServices.store,
+    contentStore: capabilityServices.contentStore,
+    attentionReplies: managedAttentionReplies,
+    engine: managedContinuationEngine,
+    recoverFinalizedResult: async ({ agentId, sessionKey, journalKey }) => {
+      const sessionManager = handle.piSessionAdapters.get(agentId);
+      if (sessionManager === undefined) {
+        return err(new Error(`No session manager is registered for ${agentId}`));
+      }
+      return readExecutionResultJournal(sessionManager, sessionKey, journalKey);
+    },
+    resolveWorkspacePolicy: async (agentId, policyHash) => {
+      const loaded = await resolveCapturedWorkspacePolicy(container.workspacePolicyPort, agentId, policyHash);
+      if (loaded === undefined || !loaded.ok) {
+        return err(new Error("The captured immutable workspace policy snapshot is unavailable"));
+      }
+      const verified = verifyWorkspacePolicySnapshot(loaded.value);
+      if (
+        !verified.ok
+        || loaded.value.agentId !== agentId
+        || loaded.value.combinedHash !== policyHash
+      ) {
+        return err(new Error("The captured immutable workspace policy snapshot does not match the managed continuation"));
+      }
+      return ok(loaded.value);
+    },
+    deliver: createManagedRunContinuationDelivery({
+      adaptersByType,
+      deliveryService,
+      ...(durableResume.outwardLedger === undefined ? {} : { outwardLedger: durableResume.outwardLedger }),
+      attachmentDirectory: safePath(
+        container.config.dataDir || handle.dataDir,
+        "managed-run-delivery-attachments",
+      ),
+      logger: daemonLogger,
+    }),
+    resolveEvidencePolicies: (serviceInstanceId) => (
+      definitionForInstance(capabilityServices.plan, serviceInstanceId)?.evidencePolicies
+    ),
+    resolveHeartbeatRequirement: (serviceInstanceId) => (
+      definitionForInstance(capabilityServices.plan, serviceInstanceId)
+        ?.requestedScopes.includes("health") ?? false
+    ),
+    nowMs: () => handle.clock.now(),
+    timers: handle.timers,
+    heartbeatMaxAgeMs: MANAGED_RUN_HEARTBEAT_MAX_AGE_MS,
+    claimTtlMs: 900_000,
+    recoveryBatchSize: container.config.capabilityServices.recoveryBatchSize,
+    logger: daemonLogger,
+  });
+  if (!managedRunContinuationsResult.ok) {
+    throw new Error(`Managed-run continuation setup failed: ${managedRunContinuationsResult.error.message}`);
+  }
+  const managedRunContinuations = managedRunContinuationsResult.value;
   // eventBus.on("system:shutdown", () =>
   //   bgCompletionRunnerContext.runner.shutdown()) deleted — runner.shutdown
   // is threaded directly into setupShutdown via
@@ -2256,16 +2336,13 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // the eventBus.on("system:shutdown", ...) subscriber inside
   // registerProxyTypingListeners that silently no-op'd in production.
   const gatewaySendRef: { ref?: (channelId: string, text: string) => boolean } = {};
-  // The git-worktree seam for `spawn --worktree`. ONE registry shared
-  // by executeSubAgent (which creates + auto-cleans worktrees in-line) and the boot
-  // orphan-sweep (which reclaims worktrees orphaned by a crashed run). The lifecycle
-  // GitExec is the SAME real execFile-backed `execGit` config-git uses, adapted to
-  // the lifecycle's `{ stdout, exitCode }` shape (toLifecycleGitExec). The boot
-  // sweep is started in wirePostChannelsLifecycle (after channels) + cancelled on
-  // shutdown — modeled on the durable-resume two-phase boot hook.
+  // One registry and Git seam serve inline cleanup plus boot-time orphan recovery;
+  // the lifecycle hook starts the sweep after channels and cancels it on shutdown.
   const worktreeRegistry = createWorktreeRegistry();
   const worktreeGitExec = toLifecycleGitExec(handle.execGit);
-  const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup } = setupCrossSession({
+  const ensureDeadLetterRecoveryObservation = createBootDeadLetterRecoveryObserver({ boot: handle, daemonLogger });
+  const graphProducerState = { exists: (_graphId: string) => true };
+  const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, sendRecoverableAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, closeAnnouncementAdmission, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
     sessionResolver, deliveryQueue, deliveryService,
@@ -2280,12 +2357,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
     ...(durableRunFacts ? { durableRunFacts } : {}),
     // Trajectory-recorder release on sub-agent terminal settle — without it a dead child's recorder stays bus-subscribed and ingests other sessions' events.
     closeTrajectory: (formattedSessionKey: string) => handle.trajectoryRegistry.close(formattedSessionKey),
-    // The same outward ledger + rootRunId resolver gives announce() and DLQ
-    // drain one retained operation identity (off ⇒ pass-through).
+    ensureDeadLetterRecoveryObservation,
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
+    graphProducerExists: (graphId) => graphProducerState.exists(graphId),
   });
-
   // The worktree orphan-sweep. Boot recovery (discover prior-crash
   // worktrees from `git worktree list` → seed the registry → one conservative
   // sweep) THEN a periodic interval (.unref()'d, cancelled on shutdown). Modeled
@@ -2335,7 +2411,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const nodeTypeRegistry = createNodeTypeRegistry();
   const graphCoordinator = createGraphCoordinator(buildGraphCoordinatorDeps({
     agents: handle,
-    channels: { subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
+    channels: { subAgentRunner, sendToChannel, sendGovernedAnnouncement, sendRecoverableAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
     // Thread the live durable store so the coordinator checkpoints node state (DAG durability).
     ...(durableResume.durableRunStore ? { durableRunStore: durableResume.durableRunStore } : {}),
     ...(capEndpointHandle
@@ -2349,6 +2425,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
         }
       : {}),
   }));
+  graphProducerState.exists = (graphId) => graphCoordinator.getStatus(graphId) !== undefined;
   subAgentRunner.setGraphCoordinator(graphCoordinator);
   // Populate the late-bound holder so resumeRun (fires at resumeAndStart, after channels) routes a DAG record to coordinator.resumeGraph (incomplete-node re-entry).
   graphResumeHolder.ref = (record, lease) => graphCoordinator.resumeGraph(record, lease);
@@ -2393,7 +2470,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     msTeamsIngress,
     commandQueue, deliveryService,
     inboundMessageIdResolver, channelHealthMonitor, stopChannelHealthMonitor, stopChannelLivenessMonitor,
-    notificationContext, bgCompletionRunnerContext, terminalWakeContext,
+    notificationContext, bgCompletionRunnerContext, managedRunContinuations, terminalWakeContext,
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,
     deadLetterQueue, announcementBatcher, gatewaySendRef,
     sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig, persistImage, imageGenCostLimiter, mediaVisionBundle,
@@ -2405,7 +2482,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
     suspendedAgents, modelCatalog, channelConfig, promptTimeoutTimestamps,
     // Teardown handles surfaced for ShutdownDeps wiring.
-    shutdownBackgroundProcesses, proxyTypingCleanup,
+    shutdownBackgroundProcesses, closeAnnouncementAdmission, proxyTypingCleanup,
     outputRetentionHandle,
   });
 }
@@ -2468,9 +2545,9 @@ async function bootGateway(
   const runtimeTokens: Array<{ id: string; secretBuf: Buffer; scopes: string[] }> = [];
   const removedTokenIds = new Set<string>();
 
-  // Resolve gateway token secrets at startup (config -> env -> auto-generate)
-  const resolvedGatewayTokens = resolveGatewayTokens({ container, daemonLogger });
-
+  const gatewayTokenResult = resolveGatewayTokens({ container, daemonLogger });
+  if (!gatewayTokenResult.ok) throw gatewayTokenResult.error;
+  const resolvedGatewayTokens = gatewayTokenResult.value;
   // 6.7.0.5. Session store bridge (shared between RPC dispatch and DaemonInstance return)
   const sessionStoreBridge: SessionStoreBridge = sessionStore;
 
@@ -2500,8 +2577,8 @@ async function bootGateway(
     obsStore,
     clock: boot.clock,
     durableRuns: boot.durableRunStore,
-    billingEstimator,
-    startupTimestamp: startupStartMs,
+    managedRunReads: channels.capabilityServices.store,
+    billingEstimator, startupTimestamp: startupStartMs,
     workspaceDirs, contextBrowse,
   });
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
@@ -2637,9 +2714,9 @@ async function bootShutdown(
     | "sessionStoreBridge" | "shutdownRef" | "hotAdd" | "hotRemove" | "rpcDispatchDeps"
     | "activeExecutions" | "getActiveConnectionCount" | "wsConnections"
     | "heartbeatRunner" | "duplicateDetector" | "heartbeatCoordinator"
-    | "stopChannelHealthMonitor" | "stopChannelLivenessMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
+    | "stopChannelHealthMonitor" | "stopChannelLivenessMonitor" | "shutdownBackgroundProcesses" | "closeAnnouncementAdmission" | "proxyTypingCleanup"
     | "outputRetentionHandle"
-    | "bgCompletionRunnerContext" | "trajectoryRegistry"
+    | "bgCompletionRunnerContext" | "managedRunContinuations" | "trajectoryRegistry"
     | "auditAggregator" | "onSuspiciousContent"
     | "sessionManager"
     | "subprocessEnv" | "execToolEnv"
@@ -2654,7 +2731,7 @@ async function bootShutdown(
     logger, logLevelManager, daemonLogger, daemonVersion,
     tokenTracker, processMonitor,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-    contextPipelineCollector, backgroundIndexingPromise, db,
+    contextPipelineCollector, backgroundIndexingPromise, db, capabilityServices,
     disposeEmbedding, disposeReranker, cachedPort, maintenanceTick, obsPersistence,
     disposeActivityStream, otelHandle,
     injectionRateLimiter, destroyReactionWiring, geminiCacheManager, backgroundTaskManager,
@@ -2672,10 +2749,10 @@ async function bootShutdown(
     sessionStoreBridge, shutdownRef, gatewayHandle,
     activeExecutions, getActiveConnectionCount,
     trajectoryRegistry,
-    // 9 new teardown handles surfaced through BootContext.
-    shutdownBackgroundProcesses, proxyTypingCleanup,
+    // Teardown handles surfaced through BootContext.
+    shutdownBackgroundProcesses, closeAnnouncementAdmission, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
-    bgCompletionRunnerContext, terminalWakeContext, stopChannelHealthMonitor, stopChannelLivenessMonitor, mcpClientManager,
+    bgCompletionRunnerContext, managedRunContinuations, terminalWakeContext, stopChannelHealthMonitor, stopChannelLivenessMonitor, mcpClientManager,
     // The background video poller (undefined when video disabled) —
     // its shutdown is threaded into setupShutdown below.
     videoPoller,
@@ -2718,14 +2795,14 @@ async function bootShutdown(
     disposeActivityStream, otelShutdown: otelHandle ? () => otelHandle.shutdown() : undefined, // drain ActivityStream; flush+close the OTLP/Prometheus exporter (stops /metrics listener)
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
-    // 9 new teardown fields (8 production subscribers + setup-tools
-    // split into background-processes + mcp-client-manager).
-    // Each was previously a silent no-op subscriber.
+    // Teardown fields surfaced by subsystem composition roots.
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll: () => mcpClientManager.disconnectAll(),
     bgCompletionRunnerShutdown: () => bgCompletionRunnerContext.runner.shutdown(),
+    managedRunContinuationShutdown: () => managedRunContinuations.shutdown(),
     // Drain the terminal wake-FSM (unsubscribe + await in-flight woken turns).
     terminalWakeShutdown: terminalWakeContext ? () => terminalWakeContext.shutdown() : undefined,
+    closeAnnouncementAdmission,
     proxyTypingCleanup,
     shutdownDeliveryQueue,
     // SIGTERM clears the poller's sweeper interval + stops in-flight
@@ -2742,6 +2819,7 @@ async function bootShutdown(
     // Credential broker teardown (no-op when executor.broker is absent)
     brokerStop: boot.brokerHandle ? () => boot.brokerHandle!.stop() : undefined,
     capEndpointStop: capEndpointHandle ? () => capEndpointHandle.endpoint.stopSocket() : undefined, // stops+unlinks cap.sock
+    capabilityServicesShutdown: () => capabilityServices.shutdown(),
     timeoutMs: container.config.daemon.shutdownTimeoutMs,
   });
 
@@ -2823,18 +2901,11 @@ async function bootShutdown(
   const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
   // Derived from the SAME boot comparisons the served-window WARN used (no second comparison).
   const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
-  // Surface the relaxed no-downgrade sandbox default at boot.
-  // The typed field defaults to true (schema-security.ts); === false is the relaxation.
-  const sandboxNoDowngradeDisabled = container.config.security.agentToAgent.sandboxNoDowngrade === false;
-  // browser.noSandbox: true runs Chromium without its sandbox — a relaxed
-  // security default that must SURFACE in the config-posture snapshot, not stay
-  // silent (the browser tool processes untrusted web content).
-  const browserNoSandbox = container.config.browser?.noSandbox === true;
-  // skills.execSandbox.enabled:"never" opts ordinary exec out of its OS jail.
-  const execSandboxDisabled = anyAgentExecSandboxDisabled(container.config.agents);
-  // skills.terminal.unsafeDisableSandbox: true runs a driven coding CLI WITHOUT the bwrap jail — a
-  // relaxed security default that must SURFACE in the config-posture snapshot, not stay silent.
-  const terminalUnsafeDisableSandbox = anyAgentTerminalUnsafeDisableSandbox(container.config.agents);
+  // Surface every relaxed sandbox default at boot — the agent-to-agent no-downgrade
+  // opt-out, Chromium's sandbox, ordinary exec's OS jail, and the terminal driver's
+  // bwrap jail. Each must SURFACE in the config-posture snapshot, not stay silent.
+  const { sandboxNoDowngradeDisabled, browserNoSandbox, execSandboxDisabled, terminalUnsafeDisableSandbox } =
+    collectSandboxRelaxations(container.config);
   // Media credential gap: a PINNED media provider whose credential is absent
   // (image/transcription/tts/video) — invisible to the main-pipeline chimeric
   // detector. `imageGenProvider.isAvailable()` is the store-aware image-codex
@@ -2865,6 +2936,7 @@ async function bootShutdown(
   return {
     container, logger, logLevelManager, tokenTracker,
     processMonitor, shutdownHandle, cronSchedulers, resetSchedulers,
+    capabilityServices,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
     channelManager,
     deliveryAdapters: channelAdaptersRef,

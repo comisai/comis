@@ -1,19 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the (formerly "stubs") `terminal-tools-stubs.ts` surface. There is NO
- * remaining `not_implemented` stub: `terminal_session_status` is a
- * real, classifier-backed, owner-scoped tool whose body lives in
- * `terminal-status-tool.ts`; this module re-exports it (so the barrel import path is
- * unchanged).
+ * Tests for the `terminal-tools-stubs.ts` re-export surface. The
+ * classifier-backed, owner-scoped `terminal_session_status` implementation lives
+ * in `terminal-status-tool.ts`.
  *
  * Asserts:
- *   - the re-exported `createTerminalSessionStatusTool` is the REAL deps-taking factory
- *     (it carries the canonical name + the schema and does NOT throw
- *     `not_implemented`);
- *   - the four interaction factories remain NOT exported from this module (they live in
- *     `terminal-tools.ts` — no dual path).
- *
- * Pure-JS / macOS-green.
+ *   - the re-exported factory carries the canonical name and schema;
+ *   - the four interaction factories are exported only from `terminal-tools.ts`.
  *
  * @module
  */

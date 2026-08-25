@@ -17,6 +17,7 @@ import { resolveReservationRoot } from "./reservation-root.js";
 import { promptTimeoutHint, type AbortEvidence } from "./abort-fallout.js";
 import {
   conversationScopeToSessionKey,
+  createStableAnnouncementOperationId,
   safePath,
   systemNowMs,
   systemNowDate,
@@ -26,17 +27,20 @@ import {
   type DeliveryOrigin,
   type ChannelEndpoint,
   type ConversationLocator,
+  type AnnouncementParentDecisionReservation,
 } from "@comis/core";
 import { fromPromise, TimeoutError, withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type {
-  AnnouncementBatcher,
-  AnnouncementDeadLetterQueue,
-  AnnouncementOperationIdentity,
-  CompletionAttachmentShape,
-  SendGovernedCompletionAnnouncement,
+import {
+  isRecoverableCompletionAnnouncementConfirmedDelivered,
+  type AnnouncementBatcher,
+  type AnnouncementDeadLetterQueue,
+  type CompletionAttachmentShape,
+  type SendGovernedCompletionAnnouncement,
+  type SendRecoverableCompletionAnnouncement,
 } from "./announcement-ports.js";
+import { createCompletionAnnouncementOperationPlan } from "./completion-announcement-operations.js";
 import { buildAnnounceKey, type DeliveryDedup } from "./announce-key.js";
 import { ANNOUNCE_PARENT_TIMEOUT_MS, type SubAgentRunnerDeps, type SubAgentRunnerLogger } from "./sub-agent-runner.js";
 import {
@@ -381,6 +385,7 @@ export async function deliverAnnouncement(params: {
   batcher?: AnnouncementBatcher;
   deadLetterQueue?: AnnouncementDeadLetterQueue;
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
+  sendRecoverableAnnouncement?: SendRecoverableCompletionAnnouncement;
   /**
    * Shared, bounded delivered-key store. When the batcher is absent the
    * batcher cannot mark the key, so the non-batcher success branches mark this
@@ -415,7 +420,7 @@ export async function deliverAnnouncement(params: {
   const announcementText = announceScrub.redactions > 0 ? announceScrub.text : params.announcementText;
 
   if (
-    deps.sendGovernedAnnouncement
+    (deps.sendGovernedAnnouncement || deps.sendRecoverableAnnouncement)
     && (!callerAgentId || !callerSessionKey || !params.callerConversation || !params.destinationEndpoint)
   ) {
     deps.logger?.warn({
@@ -471,15 +476,23 @@ export async function deliverAnnouncement(params: {
   let finalText = params.suppressText ? "" : stripAnnouncementInstruction(announcementText);
   let decisionReserved = false;
 
-  async function resolveDecision(outcome: "receipt_committed" | "no_reply"): Promise<void> {
-    if (!decisionReserved || !announceKey || !deps.deadLetterQueue) return;
-    const boundary = await fromPromise(deps.deadLetterQueue.resolveDecision(announceKey, outcome));
+  async function resolveDecisionKey(
+    decisionKey: string,
+    outcome: "receipt_committed" | "no_reply",
+  ): Promise<void> {
+    if (!deps.deadLetterQueue) return;
+    const boundary = await fromPromise(deps.deadLetterQueue.resolveDecision(decisionKey, outcome));
     if (boundary.ok && boundary.value.ok) return;
     deps.logger?.warn({
       runId,
       hint: "Repair decision-quarantine storage; the retained row safely suppresses replay",
       errorKind: "resource" as const,
     }, "Sub-agent parent decision reservation could not be resolved");
+  }
+
+  async function resolveDecision(outcome: "receipt_committed" | "no_reply"): Promise<void> {
+    if (!decisionReserved || !announceKey || !deps.deadLetterQueue) return;
+    await resolveDecisionKey(announceKey, outcome);
   }
 
   // Parent execution produces text only. The single irreversible send remains
@@ -502,15 +515,41 @@ export async function deliverAnnouncement(params: {
       }
       // Stamp the ledger tree root; a reservation without it can never be adjudicated.
       const reservationRoot = resolveReservationRoot(deps.resolveRootRunId, callerAgentId, params.callerConversation?.conversationScope);
+      if (!reservationRoot) {
+        deps.logger?.warn({
+          runId,
+          hint: "Resolve a non-empty outward ledger root for the caller conversation before governed parent rewriting",
+          errorKind: "precondition" as const,
+        }, "Sub-agent parent decision has no adjudicable ledger root");
+        return;
+      }
+      const destinationEndpoint = params.destinationEndpoint;
+      if (!destinationEndpoint) {
+        deps.logger?.warn({
+          runId,
+          hint: "Bind the completion to its authenticated destination before reserving its parent decision",
+          errorKind: "precondition" as const,
+        }, "Sub-agent parent decision has no recovery endpoint");
+        return;
+      }
       const reservationBoundary = await fromPromise(deps.deadLetterQueue.reserveDecision({
         idempotencyKey: announceKey,
         agentId: callerAgentId,
         runId,
+        sessionKey: callerSessionKey,
         announcementText,
         channelType: announceChannelType,
         channelId: announceChannelId,
         failedAt: systemNowMs(),
-        ...(reservationRoot ? { rootRunId: reservationRoot } : {}),
+        rootRunId: reservationRoot,
+        deliveryAuthority: {
+          tenantId: params.callerConversation.conversationScope.tenantId,
+          agentId: callerAgentId,
+          conversationRef: params.callerConversation.conversationRef,
+        },
+        destinationEndpoint,
+        completionKeys: [announceKey],
+        retirementKeys: [announceKey],
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!reservationBoundary.ok || !reservationBoundary.value.ok) {
@@ -607,7 +646,6 @@ export async function deliverAnnouncement(params: {
   const threadId = params.announceThreadId;
   let delivered: boolean;
   let lastError = "direct channel send failed";
-  let identity: AnnouncementOperationIdentity | undefined;
 
   if (
     deps.sendGovernedAnnouncement
@@ -616,28 +654,106 @@ export async function deliverAnnouncement(params: {
     && params.callerConversation
     && params.destinationEndpoint
   ) {
+    const callerConversation = params.callerConversation;
+    const destinationEndpoint = params.destinationEndpoint;
+    const operationPlan = createCompletionAnnouncementOperationPlan(
+      finalText,
+      params.attachments ?? [],
+    );
+    if (operationPlan.pathReplacements > 0) {
+      deps.logger?.debug({
+        runId,
+        replacements: operationPlan.pathReplacements,
+        step: "completion-caption-egress",
+      }, "Attached file paths replaced before completion delivery");
+    }
     const operations: Array<{
       text: string;
       partId?: string;
       attachment?: CompletionAttachmentShape;
-    }> = params.attachments?.length
-      ? params.attachments.map((attachment, index) => ({
-          text: index === 0 ? finalText : "",
-          partId: `attachment:${index}`,
-          attachment,
-        }))
-      : [{ text: finalText }];
+      reservationKey?: string;
+    }> = operationPlan.operations.map((operation) => ({
+      text: operation.text,
+      ...(operation.partId ? { partId: operation.partId } : {}),
+      ...(operation.attachment ? { attachment: operation.attachment } : {}),
+    }));
+    const reservationRoot = resolveReservationRoot(
+      deps.resolveRootRunId,
+      callerAgentId,
+      callerConversation.conversationScope,
+    );
+    if (!announceKey || !deps.deadLetterQueue || !reservationRoot) {
+      deps.logger?.warn({
+        runId,
+        hint: "Wire durable operation reservations and the caller ledger root before governed delivery",
+        errorKind: "precondition" as const,
+      }, "Sub-agent completion operations cannot be reserved");
+      return;
+    }
+    const reservations: AnnouncementParentDecisionReservation[] = operations.map((operation) => {
+      const reservationKey = createStableAnnouncementOperationId(
+        callerAgentId,
+        callerSessionKey,
+        runId,
+        operation.partId,
+      );
+      operation.reservationKey = reservationKey;
+      return {
+        idempotencyKey: reservationKey,
+        agentId: callerAgentId,
+        runId,
+        sessionKey: callerSessionKey,
+        announcementText: operation.text,
+        channelType: announceChannelType,
+        channelId: announceChannelId,
+        failedAt: systemNowMs(),
+        rootRunId: reservationRoot,
+        deliveryAuthority: {
+          tenantId: callerConversation.conversationScope.tenantId,
+          agentId: callerAgentId,
+          conversationRef: callerConversation.conversationRef,
+        },
+        destinationEndpoint,
+        completionKeys: [announceKey],
+        ...(threadId ? { threadId } : {}),
+        ...(operation.partId ? { partId: operation.partId } : {}),
+        ...(operation.attachment ? {
+          attachment: {
+            kind: "source" as const,
+            sourceAgentId: operation.attachment.sourceAgentId,
+            path: operation.attachment.path,
+          },
+        } : {}),
+      };
+    });
+    const transitioned = await fromPromise(deps.deadLetterQueue.replaceDecisions(
+      decisionReserved ? [announceKey] : [],
+      reservations,
+    ));
+    if (!transitioned.ok || !transitioned.value.ok) {
+      deps.logger?.warn({
+        runId,
+        hint: "Restore decision-quarantine storage before retrying the completion",
+        errorKind: "resource" as const,
+      }, "Sub-agent completion operation reservations were not persisted");
+      return;
+    }
+    if (!transitioned.value.value.created) {
+      deps.logger?.debug({ runId }, "Sub-agent completion operations are already durably retained");
+      return;
+    }
     delivered = true;
     for (const operation of operations) {
       const boundary = await fromPromise(deps.sendGovernedAnnouncement({
         agentId: callerAgentId,
         callerSessionKey,
-        callerConversation: params.callerConversation,
-        destinationEndpoint: params.destinationEndpoint,
+        callerConversation,
+        destinationEndpoint,
         runId,
         channelType: announceChannelType,
         channelId: announceChannelId,
         text: operation.text,
+        completionKeys: [announceKey],
         ...(operation.partId ? { partId: operation.partId } : {}),
         ...(operation.attachment ? { attachment: operation.attachment } : {}),
         ...(threadId ? { options: { threadId } } : {}),
@@ -648,13 +764,40 @@ export async function deliverAnnouncement(params: {
         break;
       }
       const outcome = boundary.value.value;
-      identity = outcome.identity;
       if (!outcome.delivered) {
+        if ("terminalDecision" in outcome) continue;
         delivered = false;
         lastError = outcome.failure;
         break;
       }
+      if (operation.reservationKey) {
+        await resolveDecisionKey(operation.reservationKey, "receipt_committed");
+      }
     }
+  } else if (
+    deps.sendRecoverableAnnouncement
+    && callerAgentId
+    && callerSessionKey
+    && params.callerConversation
+    && params.destinationEndpoint
+    && !params.attachments?.length
+  ) {
+    const boundary = await fromPromise(deps.sendRecoverableAnnouncement({
+      agentId: callerAgentId,
+      callerSessionKey,
+      callerConversation: params.callerConversation,
+      destinationEndpoint: params.destinationEndpoint,
+      runId,
+      channelType: announceChannelType,
+      channelId: announceChannelId,
+      text: finalText,
+      ...(announceKey ? { completionKeys: [announceKey] } : {}),
+      ...(threadId ? { options: { threadId } } : {}),
+    }));
+    delivered = boundary.ok
+      && boundary.value.ok
+      && isRecoverableCompletionAnnouncementConfirmedDelivered(boundary.value.value);
+    if (!delivered) lastError = "recoverable announcement was not confirmed";
   } else {
     if (params.attachments?.length) {
       deps.logger?.warn({
@@ -679,7 +822,9 @@ export async function deliverAnnouncement(params: {
   }
 
   if (delivered) {
-    await resolveDecision("receipt_committed");
+    if (!deps.sendGovernedAnnouncement && !deps.sendRecoverableAnnouncement) {
+      await resolveDecision("receipt_committed");
+    }
     if (announceKey) deps.deliveryDedup?.mark(announceKey);
     return;
   }
@@ -691,23 +836,28 @@ export async function deliverAnnouncement(params: {
     errorKind: "network" as const,
   }, "Sub-agent announcement delivery failed");
 
-  if (params.attachments?.length) return;
+  if (deps.sendGovernedAnnouncement || deps.sendRecoverableAnnouncement || params.attachments?.length) return;
 
   if (deps.deadLetterQueue && callerAgentId && callerSessionKey) {
     const queued = await deps.deadLetterQueue.enqueue({
       announcementText: finalText,
       channelType: announceChannelType,
       channelId: announceChannelId,
-      agentId: identity?.agentId ?? callerAgentId,
+      agentId: callerAgentId,
       runId,
+      sessionKey: callerSessionKey,
       failedAt: systemNowMs(),
       attemptCount: 0,
       lastError,
       ...(threadId ? { threadId } : {}),
       ...(announceKey ? { idempotencyKey: announceKey } : {}),
-      ...(identity ? {
-        rootRunId: identity.rootRunId,
-        stepIndex: identity.stepIndex,
+      ...(params.callerConversation && params.destinationEndpoint ? {
+        deliveryAuthority: {
+          tenantId: params.callerConversation.conversationScope.tenantId,
+          agentId: callerAgentId,
+          conversationRef: params.callerConversation.conversationRef,
+        },
+        destinationEndpoint: params.destinationEndpoint,
       } : {}),
     });
     if (!queued?.ok) {
@@ -721,167 +871,4 @@ export async function deliverAnnouncement(params: {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Failure notification (LLM-free)
-// ---------------------------------------------------------------------------
-
-interface FailureNotificationParams {
-  channelType: string;
-  channelId: string;
-  task: string;
-  runtimeMs: number;
-  runId: string;
-  /** Authenticated caller identity that owns the governed outward operation. */
-  callerAgentId?: string;
-  /** Formatted caller session key — needed to build the shared announceKey. */
-  callerSessionKey?: string;
-  /** Canonical caller authority for the governed outward operation. */
-  callerConversation?: ConversationLocator;
-  /** Immutable endpoint captured with the authenticated caller turn. */
-  destinationEndpoint?: ChannelEndpoint;
-  /** Topic captured from the exact requester route when the run was accepted. */
-  threadId?: string;
-  /** Cause line replacing the generic error sentence for attributed kills. */
-  detail?: string;
-}
-
-type FailureNotificationDeps = Pick<
-  SubAgentRunnerDeps,
-  "sendToChannel" | "sendGovernedAnnouncement" | "logger" | "batcher"
-> & {
-    /**
-     * Shared, bounded delivered-key store. Lets the failure-path dedup
-     * work WITHOUT a batcher. When both a
-     * batcher and a dedup are injected they are the SAME underlying set (the
-     * batcher delegates to it), so checking/marking either is consistent.
-     */
-    deliveryDedup?: DeliveryDedup;
-  };
-
-const failureNotificationsInFlight = new Map<string, Promise<void>>();
-
-async function deliverFailureNotificationOnce(
-  params: FailureNotificationParams,
-  deps: FailureNotificationDeps,
-): Promise<void> {
-  const taskPreview = params.task.length > 100
-    ? params.task.slice(0, 97) + "..."
-    : params.task;
-
-  const message = [
-    `Task failed: ${taskPreview}`,
-    params.detail ?? "The task encountered an error and could not complete.",
-    `Runtime: ${(params.runtimeMs / 1000).toFixed(1)}s`,
-  ].join("\n");
-
-  // Build the SAME idempotency key as the success path
-  // via the shared `buildAnnounceKey` helper (one source of truth — divergence
-  // would silently break the cross-path dedup) and dedup against the SAME
-  // deliveredKeys set (reached via the batcher's hasDelivered/markDelivered).
-  // A budget-failed graph node routes here; its failure-key
-  // == its success-key, so a second sweep does not double-notify. Undefined for
-  // a top-level spawn (no callerSessionKey) → no dedup.
-  const announceKey = buildAnnounceKey(params.callerSessionKey, params.runId);
-  // Dedup against the shared set whether reached via the batcher OR the
-  // directly-injected DeliveryDedup (the no-batcher path). They are the same
-  // underlying set in production; checking either suppresses a double-notify.
-  const alreadyDelivered = announceKey !== undefined
-    && (deps.batcher?.hasDelivered(announceKey) === true || deps.deliveryDedup?.has(announceKey) === true);
-  // A completion announcement that is enqueued-but-unflushed (or
-  // retained-uncertain) still OWNS delivery for this key — hasDelivered is
-  // false only because the flush hasn't run yet. Sending the failure notice
-  // now would double-notify the recipient once the batch drains (the
-  // daemon-shutdown race: the run enqueued its announcement, then the
-  // shutdown sweep suppressed the run and routed here).
-  const announcementOwnsDelivery = announceKey !== undefined
-    && deps.batcher?.hasPending?.(announceKey) === true;
-  if (alreadyDelivered || announcementOwnsDelivery) {
-    deps.logger?.debug({
-      runId: params.runId,
-      hint: announcementOwnsDelivery
-        ? "pending completion announcement owns delivery; failure notification suppressed"
-        : "duplicate failure notification suppressed",
-    }, "Failure notification dedup no-op");
-    return;
-  }
-
-  const threadId = params.threadId;
-
-  if (
-    deps.sendGovernedAnnouncement
-    && (!params.callerAgentId || !params.callerSessionKey || !params.callerConversation || !params.destinationEndpoint)
-  ) {
-    deps.logger?.warn({
-      runId: params.runId,
-      hint: "Bind the failure notice to its authenticated caller agent and session before delivery",
-      errorKind: "precondition" as const,
-    }, "Governed failure notification has no delivery authority");
-    return Promise.reject(new Error("Governed failure notification requires caller delivery authority"));
-  }
-
-  let delivered: boolean;
-  let sendErr: Error | undefined;
-  if (deps.sendGovernedAnnouncement) {
-    const boundary = await fromPromise(deps.sendGovernedAnnouncement({
-      agentId: params.callerAgentId!,
-      callerSessionKey: params.callerSessionKey!,
-      callerConversation: params.callerConversation!,
-      destinationEndpoint: params.destinationEndpoint!,
-      runId: params.runId,
-      channelType: params.channelType,
-      channelId: params.channelId,
-      text: message,
-      ...(threadId ? { options: { threadId } } : {}),
-    }));
-    delivered = boundary.ok && boundary.value.ok && boundary.value.value.delivered;
-  } else {
-    const boundary = await fromPromise(deps.sendToChannel(
-      params.channelType,
-      params.channelId,
-      message,
-      threadId ? { threadId } : undefined,
-    ));
-    delivered = boundary.ok && boundary.value;
-    sendErr = boundary.ok ? new Error("sendToChannel returned false") : boundary.error;
-  }
-  if (!delivered) {
-    sendErr ??= new Error("Governed failure notification was not confirmed");
-    deps.logger?.warn({
-      runId: params.runId,
-      err: toSafeErrorLogString(sendErr),
-      hint: deps.sendGovernedAnnouncement
-        ? "Inspect the retained governed operation before deciding whether to retry"
-        : "Even direct channel send failed; user will not be notified",
-      errorKind: "network" as const,
-    }, "Failure notification delivery failed");
-    return Promise.reject(sendErr);
-  }
-
-  // Mark delivered only after a confirmed true result. Both sinks resolve to
-  // the same bounded set in production.
-  if (announceKey) {
-    deps.batcher?.markDelivered(announceKey);
-    deps.deliveryDedup?.mark(announceKey);
-  }
-}
-
-/**
- * Deliver one fixed-format, LLM-free failure notice. Keyed concurrent callers
- * join the same attempt; the governed sender provides durable replay blocking.
- */
-export function deliverFailureNotification(
-  params: FailureNotificationParams,
-  deps: FailureNotificationDeps,
-): Promise<void> {
-  const announceKey = buildAnnounceKey(params.callerSessionKey, params.runId);
-  if (announceKey === undefined) return deliverFailureNotificationOnce(params, deps);
-  const existing = failureNotificationsInFlight.get(announceKey);
-  if (existing !== undefined) return existing;
-  const pending = deliverFailureNotificationOnce(params, deps).finally(() => {
-    if (failureNotificationsInFlight.get(announceKey) === pending) {
-      failureNotificationsInFlight.delete(announceKey);
-    }
-  });
-  failureNotificationsInFlight.set(announceKey, pending);
-  return pending;
-}
+export { deliverFailureNotification } from "./sub-agent-failure-notification.js";

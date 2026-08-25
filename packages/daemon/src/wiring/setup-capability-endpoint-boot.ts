@@ -127,11 +127,11 @@ export function createRootRunIdRegistry(deps: {
 
   function mintGeneration(
     principalKey: string,
-    agentId: string,
     formatted: string,
     activatedAtMs: number,
   ): string {
-    const rootRunId = `root-session-${idFactory()}-${agentId}-${formatted}`;
+    const encodedSessionKey = Buffer.from(formatted, "utf8").toString("base64url");
+    const rootRunId = `root-session-${idFactory()}-${encodedSessionKey}`;
     const generation: RootRunGeneration = { rootRunId, activatedAtMs };
     const generations = generationsByPrincipal.get(principalKey) ?? [];
     generations.push(generation);
@@ -156,7 +156,6 @@ export function createRootRunIdRegistry(deps: {
     if (generations === undefined || generations.length === 0) {
       return ok(mintGeneration(
         principalKey,
-        agentId,
         formatted,
         requestStartedAt ?? deps.clock.now(),
       ));
@@ -185,7 +184,7 @@ export function createRootRunIdRegistry(deps: {
     ) {
       return ok(current.rootRunId);
     }
-    return ok(mintGeneration(principalKey, agentId, formatted, requestStartedAt));
+    return ok(mintGeneration(principalKey, formatted, requestStartedAt));
   };
 
   return Object.freeze({

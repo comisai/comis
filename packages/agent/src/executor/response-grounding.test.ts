@@ -521,6 +521,17 @@ describe("response grounding module", () => {
     })).toEqual({ response, corrected: false });
   });
 
+  it("does not combine unrelated run confirmation and first-person prose into scheduler state", () => {
+    const response =
+      "Prepared the task. Managed run confirmed. I am not claiming delivery from terminal output.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response,
+      toolExecResults: [],
+      honestResponse: "I could not verify the scheduled job.",
+    })).toEqual({ response, corrected: false });
+  });
+
   it("does not combine separated market-report terms into scheduler state", () => {
     const response = [
       "Prices are Friday closes; markets were closed when this was prepared Saturday.",

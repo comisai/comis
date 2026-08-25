@@ -17,6 +17,7 @@
     { "path": "../memory" },
     { "path": "../observability" },
     { "path": "../scheduler" },
-    { "path": "../skills" }
+    { "path": "../skills" },
+    { "path": "../capability-service-sdk" }
   ]
 }

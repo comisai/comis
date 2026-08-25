@@ -1,11 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, describe, expect, it } from "vitest";
-import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  access,
+  chmod,
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { safePath } from "@comis/core";
+import { ok } from "@comis/shared";
 import {
   createCompletionAttachmentPreparer,
   prepareCompletionAttachment,
+  reconcileCompletionAttachmentSnapshots,
+  verifyCompletionAttachmentSnapshot,
 } from "./completion-attachment.js";
 
 const roots: string[] = [];
@@ -55,6 +70,27 @@ describe("completion attachment preparation", () => {
     await expect(access(result.value.path)).rejects.toThrow();
   });
 
+  it("syncs the snapshot directory and its parent before admitting the file", async () => {
+    const { dataDir, workspaceDir } = await makeLayout();
+    const sourcePath = safePath(workspaceDir, "durable.txt");
+    await writeFile(sourcePath, "durable", { mode: 0o600 });
+    const syncDirectory = vi.fn(async () => ok(undefined));
+
+    const result = await prepareCompletionAttachment({
+      dataDir,
+      workspaceDir,
+      sourcePath,
+      syncDirectory,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(syncDirectory.mock.calls.map(([path]) => path)).toEqual([
+      safePath(dataDir, "completion-attachments"),
+      dataDir,
+    ]);
+    if (result.ok) await result.value.cleanup();
+  });
+
   it("resolves the producing agent workspace before preparing its output", async () => {
     const { dataDir } = await makeLayout();
     const workspaceDir = safePath(dataDir, "workspace-report-agent");
@@ -66,10 +102,113 @@ describe("completion attachment preparation", () => {
       agents: { default: {} },
     });
 
-    const result = await prepare({ sourceAgentId: "report-agent", path: sourcePath });
+    const result = await prepare({
+      kind: "source",
+      sourceAgentId: "report-agent",
+      path: sourcePath,
+    });
 
     expect(result.ok).toBe(true);
     if (result.ok) await result.value.cleanup();
+  });
+
+  it("keeps admitted bytes stable and rejects a changed snapshot", async () => {
+    const { dataDir, workspaceDir } = await makeLayout();
+    const sourcePath = safePath(workspaceDir, "report.txt");
+    await writeFile(sourcePath, "admitted", { mode: 0o600 });
+    const prepared = await prepareCompletionAttachment({
+      dataDir,
+      workspaceDir,
+      sourcePath,
+      sourceAgentId: "worker-a",
+    });
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+
+    await writeFile(sourcePath, "replaced", { mode: 0o600 });
+    await expect(readFile(prepared.value.path, "utf8")).resolves.toBe("admitted");
+    await expect(verifyCompletionAttachmentSnapshot(dataDir, prepared.value))
+      .resolves.toEqual(ok(prepared.value));
+
+    await chmod(prepared.value.path, 0o600);
+    await writeFile(prepared.value.path, "tampered", { mode: 0o600 });
+    const verified = await verifyCompletionAttachmentSnapshot(dataDir, prepared.value);
+    expect(verified.ok).toBe(false);
+    await prepared.value.cleanup();
+  });
+
+  it("rejects same-size source mutation while snapshotting", async () => {
+    const { dataDir, workspaceDir } = await makeLayout();
+    const sourcePath = safePath(workspaceDir, "raced.txt");
+    const original = "a".repeat(64 * 1024);
+    await writeFile(sourcePath, original, { mode: 0o600 });
+    const probe = await open(sourcePath, "r");
+    type PositionalRead = (
+      this: FileHandle,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => Promise<{ bytesRead: number; buffer: Buffer }>;
+    const prototype = Object.getPrototypeOf(probe) as { read: PositionalRead };
+    const originalRead = prototype.read;
+    await probe.close();
+    let mutated = false;
+    const readSpy = vi.spyOn(prototype, "read").mockImplementation(async function (
+      this: FileHandle,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) {
+      const result = await originalRead.call(this, buffer, offset, length, position);
+      if (!mutated) {
+        mutated = true;
+        await writeFile(sourcePath, "b".repeat(original.length), { mode: 0o600 });
+        await utimes(sourcePath, new Date(1_000), new Date(2_000));
+      }
+      return result;
+    });
+
+    try {
+      const prepared = await prepareCompletionAttachment({
+        dataDir,
+        workspaceDir,
+        sourcePath,
+      });
+      expect(prepared.ok).toBe(false);
+    } finally {
+      readSpy.mockRestore();
+    }
+  });
+
+  it("removes crash-orphaned snapshots while preserving every durable reference", async () => {
+    const { dataDir, workspaceDir } = await makeLayout();
+    const firstSource = safePath(workspaceDir, "referenced.txt");
+    const secondSource = safePath(workspaceDir, "orphaned.txt");
+    await writeFile(firstSource, "referenced", { mode: 0o600 });
+    await writeFile(secondSource, "orphaned", { mode: 0o600 });
+    const referenced = await prepareCompletionAttachment({
+      dataDir,
+      workspaceDir,
+      sourcePath: firstSource,
+    });
+    const orphaned = await prepareCompletionAttachment({
+      dataDir,
+      workspaceDir,
+      sourcePath: secondSource,
+    });
+    expect(referenced.ok && orphaned.ok).toBe(true);
+    if (!referenced.ok || !orphaned.ok) return;
+
+    await expect(reconcileCompletionAttachmentSnapshots(
+      dataDir,
+      [referenced.value.path],
+    )).resolves.toEqual(ok(undefined));
+
+    await expect(readFile(referenced.value.path, "utf8")).resolves.toBe("referenced");
+    await expect(access(orphaned.value.path)).rejects.toThrow();
+    await referenced.value.cleanup();
   });
 
   it("rejects files outside the producing workspace and symbolic links", async () => {

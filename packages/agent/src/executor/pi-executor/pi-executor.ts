@@ -34,6 +34,7 @@
  */
 
 import * as os from "node:os";
+import { createHash } from "node:crypto";
 
 import {
   attachTrajectoryToEventBus,
@@ -89,16 +90,14 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "../command-directive-types.js";
 import type { StepCounter } from "../step-counter.js";
-import {
-  createToolRetryBreaker,
-  type ToolRetryBreaker,
-} from "../../safety/tool-retry-breaker.js";
+import type { ToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
 import {
   attributeBackgroundFailuresToOriginatingTool,
   createBackgroundTaskSettlementReconciler,
   type BackgroundTaskSettlementReconciler,
 } from "../../safety/background-failure-attribution.js";
 import { createMessageSendLimiter } from "../../safety/message-send-limiter.js";
+import { createToolRetryBreakerLifecycle } from "./tool-retry-breaker-lifecycle.js";
 import type { ComisSessionManager } from "../../session/comis-session-manager.js";
 import type { RunHandle } from "../active-run-registry.js";
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../session/orphaned-message-repair.js";
@@ -168,7 +167,7 @@ import { getElapsedSinceLastResponse } from "../ttl-guard.js";
 import { clearSessionBlockStability } from "../block-stability-tracker.js";
 import { wrapToolForAutoBackground } from "../../background/index.js";
 import { BackgroundTasksConfigSchema } from "@comis/core";
-import type { BackgroundTaskOrigin } from "@comis/core";
+import type { BackgroundTaskOrigin } from "../../background/background-task-types.js";
 import {
   applyMutationSerializer,
   applyPersistedReactiveStrip,
@@ -359,23 +358,17 @@ export function createPiExecutor(
     get: () => executionMinTokensOverride,
     set: (value) => { executionMinTokensOverride = value; },
   };
-  // Tool health belongs to the executor/agent lifetime, not one foreground
-  // message. A promoted task commonly settles after execute() returns; keeping
-  // both objects here lets the next turn reconcile that durable terminal state
-  // before any new tool call.
-  const toolRetryBreakerConfig = config.toolRetryBreaker;
-  const toolRetryBreaker = toolRetryBreakerConfig?.enabled !== false
-    ? createToolRetryBreaker({
-        maxConsecutiveFailures: toolRetryBreakerConfig?.maxConsecutiveFailures ?? 3,
-        maxToolFailures: toolRetryBreakerConfig?.maxToolFailures ?? 5,
-        suggestAlternatives: toolRetryBreakerConfig?.suggestAlternatives ?? true,
-        maxConsecutiveErrorPatterns:
-          toolRetryBreakerConfig?.maxConsecutiveErrorPatterns ?? 2,
-      })
-    : undefined;
-  const backgroundTaskSettlementReconciler = toolRetryBreaker === undefined
+  // Foreground failures belong to one execution. Background-task health must
+  // outlive it because a promoted task can settle after execute() returns.
+  const toolRetryBreakerLifecycle = createToolRetryBreakerLifecycle(
+    { config: config.toolRetryBreaker },
+  );
+  const backgroundTaskSettlementReconciler =
+    toolRetryBreakerLifecycle.backgroundBreaker === undefined
     ? undefined
-    : createBackgroundTaskSettlementReconciler(toolRetryBreaker);
+    : createBackgroundTaskSettlementReconciler(
+        toolRetryBreakerLifecycle.backgroundBreaker,
+      );
 
   return {
     async execute(
@@ -389,6 +382,7 @@ export function createPiExecutor(
       overrides?: ExecutionOverrides,
     ): Promise<ExecutionResult> {
       const executionId = randomUUID();
+      const toolRetryBreaker = toolRetryBreakerLifecycle.createExecutionBreaker();
       let finalizedResultJournaled = false;
       const finalizeResult = async (candidate: ExecutionResult): Promise<ExecutionResult> => {
         if (!finalizedResultJournaled) {
@@ -766,6 +760,7 @@ export function createPiExecutor(
           externalAbortState,
           resultJournalFailure,
           toolRetryBreaker,
+          backgroundToolRetryBreaker: toolRetryBreakerLifecycle.backgroundBreaker,
           backgroundTaskSettlementReconciler,
         }),
       );
@@ -838,6 +833,7 @@ interface RunSessionLockedContext {
   readonly externalAbortState: ExternalAbortState;
   readonly resultJournalFailure: { error?: Error };
   readonly toolRetryBreaker: ToolRetryBreaker | undefined;
+  readonly backgroundToolRetryBreaker: ToolRetryBreaker | undefined;
   readonly backgroundTaskSettlementReconciler:
     | BackgroundTaskSettlementReconciler
     | undefined;
@@ -859,6 +855,7 @@ async function runSessionLocked(
     externalAbortState,
     resultJournalFailure,
     toolRetryBreaker,
+    backgroundToolRetryBreaker,
     backgroundTaskSettlementReconciler,
   } = ctx;
   if (executionOverrides?.signal?.aborted) {
@@ -1432,7 +1429,10 @@ async function runSessionLocked(
   // both operator configuration and request metadata. Sub-agent and graph legs
   // inherit this live context value instead of a config-only approximation.
   const turnContext = tryGetContext();
-  if (turnContext) turnContext.resolvedLanguage = responseLocalePolicy.locale;
+  if (turnContext) {
+    turnContext.resolvedLanguage = responseLocalePolicy.locale;
+    turnContext.responseLocalePolicy = Object.freeze({ ...responseLocalePolicy });
+  }
 
   const preparedTurnResult = await prepareTurn({
     scope: tryGetContext()?.turnScope,
@@ -1920,12 +1920,13 @@ async function runSessionLocked(
   // without this its breaker never trips and a failing tool can be relaunched
   // until the turn's wall-clock budget expires (see
   // background-failure-attribution.ts). The listener is turn-scoped; the
-  // breaker and settlement reconciler are executor-scoped, so a later turn
-  // catches any terminal event that arrived after this listener was removed.
-  if (toolRetryBreaker) {
+  // background breaker and settlement reconciler are executor-scoped, so a
+  // later turn catches any terminal event that arrived after this listener was
+  // removed. Foreground failures stay in the execution-scoped breaker above.
+  if (backgroundToolRetryBreaker) {
     unsubscribeBackgroundFailures = attributeBackgroundFailuresToOriginatingTool({
       eventBus: deps.eventBus,
-      breaker: toolRetryBreaker,
+      breaker: backgroundToolRetryBreaker,
       ...(backgroundTaskSettlementReconciler === undefined
         ? {}
         : { reconciler: backgroundTaskSettlementReconciler }),
@@ -3021,6 +3022,10 @@ async function runSessionLocked(
   // background-continuation context (which lacks these locals).
   if (deps.backgroundTaskManager && config.backgroundTasks?.enabled !== false) {
     const bgConfig = BackgroundTasksConfigSchema.parse(config.backgroundTasks ?? {});
+    const capturedToolIds = [...new Set(mergedCustomTools.map((tool) => tool.name))].sort();
+    const capturedCapabilityViewHash = createHash("sha256")
+      .update(JSON.stringify(capturedToolIds), "utf8")
+      .digest("hex");
     const originResolver = (): BackgroundTaskOrigin | undefined => {
       // Defensive: if any required field is unexpectedly missing, fall through
       // to foreground execution (no background promotion). Promotion requires
@@ -3045,6 +3050,9 @@ async function runSessionLocked(
         trustLevel: context.trustLevel,
         responseLocalePolicy,
         backgroundHopCount: incomingHopCount,
+        workspacePolicyHash: workspacePolicySnapshot.combinedHash,
+        capturedToolIds,
+        capturedCapabilityViewHash,
       };
     };
     for (const tool of mergedCustomTools) {

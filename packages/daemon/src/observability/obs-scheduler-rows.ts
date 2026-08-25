@@ -152,8 +152,14 @@ export function wireSchedulerDiagnostics(input: {
   eventBus: TypedEventBus;
   diagnosticBuffer: { push(row: DiagnosticRow): void };
 }): void {
+  input.eventBus.on("announcement:dead_lettered", (payload) => {
+    input.diagnosticBuffer.push(announcementDeadLetteredEventToRow(payload));
+  });
   input.eventBus.on("announcement:quarantine_pending", (payload) => {
     input.diagnosticBuffer.push(announcementQuarantineEventToRow(payload));
+  });
+  input.eventBus.on("announcement:quarantine_read_failed", (payload) => {
+    input.diagnosticBuffer.push(announcementQuarantineReadFailedEventToRow(payload));
   });
   input.eventBus.on("scheduler:cron_ownership_reconciliation", (payload) => {
     input.diagnosticBuffer.push(cronOwnershipReconciliationEventToRow(payload));
@@ -196,19 +202,32 @@ export function wireSchedulerDiagnostics(input: {
   });
 }
 
-/**
- * Map `announcement:quarantine_pending` → a `health_signal` DiagnosticRow.
- *
- * Severity is `"warning"`, never `"info"`: a quarantined announcement means a
- * background task's outcome is being withheld from the user because the runtime
- * could not prove they were already told. `buildFindings` folds warning-severity
- * rows into one finding per `signal` label, so this reaches
- * `comis system-health` as a named finding instead of a daemon.log grep — live,
- * a completed chart set sat quarantined and the user had to ask for it.
- * Counts only; no announcement text ever enters a diagnostic row.
- */
-export function announcementQuarantineEventToRow(
-  payload: EventMap["announcement:quarantine_pending"],
+/** Map one durable announcement admission to its owning session and system health. */
+export function announcementDeadLetteredEventToRow(
+  payload: EventMap["announcement:dead_lettered"],
+): DiagnosticRow {
+  const decisionReserved = payload.reason === "parent_decision_reserved";
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: decisionReserved ? "info" : "warning",
+    agentId: "",
+    sessionKey: payload.sessionKey,
+    message: "announcement:dead_lettered",
+    details: JSON.stringify({
+      signal: decisionReserved
+        ? "announcement_decision_reserved"
+        : "announcement_dead_lettered",
+      channelType: payload.channelType,
+      reason: payload.reason,
+    }),
+    traceId: undefined,
+  };
+}
+
+/** Map an unreadable durable quarantine to a named daemon-wide finding. */
+export function announcementQuarantineReadFailedEventToRow(
+  payload: EventMap["announcement:quarantine_read_failed"],
 ): DiagnosticRow {
   return {
     timestamp: payload.timestamp,
@@ -216,10 +235,32 @@ export function announcementQuarantineEventToRow(
     severity: "warning",
     agentId: "",
     sessionKey: "",
+    message: "announcement:quarantine_read_failed",
+    details: JSON.stringify({ signal: "announcement_quarantine_read_failed" }),
+    traceId: undefined,
+  };
+}
+
+/**
+ * Map `announcement:quarantine_pending` → a `health_signal` DiagnosticRow.
+ *
+ * A non-zero operator count is warning-severity; a zero count is the current
+ * clearing state. Counts only; no announcement text enters a diagnostic row.
+ */
+export function announcementQuarantineEventToRow(
+  payload: EventMap["announcement:quarantine_pending"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: payload.pendingCount > 0 ? "warning" : "info",
+    agentId: "",
+    sessionKey: "",
     message: "announcement:quarantine_pending",
     details: JSON.stringify({
       signal: "announcement_quarantine",
       pendingCount: payload.pendingCount,
+      activeRecoveryCount: payload.activeRecoveryCount,
     }),
     traceId: undefined,
   };

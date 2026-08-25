@@ -162,6 +162,30 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(parsed.value.comis?.["min-distinct-web-search-queries"]).toBe(3);
   });
 
+  it("excludes service-dependent skills from observable seeded output", () => {
+    const fixtureRoot = mkdtempSync(resolve(tmpdir(), "comis-skill-service-requirements-"));
+    const bundledRoot = resolve(fixtureRoot, "bundled");
+    const skillsTarget = resolve(fixtureRoot, "installed");
+    const manifests = {
+      generic: "---\nname: generic\ndescription: Generic skill\nversion: 1.0.0\n---\nBody\n",
+      dependent: "---\nname: dependent\ndescription: Service skill\nversion: 1.0.0\ncomis:\n  requires:\n    capabilityServices: [service_fixture]\n---\nBody\n",
+    };
+    for (const [name, manifest] of Object.entries(manifests)) {
+      mkdirSync(resolve(bundledRoot, name), { recursive: true });
+      writeFileSync(resolve(bundledRoot, name, "SKILL.md"), manifest);
+    }
+
+    try {
+      const result = seedBundledSkills(defaultSeedBundledSkillsDeps(bundledRoot, skillsTarget));
+
+      expect(result).toEqual({ seeded: ["generic"], skipped: ["dependent"] });
+      expect(existsSync(resolve(skillsTarget, "generic", "SKILL.md"))).toBe(true);
+      expect(existsSync(resolve(skillsTarget, "dependent"))).toBe(false);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it("downloads a generated chart into an ESM workspace without host renderers", () => {
     const repositoryRoot = resolve(
       dirname(fileURLToPath(import.meta.url)),
@@ -239,7 +263,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     mkdirSync(resolve(installedSkill, "scripts"), { recursive: true });
     writeFileSync(
       resolve(bundledSkill, "SKILL.md"),
-      "---\nname: example-skill\nversion: 2.0.0\n---\n",
+      "---\nname: example-skill\ndescription: Example skill\nversion: 2.0.0\n---\n",
     );
     writeFileSync(
       resolve(bundledSkill, "scripts/generate.cjs"),
@@ -285,6 +309,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       skillsTarget: "/t",
       listSkillNames: () => Object.keys(bundled),
       bundledVersion: (_root, name) => bundled[name],
+      bundledCapabilityServices: () => [],
       installedVersion: (_t, name) => installed[name],
       seed: (name) => seededCalls.push(name),
       logger,
@@ -301,6 +326,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       skillsTarget: "/t",
       listSkillNames: () => ["claude-code"],
       bundledVersion: () => "1.0.0",
+      bundledCapabilityServices: () => [],
       installedVersion: () => undefined, // not installed
       seed: (n) => seeded.push(n),
     });
@@ -315,6 +341,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       skillsTarget: "/t",
       listSkillNames: () => ["skill-creator", "claude-code", "codex"],
       bundledVersion: (_r, n) => ({ "skill-creator": "1.1.1", "claude-code": "1.0.0", codex: "1.0.0" })[n],
+      bundledCapabilityServices: () => [],
       installedVersion: (_t, n) => ({ "skill-creator": "1.1.1", "claude-code": "1.0.0", codex: "1.0.0" })[n],
       seed: (n) => seeded.push(n),
     });
@@ -329,6 +356,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       skillsTarget: "/t",
       listSkillNames: () => [],
       bundledVersion: () => undefined,
+      bundledCapabilityServices: () => [],
       installedVersion: () => undefined,
       seed: () => {
         throw new Error("must not seed");

@@ -30,7 +30,7 @@
 | data dir | `/home/comis/.comis` (`DATA`) | config, secrets.db, sessions, workspace — owned by `comis` |
 | master key | `$DATA/.env` → `SECRETS_MASTER_KEY` | the daemon loads `<dataDir>/.env` at boot; the systemd unit also loads `/etc/comis/env` |
 | secrets | encrypted `secrets.db` | API keys, OAuth profiles, `COMIS_GATEWAY_TOKEN` — `su - comis -c 'comis secrets list'` |
-| emulator | `tsx test/live/bin/vps-emu.ts` in `$EMU_DIR` (default `/root/comis-emu`) on a **kernel-allocated** loopback port | wiring in `EMU_JSON` (`$DATA/emulator-wiring.json` locally, `/tmp/comis-emu.json` remotely) `{apiRoot, port, botToken:"1234567:emulator-fake-token"}` |
+| emulator | `tsx test/live/bin/vps-emu.ts` in `$EMU_DIR` (default `/root/comis-emu`) on a **kernel-allocated** loopback port | wiring in `EMU_JSON` (`$DATA/emulator-wiring.json` locally, `/tmp/comis-emu.json` remotely) and message-id reservations in the independent durable `EMU_MESSAGE_ID_STATE_DIR` |
 | drive id | sender/chat `678314278` (`CHATID`), `senderTrustMap: admin` | drive as this user (admin-trust) |
 
 The daemon runs **under systemd** (`comis.service`) exactly like a user install — including the SIGUSR2
@@ -279,4 +279,4 @@ RIG_MODE=local DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive .
 - **SSH drops on long sleeps** → add `-o ServerAliveInterval=5`. macOS has no `timeout`.
 - **`pgrep -f daemon.js` false-matches** your `bash -lc`/`sudo` wrappers → filter `grep -vE "bash|sudo|grep"`.
 - **Don't chase an `effectiveWindow:8192` viable-floor WARN** — for a catalog-unknown model it's usually an invalid/mistyped model, not a window bug. Pick a valid model.
-- **rootRunId has two formats:** orchestrate=`root-default-<id>`; graph/spawn=`root-session-<sessionKey>`.
+- **rootRunId has two formats:** orchestrate=`root-default-<id>`; graph/spawn=`root-session-<generation UUID>-<base64url formatted session key>`.

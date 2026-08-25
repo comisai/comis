@@ -115,6 +115,8 @@ function makeLedger(opts?: {
   };
   return {
     calls,
+    lookupTerminalDecision: async () => ok(undefined),
+    recordTerminalDecision: async () => ok(undefined),
     allocateStep: async (rootRunId, operationId) => {
       record("allocateStep", rootRunId, operationId);
       return ok(0);

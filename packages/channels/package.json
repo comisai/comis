@@ -1,7 +1,7 @@
 {
   "name": "@comis/channels",
   "private": true,
-  "version": "1.0.63",
+  "version": "1.0.64",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Messaging adapters for Comis, including Microsoft Teams, Email, Discord, Telegram, Slack, and more.",
@@ -64,7 +64,7 @@
     "imapflow": "1.3.6",
     "irc-framework": "4.14.0",
     "jose": "6.2.4",
-    "mailparser": "3.9.14",
+    "mailparser": "3.9.16",
     "nodemailer": "9.0.1"
   },
   "devDependencies": {

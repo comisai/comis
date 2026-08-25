@@ -20,6 +20,7 @@ import {
   openSqliteDatabase as _openSqliteDatabase,
   createObservabilityStore as _createObservabilityStore,
   createLcdBrowseStore as _createLcdBrowseStore,
+  createSqliteManagedRunStore as _createSqliteManagedRunStore,
 } from "@comis/memory";
 import type { ObservabilityStore } from "@comis/memory";
 import type { SecretMetadata } from "@comis/core";
@@ -47,3 +48,6 @@ export const offlineOAuthProfileSet = _offlineOAuthProfileSet;
 export const openSqliteDatabase = _openSqliteDatabase;
 export const createObservabilityStore = _createObservabilityStore;
 export const createLcdBrowseStore = _createLcdBrowseStore;
+// The offline obs.explain fallback links a session to the managed
+// (capability-service) runs it prepared by reading the same local memory.db.
+export const createSqliteManagedRunStore = _createSqliteManagedRunStore;

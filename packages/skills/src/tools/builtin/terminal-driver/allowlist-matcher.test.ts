@@ -47,6 +47,7 @@ const DEFAULT_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
   credentialPaths: [],
+  ephemeralWritablePaths: [],
   uid: "dedicated",
 };
 
@@ -226,6 +227,7 @@ describe("AllowEntryLike.scope — the scope contract carried verbatim (no-mutat
       network: "listed-hosts",
       hosts: ["api.example.com"],
       credentialPaths: ["~/.claude"],
+      ephemeralWritablePaths: [],
       uid: "daemon",
     };
     const matched = matchAllowEntry(link, [entry({}, "bash", scope)]);
@@ -244,6 +246,7 @@ describe("AllowEntryLike.scope — the scope contract carried verbatim (no-mutat
       filesystem: "full",
       network: "full",
       credentialPaths: ["~/.claude"],
+      ephemeralWritablePaths: [],
       uid: "daemon",
     };
     const input = entry({}, "bash", declared);
@@ -268,6 +271,7 @@ describe("AllowEntryLike.scope — the scope contract carried verbatim (no-mutat
       filesystem: "workspace",
       network: "none",
       credentialPaths: [],
+      ephemeralWritablePaths: [],
       uid: "dedicated",
     });
   });

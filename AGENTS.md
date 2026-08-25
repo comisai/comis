@@ -8,40 +8,20 @@ Hexagonal (ports + adapters). Core defines port interfaces; adapters implement t
 
 Extension points in `packages/core/src/`:
 
-- `ports/` — port interfaces (`*Port` suffix): `ChannelPort`, `ChannelPluginPort`, `MemoryPort`, `SkillPort`, `EmbeddingPort`, `MediaResolverPort`, `TranscriptionPort`, `TTSPort`, `ImageAnalysisPort`, `VisionPort`, `FileExtractionPort`, `OutputGuardPort`, `SecretStorePort`, `DeviceIdentityPort`, `CredentialMappingPort`, `PluginPort`, `DeliveryQueuePort`, `DeliveryMirrorPort`, `ClockPort`, `EnvPort`, `TimerPort` (+ `TimerHandle`), `ContextStorePort`, `SessionStorePort`, `FileLockPort`, hook types. Adapters live in the consumer package (e.g., `@comis/memory` for store ports) or `@comis/infra` for runtime adapters (`createSystemClock`, `createSystemEnv`, `createSystemTimers`).
+- `ports/` — port interfaces (`*Port` suffix): `ChannelPort`, `ChannelPluginPort`, `MemoryPort`, `SkillPort`, `EmbeddingPort`, `MediaResolverPort`, `TranscriptionPort`, `TTSPort`, `ImageAnalysisPort`, `VisionPort`, `FileExtractionPort`, `OutputGuardPort`, `SecretStorePort`, `DeviceIdentityPort`, `CredentialMappingPort`, `PluginPort`, `DeliveryQueuePort`, `DeliveryMirrorPort`, `ClockPort`, `EnvPort`, `TimerPort` (+ `TimerHandle`), `ContextStorePort`, `SessionStorePort`, `FileLockPort`, `CapabilityServiceControlPort`, `ManagedRunStorePort`, `ManagedRunContentPort`, `WorkspaceLeasePort`, `ExecutionAttachmentPort`, hook types. Adapters live in the consumer package (e.g., `@comis/memory` for store ports) or `@comis/infra` for runtime adapters (`createSystemClock`, `createSystemEnv`, `createSystemTimers`).
 - `runtime/` — sanctioned-root in-package helpers (`system-time.ts`: `systemNowMs`, `systemNowDate`, `systemDateFrom`, `systemSleep`, `systemSetTimeout`/`systemClearTimeout`, `systemSetInterval`/`systemClearInterval`, `systemScheduleTimeout`, `systemGetEnv`, `systemEnvSnapshot`). Use these only at trust-boundary call sites that genuinely cannot accept an injected port (top-level loggers, OAuth poll loops). Secrets must still go through `SecretManager`.
 - `domain/` — Zod-validated domain types (`NormalizedMessage`, `MemoryEntry`, `AgentResponse`, `ExecutionGraph`, `SubagentResult`, `ApprovalRequest`, `CredentialMapping`, `SecretRef`, etc.). Define schema → infer type with `z.infer`.
 - `security/` — security primitives: `safePath`, `validateUrl` (SSRF), `SecretManager`, `SecretsCrypto` (AES-256-GCM), `ScopedSecretManager`, `SecretRefResolver`, `ActionClassifier`, `AuditAggregator`, `InputSecurityGuard`, `validateInput`, `OutputGuard`, `MemoryWriteValidator`, `wrapExternalContent`, `sanitizeLogString`, `CanaryToken`, injection patterns + rate limiter.
-- `config/` — Zod schemas, layered config (defaults → YAML files → env overrides). Paths via `COMIS_CONFIG_PATHS` (comma-separated). Runtime changes via `config.write` RPC (in-memory only).
-- `event-bus/` — `TypedEventBus` with strongly-typed events across `AgentEvents`, `ChannelEvents`, `MessagingEvents`, `InfraEvents`. Logging supplements events, does not replace them.
+- `config/` — Zod schemas, layered config (defaults → YAML files → env overrides). Paths via `COMIS_CONFIG_PATHS` (comma-separated). Runtime writes use `config.patch` / `config.apply`, while immutable topology is changed in config files and applied on restart; [`docs/reference/config-yaml.mdx`](docs/reference/config-yaml.mdx) owns the field contracts.
+- `event-bus/` — `TypedEventBus` with strongly-typed event families including `AgentEvents`, `ChannelEvents`, `MessagingEvents`, `InfraEvents`, `CapabilityServiceEvents`, and `ManagedRunEvents`. Logging supplements events, does not replace them.
 - `hooks/` — `PluginRegistry` + `HookRunner` for plugin lifecycle.
 - `context/` — AsyncLocalStorage request-scoped context via `runWithContext()` / `getContext()`.
 - `bootstrap.ts` — composition root → `AppContainer`.
 
 ### Package Map
 
-```
-shared        Result type, utilities — zero runtime deps
-core          domain, ports, event bus, security, config, hooks, bootstrap, ComisLogger structural contract, FileLockPort, ContextStorePort (the LCD lossless-store port) + SessionStorePort + row DTOs (LcdMessage, LcdMessagePart, LcdPartMetadata, LcdPartKind, LcdRole, ContextStoreScope, AppendMessageInput, SessionData, SessionListEntry, SessionDetailedEntry) + parts-codec (messageToParts/partsToMessage), OAuth helpers, master-key helpers
-infra         Pino structured logging implementation (assignable to core's ComisLogger contract)
-observability Diagnostics substrate: queued writer, payload bounding, sanitization, path guards, cache-trace runtime + EventBus bridge, cache-stats aggregation/RPC
-observability-otel opt-in OTel extension: OTLP traces/metrics/logs + a standalone Prometheus /metrics exporter (single MeterProvider, two readers); subscribes the bus, content-free; the ONLY @opentelemetry/*-dependent package; daemon lazy-loads it (dynamic import) only when observability.otel/prometheus is enabled → core/daemon build OTel-free
-memory        SQLite-backed ContextStorePort + SessionStorePort impls (return types
-              from core) + MemoryApi + FTS5 + vector search (MemoryPort, SecretStorePort,
-              CredentialMappingPort, DeliveryQueuePort, DeliveryMirrorPort, OAuth-store,
-              observability/embedding adapters). Row DTOs re-exported from core (single
-              source of truth). Daemon consumes; agent + cli consume port types from @comis/core.
-gateway       Hono HTTP, JSON-RPC, WebSocket, mTLS
-skills        manifest, prompt skills, MCP, built-in tools, media, STT/TTS/vision/image-gen integrations
-scheduler     cron, heartbeat, task extraction; createFileLock(): FileLockPort factory backed by proper-lockfile
-agent         orchestration: executor, planner, RAG, sessions, model, safety, response-filter (does not reference @comis/infra; OAuth helpers live in @comis/core)
-channels      platform adapters (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email, Echo) (does not reference @comis/infra)
-orchestrator  inbound pipeline, execution coordination, channel-manager, command queue, routing, cross-session messaging
-cli           Commander.js, JSON-RPC client
-daemon        orchestrator, observability, systemd (DeviceIdentityPort adapter)
-comis         umbrella package — namespace re-exports
-web           Lit + Vite + Tailwind standalone SPA
-```
+The authoritative package inventory, package roles, and dependency overview
+live in [`docs/developer-guide/packages.mdx`](docs/developer-guide/packages.mdx).
 
 Dependency direction: inward to `core`. `daemon` depends on everything; `shared` depends on nothing. Use public exports (`packages/*/dist/index.js`) only — no cross-package internal imports.
 
@@ -275,7 +255,7 @@ When uncertain, classify higher.
 3. **Define scope** — one concern per change; no mixed feature+refactor+infra patches.
 4. **Test-first (TDD)** — write the failing test before the production patch (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. RED must be reproducible on the pre-patch code; the patch is the GREEN step.
 5. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
-6. **Validate** — `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`) must all pass.
+6. **Validate** — `pnpm validate` must pass. The root `package.json` owns the exact gate chain.
 7. **Document impact** — update comments/docs for behavior changes, risk, side effects.
 8. **Commit the slice** — commit this RED → GREEN pair on the working branch before starting the next concern (§2.13). Steps 4–8 repeat per concern; the task is not done until `git status --short` is empty.
 
@@ -307,10 +287,10 @@ Define interface in `core/src/ports/` → export from core index → add to `App
 `z.strictObject({...})` schema in `core/src/domain/` (domain layer is strict — loosening is a compat break) → infer type with `z.infer<typeof Schema>` → export schema, type, and a paired `parseX(raw): Result<T, z.ZodError>` helper wrapping `safeParse()`. Call sites use `parseX()` — never `.parse()` (throws) or raw `.safeParse()`.
 
 ### 6.4 Add a Config Schema
-`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`. New top-level sections register a single entry in the `SECTION_REGISTRY` in `core/src/config/section-registry.ts` (the consolidated source of truth). Per-view derivations (`SECTION_SCHEMAS` in `schema-serializer.ts`, the metadata map in `field-metadata.ts`, the managed-section redirect map in `managed-sections.ts`) are derived from the registry — no per-file edit needed beyond the registry entry.
+`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by runtime config writes. New top-level sections register a single entry in the `SECTION_REGISTRY` in `core/src/config/section-registry.ts` (the consolidated source of truth). Per-view derivations (`SECTION_SCHEMAS` in `schema-serializer.ts`, the metadata map in `field-metadata.ts`, the managed-section redirect map in `managed-sections.ts`) are derived from the registry — no per-file edit needed beyond the registry entry.
 
 ### 6.5 Add a Skill
-Use a prompt skill when a request adds reusable task expertise, a domain procedure, a persona playbook, examples, or task-specific tool guidance rather than a universal runtime mechanism. A repository-shipped skill ships and seeds **only** from `packages/daemon/bundled-skills/<name>/SKILL.md` — that tree is in `@comis/daemon`'s `files`, is the one Docker copies, and is auto-scanned at boot by `wiring/seed-bundled-skills.ts`. The repo-root `skills/` tree is a byte-identical mirror of seven of those skills that ships nowhere, so a skill added only there never reaches an install: edit the bundled copy, and update the mirror in the same commit for a skill that exists in both (`scripts/contracts/real-user-target-contract.test.ts` gates that parity for `deep-research` only). Skill-system implementation code lives under `packages/skills/`. Skills are Markdown files with manifest frontmatter: validate frontmatter against the manifest Zod schema and test discovery, eligibility, loading, sanitization, and representative selection behavior.
+Use a prompt skill when a request adds reusable task expertise, a domain procedure, a persona playbook, examples, or task-specific tool guidance rather than a universal runtime mechanism. A repository-shipped skill ships and seeds **only** from `packages/daemon/bundled-skills/<name>/SKILL.md` — that tree is in `@comis/daemon`'s `files`, is the one Docker copies, and is auto-scanned at boot by `wiring/seed-bundled-skills.ts`. The repo-root `skills/` tree is a byte-identical mirror of selected bundled skills that ships nowhere, so a skill added only there never reaches an install: edit the bundled copy, and update the mirror in the same commit for a skill that exists in both (`scripts/contracts/real-user-target-contract.test.ts` gates that parity for `deep-research` only). Skill-system implementation code lives under `packages/skills/`. Skills are Markdown files with manifest frontmatter: validate frontmatter against the manifest Zod schema and test discovery, eligibility, loading, sanitization, and representative selection behavior.
 
 A repository-shipped skill must remain opt-in and discoverable, not part of the stable engine prefix or default workspace policy. Its description must state the narrow trigger accurately. A skill may recommend tools, but capability and approval enforcement remains in code and agent tool policy; skill metadata or prose never grants authority. If the specialization needs a new external capability rather than instructions, implement the MCP/tool adapter and its security contract separately, then let the skill describe how to use that capability.
 
@@ -335,12 +315,12 @@ Register metadata via `registerToolMetadata(name, meta)` in `packages/skills/src
 The full gate — required before declaring a task complete, and before any push or PR:
 ```bash
 pnpm validate
-# = pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage
 ```
 
 Each step is deliberate — do not substitute a cheaper one and call it validated:
 
 - **`docs:check`** runs first because it is cheap and needs no build. It compiles every `docs/**/*.mdx`; the docs are otherwise outside every gate (§2.14).
+- **`capability-protocol:check`** verifies the committed language-neutral protocol bundle against its schema source before the build.
 - **`build:clean`** (not incremental `build`) — a stale `dist/` hides workspace-dependency cycles.
 - **`cycles`** (madge, dist `.d.ts`) and **`cycles:refs`** (`tsc -b --dry`, project-reference/TS6202) are **two different checks**; running only the first misses reference cycles.
 - **`test:coverage`** (not bare `test`) — the per-package coverage floors only run under coverage. Skipping incremental-vs-clean build and coverage is exactly what let a build-cycle + coverage cascade reach `main`.
@@ -417,10 +397,11 @@ If full validation is impractical, document what was run and what was skipped.
 
 **Releasing `vX.Y.Z`** (maintainer operation — never performed without an explicit request):
 
-1. Bump **all 16 `packages/*/package.json` to the same version** — they move together. The umbrella package bundles the others, so drift surfaces at publish time, not in a local build.
+1. Bump **every `packages/*/package.json` to the same version** — they move together. The umbrella package bundles the others, so drift surfaces at publish time, not in a local build. A merge cannot catch this on its own: a release bump on the default branch never touches a package that exists only on a feature branch, so the new package silently keeps its pre-bump version. `test/architecture/package-version-alignment.test.ts` enforces the invariant locally, and the release preflight rejects a tag that disagrees with any package.
 2. Sweep for stray pins: `grep -rn '<old-version>' --include='*.json' --include='*.mdx' --include='*.md' .` (excluding `node_modules`, `dist/`, lockfiles, changelog). Docs are intentionally un-pinned; a version appearing there is usually a regression.
 3. `pnpm validate`, plus `pnpm validate:full` on Linux for the integration and tarball tiers.
 4. Commit, push, tag. The `vX.Y.Z` tag triggers npm publish (with provenance) and the multi-arch image builds.
 5. **Verify the publish actually landed** — `npm view comisai dist-tags` must show the new version. The publish job has silently drifted before; a green workflow is not proof.
+6. **Verify the capability-service protocol bundle attached** — the release must carry `comis-capability-service-protocol-vX.Y.Z.tar.gz` and its `.manifest.json` sidecar. External companion services pin those bytes by digest; the private SDK is never published to npm. Renaming an asset invalidates every pin already in the field, so it is a coordinated release-train step across the companion repositories, not a rename.
 
 **Worktrees.** After merging a worktree branch back, remove the worktree and delete its tracking branch in the same step — do not leave stale worktrees behind.

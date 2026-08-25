@@ -39,6 +39,7 @@ agents:
 # navigation is SSRF-blocked by default and needs this explicit opt-in.
 browser:
   cdpPort: 18452
+  defaultProfile: "integration-test-18452"
   allowLoopbackNavigation: true
 
 gateway:

@@ -1,39 +1,40 @@
 ---
 title: "Hot Reload"
-description: "Config and skill hot reload mechanism reference covering SIGUSR1 restart and chokidar file watching"
+description: "Config and skill hot reload mechanism reference covering SIGUSR2 restart and chokidar file watching"
 icon: "rotate"
 ---
 
 **What this is for:** how config and skill changes propagate without a manual restart, and which kinds of changes still require one. **Who it's for:** operators tuning a live deployment and developers building skills or automating config updates.
 
-Comis has two distinct hot reload mechanisms: **config hot reload** uses RPC-based writes followed by a SIGUSR1-triggered process restart, while **skill hot reload** uses chokidar file watchers for discovery directory monitoring. These are completely separate systems.
+Comis has two distinct hot reload mechanisms: **config hot reload** uses RPC-based writes followed by a SIGUSR2-triggered process restart, while **skill hot reload** uses chokidar file watchers for discovery directory monitoring. These are completely separate systems.
 
 ## What reloads, and how
 
 | Change | How it applies | Drops connections? |
 |--------|---------------|--------------------|
-| `config.patch` / `config.apply` (any section) | Validate → write → 200 ms delayed `SIGUSR1` → process restart | Yes — supervisor (pm2/systemd) restarts the daemon. WS clients reconnect with restart-continuation. |
-| `agents.create` / `agents.update` / `agents.delete` | Same path, but with a 2-second debounced `SIGUSR1` so batches coalesce | Yes |
+| `config.patch` / `config.apply` (mutable sections) | Validate → write → 200 ms delayed `SIGUSR2` → process restart | Yes — supervisor (pm2/systemd) restarts the daemon. WS clients reconnect with restart-continuation. |
+| `agents.create` / `agents.update` / `agents.delete` | Same path, but with a 2-second debounced `SIGUSR2` so batches coalesce | Yes |
 | `tokens.create` / `tokens.revoke` / `tokens.rotate` | Same debounced restart path | Yes |
 | `channels.enable` / `channels.disable` | Same debounced restart path | Yes |
-| `gateway.restart` RPC | Direct `SIGUSR1` (200 ms delay to flush response) | Yes |
-| `tooling.*` (entire subtree) | `config.patch` / `config.apply` validate → write → 200 ms delayed `SIGUSR1` → process restart. **Cannot hot-flip** within a running session — `tooling.capabilityIndex.enabled` selects between two cached system-prompt shapes (one-line residual vs flat tool dump), and `tooling.installDetours.mode` is read at adapter-construction time. Operator-only: agents cannot self-edit (the entire `tooling` subtree is in `IMMUTABLE_CONFIG_PREFIXES`). | Yes |
+| `gateway.restart` RPC | Direct `SIGUSR2` (200 ms delay to flush response) | Yes |
+| `tooling.*` (entire subtree) | Runtime writes are rejected. Edit the config file, validate it, and restart manually; prompt shapes and install-detour policy are constructed at boot. | Yes |
+| `capabilityServices.*` | Runtime writes are rejected. Edit the config file, validate it, and restart manually so linked service topology and authority roots change only at boot. | Yes |
 | New SKILL.md added to a discovery path | chokidar `add` event → debounced re-discovery, no restart | No |
 | Existing SKILL.md edited or deleted | chokidar `change` / `unlink` event → debounced re-discovery | No |
 | Editing `~/.comis/config.yaml` directly | **Not detected.** Run `comis config validate` then restart manually. | -- |
 
-The takeaway: **everything except skill files goes through a daemon restart.** The restart is graceful (ordered teardown, ~30 s hard timeout) and active sessions are preserved across the bounce via the restart continuation tracker, so end users typically don't notice.
+The takeaway: **everything except skill files takes effect through a daemon restart.** The restart is graceful (ordered teardown, 45 s hard timeout by default) and active sessions are preserved across the bounce via the restart continuation tracker, so end users typically don't notice.
 
 <Warning>
-  Config hot reload is NOT file watching. The daemon does not watch config files for changes. Config changes go through the RPC API, which validates, writes, and then sends SIGUSR1 to restart the daemon.
+  Config hot reload is NOT file watching. The daemon does not watch config files for changes. Mutable config changes go through the RPC API, which validates, writes, and then sends SIGUSR2 to restart the daemon.
 </Warning>
 
 ## Config Hot Reload
 
-Config changes are applied through RPC methods that validate the change, write to the local YAML file, and trigger a SIGUSR1 signal for process restart.
+Mutable config changes are applied through RPC methods that validate the change, write to the local YAML file, and trigger a SIGUSR2 signal for process restart.
 
 <Info>
-  **Source:** `packages/daemon/src/rpc/config-handlers.ts` -- 10 RPC methods including `config.patch`, `config.apply`, `config.rollback`, `gateway.restart`.
+  **Source:** `packages/daemon/src/api/config-handlers/` -- 10 RPC methods including `config.patch`, `config.apply`, `config.rollback`, `gateway.restart`.
 </Info>
 
 ### config.patch
@@ -54,7 +55,7 @@ Deep-merges a partial config change into the existing configuration.
 10. **Atomic write** -- write to temp file, then `rename()` to `config.local.yaml`
 11. **Best-effort git commit** -- record the change in config git history
 12. **Audit event** -- emit `audit:event` with `actionType: "config.patch"`
-13. **200ms delayed SIGUSR1** -- schedule process restart to pick up new config
+13. **200ms delayed SIGUSR2** -- schedule process restart to pick up new config
 
 ### config.apply
 
@@ -62,19 +63,26 @@ Full section replacement (not deep merge). Same flow as `config.patch` except st
 
 ### config.rollback
 
-Restores config from git history to a specific commit SHA. Calls `configGitManager.rollback(sha)`, then sends SIGUSR1 for restart.
+Restores config from git history to a specific commit SHA. Calls `configGitManager.rollback(sha)`, then sends SIGUSR2 for restart.
 
 ### persistToConfig (Internal Utility)
 
-Used by management RPC handlers (agents, tokens, channels) to persist config changes. Follows the same validate-write-restart pattern but with a **2-second debounced SIGUSR1** instead of the 200ms delay used by `config.patch`. This allows batch operations (e.g., creating 8 agents in sequence) to coalesce into a single restart.
+Used by management RPC handlers (agents, tokens, channels) to persist config changes. Follows the same validate-write-restart pattern but with a **2-second debounced SIGUSR2** instead of the 200ms delay used by `config.patch`. This allows batch operations (e.g., creating 8 agents in sequence) to coalesce into a single restart.
 
 <Info>
-  **Source:** `packages/daemon/src/rpc/persist-to-config.ts` -- debounced SIGUSR1 for batch config operations.
+  **Source:** `packages/daemon/src/api/shared/persist-to-config.ts` -- debounced SIGUSR2 for batch config operations.
 </Info>
 
 ### Immutable Config Keys
 
 Certain config paths cannot be modified at runtime through the RPC API. Attempting to patch these paths returns an error instructing the operator to modify config files manually.
+
+This includes the capability map and install-detour policy under `tooling` and
+linked capability-service topology under `capabilityServices`. Those settings
+define boot-time prompt construction, service activation, credentials, and
+filesystem authority, so they are loaded only at boot. See
+[Capability Services](/reference/config-yaml#capability-services) for the config
+contract.
 
 ### Git Versioning
 
@@ -145,20 +153,20 @@ The `SkillWatcherHandle` provides a `close()` method for shutdown cleanup. Durin
 
 ## Gateway Restart
 
-The `gateway.restart` RPC method triggers the same SIGUSR1 mechanism as config hot reload:
+The `gateway.restart` RPC method triggers the same SIGUSR2 mechanism as config hot reload:
 
 ```typescript
 // 200ms delay allows the RPC response to flush over WebSocket
 setTimeout(() => {
-  process.kill(process.pid, "SIGUSR1");
+  process.kill(process.pid, "SIGUSR2");
 }, 200);
 ```
 
 This is used when the gateway needs to restart for reasons other than config changes (e.g., TLS certificate rotation).
 
-## SIGUSR1 Lifecycle
+## SIGUSR2 Lifecycle
 
-When SIGUSR1 is received, the daemon initiates an ordered teardown sequence followed by process exit. The process manager (pm2 or systemd) detects the exit and restarts the daemon with the updated config.
+When SIGUSR2 is received, the daemon initiates an ordered teardown sequence and exits with code 42. A managed pm2 or systemd service then restarts the daemon with the updated config.
 
 <Info>
   **Source:** `packages/daemon/src/wiring/setup-shutdown.ts` -- ordered teardown with hard timeout.
@@ -166,30 +174,10 @@ When SIGUSR1 is received, the daemon initiates an ordered teardown sequence foll
 
 ### Teardown Sequence
 
-The shutdown handler stops components in dependency order:
-
-1. Graph coordinator (cancel running graph pipelines)
-2. Sub-agent runner (drain active sub-agent runs)
-3. Lock cleanup timer
-4. Approval gate (dispose pending timers)
-5. Skill file watchers (close chokidar instances)
-6. Cron schedulers (per-agent)
-7. Session reset schedulers (per-agent)
-8. Browser services (close Chrome processes)
-9. Restart continuation tracker (capture active sessions)
-10. Lifecycle reactors
-11. Channel manager (stop all channel adapters)
-12. Heartbeat runner
-13. Per-agent heartbeat runner
-14. Wake coalescer
-15. Media temp manager
-16. Gateway HTTP/WebSocket server
-17. Observability modules (diagnostic collector, activity tracker, delivery tracer)
-18. Background embedding indexing (with 5-second timeout)
-19. Audit aggregator
-20. Injection rate limiter
-21. Secret store database
-22. Memory database
+The daemon operations guide owns the shutdown order and its operator-visible log
+shape. See [Shutting Down](/operations/daemon#shutting-down). The load-bearing
+capability-service invariant is that new ingress closes and accepted report
+mutations drain before the shared memory database closes.
 
 ### Hard Timeout
 
@@ -198,13 +186,13 @@ The shutdown handler has a hard timeout of **45 seconds** (default `timeoutMs`).
 ### Signal Registration
 
 ```typescript
-process.on("SIGUSR1", () => {
-  daemonLogger.info("SIGUSR1 received, initiating restart");
-  void shutdownHandle.trigger("SIGUSR1");
+process.on("SIGUSR2", () => {
+  daemonLogger.info("SIGUSR2 received, initiating restart");
+  void shutdownHandle.trigger("SIGUSR2");
 });
 ```
 
-The SIGUSR1 handler triggers the same graceful shutdown used for SIGTERM/SIGINT, ensuring all components are properly cleaned up regardless of the restart trigger.
+The SIGUSR2 handler triggers the same graceful shutdown used for SIGTERM/SIGINT, ensuring all components are properly cleaned up regardless of the restart trigger.
 
 <CardGroup cols={2}>
   <Card title="Security Model" icon="shield" href="/security">

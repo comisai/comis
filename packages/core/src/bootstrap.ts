@@ -21,6 +21,7 @@ import { createPrincipalResolver } from "./domain/principal-resolver.js";
 
 /** Default base directory: ~/.comis */
 const DEFAULT_DATA_DIR = safePath(os.homedir(), ".comis");
+const PLATFORM_EVENT_LISTENER_BASELINE = 16;
 
 /**
  * Name of the 32-byte HMAC secret backing every signed channel callback
@@ -169,9 +170,14 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   for (const entry of Object.values(config.providers.entries)) {
     if (entry.apiKeyName.length > 0) referencedNames.add(entry.apiKeyName);
   }
+  for (const instance of config.capabilityServices.instances) {
+    referencedNames.add(instance.control.credentialRef.slice("secret://".length));
+  }
 
   // 3. Create event bus
-  const eventBus = new TypedEventBus();
+  const eventBus = new TypedEventBus().setMaxListeners(
+    PLATFORM_EVENT_LISTENER_BASELINE + config.queue.maxConcurrentSessions,
+  );
 
   // 3b. Create plugin infrastructure
   const pluginRegistry = createPluginRegistry();

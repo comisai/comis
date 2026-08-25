@@ -48,7 +48,7 @@ describe("resolveBootDataDir", () => {
     if (cached.length === 0) return; // Fresh machine with no cache: seeding is a documented no-op.
     const seeded = readdirSync(join(dataDir, "models"));
     for (const model of cached) {
-      expect(seeded, `${model} must be hard-linked into the test-owned data dir`).toContain(model);
+      expect(seeded, `${model} must be seeded into the test-owned data dir`).toContain(model);
     }
   });
 

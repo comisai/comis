@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   TypedEventBus,
   createConversationRef,
-  type BackgroundTaskOrigin,
 } from "@comis/core";
 import { err, ok, type Result } from "@comis/shared";
 import {
@@ -13,6 +12,7 @@ import {
 import type {
   BackgroundSessionState,
   BackgroundTask,
+  BackgroundTaskOrigin,
 } from "./background-task-types.js";
 
 function makeOrigin(): BackgroundTaskOrigin {
@@ -50,6 +50,9 @@ function makeOrigin(): BackgroundTaskOrigin {
     trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
+    workspacePolicyHash: "a".repeat(64),
+    capturedToolIds: [],
+    capturedCapabilityViewHash: "b".repeat(64),
   };
 }
 
@@ -66,6 +69,15 @@ async function acceptDelivery(
     ? { kind: "accepted" as const }
     : { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
 }
+
+const immutableContinuationDeps = {
+  assembleToolsForAgent: async () => [],
+  resolveWorkspacePolicy: async (agentId: string, policyHash: string) => ok({
+    agentId,
+    sections: [],
+    combinedHash: policyHash,
+  }),
+};
 
 describe("background completion retry lifecycle", () => {
   it("retries a proven pre-send failure without ledger reconciliation", async () => {
@@ -113,6 +125,7 @@ describe("background completion retry lifecycle", () => {
     const reconcileDelivery = vi.fn();
     const runner = createBackgroundCompletionRunner({
       eventBus,
+      ...immutableContinuationDeps,
       getExecutor: vi.fn() as never,
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
@@ -193,6 +206,7 @@ describe("background completion retry lifecycle", () => {
     const deliverCompletion = vi.fn(acceptDelivery);
     const runner = createBackgroundCompletionRunner({
       eventBus,
+      ...immutableContinuationDeps,
       getExecutor: vi.fn() as never,
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
@@ -305,6 +319,7 @@ describe("background completion retry lifecycle", () => {
     const recordRecoveryIncident = vi.fn().mockReturnValue(ok(undefined));
     const runner = createBackgroundCompletionRunner({
       eventBus,
+      ...immutableContinuationDeps,
       getExecutor: () => ({
         execute,
       }) as never,
@@ -406,6 +421,7 @@ describe("background completion retry lifecycle", () => {
     const recoverFinalizedResult = vi.fn().mockResolvedValue(ok(undefined));
     const runner = createBackgroundCompletionRunner({
       eventBus,
+      ...immutableContinuationDeps,
       getExecutor: () => ({ execute }) as never,
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       recoverFinalizedResult,
@@ -487,6 +503,7 @@ describe("background completion retry lifecycle", () => {
     });
     const runner = createBackgroundCompletionRunner({
       eventBus,
+      ...immutableContinuationDeps,
       getExecutor: () => ({ execute }) as never,
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok({
@@ -587,6 +604,7 @@ describe("background completion retry lifecycle", () => {
     const deliverCompletion = vi.fn(acceptDelivery);
     const runner = createBackgroundCompletionRunner({
       eventBus,
+      ...immutableContinuationDeps,
       getExecutor: () => ({ execute }) as never,
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       recoverFinalizedResult,
@@ -671,6 +689,7 @@ describe("background completion retry lifecycle", () => {
     const recordJournalRecoveryIncident = vi.fn().mockReturnValue(ok(undefined));
     const runner = createBackgroundCompletionRunner({
       eventBus,
+      ...immutableContinuationDeps,
       getExecutor: () => ({ execute }) as never,
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       recoverFinalizedResult: vi.fn().mockResolvedValue(err(new Error("journal unavailable"))),
@@ -744,6 +763,7 @@ describe("background completion retry lifecycle", () => {
     const execute = vi.fn().mockRejectedValue(new Error("identity preparation failed"));
     const runner = createBackgroundCompletionRunner({
       eventBus,
+      ...immutableContinuationDeps,
       getExecutor: () => ({ execute }) as never,
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       recoverFinalizedResult,
@@ -832,6 +852,7 @@ describe("background completion retry lifecycle", () => {
     const deliverCompletion = vi.fn(acceptDelivery);
     const runner = createBackgroundCompletionRunner({
       eventBus,
+      ...immutableContinuationDeps,
       getExecutor: () => ({ execute }) as never,
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
@@ -928,6 +949,7 @@ describe("background completion retry lifecycle", () => {
     const deliverCompletion = vi.fn();
     const runner = createBackgroundCompletionRunner({
       eventBus,
+      ...immutableContinuationDeps,
       getExecutor: () => ({ execute: vi.fn() }) as never,
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),

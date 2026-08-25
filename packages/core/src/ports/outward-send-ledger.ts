@@ -48,8 +48,11 @@ export type OutwardSendState = "send_attempt_started" | "unknown_after_send" | "
  */
 export type ReconcileOutcome = "unresolved";
 
+export type OutwardTerminalDecision = "delivered" | "discarded" | "no_reply";
+
 /** Closed discriminator for the irreversible outward operation. */
 export type OutwardOperationKind =
+  | "attachment_send"
   | "message_send"
   | "message_reply"
   | "message_react"
@@ -121,6 +124,17 @@ export interface OutwardSendBeginInput {
  * caller treats as "already in flight".
  */
 export interface OutwardSendLedgerPort {
+  lookupTerminalDecision(
+    rootRunId: string,
+    operationId: string,
+  ): Promise<Result<OutwardTerminalDecision | undefined, Error>>;
+
+  recordTerminalDecision(
+    rootRunId: string,
+    operationId: string,
+    outcome: OutwardTerminalDecision,
+  ): Promise<Result<void, Error>>;
+
   /**
    * Resolve a caller-provided logical operation identity to one stable outward
    * sequence for a tree root. Repeating the same `(rootRunId, operationId)`

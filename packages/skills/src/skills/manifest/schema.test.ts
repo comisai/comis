@@ -284,4 +284,20 @@ Body content.
     expect(result.value.mcpServers?.[0]?.transport).toBe("stdio");
     expect(result.value.mcpServers?.[0]?.command).toBe("npx");
   });
+
+  it("parses capability service prerequisites as typed requirements", () => {
+    const result = parseSkillManifest(`---
+name: service-skill
+description: Requires an external service
+comis:
+  requires:
+    capabilityServices: [service_fixture]
+---
+Body content.
+`);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.comis?.requires?.capabilityServices).toEqual(["service_fixture"]);
+  });
 });

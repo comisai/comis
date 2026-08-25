@@ -664,54 +664,6 @@ describe("buildFindings — sandbox_downgrade_refused finding", () => {
   });
 });
 
-/** A `health_signal` row labelled `delivery_deadlettered`. */
-function deadletterRow(ts: number, channelType: string, transient: boolean): DiagnosticRow {
-  return {
-    timestamp: ts,
-    category: "health_signal",
-    severity: "warning",
-    message: "subagent:delivery_deadlettered",
-    details: JSON.stringify({ signal: "delivery_deadlettered", channelType, transient }),
-  };
-}
-
-describe("buildFindings — delivery_deadlettered finding", () => {
-  const CODE = "delivery_deadlettered";
-
-  it("emits ONE finding with the dropped count + the transient/permanent split", () => {
-    const findings = buildFindings(
-      [deadletterRow(1, "telegram", true), deadletterRow(2, "discord", true), deadletterRow(3, "slack", false)],
-      [],
-      [],
-    );
-    const f = findings.filter((x) => x.code === CODE);
-    expect(f).toHaveLength(1);
-    expect(f[0]!.count).toBe(3);
-    expect(f[0]!.detail).toMatch(/3 sub-agent completion\(s\) dead-lettered/);
-    // 2 after-retries (transient) + 1 permanent (immediate) split is named.
-    expect(f[0]!.detail).toMatch(/2 .*retr/i);
-    expect(f[0]!.detail).toMatch(/1 permanent/i);
-    expect(f[0]!.hint).toMatch(/comis explain|deliver/i);
-  });
-
-  it("does NOT emit on zero deadletter rows (zero-traffic guard)", () => {
-    const findings = buildFindings(
-      [{ timestamp: 1, category: "health_signal", severity: "warning", message: "h", details: JSON.stringify({ signal: "lcd_divergence" }) }],
-      [],
-      [],
-    );
-    expect(findings.some((x) => x.code === CODE)).toBe(false);
-  });
-
-  it("is SAFE TO PASTE — no runId, no announcement body, no error string", () => {
-    const f = buildFindings([deadletterRow(1, "telegram", false)], [], []).find((x) => x.code === CODE)!;
-    for (const text of [f.detail, f.hint]) {
-      expect(text).not.toMatch(/run-|Error:|at .*\.ts:/);
-      expect(text).not.toMatch(/https?:\/\//);
-    }
-  });
-});
-
 /** A `health_signal` row labelled `node_budget_exceeded`, carrying the closed capSource. */
 function budgetRow(ts: number, capSource: string): DiagnosticRow {
   return {
@@ -1058,6 +1010,74 @@ describe("buildFindings — health_signal rollup counts only degraded (warning) 
     expect(finding?.detail).toContain("message_text_too_large=1");
     expect(finding?.hint).toMatch(/pre-session|normalized message bound/i);
     expect(finding?.hint).not.toMatch(/comis explain/i);
+  });
+
+  it("routes standing announcement quarantine findings to the operator control plane", () => {
+    const finding = buildFindings(
+      [{
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "announcement:quarantine_pending",
+        details: JSON.stringify({
+          signal: "announcement_quarantine",
+          pendingCount: 2,
+        }),
+      }],
+      [],
+      [],
+    ).find((candidate) => candidate.code === "health_signal:announcement_quarantine");
+
+    expect(finding?.hint).toContain("node packages/cli/dist/cli.js quarantine list");
+    expect(finding?.hint).not.toMatch(/comis explain/i);
+  });
+
+  it("uses the latest quarantine state instead of retaining stale warnings", () => {
+    const rows: DiagnosticRow[] = [
+      {
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "announcement:quarantine_pending",
+        details: JSON.stringify({ signal: "announcement_quarantine", pendingCount: 2 }),
+      },
+      {
+        timestamp: 2_000,
+        category: "health_signal",
+        severity: "info",
+        message: "announcement:quarantine_pending",
+        details: JSON.stringify({
+          signal: "announcement_quarantine",
+          pendingCount: 0,
+          activeRecoveryCount: 1,
+        }),
+      },
+    ];
+
+    expect(activeHealthSignalWarningCount(rows)).toBe(0);
+    expect(buildFindings(rows, [], [])).toEqual([]);
+  });
+
+  it("clears a quarantine read failure after a successful current sample", () => {
+    const rows: DiagnosticRow[] = [
+      {
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "announcement:quarantine_read_failed",
+        details: JSON.stringify({ signal: "announcement_quarantine_read_failed" }),
+      },
+      {
+        timestamp: 2_000,
+        category: "health_signal",
+        severity: "info",
+        message: "announcement:quarantine_pending",
+        details: JSON.stringify({ signal: "announcement_quarantine", pendingCount: 0 }),
+      },
+    ];
+
+    expect(activeHealthSignalWarningCount(rows)).toBe(0);
+    expect(buildFindings(rows, [], [])).toEqual([]);
   });
 
   it("keeps protected background recovery incidents aligned with system health", () => {

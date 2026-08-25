@@ -160,18 +160,20 @@ export interface ShutdownDeps {
   trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
   // Lifted teardowns: previously ran via container.eventBus.on("system:shutdown", …)
   // subscribers with no production emitter (silent no-ops); now direct fields invoked
-  // by this composition root. (8 subscribers → 9 fields: setup-tools splits into
-  // background-processes + mcp-client-manager.)
+  // by this composition root.
   /** Drain per-agent background-process registries (from setupTools). */
   shutdownBackgroundProcesses?: () => Promise<void>;
   /** Disconnect MCP clients. */
   mcpClientManagerDisconnectAll?: () => Promise<void>;
   /** Drain background completion runner. */
   bgCompletionRunnerShutdown?: () => Promise<void>;
+  /** Drain managed-run continuation events and shared execution engine. */
+  managedRunContinuationShutdown?: () => Promise<void>;
   /** Drain the terminal wake-FSM — unsubscribe from the bus + await in-flight woken turns (124-09). */
   terminalWakeShutdown?: () => Promise<void>;
   /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
   proxyTypingCleanup?: () => void;
+  closeAnnouncementAdmission?: () => void;
   /** Stop the delivery queue (from setupDeliveryQueue). */
   shutdownDeliveryQueue?: () => void;
   /** Stop the background video poller — sweeper interval + in-flight loops. */
@@ -188,6 +190,8 @@ export interface ShutdownDeps {
   /** Stop the credential broker (TCP + unix socket teardown). Only present when executor.broker is configured. */
   brokerStop?: () => Promise<void>;
   capEndpointStop?: () => Promise<void>; // present only with an autonomy agent.
+  /** Close capability-service admission and drain accepted report mutations before the shared database closes. */
+  capabilityServicesShutdown?: () => Promise<Result<void, Error>>;
 }
 
 /** All services produced by the shutdown setup phase. */
@@ -248,11 +252,13 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     obsPersistence, disposeActivityStream, otelShutdown,
     geminiCacheManager,
     trajectoryRegistry,
-    // 9 new teardown handles lifted from system:shutdown subscribers.
+    // Teardown handles lifted from system:shutdown subscribers.
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll,
     bgCompletionRunnerShutdown,
+    managedRunContinuationShutdown,
     terminalWakeShutdown,
+    closeAnnouncementAdmission,
     proxyTypingCleanup,
     shutdownDeliveryQueue,
     shutdownVideoPoller,
@@ -264,6 +270,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     unsubscribeHealthAggregator,
     brokerStop,
     capEndpointStop,
+    capabilityServicesShutdown,
   } = deps;
 
   // Inlined graceful-shutdown body: SIGTERM/
@@ -368,6 +375,8 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         }, "Component stopped");
       }
 
+      closeAnnouncementAdmission?.();
+
       // Shutdown graph coordinator -- before subAgentRunner so coordinator
       // unsubscribes from events and cancels graphs before runner stops
       if (graphCoordinator) {
@@ -385,6 +394,14 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           await subAgentRunner.shutdown();
           daemonLogger.info({ component: "sub-agent-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "sub-agent-runner", daemonLogger, SUB_AGENT_SHUTDOWN_TIMEOUT_MS);
+      }
+
+      if (managedRunContinuationShutdown) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await managedRunContinuationShutdown();
+          daemonLogger.info({ component: "managed-run-continuations", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "managed-run-continuations", daemonLogger);
       }
 
       // Drain background-completion-runner before stopping
@@ -631,6 +648,24 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           await capEndpointStop();
           daemonLogger.info({ component: "capability-endpoint", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "capability-endpoint", daemonLogger);
+      }
+      if (capabilityServicesShutdown) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          const result = await capabilityServicesShutdown();
+          if (!result.ok) {
+            daemonLogger.error({
+              errorKind: "internal" as const,
+              hint: "Inspect capability-service report ingress and endpoint cleanup before restarting the daemon",
+            }, "Capability-service platform shutdown failed");
+            return;
+          }
+          daemonLogger.info({
+            component: "capability-services",
+            durationMs: systemNowMs() - stopMs,
+            shutdownOrder: ++shutdownOrder,
+          }, "Component stopped");
+        }, "capability-services", daemonLogger);
       }
       if (mcpClientManagerDisconnectAll) {
         const stopMs = systemNowMs();

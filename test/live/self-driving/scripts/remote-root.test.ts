@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { createServer } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
@@ -22,6 +23,7 @@ import { AppConfigSchema } from "@comis/core";
 import { offlineSecretGet } from "@comis/memory";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(HERE, "../../../..");
 const HELPER = resolve(HERE, "_remote-root.sh");
 const RIG_HELPER = resolve(HERE, "_rig.sh");
 const RIG_NODE_HELPER = resolve(HERE, "_rig.mjs");
@@ -446,6 +448,52 @@ describe("local rig mode", () => {
     expect(isolated).not.toContain("comis-does-not-exist-here");
   });
 
+  it("rebuilds local emulator paths after dropping a leaked remote layout", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-rig-emulator-layout-"));
+    temporaryDirectories.push(directory);
+    const isolatedData = resolve(directory, "isolated-data");
+    const liveEnv = resolve(directory, "live.env");
+    const rigEnv = resolve(directory, "rig.env");
+    const missingRemoteHome = "/home/comis-does-not-exist-here";
+    writeFileSync(
+      liveEnv,
+      [
+        `COMIS_HOME=${missingRemoteHome}`,
+        `DATA=${missingRemoteHome}/.comis`,
+        `PKG=${missingRemoteHome}/.npm-global/lib/node_modules/comisai`,
+        "EMU_DIR=/root/comis-emu",
+        "KIT_DIR=/root",
+        "EMU_JSON=/tmp/comis-emu.json",
+        "EMU_LOG=/root/comis-emu.log",
+        "EMU_TMUX_SESSION=emu",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    writeFileSync(rigEnv, "", { mode: 0o600 });
+
+    const output = runRigHelper(
+      `rig_load_env ${shellQuote(liveEnv)} ${shellQuote(rigEnv)} 2>/dev/null; printf '%s|%s|%s|%s|%s\n' "$EMU_DIR" "$KIT_DIR" "$EMU_JSON" "$EMU_LOG" "$EMU_TMUX_SESSION"`,
+      {
+        HOME: directory,
+        RIG_MODE: "local",
+        RIG_ENV: rigEnv,
+        DATA: isolatedData,
+        REPO: resolve(HERE, "../../../.."),
+        SERVICE: "comis-isolated-test",
+      },
+    );
+
+    expect(output.trim()).toBe(
+      [
+        resolve(HERE, "../../../.."),
+        HERE,
+        resolve(isolatedData, "emulator-wiring.json"),
+        resolve(isolatedData, "emulator.log"),
+        "emu-comis-isolated-test",
+      ].join("|"),
+    );
+  });
+
   it("keeps explicit local selections ahead of live and rendered rig files", () => {
     const directory = mkdtempSync(resolve(tmpdir(), "comis-local-rig-precedence-"));
     temporaryDirectories.push(directory);
@@ -662,6 +710,78 @@ describe("local rig mode", () => {
     expect(() => statSync(selected)).toThrow();
   });
 
+  it("refuses a relative first-run root before creating it", () => {
+    const directory = makeCanonicalTempDirectory("comis-local-init-relative-root-");
+    const marker = resolve(directory, "guard.txt");
+    writeFileSync(marker, "unchanged\n", { mode: 0o600 });
+
+    const result = spawnSync("bash", [INIT_LOCAL_CONFIG], {
+      cwd: directory,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: directory,
+        RIG_MODE: "local",
+        RIG_ENV: resolve(directory, "absent.rig-env"),
+        DATA: "relative-rig",
+        GW_PORT: "4881",
+        SERVICE: "comis-relative-root",
+        LOCAL_SUPERVISOR: "direct",
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "DATA must be an absolute path (got 'relative-rig')",
+    );
+    expect(readFileSync(marker, "utf8")).toBe("unchanged\n");
+    expect(existsSync(resolve(directory, "relative-rig"))).toBe(false);
+  });
+
+  it("refuses a busy first-run gateway port before creating the data root", async () => {
+    const directory = makeCanonicalTempDirectory("comis-local-init-busy-port-");
+    const data = resolve(directory, "isolated-data");
+    const marker = resolve(directory, "guard.txt");
+    writeFileSync(marker, "unchanged\n", { mode: 0o600 });
+    const listener = createServer();
+    await new Promise<void>((resolveListen, rejectListen) => {
+      listener.once("error", rejectListen);
+      listener.listen(0, "127.0.0.1", resolveListen);
+    });
+    const address = listener.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("test listener did not bind a TCP port");
+    }
+
+    try {
+      const result = spawnSync("bash", [INIT_LOCAL_CONFIG], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: directory,
+          RIG_MODE: "local",
+          RIG_ENV: resolve(directory, "absent.rig-env"),
+          DATA: data,
+          GW_PORT: String(address.port),
+          SERVICE: "comis-busy-port",
+          LOCAL_SUPERVISOR: "direct",
+          LOCAL_TMUX_SESSION: `comis-busy-port-${process.pid}`,
+        },
+      });
+
+      expect(result.status).toBe(2);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        `GW_PORT ${address.port} is already owned by another process`,
+      );
+      expect(readFileSync(marker, "utf8")).toBe("unchanged\n");
+      expect(existsSync(data)).toBe(false);
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => {
+        listener.close((error) => (error ? rejectClose(error) : resolveClose()));
+      });
+    }
+  });
+
   it("initializes a pinned local config without exposing generated credentials", () => {
     const directory = makeCanonicalTempDirectory("comis-local-config-init-");
     const data = resolve(directory, "isolated-data");
@@ -757,6 +877,53 @@ describe("local rig mode", () => {
           DATA: data,
           GW_PORT: "4883",
           SERVICE: "comis-local-rpc-secret",
+          GWTOKEN: "f".repeat(48),
+          COMIS_GATEWAY_TOKEN: "",
+        },
+      },
+    );
+
+    expect(probe.status, `${probe.stdout}${probe.stderr}`).toBe(0);
+    expect(probe.stdout.trim()).toBe("selected|48");
+  });
+
+  it("resolves the selected remote gateway secret ahead of a stale rendered token", () => {
+    const directory = makeCanonicalTempDirectory("comis-remote-rpc-secret-");
+    const data = resolve(directory, "isolated-data");
+    const packageRoot = resolve(directory, "installed-comis");
+    const cliPath = resolve(packageRoot, "node_modules/@comis/cli/dist/cli.js");
+    mkdirSync(dirname(cliPath), { recursive: true });
+    mkdirSync(data, { recursive: true });
+    writeFileSync(
+      cliPath,
+      [
+        "#!/usr/bin/env node",
+        'if (process.argv.slice(2).join(" ") !== "secrets get --offline COMIS_GATEWAY_TOKEN") process.exit(2);',
+        `process.stdout.write(${JSON.stringify("a".repeat(48))});`,
+      ].join("\n"),
+    );
+
+    const probe = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        [
+          `const { ensureRpcEnv } = await import(${JSON.stringify(pathToFileURL(RIG_NODE_HELPER).href)});`,
+          "ensureRpcEnv();",
+          "const resolved = process.env.COMIS_GATEWAY_TOKEN ?? '';",
+          "console.log(`${resolved === process.env.GWTOKEN ? 'stale' : 'selected'}|${resolved.length}`);",
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RIG_MODE: "remote",
+          RIG_ENV: resolve(directory, "selected.rig-env"),
+          COMIS_DATA_DIR: data,
+          COMIS_CONFIG_PATHS: resolve(data, "config.yaml"),
+          PKG: packageRoot,
           GWTOKEN: "f".repeat(48),
           COMIS_GATEWAY_TOKEN: "",
         },
@@ -899,12 +1066,279 @@ describe("local rig mode", () => {
     expect(launcher).toContain('process.env["EMU_JSON"] ?? "/tmp/comis-emu.json"');
   });
 
+  it("removes stale emulator wiring before launching a replacement process", () => {
+    const directory = makeCanonicalTempDirectory("comis-restart-emu-");
+    const bin = resolve(directory, "bin");
+    const wiring = resolve(directory, "emulator-wiring.json");
+    const log = resolve(directory, "emulator.log");
+    const capture = resolve(directory, "launch-state");
+    mkdirSync(bin);
+    writeFileSync(wiring, JSON.stringify({ port: 1, pid: 999_999_999 }));
+    writeFileSync(log, "stale\n");
+    writeFileSync(
+      resolve(bin, "tmux"),
+      `#!/usr/bin/env bash
+case "\${1:-}" in
+  has-session) exit 1 ;;
+  new-session)
+    if [ -e "$EMU_JSON" ]; then exit 41; fi
+    printf 'stale-wiring-absent\\n' > "$EMU_LAUNCH_CAPTURE"
+    printf '{"port":49001,"pid":4242}\\n' > "$EMU_JSON"
+    printf 'EMU_UP port=49001\\n' > "$EMU_LOG"
+    ;;
+  set-environment) ;;
+esac
+`,
+      { mode: 0o700 },
+    );
+    writeFileSync(resolve(bin, "tsx"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
+    writeFileSync(resolve(bin, "sleep"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
+
+    const restarted = spawnSync("bash", [RESTART_EMULATOR], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+        RIG_MODE: "local",
+        DATA: directory,
+        REPO: REPO_ROOT,
+        EMU_DIR: REPO_ROOT,
+        EMU_JSON: wiring,
+        EMU_LOG: log,
+        EMU_LAUNCH_CAPTURE: capture,
+        EMU_MESSAGE_ID_STATE_DIR: resolve(directory, "message-ids"),
+        EMU_TMUX_SESSION: "emu-fixture",
+        SERVICE: "comis-fixture",
+        RIG_ENV: resolve(directory, "absent-rig-env"),
+      },
+    });
+
+    expect(restarted.status, `${restarted.stdout}${restarted.stderr}`).toBe(0);
+    expect(readFileSync(capture, "utf8").trim()).toBe("stale-wiring-absent");
+    expect(JSON.parse(readFileSync(wiring, "utf8"))).toEqual({ port: 49001, pid: 4242 });
+    expect(restarted.stdout).toContain("EMU UP");
+  });
+
   it("scopes the local phase-zero daemon probe to the selected lifecycle owner", () => {
     const source = readFileSync(PHASE_ZERO_CHECK, "utf8");
 
     expect(source).toContain('daemon_pid="$(rig_daemon_pid)"');
     expect(source).toContain('pass "daemon-process" "selected daemon process is running (pid $daemon_pid)"');
     expect(source).not.toContain("pid $(pgrep -f 'node.*daemon\\.js' | head -1)");
+  });
+
+  it("recognizes a service wrapper that imports the selected daemon distribution", () => {
+    const directory = makeCanonicalTempDirectory("comis-rig-wrapper-entry-");
+    const packageRoot = resolve(directory, "comisai");
+    const daemonDist = resolve(packageRoot, "node_modules/@comis/daemon/dist");
+    const wrapper = resolve(directory, "campaign-daemon.mjs");
+    const unrelated = resolve(directory, "unrelated-daemon.mjs");
+    const kit = resolve(directory, "kit");
+    const data = resolve(directory, "data");
+    const bin = resolve(directory, "bin");
+    const rigEnv = resolve(directory, "rig.env");
+    mkdirSync(daemonDist, { recursive: true });
+    mkdirSync(kit);
+    mkdirSync(data);
+    mkdirSync(bin);
+    writeFileSync(resolve(daemonDist, "daemon.js"), "export const daemon = true;\n");
+    writeFileSync(resolve(daemonDist, "index.js"), "export const main = () => {};\n");
+    writeFileSync(
+      wrapper,
+      `import { main } from ${JSON.stringify(`${daemonDist}/index.js`)};\nvoid main;\n`,
+    );
+    writeFileSync(unrelated, 'import "./somewhere-else.js";\n');
+
+    const imported = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          `source ${shellQuote(RIG_HELPER)}`,
+          `PKG=${shellQuote(packageRoot)}`,
+          `rig_entry_uses_daemon_dist ${shellQuote(wrapper)}`,
+        ].join("\n"),
+      ],
+      { encoding: "utf8", env: NO_RIG_ENV },
+    );
+    const rejected = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          `source ${shellQuote(RIG_HELPER)}`,
+          `PKG=${shellQuote(packageRoot)}`,
+          `rig_entry_uses_daemon_dist ${shellQuote(unrelated)}`,
+        ].join("\n"),
+      ],
+      { encoding: "utf8", env: NO_RIG_ENV },
+    );
+
+    expect(imported.status, imported.stderr).toBe(0);
+    expect(rejected.status).not.toBe(0);
+
+    writeFileSync(resolve(kit, "_rig.sh"), readFileSync(RIG_HELPER));
+    writeFileSync(resolve(kit, "_rig.mjs"), "export {};\n");
+    writeFileSync(resolve(kit, "revoke.mjs"), 'console.log("RESULT:{}");\n');
+    writeFileSync(resolve(data, "config.yaml"), "gateway:\n  port: 4766\n");
+    writeFileSync(rigEnv, `export GWTOKEN=${"a".repeat(40)}\n`);
+    writeFileSync(
+      resolve(bin, "ssh"),
+      "#!/usr/bin/env bash\nremote=\"${!#}\"\nexec bash -c \"$remote\"\n",
+      { mode: 0o700 },
+    );
+    writeFileSync(
+      resolve(bin, "systemctl"),
+      `#!/usr/bin/env bash
+case "$*" in
+  *is-active*) printf 'active\\n' ;;
+  *ExecStart*) printf '/usr/bin/node %s\\n' "$DOCTOR_WRAPPER" ;;
+  *) printf '4242\\n' ;;
+esac
+`,
+      { mode: 0o700 },
+    );
+    writeFileSync(
+      resolve(bin, "ss"),
+      "#!/usr/bin/env bash\nprintf 'LISTEN 0 128 127.0.0.1:4766 0.0.0.0:*\\n'\n",
+      { mode: 0o700 },
+    );
+
+    const doctor = spawnSync("bash", [RIG_DOCTOR], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+        RIG_MODE: "remote",
+        VPS: "fixture-host",
+        REMOTE_SUDO: "0",
+        SERVICE: "comis-campaign",
+        COMIS_HOME: directory,
+        PKG: packageRoot,
+        KIT_DIR: kit,
+        DATA: data,
+        RIG_ENV: rigEnv,
+        GWTOKEN: "a".repeat(40),
+        GW_PORT: "4766",
+        EMU_JSON: resolve(data, "absent-emulator.json"),
+        DOCTOR_WRAPPER: wrapper,
+      },
+    });
+
+    expect(doctor.status, `${doctor.stdout}${doctor.stderr}`).toBe(0);
+    expect(doctor.stdout).toContain("service wrapper imports the daemon distribution under $PKG");
+  });
+
+  it("returns the selected remote wrapper process instead of a sibling daemon", () => {
+    const directory = makeCanonicalTempDirectory("comis-rig-remote-wrapper-pid-");
+    const packageRoot = resolve(directory, "comisai");
+    const daemonDist = resolve(packageRoot, "node_modules/@comis/daemon/dist");
+    const wrapper = resolve(directory, "campaign-daemon.mjs");
+    const bin = resolve(directory, "bin");
+    mkdirSync(daemonDist, { recursive: true });
+    mkdirSync(bin);
+    writeFileSync(resolve(daemonDist, "daemon.js"), "export const daemon = true;\n");
+    writeFileSync(
+      wrapper,
+      `import { main } from ${JSON.stringify(`${daemonDist}/index.js`)};\nvoid main;\n`,
+    );
+    writeFileSync(resolve(bin, "systemctl"), "#!/usr/bin/env bash\nprintf '4242\\n'\n", { mode: 0o700 });
+    writeFileSync(
+      resolve(bin, "ps"),
+      `#!/usr/bin/env bash\nprintf '%s\\n' ${shellQuote(`/usr/bin/node ${wrapper}`)}\n`,
+      { mode: 0o700 },
+    );
+    writeFileSync(resolve(bin, "pgrep"), "#!/usr/bin/env bash\nprintf '9999\\n'\n", { mode: 0o700 });
+
+    const selected = runRigHelper(
+      'kill() { return 0; }; printf "%s" "$(rig_daemon_pid)"',
+      {
+        RIG_MODE: "remote",
+        SERVICE: "comis-campaign",
+        PKG: packageRoot,
+        PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+      },
+    );
+
+    expect(selected).toBe("4242");
+
+    writeFileSync(wrapper, 'import "./unrelated.js";\n');
+    const rejected = runRigHelper(
+      'kill() { return 0; }; printf "%s" "$(rig_daemon_pid)"',
+      {
+        RIG_MODE: "remote",
+        SERVICE: "comis-campaign",
+        PKG: packageRoot,
+        PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+      },
+    );
+
+    expect(rejected).toBe("");
+  });
+
+  it("parses every deployment record kind by its final timestamp", () => {
+    const directory = makeCanonicalTempDirectory("comis-verify-build-");
+    const bin = resolve(directory, "bin");
+    const record = resolve(directory, "deployed-build");
+    const systemctlCapture = resolve(directory, "systemctl-args");
+    const dateCapture = resolve(directory, "date-args");
+    const localSha = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "--short", "HEAD"], {
+      encoding: "utf8",
+    }).trim();
+    mkdirSync(bin);
+    writeFileSync(
+      resolve(bin, "ssh"),
+      "#!/usr/bin/env bash\nremote=\"${!#}\"\nexec bash -c \"$remote\"\n",
+      { mode: 0o700 },
+    );
+    writeFileSync(
+      resolve(bin, "systemctl"),
+      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$SYSTEMCTL_CAPTURE\"\nprintf '4242\\n'\n",
+      { mode: 0o700 },
+    );
+    writeFileSync(
+      resolve(bin, "ps"),
+      "#!/usr/bin/env bash\nprintf 'Mon Jan 1 00:01:00 UTC 2026\\n'\n",
+      { mode: 0o700 },
+    );
+    writeFileSync(
+      resolve(bin, "date"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$DATE_CAPTURE"
+case "$*" in
+  *2026-01-01T00:00:00Z*) printf '100\\n' ;;
+  *) printf '200\\n' ;;
+esac
+`,
+      { mode: 0o700 },
+    );
+
+    for (const kind of ["installed", "deployed", "dist-overlay"]) {
+      writeFileSync(record, `${localSha} ${kind} 2026-01-01T00:00:00Z\n`);
+      writeFileSync(systemctlCapture, "");
+      writeFileSync(dateCapture, "");
+      const verified = spawnSync("bash", [VERIFY_BUILD], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+          RIG_MODE: "remote",
+          VPS: "fixture-host",
+          REMOTE_SUDO: "0",
+          SERVICE: "selected-service",
+          COMIS_HOME: directory,
+          REPO: REPO_ROOT,
+          RIG_ENV: resolve(directory, "absent-rig-env"),
+          COMIS_DEPLOY_RECORD_PATH: record,
+          SYSTEMCTL_CAPTURE: systemctlCapture,
+          DATE_CAPTURE: dateCapture,
+        },
+      });
+
+      expect(verified.status, `${kind}: ${verified.stdout}${verified.stderr}`).toBe(0);
+      expect(readFileSync(systemctlCapture, "utf8")).toContain("selected-service");
+      expect(readFileSync(dateCapture, "utf8")).toContain("2026-01-01T00:00:00Z");
+    }
   });
 
   it("keeps the local rig shell entry points syntactically valid", () => {
@@ -1118,6 +1552,31 @@ describe("local rig mode", () => {
     expect(restart).toContain('if [ \\"\\$daemon_exit_code\\" -eq 42 ]; then continue');
     expect(restart).toContain('exit \\"\\$daemon_exit_code\\"');
     expect(restart).not.toContain("status=\\$?");
+  });
+
+  it("surfaces the actionable failure ahead of a local daemon crash stack", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-boot-diagnostic-"));
+    temporaryDirectories.push(directory);
+    const consoleLog = resolve(directory, "daemon.console.log");
+    writeFileSync(
+      consoleLog,
+      [
+        "FATAL: failure from an earlier launch",
+        "structured startup line",
+        "FATAL: gateway.tokens[0].secret resolved to 8 characters; provide at least 32",
+        ...Array.from({ length: 20 }, (_, index) => `stack frame ${index + 1}`),
+      ].join("\n"),
+    );
+
+    const output = runRigHelper(
+      `rig_actionable_boot_failure ${shellQuote(consoleLog)} 2`,
+      { RIG_MODE: "local" },
+    );
+
+    expect(output.trim()).toBe(
+      "FATAL: gateway.tokens[0].secret resolved to 8 characters; provide at least 32",
+    );
+    expect(output).not.toContain("earlier launch");
   });
 
   it("binds local daemon boot and runtime storage to the isolated rig data directory", () => {

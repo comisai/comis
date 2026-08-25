@@ -32,7 +32,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   echo "missing $HERE/_rig.sh — re-run deploy-scripts.sh (the kit ships as a unit)" >&2
   exit 2
 }
-rig_load_env "$HERE/.live-env" "$HERE/.rig-env" /root/comis-rig.env
+rig_load_env "$HERE/.live-env" "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
 if rig_is_local; then
   # tsx from the workspace (a devDependency of this repo) — never assume a global install locally.
   if command -v tsx >/dev/null 2>&1; then TSX="tsx"; else TSX="pnpm -s exec tsx"; fi
@@ -61,10 +61,18 @@ if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
   kill -0 "$old_pid" 2>/dev/null && kill -9 "$old_pid" 2>/dev/null || true
 fi
 
+# The wiring file is ephemeral and must describe only the process launched below. Removing it also
+# avoids Linux protected-regular-file rejection when a prior SSH user owns the fixed /tmp path.
+if ! rm -f -- "$EMU_JSON"; then
+  echo "cannot remove stale emulator wiring at $EMU_JSON" >&2
+  exit 1
+fi
+
 # (2) Launch it detached. tmux when available (the only thing that survives an ssh close); locally a
 # plain nohup suffices when tmux is absent, since there is no channel to close.
 : >"$EMU_LOG"
-LAUNCH="cd '$EMU_DIR' && exec env EMU_JSON='$EMU_JSON' EMU_GROUPS='${EMU_GROUPS:-}' $TSX test/live/bin/vps-emu.ts"
+mkdir -p "$EMU_MESSAGE_ID_STATE_DIR"
+LAUNCH="cd '$EMU_DIR' && exec env EMU_JSON='$EMU_JSON' EMU_MESSAGE_ID_STATE_DIR='$EMU_MESSAGE_ID_STATE_DIR' EMU_GROUPS='${EMU_GROUPS:-}' $TSX test/live/bin/vps-emu.ts"
 if command -v tmux >/dev/null 2>&1; then
   tmux new-session -d -s "$EMU_TMUX_SESSION" "$LAUNCH > '$EMU_LOG' 2>&1"
   tmux set-environment -t "$EMU_TMUX_SESSION" COMIS_EMU_DATA_OWNER "$DATA"

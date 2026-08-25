@@ -46,6 +46,7 @@ comis:
   requires:                          # External prerequisites
     bins: ["ripgrep", "fd"]          # Required binaries on PATH
     env: ["OPENAI_API_KEY"]          # Required environment variables
+    capabilityServices: ["service"]  # External services required by this skill
   skill-key: my-custom-key           # Explicit skill key override (slug format)
   primary-env: discord               # Display/grouping hint for primary environment
   command-dispatch: my-command       # Metadata-only dispatch tag for command routing

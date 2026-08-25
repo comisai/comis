@@ -25,6 +25,7 @@ import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { err, ok, type Result } from "@comis/shared";
 
 import { createFakeTimers } from "../../../../../../test/support/fake-timers.js";
 import {
@@ -116,11 +117,15 @@ function baseDeps(
   spawnWorker: TerminalSessionRegistryDeps["spawnWorker"],
   over: Partial<TerminalSessionRegistryDeps> = {},
 ): TerminalSessionRegistryDeps {
+  const durability = over.durability === undefined
+    ? undefined
+    : { killTmuxSession: () => ok(undefined), ...over.durability };
   return {
     spawnWorker,
     logger: makeLogger(),
     nowMs: () => 1_700_000_000_000,
     ...over,
+    ...(durability === undefined ? {} : { durability }),
   };
 }
 
@@ -271,7 +276,7 @@ describe("createTerminalSessionRegistry — durable evict kill-sessions the deta
     // The reap must target the socket this session actually runs on. With one server per
     // session, a boot-wide socket here would kill the wrong server — or, worse, another live
     // drive's — instead of this one.
-    const killTmuxSession = vi.fn();
+    const killTmuxSession = vi.fn(() => ok(undefined));
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(
       baseDeps(() => fake.child, {
@@ -288,7 +293,7 @@ describe("createTerminalSessionRegistry — durable evict kill-sessions the deta
   });
 
   it("kill of a NON-durable session does NOT kill-session (no durable tmux to reap)", async () => {
-    const killTmuxSession = vi.fn();
+    const killTmuxSession = vi.fn(() => ok(undefined));
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { killTmuxSession } }));
     const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
@@ -297,7 +302,239 @@ describe("createTerminalSessionRegistry — durable evict kill-sessions the deta
   });
 });
 
+describe("createTerminalSessionRegistry — confirmed process termination", () => {
+  type ConfirmingRegistry = ReturnType<typeof createTerminalSessionRegistry> & {
+    terminateAndConfirm(
+      sessionId: string,
+      owner: typeof OWNER,
+    ): Promise<{ ok: true; value: undefined } | { ok: false; error: Error }>;
+  };
+
+  it("preserves the managed handle when the worker refuses termination", async () => {
+    const fake = makeFakeWorker((req) => req.method === "kill" ? {
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: false,
+      error: "backend still alive",
+    } : undefined);
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child)) as ConfirmingRegistry;
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+
+    expect(typeof registry.terminateAndConfirm).toBe("function");
+    await expect(registry.terminateAndConfirm(created.sessionId, OWNER)).resolves.toMatchObject({ ok: false });
+    expect(registry.get(created.sessionId, OWNER)).toBeDefined();
+  });
+
+  it("drops the managed handle only after the worker acknowledges termination", async () => {
+    const fake = makeFakeWorker((req) => req.method === "kill" ? {
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: { terminated: true },
+    } : undefined);
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child)) as ConfirmingRegistry;
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+
+    await expect(registry.terminateAndConfirm(created.sessionId, OWNER)).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(fake.requestFrames.map((frame) => frame.method)).toEqual(["create", "kill"]);
+    expect(registry.get(created.sessionId, OWNER)).toBeUndefined();
+  });
+
+  it("retains managed authority when durable retirement fails after termination", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const retireManagedSession = vi.fn(async () => err(new Error("managed store unavailable")));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { descriptorStore: fakeDescriptorStore(), retireManagedSession } as never,
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, OWNER);
+
+    await expect(registry.kill(created.sessionId, OWNER)).rejects.toThrow("managed store unavailable");
+    expect(retireManagedSession).toHaveBeenCalledOnce();
+    expect(registry.get(created.sessionId, OWNER)).toMatchObject({ status: "exited" });
+  });
+
+  it("retains managed authority until detached tmux termination is confirmed", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const killTmuxSession = vi.fn(() => err(new Error("detached tmux is still alive")));
+    const retireManagedSession = vi.fn(async () => ok(undefined));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { descriptorStore: fakeDescriptorStore(), killTmuxSession, retireManagedSession } as never,
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, OWNER);
+
+    await expect(registry.kill(created.sessionId, OWNER)).rejects.toThrow("detached tmux is still alive");
+    expect(retireManagedSession).not.toHaveBeenCalled();
+    expect(registry.get(created.sessionId, OWNER)).toMatchObject({ status: "exited" });
+  });
+
+  it("retains managed registry authority when descriptor deletion cannot commit", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const store = fakeDescriptorStore();
+    const removeError = new Error("descriptor deletion failed");
+    store.remove = vi.fn(() => err(removeError)) as never;
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: store,
+        killTmuxSession: () => ok(undefined),
+        retireManagedSession: async () => ok(undefined),
+      } as never,
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, OWNER);
+
+    await expect(registry.kill(created.sessionId, OWNER)).rejects.toThrow("descriptor deletion failed");
+    expect(registry.get(created.sessionId, OWNER)).toMatchObject({ status: "exited" });
+  });
+});
+
 describe("createTerminalSessionRegistry — lazy re-spawn", () => {
+  it("uses a daemon-reserved managed session identity exactly once", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: { rootPid: 6200 },
+    }));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: fakeDescriptorStore(),
+        retireManagedSession: async () => ok(undefined),
+      },
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+    const request = {
+      sessionId: "terminal-session-reserved",
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    };
+
+    await expect(registry.create(request, OWNER)).resolves.toMatchObject({
+      sessionId: "terminal-session-reserved",
+    });
+    await expect(registry.create(request, OWNER)).rejects.toThrow("already registered");
+  });
+
+  it("refuses a managed create whose reserved authority is released during launch", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: { rootPid: 6200 },
+    }));
+    let resolveIdentity!: (identity: { pid: number; startIdentity: string }) => void;
+    const identity = new Promise<{ pid: number; startIdentity: string }>((resolve) => {
+      resolveIdentity = resolve;
+    });
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: fakeDescriptorStore(),
+        retireManagedSession: async () => ok(undefined),
+      },
+      resolveRootProcessIdentity: async () => identity,
+    }));
+    const creating = registry.create({
+      sessionId: "terminal-session-raced",
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, OWNER);
+    await vi.waitFor(() => expect(fake.requestFrames).toHaveLength(1));
+
+    await expect(registry.terminateAndConfirm(
+      "terminal-session-raced",
+      OWNER,
+    )).resolves.toEqual({ ok: true, value: undefined });
+    resolveIdentity({ pid: 6200, startIdentity: "linux:991" });
+
+    await expect(creating).rejects.toThrow("authority was revoked");
+    expect(registry.get("terminal-session-raced", OWNER)).toBeUndefined();
+  });
+
   it("spawns the worker once for the first create (single live worker per registry)", async () => {
     const spawnWorker = vi.fn(() => makeFakeWorker().child);
     const registry = createTerminalSessionRegistry(baseDeps(spawnWorker));
@@ -395,6 +632,49 @@ describe("createTerminalSessionRegistry — read round-trip", () => {
       alive: true,
     });
   });
+
+  it("preserves the final bounded screen after the terminal process exits", async () => {
+    const fake = makeFakeWorker((req) => {
+      if (req.method !== "read") return undefined;
+      return {
+        sessionId: req.sessionId,
+        requestId: req.requestId,
+        ok: true,
+        result: {
+          screen: "protected bootstrap failed",
+          cursor: { x: 26, y: 0 },
+          cols: 80,
+          rows: 24,
+          alt: false,
+          alive: false,
+        },
+      };
+    });
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+    const handle = registry.get(sessionId, OWNER);
+    if (handle === undefined) throw new Error("test session handle is missing");
+    handle.status = "exited";
+    handle.exitCode = 1;
+
+    const view = await registry.read(sessionId, OWNER);
+
+    expect(view).toEqual({
+      screen: "protected bootstrap failed",
+      cursor: { x: 26, y: 0 },
+      cols: 80,
+      rows: 24,
+      alt: false,
+      alive: false,
+    });
+    expect(fake.requestFrames.some((frame) => frame.method === "read")).toBe(true);
+  });
 });
 
 describe("createTerminalSessionRegistry — everSentText marks a tasked drive", () => {
@@ -405,7 +685,7 @@ describe("createTerminalSessionRegistry — everSentText marks a tasked drive", 
   // send_text flips it true; send_key (gate/menu navigation) does NOT count as a task.
   function okSend(req: TerminalRequestFrame): TerminalReplyFrame | undefined {
     if (req.method !== "send_text" && req.method !== "send_key") return undefined;
-    return { sessionId: req.sessionId, requestId: req.requestId, ok: true, result: { screen: "ok", cursor: { x: 0, y: 0 } } };
+    return { sessionId: req.sessionId, requestId: req.requestId, ok: true, result: { screen: "ok", cursor: { x: 0, y: 0 }, delivered: true } };
   }
   const CREATE_REQ = { allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 } as const;
 
@@ -600,6 +880,7 @@ describe("createTerminalSessionRegistry — scope rides the create frame", () =>
       network: "listed-hosts",
       hosts: ["api.example.com"],
       credentialPaths: ["~/.claude"],
+      ephemeralWritablePaths: [],
       uid: "dedicated",
     };
 
@@ -721,7 +1002,7 @@ describe("createTerminalSessionRegistry — bwrapPath rides the create frame (ja
       argv: [],
       cols: 80,
       rows: 24,
-      scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
+      scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
       workspace: "/work/agent-1",
       cwd: "/work/agent-1",
     }, OWNER);
@@ -743,7 +1024,7 @@ describe("createTerminalSessionRegistry — bwrapPath rides the create frame (ja
       argv: [],
       cols: 80,
       rows: 24,
-      scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
+      scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
       workspace: "/work/agent-1",
       cwd: "/work/agent-1",
     }, OWNER);
@@ -853,6 +1134,199 @@ describe("createTerminalSessionRegistry — malformed-frame on stdout does NOT c
 });
 
 describe("createTerminalSessionRegistry — worker create failure is surfaced", () => {
+  it("identifies a managed create reply that omits the terminal root PID", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create"
+        ? { sessionId: req.sessionId, backend: "tmux", cols: 80, rows: 24 }
+        : { terminated: true },
+    }));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: fakeDescriptorStore(),
+        retireManagedSession: async () => ok(undefined),
+      },
+      resolveRootProcessIdentity: vi.fn(async () => ({ pid: 6200, startIdentity: "linux:991" })),
+    } as unknown as Partial<TerminalSessionRegistryDeps>));
+
+    await expect(registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    } as never, OWNER)).rejects.toThrow("managed terminal create reply omitted a positive root PID");
+  });
+
+  it("identifies a managed root PID whose process start identity is unreadable", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create"
+        ? { sessionId: req.sessionId, backend: "tmux", cols: 80, rows: 24, rootPid: 6200 }
+        : { terminated: true },
+    }));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: fakeDescriptorStore(),
+        retireManagedSession: async () => ok(undefined),
+      },
+      resolveRootProcessIdentity: vi.fn(async () => undefined),
+    } as unknown as Partial<TerminalSessionRegistryDeps>));
+
+    await expect(registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    } as never, OWNER)).rejects.toThrow("managed terminal process 6200 start identity is unreadable");
+  });
+
+  it("awaits a managed create reply and persists the resolved terminal root-process identity", async () => {
+    const fake = makeFakeWorker((req) => {
+      if (req.method !== "create") return undefined;
+      return {
+        sessionId: req.sessionId,
+        requestId: req.requestId,
+        ok: true,
+        result: { sessionId: req.sessionId, backend: "tmux", cols: 80, rows: 24, rootPid: 6200 },
+      };
+    });
+    const descriptorStore: SessionDescriptorStorePort = {
+      persist: vi.fn(() => ok(undefined)),
+      recover: vi.fn(() => []),
+      remove: vi.fn(() => ok(undefined)),
+    };
+    const resolveRootProcessIdentity = vi.fn(async (pid: number) => ({
+      pid,
+      startIdentity: "linux-proc-start-6200",
+    }));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { descriptorStore },
+      resolveRootProcessIdentity,
+    } as unknown as Partial<TerminalSessionRegistryDeps>));
+
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    } as never, OWNER);
+
+    expect(resolveRootProcessIdentity).toHaveBeenCalledWith(6200);
+    const createFrame = fake.requestFrames.find((frame) => frame.method === "create");
+    expect(createFrame?.params["managedWorkspace"]).toBe(true);
+    expect(created).toMatchObject({
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux-proc-start-6200" },
+    });
+    expect(descriptorStore.persist).toHaveBeenLastCalledWith(expect.objectContaining({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux-proc-start-6200" },
+    }));
+  });
+
+  it("retires reserved authority when initial descriptor persistence fails", async () => {
+    const fake = makeFakeWorker();
+    const spawnWorker = vi.fn(() => fake.child);
+    const retireManagedSession = vi.fn(async () => ok(undefined));
+    const registry = createTerminalSessionRegistry(baseDeps(spawnWorker, {
+      durability: {
+        descriptorStore: {
+          persist: vi.fn(() => err(new Error("descriptor storage unavailable"))),
+          recover: vi.fn(() => []),
+          remove: vi.fn(() => ok(undefined)),
+        },
+        retireManagedSession,
+      },
+    }));
+
+    await expect(registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    }, OWNER)).rejects.toThrow("descriptor storage unavailable");
+
+    expect(spawnWorker).not.toHaveBeenCalled();
+    expect(retireManagedSession).toHaveBeenCalledOnce();
+    expect(registry.size()).toBe(0);
+  });
+
+  it("retires a launched managed terminal when its resolved identity cannot be persisted", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    let persistenceAttempt = 0;
+    const descriptorStore: SessionDescriptorStorePort = {
+      persist: vi.fn(() => {
+        persistenceAttempt += 1;
+        return persistenceAttempt === 1
+          ? ok(undefined)
+          : err(new Error("descriptor storage unavailable"));
+      }),
+      recover: vi.fn(() => []),
+      remove: vi.fn(() => ok(undefined)),
+    };
+    const retireManagedSession = vi.fn(async () => ok(undefined));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { descriptorStore, retireManagedSession },
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+
+    await expect(registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    }, OWNER)).rejects.toThrow("descriptor storage unavailable");
+
+    expect(fake.requestFrames.map((frame) => frame.method)).toEqual(["create", "kill"]);
+    expect(retireManagedSession).toHaveBeenCalledOnce();
+    expect(registry.size()).toBe(0);
+  });
+
   it("an ok:false create reply flips the session to 'lost' (list/read agree alive:false) and fires onSpawnFailed", async () => {
     // The worker's handleCreate throws (bad bin ENOENT, forkpty failure, …) → the
     // worker replies { ok:false } to the create frame. Pre-patch the registry does
@@ -1100,7 +1574,7 @@ describe("createTerminalSessionRegistry — sendText forwarding", () => {
             requestId: req.requestId,
             ok: true,
             // The worker returns a FULL view; the registry resolves only {screen,cursor}.
-            result: { screen: "hello", cursor: { x: 5, y: 0 }, cols: 80, rows: 24, alt: false, alive: true },
+            result: { screen: "hello", cursor: { x: 5, y: 0 }, cols: 80, rows: 24, alt: false, alive: true, delivered: true },
           }
         : undefined,
     );
@@ -1136,7 +1610,7 @@ describe("createTerminalSessionRegistry — sendText forwarding", () => {
             sessionId: req.sessionId,
             requestId: req.requestId,
             ok: true,
-            result: { screen: "x", cursor: { x: 1, y: 0 } },
+            result: { screen: "x", cursor: { x: 1, y: 0 }, delivered: true },
           }
         : undefined,
     );
@@ -1157,6 +1631,29 @@ describe("createTerminalSessionRegistry — sendText forwarding", () => {
     await registry.sendText(sessionId, OWNER, { text: "x" });
     const after = registry.get(sessionId, OWNER)?.lastActivity;
     expect(after).toBeGreaterThan(created as number);
+  });
+
+  it("preserves a worker refusal when the child exits before the registry observes the transition", async () => {
+    const fake = makeFakeWorker((req) => req.method === "send_text"
+      ? {
+          sessionId: req.sessionId,
+          requestId: req.requestId,
+          ok: true,
+          result: { screen: "", cursor: { x: 0, y: 0 }, delivered: false },
+        }
+      : undefined);
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+
+    const out = await registry.sendText(sessionId, OWNER, { text: "too-late" });
+
+    expect(out.delivered).toBe(false);
   });
 
   it("degrades a send_text on a reply timeout (ok:false) — no throw, no hang", async () => {
@@ -1205,7 +1702,7 @@ describe("createTerminalSessionRegistry — sendKey forwarding", () => {
             sessionId: req.sessionId,
             requestId: req.requestId,
             ok: true,
-            result: { screen: "^C", cursor: { x: 0, y: 1 } },
+            result: { screen: "^C", cursor: { x: 0, y: 1 }, delivered: true },
           }
         : undefined,
     );
@@ -1687,12 +2184,6 @@ describe("createTerminalSessionRegistry — cleanup() is owner-agnostic (tears d
 // interval); EVERY eviction runs the single audited site — drop +
 // cleanupSessionWorkspace + onEvict(reason) + onCapForget (so the cap-state map
 // is forgotten on the reap path, not only the tool kill).
-//
-// RED on the pre-patch registry: the deps have no maxSessions/idleTtlMs/timers/
-// onEvict/onCapForget, there is no reaper.checkOverflow() in create, no
-// reaper.stop() in cleanup, and no public evict() — so an over-cap create keeps
-// all 3 sessions, the fake-timer interval is never armed, and onCapForget never
-// fires.
 // ===========================================================================
 
 describe("createTerminalSessionRegistry — reaper composition", () => {
@@ -1731,6 +2222,25 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
     expect(onEvict.mock.calls[0][0].reason).toBe("max_sessions");
   });
 
+  it("serializes concurrent creates so maxSessions cannot be exceeded", async () => {
+    const fake = makeIsolatingWorker();
+    const { deps, onEvict } = reaperDeps(() => fake.child, { maxSessions: 1 });
+    const registry = createTerminalSessionRegistry(deps);
+
+    const [first, second] = await Promise.all([
+      registry.create({ ...bashReq, sessionId: "terminal-session_first" }, subA),
+      registry.create({ ...bashReq, sessionId: "terminal-session_second" }, subA),
+    ]);
+
+    expect(registry.size()).toBe(1);
+    expect(registry.get(first.sessionId, subA)).toBeUndefined();
+    expect(registry.get(second.sessionId, subA)).toBeDefined();
+    expect(onEvict).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: first.sessionId,
+      reason: "max_sessions",
+    }));
+  });
+
   it("Test B — cleanup() stops the sweep: the fake-timer interval is cancelled (no leaked sweep)", async () => {
     const fake = makeIsolatingWorker();
     const { deps, timers } = reaperDeps(() => fake.child, { maxSessions: 10 });
@@ -1767,6 +2277,86 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
     expect(typeof onEvict.mock.calls[0][0].durationMs).toBe("number");
     // The cap-state map is forgotten on the reap path (no SessionCaps leak).
     expect(onCapForget).toHaveBeenCalledWith(s.sessionId);
+  });
+
+  it("retires a managed binding before reaper eviction drops authority", async () => {
+    const order: string[] = [];
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const retireManagedSession = vi.fn(async () => {
+      order.push("retire");
+      return ok(undefined);
+    });
+    const capForget = vi.fn((sessionId: string) => {
+      order.push("cap-forget");
+      return sessionId;
+    });
+    const { deps } = reaperDeps(() => fake.child, {
+      maxSessions: 10,
+      durability: { descriptorStore: fakeDescriptorStore(), retireManagedSession } as never,
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+      onCapForget: capForget,
+    });
+    const registry = createTerminalSessionRegistry(deps);
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, subA);
+
+    await registry.evict(created.sessionId, subA, "max_interactions");
+
+    expect(order).toEqual(["retire", "cap-forget"]);
+    expect(registry.get(created.sessionId, subA)).toBeUndefined();
+  });
+
+  it("rejects an over-cap create when durable retirement cannot evict the existing authority", async () => {
+    const fake = makeFakeWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const retireManagedSession = vi.fn(async () => err(new Error("retirement unavailable")));
+    const { deps, onEvict, onCapForget } = reaperDeps(() => fake.child, {
+      maxSessions: 1,
+      durability: { descriptorStore: fakeDescriptorStore(), retireManagedSession },
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    });
+    const registry = createTerminalSessionRegistry(deps);
+    const managed = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, subA);
+
+    await expect(registry.create(bashReq, subA)).rejects.toThrow("retirement unavailable");
+
+    expect(registry.get(managed.sessionId, subA)?.status).toBe("exited");
+    expect(registry.size()).toBe(1);
+    expect(fake.requestFrames.map((frame) => frame.method)).toEqual(["create", "kill"]);
+    expect(onEvict).not.toHaveBeenCalled();
+    expect(onCapForget).not.toHaveBeenCalled();
   });
 
   it("Test C2 — evict() is owner-scoped: a cross-owner evict is a no-op (the session survives, no cap-forget)", async () => {
@@ -1826,16 +2416,27 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
  * (a length-prefixed event frame, or raw/oversized garbage for the crash-guard tests).
  * stdin/stdout are present so create() round-trips; on/kill complete the surface.
  */
-function makeFd3DrivableWorker(): {
+function makeFd3DrivableWorker(
+  autoReply?: (frame: TerminalRequestFrame) => TerminalReplyFrame | undefined,
+): {
   child: FakeWorkerChild;
   emitFd3: (bytes: Buffer) => void;
 } {
   const emitter = new EventEmitter();
   const stdout = new EventEmitter();
   const fd3 = new EventEmitter();
+  const decoder = createFrameDecoder();
   const child = {
     pid: 6161,
-    stdin: { write: () => true } as unknown as FakeWorkerChild["stdin"],
+    stdin: {
+      write: (chunk: Buffer) => {
+        for (const frame of decoder.push(chunk)) {
+          const reply = autoReply?.(frame as TerminalRequestFrame);
+          if (reply !== undefined) queueMicrotask(() => stdout.emit("data", encodeFrame(reply)));
+        }
+        return true;
+      },
+    } as unknown as FakeWorkerChild["stdin"],
     stdout: stdout as unknown as FakeWorkerChild["stdout"],
     // fd0=stdin, fd1=stdout, fd2=stderr, fd3=the events push channel.
     stdio: [null, stdout, null, fd3],
@@ -1874,6 +2475,83 @@ describe("createTerminalSessionRegistry — fd3 events-push reader (no poll)", (
     expect(events[0].payload).toMatchObject({ state: "awaiting-input" });
     // The session is untouched — an event is not a crash signal.
     expect(registry.get(sessionId, OWNER)?.status).toBe("running");
+  });
+
+  it("retires a durable reattach descriptor when fd3 reports that the session exited", async () => {
+    const fake = makeFd3DrivableWorker();
+    const store = fakeDescriptorStore();
+    const onTerminalEvent = vi.fn();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        durability: { descriptorStore: store },
+        onTerminalEvent,
+      }),
+    );
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+    }, OWNER);
+    expect(store.recover()).toHaveLength(1);
+
+    fake.emitFd3(
+      encodeFrame({ sessionId, event: "terminal:session_state", payload: { state: "exited" } }),
+    );
+
+    expect(onTerminalEvent).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId,
+      event: "terminal:session_state",
+      payload: { state: "exited" },
+    }));
+    expect(registry.get(sessionId, OWNER)?.status).toBe("exited");
+    expect(store.remove).toHaveBeenCalledWith(sessionId);
+    expect(store.recover()).toHaveLength(0);
+  });
+
+  it("retains a managed descriptor until natural-exit retirement succeeds", async () => {
+    const fake = makeFd3DrivableWorker((req) => ({
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: req.method === "create" ? { rootPid: 6200 } : { terminated: true },
+    }));
+    const store = fakeDescriptorStore();
+    let confirmRetirement: ((result: Result<void, Error>) => void) | undefined;
+    const retireManagedSession = vi.fn(() => new Promise<Result<void, Error>>((resolve) => {
+      confirmRetirement = resolve;
+    }));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { descriptorStore: store, retireManagedSession },
+      resolveRootProcessIdentity: async () => ({ pid: 6200, startIdentity: "linux:991" }),
+    }));
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run-a",
+        workspaceLeaseId: "workspace-lease-a",
+        serviceInstanceId: "service-a",
+      },
+    }, OWNER);
+    store.remove.mockClear();
+
+    fake.emitFd3(encodeFrame({
+      sessionId,
+      event: "terminal:session_state",
+      payload: { state: "exited" },
+    }));
+
+    expect(store.remove).not.toHaveBeenCalled();
+    expect(store.recover()).toHaveLength(1);
+    confirmRetirement?.(ok(undefined));
+    await vi.waitFor(() => expect(store.remove).toHaveBeenCalledWith(sessionId));
   });
 
   it("a corrupt (non-JSON) fd3 byte does NOT crash the daemon — WARN errorKind:'validation', drop the worker, never rethrow", async () => {
@@ -2199,9 +2877,15 @@ function durableDescriptor(over: Partial<SessionDescriptor> = {}): SessionDescri
 function fakeDescriptorStore(seed: SessionDescriptor[] = []): SessionDescriptorStorePort {
   const map = new Map<string, SessionDescriptor>(seed.map((d) => [d.sessionId, d]));
   return {
-    persist: vi.fn((d: SessionDescriptor) => map.set(d.sessionId, d)),
+    persist: vi.fn((d: SessionDescriptor) => {
+      map.set(d.sessionId, d);
+      return ok(undefined);
+    }),
     recover: vi.fn(() => Array.from(map.values())),
-    remove: vi.fn((id: string) => map.delete(id)),
+    remove: vi.fn((id: string) => {
+      map.delete(id);
+      return ok(undefined);
+    }),
   };
 }
 
@@ -2464,6 +3148,114 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
     expect(fake2.requestFrames.filter((f) => f.method === "reattach")).toHaveLength(0);
     expect(onUnrecoverable2).not.toHaveBeenCalled();
   });
+
+  it("retains exact dead managed authority until release confirmation", async () => {
+    const fake = makeFakeWorker();
+    const managed = {
+      ...durableDescriptor(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux:991" },
+    };
+    const store = fakeDescriptorStore([managed]);
+
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: store,
+        isTmuxAlive: () => false,
+        retireManagedSession: async () => ok(undefined),
+      },
+    }));
+
+    expect(store.remove).not.toHaveBeenCalled();
+    expect(registry.get("old-sess", DURABLE_OWNER)?.status).toBe("lost");
+    expect(registry.getManagedBinding?.("old-sess")).toEqual({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    });
+    await expect(registry.terminateAndConfirm("old-sess", DURABLE_OWNER)).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(store.remove).toHaveBeenCalledWith("old-sess");
+  });
+
+  it("rejects managed recovery when the live pane has a different process identity", async () => {
+    const fake = makeReattachWorker(true);
+    const managed = {
+      ...durableDescriptor(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux:991" },
+    };
+    const store = fakeDescriptorStore([managed]);
+    const onReattached = vi.fn();
+    const onUnrecoverable = vi.fn();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: store,
+        isTmuxAlive: () => true,
+        resolveTmuxRootProcessIdentity: () => ({ pid: 6200, startIdentity: "linux:992" }),
+        onReattached,
+        onUnrecoverable,
+      } as never,
+    }));
+
+    expect(registry.get("old-sess", DURABLE_OWNER)?.status).toBe("lost");
+    expect(fake.requestFrames.filter((frame) => frame.method === "reattach")).toHaveLength(0);
+    expect(onReattached).not.toHaveBeenCalled();
+    expect(onUnrecoverable).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "old-sess",
+      reason: "managed_root_identity_mismatch",
+    }));
+  });
+
+  it("rehydrates incomplete managed authority for cleanup without claiming recovery", async () => {
+    const fake = makeReattachWorker(true);
+    const managed = {
+      ...durableDescriptor(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    };
+    const store = fakeDescriptorStore([managed]);
+    const onReattached = vi.fn();
+    const onUnrecoverable = vi.fn();
+    const killTmuxSession = vi.fn(() => ok(undefined));
+    const retireManagedSession = vi.fn(async () => ok(undefined));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: store,
+        isTmuxAlive: () => true,
+        killTmuxSession,
+        retireManagedSession,
+        onReattached,
+        onUnrecoverable,
+      } as never,
+    }));
+
+    await vi.waitFor(() => expect(onUnrecoverable).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "old-sess",
+      reason: "managed_root_identity_unavailable",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    })));
+    expect(registry.get("old-sess", DURABLE_OWNER)?.status).toBe("lost");
+    expect(fake.requestFrames.filter((frame) => frame.method === "reattach")).toHaveLength(0);
+    expect(onReattached).not.toHaveBeenCalled();
+    expect(store.remove).not.toHaveBeenCalled();
+
+    await expect(registry.terminateAndConfirm("old-sess", DURABLE_OWNER)).resolves.toEqual(ok(undefined));
+    expect(killTmuxSession).toHaveBeenCalledWith("comis-old-sess", undefined);
+    expect(retireManagedSession).toHaveBeenCalledWith(expect.objectContaining({
+      managedRunId: "managed-run_a",
+      terminalSessionId: "old-sess",
+    }));
+  });
 });
 
 // ===========================================================================
@@ -2649,8 +3441,9 @@ describe("createTerminalSessionRegistry — cleanup PRESERVES a durable session 
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true } }));
     await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24, durable: true }, DURABLE_OWNER);
     await registry.cleanup();
+    fake.emitClose(0);
     expect(fake.requestFrames.filter((f) => f.method === "kill"), "a durable session's tmux must NOT be killed on a graceful cleanup").toHaveLength(0);
-    expect(store.remove, "the durable descriptor must be PRESERVED on cleanup (recover-on-boot needs it)").not.toHaveBeenCalled();
+    expect(store.remove, "the durable descriptor must be PRESERVED after the worker closes (recover-on-boot needs it)").not.toHaveBeenCalled();
   });
 
   it("a graceful cleanup STILL evicts a non-durable session (kill frame sent) — floor unchanged", async () => {

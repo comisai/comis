@@ -67,8 +67,10 @@ Message lifecycle, session management, subagent lifecycle, compaction, context e
 
 | Event Name | Key Payload Fields |
 |------------|-------------------|
-| `announcement:dead_lettered` | runId, channelType, reason, timestamp |
+| `announcement:dead_lettered` | runId, sessionKey, channelType, reason, timestamp |
 | `announcement:dead_letter_delivered` | runId, channelType, attemptCount, timestamp |
+| `announcement:quarantine_pending` | pendingCount, activeRecoveryCount, timestamp |
+| `announcement:quarantine_read_failed` | timestamp |
 | `compaction:started` | agentId, sessionKey, timestamp |
 | `compaction:recommended` | agentId, sessionKey, contextPercent, contextTokens, contextWindow, timestamp |
 | `compaction:flush` | sessionKey, memoriesWritten, trigger, success, failureReason?, timestamp |
@@ -138,8 +140,6 @@ Skill lifecycle, tool execution, audit logging, observability (tokens and latenc
 | `graph:repaired` | pattern, nodeCount, capabilityClass, agentId, sessionKey, timestamp |
 | `graph:synthesized_from_intent` | pattern, nodeCount, agentId, sessionKey, timestamp |
 | `subagent:budget_exceeded` | graphId, nodeId, agentId, tokenBudget, tokensUsed, timestamp |
-| `subagent:delivery_retried` | runId, channelType, attempt, transient, timestamp |
-| `subagent:delivery_deadlettered` | runId, channelType, attempt, transient, timestamp |
 | `subagent:steered` | runId, agentId, mode, timestamp |
 | `subagent:killed` | runId, agentId, sessionKey, killedBy, runtimeMs, idleMs, thresholdMs, timestamp |
 | `memory:review_completed` | agentId, sessionsReviewed, memoriesExtracted, duplicatesSkipped, durationMs, timestamp |
@@ -200,14 +200,11 @@ See [Execution Graphs: Small-model authoring](/agents/execution-graphs#small-mod
 
 **Attributed sub-agent kills:** `subagent:killed` fires at the runner's kill chokepoint for every force-killed sub-agent run, naming who initiated it via the closed `killedBy` union (`parent` | `health_monitor` | `operator` | `system`). A daemon health-monitor stuck-kill carries the `idleMs`/`thresholdMs` telemetry; the free-text kill reason never rides the bus (it stays on the run's failure record and the WARN log). `sessionKey` is the killed child's key, so the trajectory record lands in the child's own file and `comis explain` on the child yields the `subagent_stuck_killed` verdict.
 
-**Self-healing completion delivery:** `subagent:delivery_retried` and `subagent:delivery_deadlettered` track the retry/dead-letter routing when a sub-agent completion delivery falls back to a direct channel send and that send fails. Like `subagent:budget_exceeded`, both payloads are counts and ids only -- never the announcement text, the sub-agent output, or the error string.
-
-- `subagent:delivery_retried` fires once **per retry** of a *transient* delivery failure. `runId` is the sub-agent run, `channelType` is the target channel, `attempt` is the 1-based retry number, and `transient` is always `true` (only transient failures are retried).
-- `subagent:delivery_deadlettered` fires when a delivery is finally **dead-lettered** -- either after exhausting `security.agentToAgent.delivery.maxRetries` retries for a transient failure, or immediately for a permanent one. `attempt` is the number of retries that were exhausted (`0` for an immediate permanent dead-letter), and `transient` records whether the dead-letter followed an exhausted transient retry (`true`) or a permanent failure (`false`).
+**Completion delivery recovery:** `announcement:dead_lettered` fires after a failed completion or parent-decision fallback is durably retained. Its `sessionKey` attributes the degradation to `comis explain`, while `reason` distinguishes a failed delivery from a reserved parent decision. `announcement:quarantine_pending` reports both the daemon-wide operator-pending count consumed by `comis system-health` and the entries still eligible for automatic recovery; `announcement:quarantine_read_failed` says that standing count is unknown. `announcement:dead_letter_delivered` closes a successfully recovered delivery. These payloads carry ids, counts, closed reasons, and channel labels only -- never announcement text, child output, or an error string.
 
 **Mid-flight steering:** `subagent:steered` fires when [`subagent.steer`](/reference/json-rpc#subagent-steer) **injects** a steering message into a running child -- i.e. only when [`security.agentToAgent.steerInject`](/reference/config-yaml#security) is `true` (default `false`); the flag-off kill+respawn path does not emit it. Like the other `subagent:*` events, the payload is counts/ids/mode only -- `runId` is the steered run (the work is preserved; the same run continues), `agentId` is the owning agent, and `mode` is the closed union `"steer" | "followup"` recording which path landed the inject (`steer` when the child was streaming, `followup` when it was idle). The steering message body is **never** included -- no `message`, `text`, or task string is ever on the bus.
 
-See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-delivery-retries) for the transient/permanent classification and the backoff schedule.
+See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-delivery-retries) for the durable recovery and quarantine rules.
 
 **Sandbox no-downgrade refusal:** `security:sandbox_downgrade_refused` fires when the fail-closed [no-downgrade invariant](/security/threat-model) refuses a sub-agent spawn because the child's resolved sandbox posture would be less confined than its spawner's. `parentAgentId`/`childAgentId` are agent ids; `violatedDimensions` lists the offending dimensions (`exec` / `filesystem` / `network` / `uid`); `parentPosture` and `childPosture` carry each dimension as a closed enum **label** (e.g. exec `always`/`never`). The payload is enum labels and ids only -- never filesystem paths, network hosts, uid numbers, or any credential value, so it does not leak the operator's sandbox topology. Gated by [`security.agentToAgent.sandboxNoDowngrade`](/reference/config-yaml) (default on).
 

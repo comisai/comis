@@ -436,6 +436,10 @@ export interface ReadResult {
   rows: number;
   alt: boolean;
   alive: boolean;
+  /** The driven process exit code, present when the backend reported one. */
+  exitCode?: number;
+  /** Bounded raw terminal tail retained only after exit for failure diagnosis. */
+  exitTail?: string;
   /** The screen-diff vs the previous read (changed flag + changed-row range). */
   diff?: SnapshotDiff;
 }
@@ -470,7 +474,12 @@ export interface ReadResultContext {
   rows: number;
   /** Whether the backend is still alive. */
   alive: boolean;
+  /** The driven process exit code, when known. */
+  exitCode?: number;
 }
+
+/** The exit-only raw evidence ceiling. The tool layer cleans, redacts, and wraps it. */
+const EXIT_RING_TAIL_CHARS = 8192;
 
 /**
  * Assemble the worker's `read` reply from an emulator snapshot + the session
@@ -495,6 +504,12 @@ export function buildReadResult(
     rows: snap?.rows ?? ctx.rows,
     alt: snap?.alt ?? false,
     alive: ctx.alive,
+    ...(ctx.alive ? {} : {
+      ...(ctx.exitCode === undefined ? {} : { exitCode: ctx.exitCode }),
+      ...(ctx.ring.length === 0
+        ? {}
+        : { exitTail: ctx.ring.length > EXIT_RING_TAIL_CHARS ? ctx.ring.slice(-EXIT_RING_TAIL_CHARS) : ctx.ring }),
+    }),
   };
 }
 

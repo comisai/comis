@@ -34,7 +34,9 @@ The public repo shows no build pre-history. Never add (AGENTS.md §2.12): proces
 
 ## Project
 
-Comis is a security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo, 16 packages, hexagonal architecture (ports + adapters). Node.js >= 22, Linux-only.
+Comis is a security-first AI agent platform connecting agents to chat channels.
+It is a TypeScript monorepo with hexagonal architecture (ports + adapters). The
+current package inventory lives in `docs/developer-guide/packages.mdx`.
 
 ## Build & Test
 
@@ -68,7 +70,11 @@ pnpm test:cleanup               # clean test artifacts
 
 Vitest aliases `@comis/*` → `packages/*/dist/index.js` for integration tests — use bare-package imports, never `../packages/*/src/*`. **Stale `dist/` silently masks `src/` changes**: if a test passes after editing only `src/`, you forgot `pnpm build`.
 
-Primary validation: **`pnpm validate`** = `docs:check && build:clean && cycles && cycles:refs && lint:security && test:coverage`. This is the local mirror of CI's deterministic, cross-platform gates — run it before pushing. It deliberately uses **`build:clean`** (not incremental `build`) and **`test:coverage`** (not bare `test`) because those are exactly the gaps that let the #133 build-cycle + coverage cascade reach `main`: a stale `dist/` hides a workspace-dependency cycle, and the per-package coverage floors are CI-only unless coverage actually runs. **`docs:check`** runs first (cheap, no build needed) and compiles every `docs/**/*.mdx` through the MDX compiler — the docs are otherwise outside every gate (build/cycles/lint/coverage all scope to `packages/*`), so a bare `<`/`{` in prose used to fail only server-side at the Mintlify deploy. It also runs as its own `ci.yml` step since the pre-push hook can be skipped with `--no-verify` (which the hook itself suggests for docs-only pushes).
+Primary validation is **`pnpm validate`**; the root `package.json` owns the exact
+gate chain. It is the local mirror of CI's deterministic, cross-platform gates
+and includes documentation compilation, capability-protocol drift detection, a
+clean build, both cycle checks, security lint, and coverage. Run it before
+pushing.
 
 A **pre-push git hook** (`.githooks/pre-push`, auto-installed by the `prepare` script via `git config core.hooksPath .githooks`) runs `pnpm validate` and blocks the push on failure. Bypass a single push with `git push --no-verify`. The integration/E2E/tarball/audit tiers are NOT in the hook (they need Linux + ffmpeg/bubblewrap) — run `pnpm validate:full` on Linux or rely on CI.
 
@@ -213,32 +219,9 @@ git branch -D worktree-<name>
 
 ## Releases
 
-Steps to ship `vX.Y.Z`:
-
-1. **Bump all 16 `packages/*/package.json` to `X.Y.Z`** — they must move together. The umbrella `comisai` package (in `packages/comis/`) bundles the others, so version drift between them surfaces at publish time, not in local builds.
-
-2. **Sweep for version pins.** The docs no longer pin release versions (de-pinned in the accuracy-first docs rewrite), so as of v1.0.54 this sweep should hit only the 16 `packages/*/package.json` — but run it every bump as the guard against a pin creeping back:
-   ```bash
-   grep -rn '<old-version>' --include='*.json' --include='*.mdx' --include='*.md' . \
-     | grep -v node_modules | grep -v 'dist/' | grep -v package-lock | grep -v CHANGELOG
-   ```
-   `docs/operations/docker.mdx` mentions a version illustratively (`pushing vX.Y.Z produces …`) and is **not** bumped per release.
-
-3. **Validate:** `pnpm validate` — clean build, cycles (madge + project-reference), lint:security, and coverage must all pass before the bump commit. (Skipping the cycles step once let a release ship with a missing `@comis/core` dep in `packages/web/package.json` and a latent 17-cycle backlog go unnoticed for days.) For the release, also run `pnpm validate:full` on Linux to exercise the integration + tarball tiers.
-
-4. **Commit, push, tag:**
-   ```bash
-   git commit -m "chore(release): X.Y.Z"
-   git push origin main
-   gh release create vX.Y.Z --title vX.Y.Z --notes "<notes>"
-   ```
-   `gh release create` needs a tag that already exists, and it rejects an abbreviated SHA for `--target` — create and push the tag first (`git tag vX.Y.Z <full-sha> && git push origin vX.Y.Z`), then `gh release create vX.Y.Z --verify-tag`. The `vX.Y.Z` tag triggers three workflows in `.github/workflows/`:
-   - `npm-publish.yml` — waits for `ci.yml`'s run on the tagged commit to conclude **success**, then `pnpm build:clean` + `pnpm smoke:tarball` + `pnpm publish -r --provenance` (sigstore attestation via GitHub OIDC). Runs `packages/comis/scripts/prepack.js`, which bundles `@comis/*` into `node_modules/@comis/` for inclusion in the tarball. It deliberately does **not** re-run the gate suite: `ci.yml` already ran it for this commit, sharded and parallel. It used to call `pnpm validate:full` here, which re-ran everything serially — 48m57s of v1.0.56's 51-minute publish, proving nothing new.
-   - `docker-release.yml`, `dockerhub-release.yml` — multi-arch images (`linux/amd64` + `linux/arm64`), both `default` and `slim` variants. arm64 builds on a native runner (not QEMU).
-
-   **`dockerhub-release.yml` also creates the GitHub release** (its `github-release` job, after polling `npm-publish.yml` and `docker-release.yml` for success). So a release you create by hand and that job's step are two paths to the same artifact — and that job's wait is a race worth knowing about: its budget must exceed the whole publish run, not just the publish step. A 30-minute budget expired 2m38s early on v1.0.56 and failed the workflow (images and npm were fine; only the release-creation step was skipped, and only harmlessly because the release already existed by hand). `test/architecture/release-pipeline-gate.test.ts` holds both the no-duplicate-gate and minimum-budget invariants.
-
-   After the runs complete, verify the publish actually landed: `npm view comisai dist-tags` must show the new version (the npm job has silently drifted before).
+`AGENTS.md` §11 owns the release procedure, including package-version alignment,
+validation, tag-triggered publishing, and protocol-bundle verification. The
+workflow files under `.github/workflows/` are the executable release topology.
 
 ### Supply-chain invariants (do not regress)
 

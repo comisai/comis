@@ -103,6 +103,10 @@ const VERB_FORMS: ReadonlySet<string> = new Set([
   // Core action verbs (with common inflections — s, es, ed, ing):
   "return","returns","returned","returning",
   "reject","rejects","rejected","rejecting",
+  // "refuse" is how this codebase names a deliberate, principled decline —
+  // distinct from a validation reject. 85 descriptions already used it while
+  // the vocabulary did not, so they passed only on an incidental second verb.
+  "refuse","refuses","refused","refusing",
   "neutralize","neutralizes","neutralized","neutralizing",
   "apply","applies","applied","applying",
   "dispatch","dispatches","dispatched","dispatching",

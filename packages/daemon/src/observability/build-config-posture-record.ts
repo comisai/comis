@@ -78,6 +78,49 @@ export function anyAgentExecSandboxDisabled(
   return Object.values(agents).some((agent) => agent.skills?.execSandbox?.enabled === "never");
 }
 
+/** The four relaxed-sandbox posture flags a boot snapshot must carry. */
+export interface SandboxRelaxations {
+  sandboxNoDowngradeDisabled: boolean;
+  browserNoSandbox: boolean;
+  execSandboxDisabled: boolean;
+  terminalUnsafeDisableSandbox: boolean;
+}
+
+/**
+ * Derive every relaxed-sandbox posture flag in one pass — the agent-to-agent
+ * no-downgrade opt-out, the Chromium sandbox opt-out, the ordinary-exec jail
+ * opt-out, and the terminal-driver bwrap opt-out. Each is a RELAXED security
+ * default that must SURFACE in the boot posture snapshot rather than stay
+ * silent. Booleans only — never agent ids or config bodies. Lives here (not
+ * inline in daemon.ts) to keep daemon.ts under its 3000-line cap.
+ */
+export function collectSandboxRelaxations(
+  config: Readonly<{
+    security: { agentToAgent: { sandboxNoDowngrade?: boolean } };
+    browser?: { noSandbox?: boolean };
+    agents: Readonly<
+      Record<
+        string,
+        {
+          skills?: {
+            execSandbox?: { enabled?: "always" | "never" };
+            terminal?: { unsafeDisableSandbox?: boolean };
+          };
+        }
+      >
+    >;
+  }>,
+): SandboxRelaxations {
+  return {
+    // The typed field defaults to true (schema-security.ts); === false is the relaxation.
+    sandboxNoDowngradeDisabled: config.security.agentToAgent.sandboxNoDowngrade === false,
+    // The browser tool processes untrusted web content.
+    browserNoSandbox: config.browser?.noSandbox === true,
+    execSandboxDisabled: anyAgentExecSandboxDisabled(config.agents),
+    terminalUnsafeDisableSandbox: anyAgentTerminalUnsafeDisableSandbox(config.agents),
+  };
+}
+
 // isLoopbackHost moved to @comis/core (security/loopback-host) so the gateway's
 // boot log shares the SAME TLS-off-is-benign-on-loopback judgment as this
 // posture record and the gateway-exposure security check. Re-exported so the

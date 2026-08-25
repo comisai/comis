@@ -24,13 +24,13 @@ if ! rig_is_local; then
   VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
 fi
 
-# /root — ALL driver/oracle helpers, pushed FIRST (the token auto-fetch below uses rig-token.mjs).
+# $KIT_DIR — ALL driver/oracle helpers, pushed FIRST (the token auto-fetch below uses rig-token.mjs).
 # GLOB every *.mjs + the box-run *.sh (a hardcoded list silently DROPPED new helpers —
 # reflect-run.mjs/seed.mjs didn't deploy; a glob means a new helper auto-deploys, no list to
 # maintain). _rig.mjs rides the same glob, so the `./_rig.mjs` imports resolve on the box exactly
 # like they do locally; config.example.yaml ships for init-config.mjs (the fresh-box bootstrap).
 # LOCAL-only scripts (the deploy-*/install-* family, run-linux-tests, verify-build, rig-doctor, and
-# this transport helper) are excluded from the /root push. A tar stream works for both a direct-root
+# this transport helper) are excluded from the remote kit push. A tar stream works for both a direct-root
 # SSH target and an unprivileged target using REMOTE_SUDO=1; no protected staging path is needed.
 if rig_is_local; then
   echo "local rig — kit push skipped (the helpers ARE $HERE); rendering $RIG_ENV only"
@@ -44,7 +44,8 @@ else
   done
   relative_files=()
   for file in "${box_files[@]}"; do relative_files+=("${file#"$HERE/"}"); done
-  COPYFILE_DISABLE=1 tar --no-xattrs -C "$HERE" -cf - "${relative_files[@]}" | remote_root "tar -xf - -C /root"
+  COPYFILE_DISABLE=1 tar --no-xattrs -C "$HERE" -cf - "${relative_files[@]}" |
+    remote_root "mkdir -p '$KIT_DIR' && tar -xf - -C '$KIT_DIR'"
 fi
 
 # GWTOKEN auto-fetch — when .live-env doesn't carry it, resolve it FROM THE BOX so the rendered
@@ -110,6 +111,11 @@ export GW_PORT="\${GW_PORT:-$GW_PORT}"
 export COMIS_TRAJECTORY_DIR="\${COMIS_TRAJECTORY_DIR:-${COMIS_TRAJECTORY_DIR:-}}"
 export CHATID="\${CHATID:-$CHATID}"
 export EMU_DIR="\${EMU_DIR:-$EMU_DIR}"
+export KIT_DIR="\${KIT_DIR:-$KIT_DIR}"
+export RIG_ENV="\${RIG_ENV:-$RIG_ENV}"
+export EMU_JSON="\${EMU_JSON:-$EMU_JSON}"
+export EMU_LOG="\${EMU_LOG:-$EMU_LOG}"
+export EMU_TMUX_SESSION="\${EMU_TMUX_SESSION:-$EMU_TMUX_SESSION}"
 export GWTOKEN="\${GWTOKEN:-${rendered_gateway_token:-}}"
 EOF
 

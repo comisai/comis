@@ -101,6 +101,7 @@ describe("setupShutdown", () => {
     const gatewayHandle = { stop: vi.fn(async () => {}) } as any;
 
     const deps = createMinimalDeps({
+      closeAnnouncementAdmission: vi.fn(),
       ownedCronSchedulers: new Map([["agent-1", cronScheduler as any]]),
       resetSchedulers: new Map([["agent-1", resetScheduler as any]]),
       browserServices: new Map([["agent-1", browserService as any]]),
@@ -150,6 +151,7 @@ describe("setupShutdown", () => {
 
     // Verify key components were stopped
     expect(deps.subAgentRunner.shutdown).toHaveBeenCalled();
+    expect(deps.closeAnnouncementAdmission).toHaveBeenCalledOnce();
     expect(cronScheduler.closeAdmission).toHaveBeenCalled();
     expect(resetScheduler.stop).toHaveBeenCalled();
     expect(browserService.stop).toHaveBeenCalled();
@@ -647,6 +649,26 @@ describe("setupShutdown", () => {
     expect(gatewayEntry).toBeDefined();
     const minOrder = Math.min(...infoArgs.map((args: any[]) => args[0].shutdownOrder));
     expect(gatewayEntry![0].shutdownOrder).toBe(minOrder);
+  });
+
+  it("stops capability services before closing their shared database", async () => {
+    const callOrder: string[] = [];
+    const capabilityServicesShutdown = vi.fn(async () => {
+      callOrder.push("capability-services");
+      return ok(undefined);
+    });
+    const db = {
+      pragma: vi.fn(),
+      close: vi.fn(() => callOrder.push("memory-database")),
+    };
+    const deps = createMinimalDeps({ capabilityServicesShutdown, db } as any);
+
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
+
+    expect(capabilityServicesShutdown).toHaveBeenCalledOnce();
+    expect(callOrder.indexOf("capability-services")).toBeLessThan(callOrder.indexOf("memory-database"));
   });
 
   // -------------------------------------------------------------------------

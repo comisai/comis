@@ -54,6 +54,7 @@ export interface SetupBackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
   getExecutor: (agentId: string) => AgentExecutor;
   assembleToolsForAgent: NonNullable<BackgroundCompletionRunnerDeps["assembleToolsForAgent"]>;
+  resolveWorkspacePolicy: BackgroundCompletionRunnerDeps["resolveWorkspacePolicy"];
   adaptersByType: ReadonlyMap<string, ChannelPort>;
   deliveryService: DeliveryService;
   sessionStore: RunnerSessionStore;
@@ -317,6 +318,7 @@ export function setupBackgroundCompletionRunner(
     eventBus: deps.eventBus,
     getExecutor: deps.getExecutor,
     assembleToolsForAgent: deps.assembleToolsForAgent,
+    resolveWorkspacePolicy: deps.resolveWorkspacePolicy,
     sessionStore: deps.sessionStore,
     taskManager: deps.taskManager,
     recoverFinalizedResult: async ({ agentId, sessionKey, journalKey }) => {

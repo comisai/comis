@@ -1,153 +1,67 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Durable retry and uncertainty quarantine for failed announcements. */
 
-import { randomUUID } from "node:crypto";
-import type { TypedEventBus, OutwardSendLedgerPort, OutwardSendRecord } from "@comis/core";
-import { emitObservationalEventSafely, systemNowMs } from "@comis/core";
-import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import type {
+  AnnouncementDeadLetterEntryInput,
+  AnnouncementDeadLetterAttachmentSnapshot,
+  AnnouncementDeadLetterAttachmentSource,
+  AnnouncementDeadLetterQueuePort,
+  AnnouncementParentDecisionReservation,
+} from "@comis/core";
 import {
-  createAnnouncementOperationDigests,
-  type AnnouncementDeliveryOptions,
-  type AnnouncementPlatformSendOutcome,
-} from "./announcement-outward-operation.js";
+  emitObservationalEventSafely,
+  systemNowMs,
+} from "@comis/core";
+import { err, fromPromise, ok, type Result } from "@comis/shared";
 import {
   createParentDecisionReservationStore,
-  isParentDecisionReservation,
-  MalformedDeadLetterFileError,
-  readDeadLetterEntries,
-  writeDeadLetterEntries,
-  type ChannelType,
+  isDeadLetterSnapshotCapacityError,
+  reservedDeadLetterSnapshotBytes,
   type DeadLetterEntry,
-  type DeadLetterWriteOperations,
-  type ParentDecisionReservation,
-  type ParentDecisionReservationRecord,
+  type StoredDeadLetterEntry,
 } from "./announcement-dead-letter-file.js";
+import {
+} from "./announcement-dead-letter-invalid.js";
+import {
+  createAnnouncementTerminalDecisionStore,
+  type AnnouncementTerminalDecision,
+} from "./announcement-dead-letter-terminal-decision.js";
+import {
+  announcementRecoveryKey,
+} from "./announcement-dead-letter-identity.js";
+import type {
+  AnnouncementDeadLetterQueueOptions,
+  PreparedRecoveryAttachment,
+} from "./announcement-dead-letter-types.js";
+import { createProducerLifecycle } from "./announcement-dead-letter-producer.js";
+import { createGovernedDrainStage } from "./announcement-dead-letter-drain-governed.js";
+import { createDecisionStage } from "./announcement-dead-letter-decisions.js";
+import { createDeliveryAttemptStage } from "./announcement-dead-letter-attempts.js";
+import { createSerialDrainStage } from "./announcement-dead-letter-drain-serial.js";
+import { createDecisionReservationStage } from "./announcement-dead-letter-reservations.js";
+import { createProducerPromotionStage } from "./announcement-dead-letter-promotion.js";
+import { createStorageStage } from "./announcement-dead-letter-storage.js";
+import {
+  type DeadLetterQueueContext,
+  type DeadLetterRecordStore,
+} from "./announcement-dead-letter-context.js";
 export { isAnnouncementChannelType } from "./announcement-dead-letter-file.js";
+export type { AnnouncementLogger } from "./announcement-dead-letter-types.js";
 export type {
   ChannelType,
   DeadLetterEntry,
   ParentDecisionReservation,
 } from "./announcement-dead-letter-file.js";
-import { projectQuarantined, releaseQuarantined } from "./announcement-dead-letter-quarantine.js";
-import type {
-  QuarantinedAnnouncement,
-  QuarantineReleaseOutcome,
-} from "./announcement-dead-letter-quarantine.js";
+import { releaseQuarantined } from "./announcement-dead-letter-quarantine.js";
 export type {
   QuarantinedAnnouncement,
   QuarantineReleaseOutcome,
 } from "./announcement-dead-letter-quarantine.js";
 
-/** Minimal structural logger accepted from the daemon composition root. */
-export interface AnnouncementLogger {
-  info(obj: Record<string, unknown>, msg: string): void;
-  warn(obj: Record<string, unknown>, msg: string): void;
-  error(obj: Record<string, unknown>, msg: string): void;
-  debug(obj: Record<string, unknown>, msg: string): void;
-}
+export type AnnouncementDeadLetterQueue = AnnouncementDeadLetterQueuePort;
 
-/** Dead-letter queue interface for announcement retry management. */
-export interface AnnouncementDeadLetterQueue {
-  /**
-   * Persist a failed announcement to the dead-letter queue.
-   * Resolves only after the queue state is durable. A failed persistence never
-   * mutates the in-memory queue and never emits a queued event.
-   */
-  enqueue(
-    entry: Omit<DeadLetterEntry, "id" | "lastAttemptAt">,
-  ): Promise<Result<void, Error>>;
-  reserveDecision(
-    entry: ParentDecisionReservation,
-  ): Promise<Result<{ created: boolean }, Error>>;
-  lookupDecision(
-    idempotencyKey: string,
-  ): Promise<Result<ParentDecisionReservation | undefined, Error>>;
-  resolveDecision(
-    idempotencyKey: string,
-    outcome: "receipt_committed" | "no_reply",
-  ): Promise<Result<boolean, Error>>;
-  /**
-   * Process queued entries via the provided sendToChannel callback. Ungoverned
-   * entries are retried. Governed unresolved/ambiguous entries remain parked
-   * for operator review and never reach the callback; a committed receipt
-   * removes the entry without sending.
-   *
-   * `onDelivered` (optional) is invoked with the entry's
-   * `idempotencyKey` after a SUCCESSFUL re-delivery, so the caller can record
-   * the recovered key in the shared deliveredKeys set (deliveryDedup.mark /
-   * batcher.markDelivered). Without it, a DLQ-recovered announcement is never
-   * marked delivered and a later sweep double-notifies the same run. Only fired
-   * for keyed entries on success; never on failure (the key must stay open).
-   */
-  drain(
-    sendToChannel: (type: ChannelType, id: string, text: string, options?: AnnouncementDeliveryOptions) => Promise<boolean>,
-    onDelivered?: (idempotencyKey: string) => void,
-  ): Promise<void>;
-  /** Return the current number of entries in the queue. */
-  size(): number;
-  /**
-   * Every parked announcement, content-free, for operator review. Ordered
-   * oldest-first so the longest-stuck item leads.
-   *
-   * ASYNC because the queue loads from disk lazily: a freshly-started daemon
-   * has not drained yet, so a synchronous read of the in-memory lists reports
-   * an empty queue while the JSONL holds a stuck item — precisely the state an
-   * operator runs this to discover. It loads first, then projects.
-   */
-  listQuarantined(): Promise<readonly QuarantinedAnnouncement[]>;
-  /**
-   * Record an operator's decision about one parked announcement and drop it.
-   *
-   * `delivered` — the reader already has it (verified out of band); `discarded`
-   * — it is not worth sending. Both remove the item: the queue's job is to hold
-   * an undecided announcement, and a decided one is finished either way. The
-   * distinction rides the audit trail, not the queue.
-   *
-   * Resolves `false` for an unknown id rather than failing — releasing the same
-   * id twice is an operator retrying, not an error. Persists before mutating
-   * the in-memory state, so a failed write leaves the item parked.
-   */
-  release(
-    id: string,
-    outcome: QuarantineReleaseOutcome,
-  ): Promise<Result<boolean, Error>>;
-}
-
-/** Configuration options for the dead-letter queue factory. */
-interface AnnouncementDeadLetterQueueOptions {
-  /** JSONL file path (already safePath'd by caller). */
-  filePath: string;
-  /** Maximum retry attempts before dropping an entry (default: 5). */
-  maxRetries?: number;
-  /** Minimum interval between retry attempts in ms (default: 60_000). */
-  retryIntervalMs?: number;
-  /** Maximum age of an entry in ms before it is dropped (default: 3_600_000). */
-  maxAgeMs?: number;
-  /** Maximum number of entries in the queue (default: 100). */
-  maxEntries?: number;
-  /** Event bus for emitting dead-letter events. */
-  eventBus: TypedEventBus;
-  /** Optional logger for diagnostics. */
-  logger?: AnnouncementLogger;
-  /**
-   * The closed five-state outward-send uncertainty ledger. When present, every
-   * entry must carry its persisted `(agentId, rootRunId, stepIndex)` identity.
-   * A committed row with a receipt suppresses the send; all other retained
-   * states are blocked or parked. Only a definitive absent lookup may begin a
-   * new governed send. `undefined` means the drain uses the unledgered delivery
-   * path. Wired from the daemon.
-   */
-  outwardLedger?: OutwardSendLedgerPort;
-  /** Receipt-aware transport used only for a governed row with no ledger record. */
-  governedSendToChannel?: (
-    type: ChannelType,
-    id: string,
-    text: string,
-    options?: AnnouncementDeliveryOptions,
-  ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
-  fileOperations?: DeadLetterWriteOperations;
-}
 /** Create a JSONL-backed announcement dead-letter queue. */
+
 export function createAnnouncementDeadLetterQueue(
   opts: AnnouncementDeadLetterQueueOptions,
 ): AnnouncementDeadLetterQueue {
@@ -163,807 +77,625 @@ export function createAnnouncementDeadLetterQueue(
     logger,
     outwardLedger,
     governedSendToChannel,
+    receiptAwareSendToChannel,
+    prepareAttachment,
+    cleanupAttachment,
+    reconcileAttachments,
+    retirementProducerState,
     fileOperations,
   } = opts;
-  let entries: DeadLetterEntry[] = [];
-  let decisionReservations: ParentDecisionReservationRecord[] = [];
-  let loaded = false;
+  const store: DeadLetterRecordStore = {
+    entries: [],
+    decisionReservations: [],
+    producerReservations: [],
+    producerHandoffs: [],
+    invalidRecords: [],
+    terminalInvalidRecords: [],
+  };
+  const activeProducerKeys = new Set<string>();
+  const emittedAdmissionKeys = new Set<string>();
+  const terminalDecisionStore = createAnnouncementTerminalDecisionStore(filePath);
   let operationTail: Promise<void> = Promise.resolve();
+  let capacityVersion = 0;
+  const capacityWaiters = new Set<() => void>();
+  // Late-bound: every function member forwards at call time, so a stage can
+  // be constructed before the stages it calls into have been built.
+  const ctx: DeadLetterQueueContext = {
+    store,
+    maxRetries,
+    retryIntervalMs,
+    maxAgeMs,
+    maxEntries,
+    parentDecisionGraceMs,
+    filePath,
+    activeProducerKeys,
+    emittedAdmissionKeys,
+    opts,
+    eventBus,
+    governedSendToChannel,
+    receiptAwareSendToChannel,
+    prepareAttachment,
+    cleanupAttachment,
+    reconcileAttachments,
+    retirementProducerState,
+    terminalDecisionStore,
+    fileOperations,
+    ...(logger ? { logger } : {}),
+    ...(outwardLedger ? { outwardLedger } : {}),
+    serialize,
+    serializeStateChange,
+    signalCapacityChange: (...a: Parameters<DeadLetterQueueContext["signalCapacityChange"]>) => (signalCapacityChange as DeadLetterQueueContext["signalCapacityChange"])(...a),
+    waitForCapacity: (...a: Parameters<DeadLetterQueueContext["waitForCapacity"]>) => (waitForCapacity as DeadLetterQueueContext["waitForCapacity"])(...a),
+    admitWithBackpressure,
+    loadFromDisk: (...a: Parameters<DeadLetterQueueContext["loadFromDisk"]>) => (loadFromDisk as DeadLetterQueueContext["loadFromDisk"])(...a),
+    persist: (...a: Parameters<DeadLetterQueueContext["persist"]>) => (persist as DeadLetterQueueContext["persist"])(...a),
+    canPersistCounts: (...a: Parameters<DeadLetterQueueContext["canPersistCounts"]>) => (canPersistCounts as DeadLetterQueueContext["canPersistCounts"])(...a),
+    canPersistProducerOwnership: (...a: Parameters<DeadLetterQueueContext["canPersistProducerOwnership"]>) => (canPersistProducerOwnership as DeadLetterQueueContext["canPersistProducerOwnership"])(...a),
+    snapshotRecords: (...a: Parameters<DeadLetterQueueContext["snapshotRecords"]>) => (snapshotRecords as DeadLetterQueueContext["snapshotRecords"])(...a),
+    producerCapacityCount: (...a: Parameters<DeadLetterQueueContext["producerCapacityCount"]>) => (producerCapacityCount as DeadLetterQueueContext["producerCapacityCount"])(...a),
+    quarantineCapacityCount: (...a: Parameters<DeadLetterQueueContext["quarantineCapacityCount"]>) => (quarantineCapacityCount as DeadLetterQueueContext["quarantineCapacityCount"])(...a),
+    collectTerminalRetirementsDurably: (...a: Parameters<DeadLetterQueueContext["collectTerminalRetirementsDurably"]>) => (collectTerminalRetirementsDurably as DeadLetterQueueContext["collectTerminalRetirementsDurably"])(...a),
+    refreshTerminalInvalidRecords: (...a: Parameters<DeadLetterQueueContext["refreshTerminalInvalidRecords"]>) => (refreshTerminalInvalidRecords as DeadLetterQueueContext["refreshTerminalInvalidRecords"])(...a),
+    isSourceAttachment,
+    preparedSnapshot: (...a: Parameters<DeadLetterQueueContext["preparedSnapshot"]>) => (preparedSnapshot as DeadLetterQueueContext["preparedSnapshot"])(...a),
+    cleanupUnreferencedSnapshots: (...a: Parameters<DeadLetterQueueContext["cleanupUnreferencedSnapshots"]>) => (cleanupUnreferencedSnapshots as DeadLetterQueueContext["cleanupUnreferencedSnapshots"])(...a),
+    emitAdmission: (...a: Parameters<DeadLetterQueueContext["emitAdmission"]>) => (emitAdmission as DeadLetterQueueContext["emitAdmission"])(...a),
+    emitDelivered: (...a: Parameters<DeadLetterQueueContext["emitDelivered"]>) => (emitDelivered as DeadLetterQueueContext["emitDelivered"])(...a),
+    emitLedgerTransition: (...a: Parameters<DeadLetterQueueContext["emitLedgerTransition"]>) => (emitLedgerTransition as DeadLetterQueueContext["emitLedgerTransition"])(...a),
+    logLedgerFailure: (...a: Parameters<DeadLetterQueueContext["logLedgerFailure"]>) => (logLedgerFailure as DeadLetterQueueContext["logLedgerFailure"])(...a),
+    retainBlockedEntry: (...a: Parameters<DeadLetterQueueContext["retainBlockedEntry"]>) => (retainBlockedEntry as DeadLetterQueueContext["retainBlockedEntry"])(...a),
+    lookupTerminalDecision: (...a: Parameters<DeadLetterQueueContext["lookupTerminalDecision"]>) => (lookupTerminalDecision as DeadLetterQueueContext["lookupTerminalDecision"])(...a),
+    recordTerminalDecision: (...a: Parameters<DeadLetterQueueContext["recordTerminalDecision"]>) => (recordTerminalDecision as DeadLetterQueueContext["recordTerminalDecision"])(...a),
+    terminalizeOwner: (...a: Parameters<DeadLetterQueueContext["terminalizeOwner"]>) => (terminalizeOwner as DeadLetterQueueContext["terminalizeOwner"])(...a),
+    retainsCompletionKey: (...a: Parameters<DeadLetterQueueContext["retainsCompletionKey"]>) => (retainsCompletionKey as DeadLetterQueueContext["retainsCompletionKey"])(...a),
+    resolveDecisionDurably: (...a: Parameters<DeadLetterQueueContext["resolveDecisionDurably"]>) => (resolveDecisionDurably as DeadLetterQueueContext["resolveDecisionDurably"])(...a),
+    textChunkOwners: (...a: Parameters<DeadLetterQueueContext["textChunkOwners"]>) => (textChunkOwners as DeadLetterQueueContext["textChunkOwners"])(...a),
+    unresolvedChunkOperationId: (...a: Parameters<DeadLetterQueueContext["unresolvedChunkOperationId"]>) => (unresolvedChunkOperationId as DeadLetterQueueContext["unresolvedChunkOperationId"])(...a),
+    settleTextChunkRelease: (...a: Parameters<DeadLetterQueueContext["settleTextChunkRelease"]>) => (settleTextChunkRelease as DeadLetterQueueContext["settleTextChunkRelease"])(...a),
+    recordDrainingEntryTextChunks: (...a: Parameters<DeadLetterQueueContext["recordDrainingEntryTextChunks"]>) => (recordDrainingEntryTextChunks as DeadLetterQueueContext["recordDrainingEntryTextChunks"])(...a),
+    recoveryOptions: (...a: Parameters<DeadLetterQueueContext["recoveryOptions"]>) => (recoveryOptions as DeadLetterQueueContext["recoveryOptions"])(...a),
+    retryEntryFromReservation: (...a: Parameters<DeadLetterQueueContext["retryEntryFromReservation"]>) => (retryEntryFromReservation as DeadLetterQueueContext["retryEntryFromReservation"])(...a),
+    parkGovernedEntry: (...a: Parameters<DeadLetterQueueContext["parkGovernedEntry"]>) => (parkGovernedEntry as DeadLetterQueueContext["parkGovernedEntry"])(...a),
+    drainPreparedGovernedEntry: (...a: Parameters<DeadLetterQueueContext["drainPreparedGovernedEntry"]>) => (drainPreparedGovernedEntry as DeadLetterQueueContext["drainPreparedGovernedEntry"])(...a),
+    drainGovernedEntry: (...a: Parameters<DeadLetterQueueContext["drainGovernedEntry"]>) => (drainGovernedEntry as DeadLetterQueueContext["drainGovernedEntry"])(...a),
+    drainLedgerlessTextChunks: (...a: Parameters<DeadLetterQueueContext["drainLedgerlessTextChunks"]>) => (drainLedgerlessTextChunks as DeadLetterQueueContext["drainLedgerlessTextChunks"])(...a),
+    adjudicateReservations: (...a: Parameters<DeadLetterQueueContext["adjudicateReservations"]>) => (adjudicateReservations as DeadLetterQueueContext["adjudicateReservations"])(...a),
+    drainSerialized: (...a: Parameters<DeadLetterQueueContext["drainSerialized"]>) => (drainSerialized as DeadLetterQueueContext["drainSerialized"])(...a),
+    publicProducerReservation: (...a: Parameters<DeadLetterQueueContext["publicProducerReservation"]>) => (publicProducerReservation as DeadLetterQueueContext["publicProducerReservation"])(...a),
+    producerRecoveryAnnouncement: (...a: Parameters<DeadLetterQueueContext["producerRecoveryAnnouncement"]>) => (producerRecoveryAnnouncement as DeadLetterQueueContext["producerRecoveryAnnouncement"])(...a),
+    consumeProducerSlots: (...a: Parameters<DeadLetterQueueContext["consumeProducerSlots"]>) => (consumeProducerSlots as DeadLetterQueueContext["consumeProducerSlots"])(...a),
+    consumeProducerReservationsDurably: (keys) => consumeProducerReservationsDurably(keys),
+    promoteProducerReservations: () => promoteProducerReservations(),
+    recordProducerOutcomeDurably: (k, o) => recordProducerOutcomeDurably(k, o),
+    releaseProducerDurably: (k) => releaseProducerDurably(k),
+    removeProducerReservationDurably: (k) => removeProducerReservationDurably(k),
+    promoteProducerHandoffs: () => promoteProducerHandoffs(),
+    // Getter: the reservation store is built further down the factory, after
+    // this object already has to exist for the stages wired above it.
+    get decisionStore() { return decisionStore; },
+    prepareReservedAttachment,
+  };
   function serialize<T>(operation: () => Promise<T>): Promise<T> {
     const result = operationTail.then(operation, operation);
     operationTail = result.then(() => undefined, () => undefined);
     return result;
   }
-  async function loadFromDisk(): Promise<Result<void, Error>> {
-    if (loaded) return ok(undefined);
-    const read = await readDeadLetterEntries(filePath, logger);
-    if (read.ok) {
-      entries = read.value.filter((entry): entry is DeadLetterEntry =>
-        !isParentDecisionReservation(entry));
-      decisionReservations = read.value.filter(isParentDecisionReservation);
-      loaded = true;
-      logger?.debug(
-        { entryCount: entries.length + decisionReservations.length },
-        "Loaded dead-letter entries from disk",
-      );
-      return ok(undefined);
-    }
-    if (!(read.error instanceof MalformedDeadLetterFileError)) {
-      logger?.warn(
-        {
-          errorKind: "resource" as const,
-          hint: "restore dead-letter storage access before accepting or draining announcements",
-        },
-        "Failed to read dead-letter file",
-      );
-    }
-    return err(read.error);
+
+  function producerCapacityCount(): number {
+    return store.producerHandoffs.length + store.producerReservations.length;
   }
 
-  async function persist(
-    nextEntries: readonly DeadLetterEntry[],
-    nextReservations: readonly ParentDecisionReservationRecord[] = decisionReservations,
-  ): Promise<Result<void, Error>> {
-    const written = await writeDeadLetterEntries(
-      filePath,
-      [...nextEntries, ...nextReservations],
-      fileOperations,
-    );
-    if (written.ok) return written;
-    if (written.error.state === "snapshot_visible") {
-      entries = [...nextEntries];
-      decisionReservations = [...nextReservations];
+  function quarantineCapacityCount(): number {
+    return store.entries.length + store.decisionReservations.length + store.invalidRecords.length;
+  }
+
+  function snapshotRecords(): StoredDeadLetterEntry[] {
+    return [
+      ...store.entries,
+      ...store.decisionReservations,
+      ...store.producerReservations,
+      ...store.producerHandoffs,
+      ...store.invalidRecords,
+    ];
+  }
+
+  function signalCapacityChange(): void {
+    capacityVersion++;
+    for (const resolve of capacityWaiters) resolve();
+    capacityWaiters.clear();
+  }
+
+  async function serializeStateChange<T>(operation: () => Promise<T>): Promise<T> {
+    return serialize(async () => {
+      const beforeProducer = producerCapacityCount();
+      const beforeQuarantine = quarantineCapacityCount();
+      const beforeBytes = reservedDeadLetterSnapshotBytes(snapshotRecords());
+      const result = await operation();
+      const afterBytes = reservedDeadLetterSnapshotBytes(snapshotRecords());
+      if (
+        producerCapacityCount() < beforeProducer
+        || quarantineCapacityCount() < beforeQuarantine
+        || (beforeBytes.ok && afterBytes.ok && afterBytes.value < beforeBytes.value)
+      ) {
+        signalCapacityChange();
+        const collected = await collectTerminalRetirementsDurably();
+        if (!collected.ok) {
+          logger?.warn(
+            {
+              errorKind: "resource" as const,
+              hint: "restore terminal-decision storage; durable retirement intents remain queued",
+            },
+            "Announcement terminal retirement intents could not be collected",
+          );
+        }
+      }
+      return result;
+    });
+  }
+
+  function waitForCapacity(version: number, signal?: AbortSignal): Promise<boolean> {
+    if (capacityVersion !== version) return Promise.resolve(true);
+    if (signal?.aborted) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (retry: boolean): void => {
+        if (settled) return;
+        settled = true;
+        capacityWaiters.delete(wake);
+        signal?.removeEventListener("abort", abort);
+        resolve(retry);
+      };
+      const wake = (): void => finish(true);
+      const abort = (): void => finish(false);
+      capacityWaiters.add(wake);
+      signal?.addEventListener("abort", abort, { once: true });
+      if (capacityVersion !== version) {
+        finish(true);
+      } else if (signal?.aborted) {
+        finish(false);
+      }
+    });
+  }
+
+  async function admitWithBackpressure<T>(
+    operation: () => Promise<Result<T, Error>>,
+    signal?: AbortSignal,
+    retainOnCancellation?: () => Promise<Result<T, Error>>,
+  ): Promise<Result<T, Error>> {
+    while (true) {
+      const version = capacityVersion;
+      const result = await serializeStateChange(operation);
+      if (
+        result.ok
+        || !isDeadLetterSnapshotCapacityError(result.error)
+      ) {
+        return result;
+      }
+      if (!await waitForCapacity(version, signal)) {
+        return retainOnCancellation
+          ? serializeStateChange(retainOnCancellation)
+          : err(new Error("Dead-letter admission cancelled"));
+      }
     }
-    return err(written.error.error);
+  }
+
+  function emitAdmission(entry: DeadLetterEntry): void {
+    const key = announcementRecoveryKey(entry);
+    if (emittedAdmissionKeys.has(key)) return;
+    emittedAdmissionKeys.add(key);
+    emitObservationalEventSafely(
+      { eventBus, logger },
+      "announcement:dead_lettered",
+      {
+        runId: entry.runId,
+        sessionKey: entry.sessionKey,
+        channelType: entry.channelType,
+        reason: "delivery_failed",
+        timestamp: systemNowMs(),
+      },
+    );
+  }
+
+  const {
+    collectTerminalRetirementsDurably,
+    refreshTerminalInvalidRecords,
+    loadFromDisk,
+    persist,
+  } = createStorageStage(ctx);
+
+
+  function canPersistCounts(nextEntryCount: number, nextReservationCount: number): boolean {
+    const currentCount = store.entries.length + store.decisionReservations.length + store.invalidRecords.length;
+    const nextCount = nextEntryCount + nextReservationCount + store.invalidRecords.length;
+    if (nextCount <= maxEntries || nextCount <= currentCount) return true;
+    logger?.warn(
+      {
+        entryCount: currentCount,
+        maxEntries,
+        errorKind: "resource" as const,
+        hint: "release retained dead letters before admitting new completion operations; existing evidence remains intact",
+      },
+      "Dead-letter quarantine capacity exhausted",
+    );
+    return false;
+  }
+
+  function canPersistProducerOwnership(
+    nextProducerOwnershipCount: number,
+    consumedProducerKeys: ReadonlySet<string> = new Set(),
+  ): boolean {
+    const consumedReservationCount = store.producerReservations.filter((reservation) =>
+      consumedProducerKeys.has(reservation.runId)).length;
+    const nextCount = nextProducerOwnershipCount - consumedReservationCount;
+    const currentCount = producerCapacityCount();
+    if (nextCount <= maxEntries || nextCount <= currentCount) return true;
+    logger?.warn(
+      {
+        producerHandoffCount: store.producerHandoffs.length,
+        producerReservationCount: store.producerReservations.length,
+        maxEntries,
+        errorKind: "resource" as const,
+        hint: "allow retained announcements to drain before stopping additional completion producers",
+      },
+      "Announcement producer handoff capacity exhausted",
+    );
+    return false;
+  }
+
+
+  function isSourceAttachment(
+    attachment: AnnouncementDeadLetterEntryInput["attachment"],
+  ): attachment is AnnouncementDeadLetterAttachmentSource {
+    return attachment?.kind === "source";
+  }
+
+  function preparedSnapshot(
+    attachment: PreparedRecoveryAttachment,
+  ): AnnouncementDeadLetterAttachmentSnapshot {
+    return {
+      kind: "snapshot",
+      sourceAgentId: attachment.sourceAgentId,
+      sourcePath: attachment.sourcePath,
+      path: attachment.path,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      contentDigest: attachment.contentDigest,
+      sizeBytes: attachment.sizeBytes,
+    };
+  }
+
+  async function prepareReservedAttachment<T extends {
+    idempotencyKey: string;
+    attachment?: AnnouncementDeadLetterEntryInput["attachment"];
+  }>(
+    entry: T,
+    reusable: readonly AnnouncementParentDecisionReservation[] = [],
+  ): Promise<Result<{
+    entry: T;
+    cleanup?: () => Promise<Result<void, Error>>;
+  }, Error>> {
+    if (!isSourceAttachment(entry.attachment)) return ok({ entry });
+    const existing = reusable.find((reservation) =>
+      reservation.idempotencyKey === entry.idempotencyKey
+      && reservation.attachment?.kind === "snapshot");
+    if (existing?.attachment?.kind === "snapshot") {
+      return ok({ entry: { ...entry, attachment: existing.attachment } });
+    }
+    if (!prepareAttachment) {
+      return err(new Error("Completion attachment snapshot admission is unavailable"));
+    }
+    const prepared = await fromPromise(prepareAttachment(entry.attachment));
+    if (!prepared.ok) return prepared;
+    if (!prepared.value.ok) return prepared.value;
+    return ok({
+      entry: { ...entry, attachment: preparedSnapshot(prepared.value.value) },
+      cleanup: prepared.value.value.cleanup,
+    });
+  }
+
+  async function cleanupUnreferencedSnapshots(
+    candidates: readonly {
+      attachment: AnnouncementDeadLetterAttachmentSnapshot;
+      cleanup?: () => Promise<Result<void, Error>>;
+    }[],
+  ): Promise<void> {
+    const referencedPaths = new Set([
+      ...store.entries.flatMap((entry) =>
+        entry.attachment?.kind === "snapshot" ? [entry.attachment.path] : []),
+      ...store.decisionReservations.flatMap((reservation) =>
+        reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
+      ...store.producerReservations.flatMap((reservation) =>
+        reservation.attachment?.kind === "snapshot" ? [reservation.attachment.path] : []),
+      ...store.producerHandoffs.flatMap((handoff) => handoff.operations.flatMap((operation) =>
+        operation.attachment?.kind === "snapshot" ? [operation.attachment.path] : [])),
+    ]);
+    const cleanedPaths = new Set<string>();
+    for (const candidate of candidates) {
+      if (
+        referencedPaths.has(candidate.attachment.path)
+        || cleanedPaths.has(candidate.attachment.path)
+      ) continue;
+      const cleaned = candidate.cleanup
+        ? await candidate.cleanup()
+        : cleanupAttachment
+          ? await cleanupAttachment(candidate.attachment)
+          : ok(undefined);
+      cleanedPaths.add(candidate.attachment.path);
+      if (!cleaned.ok) {
+        logger?.warn(
+          {
+            errorKind: "resource" as const,
+            hint: "remove the stale completion snapshot and verify attachment storage permissions",
+          },
+          "Completion attachment snapshot cleanup failed",
+        );
+      }
+    }
   }
 
   const decisionStore = createParentDecisionReservationStore({
     load: loadFromDisk,
     hasDeliveryKey: (idempotencyKey) =>
-      entries.some((entry) => entry.idempotencyKey === idempotencyKey),
-    getReservations: () => decisionReservations,
-    persist: (nextReservations) => persist(entries, nextReservations),
+      store.entries.some((entry) =>
+        entry.idempotencyKey === idempotencyKey
+        || entry.completionKeys?.includes(idempotencyKey) === true),
+    getReservations: () => store.decisionReservations,
+    persist: (nextReservations, consumedProducerKeys) => persist(
+      store.entries,
+      nextReservations,
+      store.invalidRecords,
+      store.producerHandoffs,
+      store.producerReservations,
+      consumedProducerKeys,
+    ),
+    canPersistReservationCount: (count) => canPersistCounts(store.entries.length, count),
     replaceReservations: (nextReservations) => {
-      decisionReservations = [...nextReservations];
+      store.decisionReservations = [...nextReservations];
     },
     logger,
   });
 
-  interface GovernedEntryIdentity {
-    rootRunId: string;
-    stepIndex: number;
-    agentId: string;
-    runId: string;
-    sessionKey: string;
-    contentDigest: string;
-    operationFingerprint: string;
-  }
-  type LedgerTransition = "lookup" | "begin" | "mark_unknown" | "commit" | "park";
-  type LedgerOutcome = "blocked" | "in_flight" | "committed" | "failed" | "parked";
-  function emitLedgerTransition(
-    identity: Pick<GovernedEntryIdentity, "rootRunId" | "stepIndex" | "runId" | "sessionKey">,
-    transition: LedgerTransition,
-    outcome: LedgerOutcome,
-  ): void {
-    emitObservationalEventSafely(
-      { eventBus, logger },
-      "delivery:outward_ledger_transition",
-      {
-        rootRunId: identity.rootRunId,
-        runId: identity.runId,
-        stepIndex: identity.stepIndex,
-        transition,
-        outcome,
-        sessionKey: identity.sessionKey,
-        timestamp: systemNowMs(),
-      },
-    );
-  }
-  /** Ledger-failure conditions already reported, keyed by entry + message.
-   *
-   *  A retained entry is re-reached on EVERY drain, so re-logging its standing
-   *  condition at ERROR each pass turns one stuck entry into unbounded ERROR
-   *  volume and buries genuinely new failures. Report the transition INTO the
-   *  condition once; later passes stay at DEBUG. Keyed by the entry's unique id,
-   *  so a re-enqueued run is a different key and reports again. Bounded by a
-   *  wholesale reset rather than per-entry pruning: the worst case is one
-   *  duplicate ERROR after a reset, which is self-healing, whereas an unpruned
-   *  set would grow for the daemon's lifetime. */
-  const MAX_REPORTED_LEDGER_FAILURES = 512;
-  const reportedLedgerFailures = new Set<string>();
+  const {
+    quarantineClassification,
+    lookupTerminalDecision,
+    recordTerminalDecision,
+    retainsCompletionKey,
+    terminalizeOwner,
+    textChunkOwners,
+    unresolvedChunkOperationId,
+    settleTextChunkRelease,
+    resolveDecisionDurably,
+  } = createDecisionStage(ctx);
 
-  function logLedgerFailure(
-    entry: DeadLetterEntry,
-    transition: string,
-    errorKind: "dependency" | "precondition" | "validation",
-    hint: string,
-    message: string,
-  ): void {
-    const conditionKey = `${entry.id}\u0000${message}`;
-    if (reportedLedgerFailures.has(conditionKey)) {
-      logger?.debug(
-        { runId: entry.runId, transition, step: "dead-letter-outward-ledger", alreadyReported: true },
-        message,
-      );
-      return;
-    }
-    if (reportedLedgerFailures.size >= MAX_REPORTED_LEDGER_FAILURES) reportedLedgerFailures.clear();
-    reportedLedgerFailures.add(conditionKey);
-    logger?.error(
-      {
-        runId: entry.runId,
-        ...(entry.rootRunId !== undefined ? { rootRunId: entry.rootRunId } : {}),
-        ...(entry.stepIndex !== undefined ? { stepIndex: entry.stepIndex } : {}),
-        transition,
-        step: "dead-letter-outward-ledger",
-        errorKind,
-        hint,
-      },
-      message,
-    );
-  }
 
-  function retainBlockedEntry(entry: DeadLetterEntry, reason: string): void {
-    entry.lastAttemptAt = systemNowMs();
-    entry.lastError = reason;
-  }
+  const {
+    emitLedgerTransition,
+    logLedgerFailure,
+    retainBlockedEntry,
+    parkGovernedEntry,
+    drainPreparedGovernedEntry,
+    drainGovernedEntry,
+    emitDelivered,
+  } = createGovernedDrainStage(ctx);
 
-  function resolveGovernedIdentity(
-    entry: DeadLetterEntry,
-  ): Result<
-    GovernedEntryIdentity,
-    "identity_incomplete" | "operation_validation_blocked"
-  > {
-    if (
-      typeof entry.rootRunId !== "string"
-      || entry.rootRunId.length === 0
-      || !Number.isSafeInteger(entry.stepIndex)
-      || entry.stepIndex === undefined
-      || entry.stepIndex < 0
-      || typeof entry.agentId !== "string"
-      || entry.agentId.length === 0
-    ) {
-      return err("identity_incomplete" as const);
-    }
 
-    const digests = createAnnouncementOperationDigests({
-      channelId: entry.channelId,
-      channelType: entry.channelType,
-      text: entry.announcementText,
-      ...(entry.threadId || entry.extra ? {
-        options: {
-          ...(entry.threadId ? { threadId: entry.threadId } : {}),
-          ...(entry.extra ? { extra: entry.extra } : {}),
-        },
-      } : {}),
-    });
-    if (!digests.ok) return err("operation_validation_blocked" as const);
-    const { contentDigest, operationFingerprint } = digests.value;
+  const {
+    enqueueDurably,
+    beginDeliveryAttemptDurably,
+    settleDeliveryAttemptDurably,
+    recordDecisionTextChunksDurably,
+    lookupDecisionTextChunksDurably,
+    recordDrainingEntryTextChunks,
+    retryEntryFromReservation,
+    adjudicateReservations,
+  } = createDeliveryAttemptStage(ctx);
 
-    return ok({
-      rootRunId: entry.rootRunId,
-      stepIndex: entry.stepIndex,
-      agentId: entry.agentId,
-      runId: entry.runId,
-      sessionKey: entry.sessionKey,
-      contentDigest,
-      operationFingerprint,
-    });
-  }
 
-  function isSameOperation(
-    entry: DeadLetterEntry,
-    identity: GovernedEntryIdentity,
-    record: OutwardSendRecord,
-  ): boolean {
-    return record.rootRunId === identity.rootRunId
-      && record.stepIndex === identity.stepIndex
-      && record.agentId === identity.agentId
-      && record.channelType === entry.channelType
-      && record.channelId === entry.channelId
-      && record.operationKind === "cross_session_announcement"
-      && record.operationFingerprint === identity.operationFingerprint
-      && record.contentDigest === identity.contentDigest;
-  }
+  const {
+    recoveryOptions,
+    drainLedgerlessTextChunks,
+    drainSerialized,
+  } = createSerialDrainStage(ctx);
 
-  async function parkGovernedEntry(
-    ledger: OutwardSendLedgerPort,
-    entry: DeadLetterEntry,
-    identity: GovernedEntryIdentity,
-  ): Promise<void> {
-    const parked = await ledger.parkUncertain(identity.rootRunId, identity.stepIndex);
-    if (!parked.ok) {
-      logLedgerFailure(
-        entry,
-        "park",
-        "dependency",
-        "repair the outward ledger and verify the channel manually before any retry",
-        "Dead-letter announcement could not be parked",
-      );
-      emitLedgerTransition(identity, "park", "blocked");
-      return;
-    }
-    if (!parked.value) {
-      emitLedgerTransition(identity, "park", "blocked");
-      return;
-    }
 
-    logger?.error(
-      {
-        rootRunId: identity.rootRunId,
-        stepIndex: identity.stepIndex,
-        step: "dead-letter-outward-ledger",
-        errorKind: "precondition" as const,
-        hint: "verify the destination channel manually before creating a new announcement operation",
-      },
-      "Dead-letter announcement parked without an authoritative platform receipt",
-    );
-    emitLedgerTransition(identity, "park", "parked");
-  }
+  const {
+    reserveDecisionDurably,
+    handoffDecisionsDurably,
+  } = createDecisionReservationStage(ctx);
 
-  /**
-   * Execute one ledger-governed retry. Only a definitive `lookup → absent`
-   * result may begin a new send attempt. Every retained state or ledger error
-   * blocks the channel call; in-flight/ambiguous rows are parked atomically.
-   */
-  async function drainGovernedEntry(
-    ledger: OutwardSendLedgerPort,
-    entry: DeadLetterEntry,
-  ): Promise<"receipt_already_committed" | "receipt_committed_now" | "retained"> {
-    const identityResult = resolveGovernedIdentity(entry);
-    if (!identityResult.ok) {
-      const invalidOperation = identityResult.error === "operation_validation_blocked";
-      logLedgerFailure(
-        entry,
-        invalidOperation ? "validate" : "identity",
-        "validation",
-        invalidOperation
-          ? "repair unsupported announcement delivery options before operator-directed recovery"
-          : "restore the original agentId, rootRunId, and stepIndex before operator-directed recovery",
-        invalidOperation
-          ? "Dead-letter announcement operation validation failed"
-          : "Dead-letter announcement lacks a complete governed operation identity",
-      );
-      if (
-        typeof entry.rootRunId === "string"
-        && entry.rootRunId.length > 0
-        && Number.isSafeInteger(entry.stepIndex)
-        && entry.stepIndex !== undefined
-        && entry.stepIndex >= 0
-      ) {
-        emitLedgerTransition(
-          { ...entry, rootRunId: entry.rootRunId, stepIndex: entry.stepIndex },
-          "lookup",
-          "blocked",
-        );
-      }
-      retainBlockedEntry(entry, identityResult.error);
-      return "retained";
-    }
-    const identity = identityResult.value;
 
-    const existing = await ledger.lookup(identity.rootRunId, identity.stepIndex);
-    if (!existing.ok) {
-      logLedgerFailure(
-        entry,
-        "lookup",
-        "dependency",
-        "restore outward-ledger reads and verify the retained operation before retrying",
-        "Dead-letter outward-ledger lookup failed",
-      );
-      emitLedgerTransition(identity, "lookup", "blocked");
-      await parkGovernedEntry(ledger, entry, identity);
-      retainBlockedEntry(entry, "outward_ledger_lookup_blocked");
-      return "retained";
-    }
+  const {
+    publicProducerReservation,
+    producerRecoveryAnnouncement,
+    promoteProducerReservations,
+    promoteProducerHandoffs,
+  } = createProducerPromotionStage(ctx);
 
-    if (existing.value !== undefined) {
-      if (!isSameOperation(entry, identity, existing.value)) {
-        logLedgerFailure(
-          entry,
-          "lookup",
-          "validation",
-          "reuse a retained operation identity only with its exact original agent, destination, and payload",
-          "Dead-letter announcement operation identity mismatch",
-        );
-        emitLedgerTransition(identity, "lookup", "blocked");
-        retainBlockedEntry(entry, "outward_operation_identity_mismatch");
-        return "retained";
-      }
 
-      switch (existing.value.state) {
-        case "committed":
-          if (
-            existing.value.platformMessageId === undefined
-            || existing.value.platformMessageId.length === 0
-          ) {
-            logLedgerFailure(
-              entry,
-              "lookup",
-              "precondition",
-              "repair the committed ledger receipt before treating this announcement as delivered",
-              "Committed dead-letter announcement lacks a platform receipt",
-            );
-            emitLedgerTransition(identity, "lookup", "blocked");
-            retainBlockedEntry(entry, "outward_committed_receipt_missing");
-            return "retained";
-          }
-          emitLedgerTransition(identity, "lookup", "committed");
-          return "receipt_already_committed";
-        case "send_attempt_started":
-        case "unknown_after_send":
-          emitLedgerTransition(identity, "lookup", "in_flight");
-          await parkGovernedEntry(ledger, entry, identity);
-          retainBlockedEntry(entry, "outward_operation_unresolved");
-          return "retained";
-        case "unresolved":
-          logLedgerFailure(
-            entry,
-            "lookup",
-            "precondition",
-            "verify the destination channel manually; an unresolved announcement is never replayed automatically",
-            "Dead-letter announcement remains unresolved",
-          );
-          emitLedgerTransition(identity, "lookup", "parked");
-          retainBlockedEntry(entry, "outward_operation_unresolved");
-          return "retained";
-        case "failed":
-          logLedgerFailure(
-            entry,
-            "lookup",
-            "precondition",
-            "inspect the terminal ledger failure before creating a distinct announcement operation",
-            "Dead-letter announcement is terminally failed",
-          );
-          emitLedgerTransition(identity, "lookup", "failed");
-          retainBlockedEntry(entry, "outward_operation_failed");
-          return "retained";
-        default: {
-          const _exhaustive: never = existing.value.state;
-          return _exhaustive;
-        }
-      }
-    }
-
-    if (!governedSendToChannel) {
-      retainBlockedEntry(entry, "outward_receipt_transport_unavailable");
-      logLedgerFailure(
-        entry,
-        "transport",
-        "precondition",
-        "wire a receipt-aware announcement transport before operator-directed recovery",
-        "Governed dead-letter transport cannot provide a platform receipt",
-      );
-      return "retained";
-    }
-
-    const begun = await ledger.begin({
-      rootRunId: identity.rootRunId,
-      stepIndex: identity.stepIndex,
-      agentId: identity.agentId,
-      channelType: entry.channelType,
-      channelId: entry.channelId,
-      operationKind: "cross_session_announcement",
-      operationFingerprint: identity.operationFingerprint,
-      contentDigest: identity.contentDigest,
-    });
-    if (!begun.ok) {
-      logLedgerFailure(
-        entry,
-        "begin",
-        "dependency",
-        "inspect and park any retained row before retrying with the same operation identity",
-        "Dead-letter outward-ledger begin failed",
-      );
-      emitLedgerTransition(identity, "begin", "blocked");
-      await parkGovernedEntry(ledger, entry, identity);
-      retainBlockedEntry(entry, "outward_ledger_begin_blocked");
-      return "retained";
-    }
-    emitLedgerTransition(identity, "begin", "in_flight");
-
-    const markedUnknown = await ledger.markUnknown(identity.rootRunId, identity.stepIndex);
-    if (!markedUnknown.ok) {
-      logLedgerFailure(
-        entry,
-        "mark_unknown",
-        "dependency",
-        "park the retained send intent and repair the ledger before any retry",
-        "Dead-letter outward-ledger uncertainty transition failed",
-      );
-      emitLedgerTransition(identity, "mark_unknown", "blocked");
-      await parkGovernedEntry(ledger, entry, identity);
-      retainBlockedEntry(entry, "outward_ledger_mark_unknown_blocked");
-      return "retained";
-    }
-    emitLedgerTransition(identity, "mark_unknown", "in_flight");
-
-    const boundary = await fromPromise(
-      governedSendToChannel(
-        entry.channelType,
-        entry.channelId,
-        entry.announcementText,
-        entry.threadId || entry.extra
-          ? {
-              ...(entry.threadId ? { threadId: entry.threadId } : {}),
-              ...(entry.extra ? { extra: entry.extra } : {}),
-            }
-          : undefined,
-      ),
-    );
-    entry.attemptCount++;
-    entry.lastAttemptAt = systemNowMs();
-    if (!boundary.ok || !boundary.value.ok) {
-      entry.lastError = "outward_transport_outcome_unavailable";
-      await parkGovernedEntry(ledger, entry, identity);
-      return "retained";
-    }
-    const outcome = boundary.value.value;
-    if (!outcome.delivered) {
-      entry.lastError = outcome.status === "unknown"
-        ? "outward_transport_uncertain"
-        : "outward_transport_rejected";
-      await parkGovernedEntry(ledger, entry, identity);
-      return "retained";
-    }
-    const receipt = outcome.platformMessageId;
-    if (receipt === undefined || receipt.length === 0) {
-      entry.lastError = "outward_platform_receipt_missing";
-      await parkGovernedEntry(ledger, entry, identity);
-      return "retained";
-    }
-
-    const committed = await ledger.commit(identity.rootRunId, identity.stepIndex, receipt);
-    if (!committed.ok) {
-      entry.lastError = "outward_receipt_commit_blocked";
-      logLedgerFailure(
-        entry,
-        "commit",
-        "dependency",
-        "verify the destination manually and repair the ledger before any retry",
-        "Dead-letter platform receipt could not be committed",
-      );
-      emitLedgerTransition(identity, "commit", "blocked");
-      await parkGovernedEntry(ledger, entry, identity);
-      return "retained";
-    }
-    emitLedgerTransition(identity, "commit", "committed");
-    return "receipt_committed_now";
-  }
-
-  function emitDelivered(entry: DeadLetterEntry, attemptCount: number): void {
-    emitObservationalEventSafely(
-      { eventBus, logger },
-      "announcement:dead_letter_delivered",
-      {
-        runId: entry.runId,
-        channelType: entry.channelType,
-        attemptCount,
-        timestamp: systemNowMs(),
-      },
-    );
-  }
-
-  async function enqueueDurably(
-    entry: Omit<DeadLetterEntry, "id" | "lastAttemptAt">,
-  ): Promise<Result<void, Error>> {
-    const load = await loadFromDisk();
-    if (!load.ok) return load;
-    const keyedEntry = entry.idempotencyKey !== undefined
-      ? entries.find((candidate) => candidate.idempotencyKey === entry.idempotencyKey)
-      : undefined;
-    if (keyedEntry) return ok(undefined);
-    const reservation = entry.idempotencyKey !== undefined
-      ? decisionReservations.find(
-          (candidate) => candidate.idempotencyKey === entry.idempotencyKey,
-        )
-      : undefined;
-    if (
-      reservation
-      && (
-        reservation.agentId !== entry.agentId
-        || reservation.runId !== entry.runId
-        || reservation.channelType !== entry.channelType
-        || reservation.channelId !== entry.channelId
-        || reservation.threadId !== entry.threadId
-      )
-    ) {
-      logger?.error(
-        {
-          errorKind: "validation" as const,
-          hint: "reuse a parent decision key only with its exact original owner and destination",
-        },
-        "Parent decision delivery identity mismatch",
-      );
-      return err(new Error("Parent decision delivery identity mismatch"));
-    }
-    const governedIdentityComplete = outwardLedger !== undefined
-      && typeof entry.rootRunId === "string"
-      && entry.rootRunId.length > 0
-      && typeof entry.agentId === "string"
-      && entry.agentId.length > 0
-      && entry.stepIndex !== undefined
-      && Number.isSafeInteger(entry.stepIndex)
-      && entry.stepIndex >= 0;
-    if (reservation && !governedIdentityComplete) return ok(undefined);
-
-    const id = tryCatch(() => randomUUID());
-    if (!id.ok) return id;
-    const fullEntry: DeadLetterEntry = {
-      ...entry,
-      id: id.value,
-      lastAttemptAt: systemNowMs(),
-    };
-    const nextEntries = [...entries];
-    const nextReservations = reservation
-      ? decisionReservations.filter((candidate) => candidate.id !== reservation.id)
-      : decisionReservations;
-    const dropped = !outwardLedger && nextEntries.length >= maxEntries
-      ? nextEntries.shift()
-      : undefined;
-    nextEntries.push(fullEntry);
-    const persisted = await persist(nextEntries, nextReservations);
-    if (!persisted.ok) {
-      logger?.error(
-        {
-          errorKind: "resource" as const,
-          hint: "restore dead-letter storage before retrying the enqueue operation",
-        },
-        "Dead-letter enqueue was not persisted",
-      );
-      return persisted;
-    }
-    entries = nextEntries;
-    decisionReservations = nextReservations;
-    if (dropped) {
-      logger?.error(
-        {
-          errorKind: "resource" as const,
-          hint: "resolve retryable dead letters before the queue reaches capacity",
-          droppedRunId: dropped.runId,
-        },
-        "Retryable dead-letter queue reached capacity",
-      );
-    } else if (outwardLedger && entries.length > maxEntries) {
-      logger?.warn(
-        {
-          entryCount: entries.length,
-          errorKind: "resource" as const,
-          hint: "resolve quarantined outward operations; governed evidence is never capacity-evicted",
-        },
-        "Governed dead-letter quarantine exceeds its review threshold",
-      );
-    }
-    emitObservationalEventSafely(
-      { eventBus, logger },
-      "announcement:dead_lettered",
-      {
-        runId: fullEntry.runId,
-        channelType: fullEntry.channelType,
-        reason: fullEntry.lastError ?? "delivery_failed",
-        timestamp: systemNowMs(),
-      },
-    );
-    return ok(undefined);
-  }
-
-  /** Settle reservations after the rewrite grace. The ledger decides whether
-   * delivery is safe; missing roots, errors, and uncertainty remain parked. */
-  async function adjudicateReservations(ledger: OutwardSendLedgerPort): Promise<void> {
-    if (decisionReservations.length === 0) return;
-    const settled: string[] = [];
-    for (const reservation of [...decisionReservations]) {
-      const remainingGraceMs = parentDecisionGraceMs
-        - (systemNowMs() - reservation.failedAt);
-      if (remainingGraceMs > 0) {
-        logger?.debug(
-          { runId: reservation.runId, remainingMs: remainingGraceMs, step: "parent-decision-rewrite-grace" },
-          "Parent decision reservation remains parked while its rewrite can still be running",
-        );
-        continue;
-      }
-      if (reservation.rootRunId === undefined || reservation.rootRunId.length === 0) {
-        // Standing condition, re-reached on every sweep — report the transition
-        // into it once, exactly as logLedgerFailure does, or one unadjudicable
-        // reservation emits a WARN per sweep for the daemon's lifetime.
-        if (reportedLedgerFailures.has(`${reservation.id}\u0000unadjudicable`)) continue;
-        reportedLedgerFailures.add(`${reservation.id}\u0000unadjudicable`);
-        // PERMANENT, unlike the ledger-error skip below: with no tree root there
-        // is nothing to ask the ledger, so this reservation can never settle and
-        // the completion behind it is never delivered. Silence here made a
-        // permanently-lost result indistinguishable from a transient one.
-        logger?.warn(
-          {
-            runId: reservation.runId,
-            agentId: reservation.agentId,
-            channelType: reservation.channelType,
-            hint: "This parked completion can never be adjudicated: the reservation carries no rootRunId, so the outward ledger cannot be asked whether the announcement was sent. Deliver or discard it by hand, and ensure the reserving path stamps rootRunId.",
-            errorKind: "internal" as const,
-          },
-          "Parent decision reservation can never be adjudicated (no ledger root)",
-        );
-        continue;
-      }
-      const step = await fromPromise(
-        ledger.allocateStep(reservation.rootRunId, reservation.idempotencyKey),
-      );
-      if (!step.ok || !step.value.ok) {
-        logger?.debug(
-          { runId: reservation.runId },
-          "Parent decision reservation left parked: outward step could not be resolved",
-        );
-        continue;
-      }
-      logger?.warn(
-        {
-          runId: reservation.runId,
-          errorKind: "timeout" as const,
-          hint: "Inspect the parent completion rewrite timeout; the durable user-safe fallback is now eligible for governed delivery",
-          step: "parent-decision-fallback",
-        },
-        "Parent decision rewrite grace elapsed; adjudicating its safe fallback",
-      );
-      entries.push({
-        id: reservation.id,
-        announcementText: reservation.announcementText,
-        channelType: reservation.channelType,
-        channelId: reservation.channelId,
-        agentId: reservation.agentId,
-        runId: reservation.runId,
-        failedAt: reservation.failedAt,
-        attemptCount: 0,
-        lastAttemptAt: 0,
-        idempotencyKey: reservation.idempotencyKey,
-        rootRunId: reservation.rootRunId,
-        stepIndex: step.value.value,
-        ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
-      } as DeadLetterEntry);
-      settled.push(reservation.idempotencyKey);
-    }
-    if (settled.length === 0) return;
-    const remaining = decisionReservations.filter(
-      (r) => !settled.includes(r.idempotencyKey),
-    );
-    decisionReservations = [...remaining];
-    const persisted = await persist(entries, remaining);
-    if (!persisted.ok) {
-      logger?.warn(
-        {
-          errorKind: "resource" as const,
-          hint: "restore dead-letter storage; the adjudicated announcements stay in memory for this drain",
-        },
-        "Failed to persist adjudicated parent decision reservations",
-      );
-    }
-  }
-
-  async function drainSerialized(
-    sendToChannel: (type: ChannelType, id: string, text: string, options?: AnnouncementDeliveryOptions) => Promise<boolean>,
-    onDelivered?: (idempotencyKey: string) => void,
-  ): Promise<void> {
-    const load = await loadFromDisk();
-    if (!load.ok) return;
-    if (outwardLedger) await adjudicateReservations(outwardLedger);
-    if (entries.length === 0) return;
-    const now = systemNowMs();
-    const workingEntries = entries
-      .map((entry) => ({ ...entry }))
-      .filter((entry) => {
-        if (outwardLedger) return true;
-        if (entry.attemptCount >= maxRetries) {
-          logger?.debug(
-            { runId: entry.runId, attemptCount: entry.attemptCount },
-            "Retryable dead-letter entry dropped after its attempt limit",
-          );
-          return false;
-        }
-        if (now - entry.failedAt >= maxAgeMs) {
-          logger?.debug(
-            { runId: entry.runId, ageMs: now - entry.failedAt },
-            "Retryable dead-letter entry dropped after its retention window",
-          );
-          return false;
-        }
-        return true;
-      });
-    const deliveredIds = new Set<string>();
-    const deliveredEntries: Array<{
-      entry: DeadLetterEntry;
-      outcome: "untracked_delivery" | "receipt_already_committed" | "receipt_committed_now";
-      durationMs: number;
-    }> = [];
-    for (const entry of workingEntries) {
-      if (now - entry.lastAttemptAt < retryIntervalMs) continue;
-      const deliveryStartedAt = systemNowMs();
-      if (outwardLedger) {
-        const governed = await drainGovernedEntry(outwardLedger, entry);
-        if (governed !== "retained") {
-          deliveredIds.add(entry.id);
-          deliveredEntries.push({ entry, outcome: governed, durationMs: systemNowMs() - deliveryStartedAt });
-        }
-        continue;
-      }
-      const boundary = await fromPromise(sendToChannel(
-        entry.channelType,
-        entry.channelId,
-        entry.announcementText,
-        entry.threadId || entry.extra
-          ? {
-              ...(entry.threadId ? { threadId: entry.threadId } : {}),
-              ...(entry.extra ? { extra: entry.extra } : {}),
-            }
-          : undefined,
-      ));
-      if (boundary.ok && boundary.value) {
-        deliveredIds.add(entry.id);
-        deliveredEntries.push({
-          entry: { ...entry, attemptCount: entry.attemptCount + 1 },
-          outcome: "untracked_delivery", durationMs: systemNowMs() - deliveryStartedAt,
-        });
-      } else {
-        entry.attemptCount++;
-        entry.lastAttemptAt = systemNowMs();
-        entry.lastError = boundary.ok
-          ? "sendToChannel returned false"
-          : "sendToChannel rejected";
-      }
-    }
-    const nextEntries = workingEntries.filter((entry) => !deliveredIds.has(entry.id));
-    const persisted = await persist(nextEntries);
-    if (!persisted.ok) {
-      logger?.error(
-        {
-          errorKind: "resource" as const,
-          hint: "restore dead-letter storage; no delivery completion was acknowledged",
-        },
-        "Dead-letter drain state was not persisted",
-      );
-      return;
-    }
-    entries = nextEntries;
-    for (const delivered of deliveredEntries) {
-      const { entry, outcome, durationMs } = delivered;
-      const idempotencyKey = entry.idempotencyKey;
-      if (idempotencyKey && onDelivered) {
-        tryCatch(() => onDelivered(idempotencyKey));
-      }
-      emitDelivered(entry, entry.attemptCount);
-      // INFO closes the opening WARN after the queue file is unlinked. It is
-      // emitted once per resolved entry, so volume is naturally bounded.
-      logger?.info(
-        {
-          runId: entry.runId,
-          attemptCount: entry.attemptCount,
-          durationMs,
-          ...(outcome !== "untracked_delivery" ? {
-            rootRunId: entry.rootRunId,
-            stepIndex: entry.stepIndex,
-          } : {}),
-          step: outcome === "receipt_already_committed"
-            ? "dlq-ledger-committed-skip"
-            : outcome === "receipt_committed_now"
-              ? "dlq-ledger-receipt-committed"
-              : "dead-letter-delivery",
-        },
-        outcome === "receipt_already_committed"
-          ? "Committed dead-letter operation removed without replay"
-          : outcome === "receipt_committed_now"
-            ? "Dead-letter entry delivered and platform receipt committed"
-            : "Dead-letter entry delivered successfully",
-      );
-    }
-  }
+  const {
+    reserveProducerDurably,
+    releaseProducerDurably,
+    recordProducerOutcomeDurably,
+    removeProducerReservationDurably,
+    cancelProducerDurably,
+    suppressProducerDurably,
+    consumeProducerReservationsDurably,
+    consumeProducerSlots,
+  } = createProducerLifecycle({
+    store,
+    ...(logger ? { logger } : {}),
+    ...(retirementProducerState ? { retirementProducerState } : {}),
+    activeProducerKeys,
+    signalCapacityChange,
+    loadFromDisk,
+    persist,
+    canPersistProducerOwnership,
+    publicProducerReservation,
+    terminalizeOwner,
+    cleanupUnreferencedSnapshots,
+  });
 
   return {
-    enqueue: (entry) => serialize(() => enqueueDurably(entry)),
-    reserveDecision: (entry) => serialize(() => decisionStore.reserve(entry)),
+    reserveProducer: (reservation, signal) => admitWithBackpressure(
+      () => reserveProducerDurably(reservation, false),
+      signal,
+    ),
+    reclaimProducer: (reservation, signal) => admitWithBackpressure(
+      () => reserveProducerDurably(reservation, true),
+      signal,
+    ),
+    recordProducerOutcome: (producerKey, outcome, signal) => admitWithBackpressure(
+      () => recordProducerOutcomeDurably(producerKey, outcome),
+      signal,
+    ),
+    releaseProducer: (producerKey) => serializeStateChange(
+      () => releaseProducerDurably(producerKey),
+    ),
+    cancelProducer: (producerKey) => serializeStateChange(
+      () => cancelProducerDurably(producerKey),
+    ),
+    suppressProducer: (producerKey) => serializeStateChange(
+      () => suppressProducerDurably(producerKey),
+    ),
+    enqueue: (entry, signal) => admitWithBackpressure(() => enqueueDurably(entry), signal),
+    beginDeliveryAttempt: (entry, signal) =>
+      admitWithBackpressure(() => beginDeliveryAttemptDurably(entry), signal),
+    settleDeliveryAttempt: (idempotencyKey, outcome) =>
+      serializeStateChange(() => settleDeliveryAttemptDurably(idempotencyKey, outcome)),
+    reserveDecision: (entry, signal) => admitWithBackpressure(
+      () => reserveDecisionDurably(entry),
+      signal,
+      () => handoffDecisionsDurably([], [entry]),
+    ),
     lookupDecision: (idempotencyKey) =>
       serialize(() => decisionStore.lookup(idempotencyKey)),
+    lookupDecisionTextChunks: (completionKey) =>
+      serialize(() => lookupDecisionTextChunksDurably(completionKey)),
     resolveDecision: (idempotencyKey, outcome) =>
-      serialize(() => decisionStore.resolve(idempotencyKey, outcome)),
+      serializeStateChange(() => resolveDecisionDurably(idempotencyKey, outcome)),
+    recordDecisionTextChunks: (idempotencyKey, chunks) =>
+      serialize(() => recordDecisionTextChunksDurably(idempotencyKey, chunks)),
+    replaceDecisions: (expectedKeys, operations, signal) =>
+      admitWithBackpressure(async () => {
+        const loaded = await loadFromDisk();
+        if (!loaded.ok) return loaded;
+        const nonterminalOperations: AnnouncementParentDecisionReservation[] = [];
+        const terminalOperations: Array<{
+          operation: AnnouncementParentDecisionReservation;
+          decision: AnnouncementTerminalDecision;
+        }> = [];
+        const settledCompletionKeys = new Set<string>();
+        const expected = new Set(expectedKeys);
+        const reusable = store.decisionReservations.filter((reservation) =>
+          expected.has(reservation.idempotencyKey));
+        for (const operation of operations) {
+          const terminalDecision = await lookupTerminalDecision(operation);
+          if (!terminalDecision.ok) return terminalDecision;
+          if (terminalDecision.value === undefined) {
+            nonterminalOperations.push(operation);
+            continue;
+          }
+          terminalOperations.push({
+            operation,
+            decision: terminalDecision.value,
+          });
+          for (const completionKey of operation.completionKeys) {
+            if (completionKey !== operation.idempotencyKey) {
+              settledCompletionKeys.add(completionKey);
+            }
+          }
+        }
+        if (nonterminalOperations.length > maxEntries) {
+          return err(new Error("Replacement announcement set exceeds quarantine capacity"));
+        }
+        const pendingOperations: AnnouncementParentDecisionReservation[] = [];
+        const transientSnapshots: Array<{
+          attachment: AnnouncementDeadLetterAttachmentSnapshot;
+          cleanup: () => Promise<Result<void, Error>>;
+        }> = [];
+        for (const operation of nonterminalOperations) {
+          const prepared = await prepareReservedAttachment(operation, reusable);
+          if (!prepared.ok) {
+            await cleanupUnreferencedSnapshots(transientSnapshots);
+            return prepared;
+          }
+          pendingOperations.push(
+            prepared.value.entry as AnnouncementParentDecisionReservation,
+          );
+          if (
+            prepared.value.cleanup
+            && prepared.value.entry.attachment?.kind === "snapshot"
+          ) {
+            transientSnapshots.push({
+              attachment: prepared.value.entry.attachment,
+              cleanup: prepared.value.cleanup,
+            });
+          }
+        }
+        const anticipatedReservations = [
+          ...store.decisionReservations.filter((reservation) =>
+            !expected.has(reservation.idempotencyKey)),
+          ...pendingOperations,
+        ];
+        for (const terminal of terminalOperations) {
+          const reconciled = await terminalizeOwner(
+            terminal.operation,
+            terminal.decision,
+            store.entries,
+            anticipatedReservations,
+          );
+          if (!reconciled.ok) {
+            await cleanupUnreferencedSnapshots(transientSnapshots);
+            return reconciled;
+          }
+        }
+        const producerKeys = [...new Set(operations.map((operation) => operation.runId))];
+        const replaced = await decisionStore.replace(
+          expectedKeys,
+          pendingOperations,
+          [...settledCompletionKeys],
+          producerKeys,
+        );
+        if (replaced.ok) {
+          consumeProducerSlots(producerKeys);
+        }
+        if (!replaced.ok || !replaced.value.created) {
+          await cleanupUnreferencedSnapshots(transientSnapshots);
+        }
+        await cleanupUnreferencedSnapshots(reusable.flatMap((reservation) =>
+          reservation.attachment?.kind === "snapshot"
+            ? [{ attachment: reservation.attachment }]
+            : []));
+        return replaced;
+      }, signal, () => handoffDecisionsDurably(expectedKeys, operations)),
+    prepareTerminalDecisionRetirement: (completionKeys, producer) => serialize(async () => {
+      if (outwardLedger) return ok(undefined);
+      return terminalDecisionStore.prepareRetirement(completionKeys, producer);
+    }),
+    collectTerminalDecisionRetirements: () => serialize(
+      () => collectTerminalRetirementsDurably(),
+    ),
     drain: (sendToChannel, onDelivered) =>
-      serialize(() => drainSerialized(sendToChannel, onDelivered)),
-    size: () => entries.length + decisionReservations.length,
+      serializeStateChange(() => drainSerialized(sendToChannel, onDelivered)),
+    durableStatus: () => serialize(async () => {
+      const load = await loadFromDisk();
+      if (!load.ok) return load;
+      const terminalInvalid = await refreshTerminalInvalidRecords();
+      if (!terminalInvalid.ok) return terminalInvalid;
+      const status = quarantineClassification().status;
+      return ok({
+        ...status,
+        activeRecoveryCount: status.activeRecoveryCount
+          + store.producerHandoffs.length
+          + store.producerReservations.length,
+      });
+    }),
+    size: () => store.entries.length
+      + store.decisionReservations.length
+      + store.producerHandoffs.length
+      + store.producerReservations.length
+      + store.invalidRecords.length
+      + store.terminalInvalidRecords.length,
     listQuarantined: () => serialize(async () => {
       // Load before projecting: the in-memory lists are empty until some
       // operation has faulted the file in, and `list` is usually the FIRST
@@ -977,23 +709,64 @@ export function createAnnouncementDeadLetterQueue(
           },
           "Quarantined announcement listing could not read the dead-letter file",
         );
+        return loadedFromDisk;
       }
-      return projectQuarantined(entries, decisionReservations);
+      const terminalInvalid = await refreshTerminalInvalidRecords();
+      if (!terminalInvalid.ok) return terminalInvalid;
+      return ok(quarantineClassification().rows);
     }),
-    release: (id, outcome) => serialize(async () => {
+    release: (id, outcome) => serializeStateChange(async () => {
       const loaded = await loadFromDisk();
       if (!loaded.ok) return loaded;
-      return releaseQuarantined({
-        id, outcome, entries, reservations: decisionReservations, logger,
-        persist: async (nextEntries, nextReservations) => {
-          const written = await persist(nextEntries, nextReservations);
+      const terminalInvalid = await refreshTerminalInvalidRecords();
+      if (!terminalInvalid.ok) return terminalInvalid;
+      if (!quarantineClassification().actionableIds.has(id)) return ok(false);
+      if (store.terminalInvalidRecords.some((record) => record.id === id)) {
+        return err(new Error("Terminal-decision corruption requires storage repair"));
+      }
+      const releasedEntry = store.entries.find((candidate) => candidate.id === id);
+      const releasedReservation = store.decisionReservations.find((candidate) => candidate.id === id);
+      const releasedDelivery = releasedEntry ?? releasedReservation;
+      if (releasedEntry) {
+        const chunkRelease = await settleTextChunkRelease(releasedEntry, outcome);
+        if (!chunkRelease.ok) return chunkRelease;
+        if (chunkRelease.value === "retain") return ok(true);
+      }
+      if (releasedDelivery) {
+        const terminalized = await terminalizeOwner(
+          releasedDelivery,
+          outcome,
+          store.entries.filter((candidate) => candidate.id !== id),
+          store.decisionReservations.filter((candidate) => candidate.id !== id),
+        );
+        if (!terminalized.ok) {
+          return terminalized;
+        }
+      }
+      const released = await releaseQuarantined({
+        id,
+        outcome,
+        entries: store.entries,
+        reservations: store.decisionReservations,
+        invalidRecords: store.invalidRecords,
+        logger,
+        persist: async (nextEntries, nextReservations, nextInvalidRecords) => {
+          const written = await persist(nextEntries, nextReservations, nextInvalidRecords);
           if (written.ok) {
-            entries = [...nextEntries];
-            decisionReservations = [...nextReservations];
+            store.entries = [...nextEntries];
+            store.decisionReservations = [...nextReservations];
+            store.invalidRecords = [...nextInvalidRecords];
           }
           return written;
         },
       });
+      if (released.ok && released.value && releasedEntry) {
+        emittedAdmissionKeys.delete(announcementRecoveryKey(releasedEntry));
+      }
+      if (releasedDelivery?.attachment?.kind === "snapshot") {
+        await cleanupUnreferencedSnapshots([{ attachment: releasedDelivery.attachment }]);
+      }
+      return released;
     }),
   };
 }

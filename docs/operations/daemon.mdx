@@ -30,7 +30,7 @@ see a startup banner in the logs:
 ```json
 {
   "level": "info",
-  "module": "daemon",
+  "name": "comis-daemon",
   "msg": "Comis daemon started",
   "version": "<installed-version>",
   "agents": ["default"],
@@ -61,17 +61,18 @@ Behind the scenes, the daemon runs through these steps in order:
 1. Loads environment variables from `~/.comis/.env`
 2. Decrypts any stored secrets (API keys, tokens)
 3. Hardens file permissions on the data directory (`~/.comis/`)
-4. Reads configuration from the paths in `COMIS_CONFIG_PATHS` (default: `~/.comis/config.yaml`) — for the full config-path syntax, see [Configuration](/installation/configuration)
+4. Reads configuration from [`COMIS_CONFIG_PATHS`](/reference/environment-variables#comis_config_paths), or from the daemon defaults when it is unset
 5. Sets up logging (file transport, per-module log levels)
 6. Initializes observability (token tracking, latency recording)
 7. Opens the memory database (SQLite with full-text search)
-8. Creates agent executors with their configured models
-9. Starts channel adapters (Telegram, Discord, Slack, etc.)
+8. Activates configured linked capability services and recovers their durable managed runs. Every later authenticated service reconnect is held until that service's rematerialized execution attachments are reconciled with their exact durable run and lease authority.
+9. Creates agent executors with their configured models
 10. Starts the scheduler (cron jobs, heartbeat monitoring)
-11. Launches the gateway server (HTTP, WebSocket, web dashboard)
-12. Registers graceful shutdown handlers
+11. Starts channel adapters (Telegram, Discord, Slack, etc.)
+12. Launches the gateway server (HTTP, WebSocket, web dashboard)
+13. Registers graceful shutdown handlers
 
-After step 12, the daemon saves a copy of the working configuration as a
+After step 13, the daemon saves a copy of the working configuration as a
 "last-known-good" snapshot (more on this in [Recovering from Problems](#recovering-from-problems)).
 
 ## Running
@@ -79,6 +80,10 @@ After step 12, the daemon saves a copy of the working configuration as a
 Once started, the daemon runs continuously in the background. It processes messages
 as they arrive, runs health checks at regular intervals (every 5 minutes by default),
 and collects system metrics every 30 seconds.
+
+Linked capability-service attention replies are handled before ordinary agent
+execution. See [Slash Commands](/agents/slash-commands#conditional-control-commands)
+for the binding and disambiguation rules.
 
 You do not need to interact with the daemon while it is running -- it handles
 everything automatically. To check on it, view the logs or visit the
@@ -96,26 +101,24 @@ Here is what the shutdown sequence looks like in the logs:
 ```json
 {"level":"info","msg":"Graceful shutdown initiated","signal":"SIGTERM"}
 {"level":"info","msg":"Daemon session summary","totalExecutions":42,"totalCostUsd":0.15,"totalTokens":25000}
-{"level":"info","msg":"Component stopped","component":"graph-coordinator","shutdownOrder":1}
-{"level":"info","msg":"Component stopped","component":"sub-agent-runner","shutdownOrder":2}
-{"level":"info","msg":"Component stopped","component":"cron-scheduler","shutdownOrder":5}
-{"level":"info","msg":"Component stopped","component":"channel-manager","shutdownOrder":10}
-{"level":"info","msg":"Component stopped","component":"gateway","shutdownOrder":14}
-{"level":"info","msg":"Component stopped","component":"memory-database","shutdownOrder":16}
+{"level":"info","msg":"Component stopped","component":"gateway","shutdownOrder":1}
+{"level":"info","msg":"Component stopped","component":"governed-schedulers","shutdownOrder":2}
+{"level":"info","msg":"Component stopped","component":"managed-run-continuations","shutdownOrder":5}
+{"level":"info","msg":"Component stopped","component":"capability-services","shutdownOrder":24}
+{"level":"info","msg":"Component stopped","component":"memory-database","shutdownOrder":31}
 {"level":"info","msg":"Graceful shutdown complete","shutdownDurationMs":456}
 ```
 
-The shutdown follows this order:
+Optional components make the numeric `shutdownOrder` values vary, but the
+dependency order is stable:
 
-1. **Session summary** -- Logs total executions, cost, and token usage for the session.
-2. **Graph coordinator** -- Stops any running multi-agent pipelines.
-3. **Sub-agent runner** -- Gives active tasks a bounded drain. If the grace period expires, checkpoint-admitted durable sub-agents suspend their local provider work and retain the running checkpoint for boot recovery; non-durable work is stopped with an attributed failure.
-4. **Cron schedulers** -- Stops scheduled jobs.
-5. **Channel adapters** -- Disconnects from messaging platforms (no new messages accepted).
-6. **Heartbeat runner** -- Stops health checks.
-7. **Gateway server** -- Closes HTTP and WebSocket connections.
-8. **Observability** -- Removes event subscriptions.
-9. **Memory database** -- Closes the SQLite database cleanly.
+1. **Stop admission** -- Closes the gateway first, then closes scheduled-work admission and drains or cancels governed jobs.
+2. **Drain execution** -- Stops graph, sub-agent, managed-run continuation, background-completion, and terminal-wake work while their dependencies remain available.
+3. **Capture restart state** -- Flushes trajectories, approvals, skill watchers, reset schedulers, browser services, and active-session continuation records.
+4. **Stop delivery surfaces** -- Disconnects channels and stops delivery, mirroring, retention, and background-process services.
+5. **Close capability boundaries** -- Stops the credential broker and terminal capability endpoint, then closes capability-service ingress and drains accepted report mutations.
+6. **Flush diagnostics and models** -- Disconnects MCP clients, drains observability, and disposes embedding and reranker resources.
+7. **Close stores** -- Closes security stores and releases the data-directory lock; the shared memory database is always last.
 
 <Info>
 The daemon waits up to 45 seconds for everything to stop cleanly. Work that

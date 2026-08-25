@@ -6,10 +6,12 @@ import {
   emitObservationalEventSafely,
   systemNowMs,
   type ComisLogger,
+  type AnnouncementDeadLetterAttachmentSnapshot,
   type ChannelEndpoint,
   type ConversationLocator,
   type OutwardSendLedgerPort,
   type OutwardSendRecord,
+  type OutwardTerminalDecision,
   type TypedEventBus,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
@@ -32,16 +34,11 @@ export interface GovernedAnnouncementRequest {
   text: string;
   options?: AnnouncementDeliveryOptions;
   attachment?: GovernedAnnouncementAttachment;
+  preparedTextChunks?: readonly string[];
 }
 
 /** Immutable prepared snapshot metadata bound into one outward operation. */
-export interface GovernedAnnouncementAttachment {
-  path: string;
-  fileName: string;
-  mimeType: string;
-  contentDigest: string;
-  sizeBytes: number;
-}
+export type GovernedAnnouncementAttachment = AnnouncementDeadLetterAttachmentSnapshot;
 
 /** Untrusted generated-file reference resolved by the daemon composition root. */
 export interface CompletionAttachmentRef {
@@ -81,12 +78,24 @@ export type GovernedAnnouncementFailure =
   | "commit_blocked";
 
 export type GovernedAnnouncementSendOutcome =
-  | { delivered: true; identity: AnnouncementOperationIdentity }
+  | {
+      delivered: true;
+      identity: AnnouncementOperationIdentity;
+      platformMessageId?: string;
+    }
+  | { delivered: false; terminalDecision: OutwardTerminalDecision }
   | {
       delivered: false;
       identity?: AnnouncementOperationIdentity;
       failure: GovernedAnnouncementFailure;
     };
+
+export function isGovernedAnnouncementConfirmedDelivered(
+  outcome: GovernedAnnouncementSendOutcome,
+): boolean {
+  return outcome.delivered
+    || ("terminalDecision" in outcome && outcome.terminalDecision === "delivered");
+}
 
 export type SendGovernedAnnouncement = (
   request: GovernedAnnouncementRequest,
@@ -107,11 +116,31 @@ export interface CompletionAnnouncementSendRequest {
   /** Distinguishes independently governed files emitted by the same run. */
   partId?: string;
   attachment?: CompletionAttachmentRef;
+  preparedAttachment?: GovernedAnnouncementAttachment;
+  preparedTextChunks?: readonly string[];
+  completionKeys?: readonly string[];
+  signal?: AbortSignal;
 }
 
 export type SendGovernedCompletionAnnouncement = (
   request: CompletionAnnouncementSendRequest,
 ) => Promise<Result<GovernedAnnouncementSendOutcome, Error>>;
+
+export type RecoverableAnnouncementSendOutcome =
+  | AnnouncementPlatformSendOutcome
+  | { delivered: false; terminalDecision: OutwardTerminalDecision };
+
+export type RecoverableCompletionAnnouncementSendRequest = Omit<
+  CompletionAnnouncementSendRequest,
+  "attachment" | "preparedAttachment"
+> & {
+  attachment?: never;
+  preparedAttachment?: never;
+};
+
+export type SendRecoverableCompletionAnnouncement = (
+  request: RecoverableCompletionAnnouncementSendRequest,
+) => Promise<Result<RecoverableAnnouncementSendOutcome, Error>>;
 
 interface GovernedAnnouncementSenderDeps {
   ledger: OutwardSendLedgerPort;
@@ -132,19 +161,6 @@ interface AnnouncementTransitionEvidence {
   runId: string;
   sessionKey: string;
   partId?: string;
-}
-
-/** Build the bounded allocation key for one originating completion operation. */
-export function createStableAnnouncementOperationId(
-  agentId: string,
-  callerSessionKey: string,
-  runId: string,
-  partId?: string,
-): string {
-  const digest = createHash("sha256")
-    .update(JSON.stringify({ agentId, callerSessionKey, kind: "completion_announcement", partId: partId ?? null, runId }))
-    .digest("hex");
-  return `completion-announcement:${digest}`;
 }
 
 export interface AnnouncementOperationDigests {
@@ -410,6 +426,23 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       sessionKey: request.sessionKey,
       ...(request.partId === undefined ? {} : { partId: request.partId }),
     };
+    const terminalDecision = await deps.ledger.lookupTerminalDecision(
+      request.rootRunId,
+      request.operationId,
+    );
+    if (!terminalDecision.ok) {
+      logFailure(
+        { agentId: request.agentId, rootRunId: request.rootRunId },
+        "terminal_decision_lookup",
+        "dependency",
+        "repair outward terminal-decision storage before retrying the retained completion",
+        "Completion announcement terminal decision lookup failed",
+      );
+      return ok({ delivered: false, failure: "lookup_blocked" });
+    }
+    if (terminalDecision.value !== undefined) {
+      return ok({ delivered: false, terminalDecision: terminalDecision.value });
+    }
     const allocated = await deps.ledger.allocateStep(request.rootRunId, request.operationId);
     if (!allocated.ok) {
       logFailure(
@@ -461,7 +494,11 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
           ...deliveryEvidence,
           platformMessageId: existing.value.platformMessageId,
         });
-        return ok({ delivered: true, identity });
+        return ok({
+          delivered: true,
+          identity,
+          platformMessageId: existing.value.platformMessageId,
+        });
       }
       if (
         existing.value.state === "send_attempt_started"
@@ -561,7 +598,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
       ...deliveryEvidence,
       platformMessageId: receipt,
     });
-    return ok({ delivered: true, identity });
+    return ok({ delivered: true, identity, platformMessageId: receipt });
   };
 
   return { send };

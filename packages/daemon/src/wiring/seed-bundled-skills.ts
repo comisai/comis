@@ -25,6 +25,7 @@ import {
   rmSync as nodeRmSync,
 } from "node:fs";
 import { safePath } from "@comis/core";
+import { parseSkillManifest } from "@comis/skills";
 
 /** Injected seams for {@link seedBundledSkills} (defaulted to real fs by {@link defaultSeedBundledSkillsDeps}). */
 export interface SeedBundledSkillsDeps {
@@ -36,6 +37,7 @@ export interface SeedBundledSkillsDeps {
   listSkillNames: (bundledRoot: string) => string[];
   /** The `version:` in `<bundledRoot>/<name>/SKILL.md`, or undefined. */
   bundledVersion: (bundledRoot: string, name: string) => string | undefined;
+  bundledCapabilityServices: (bundledRoot: string, name: string) => readonly string[] | undefined;
   /** The `version:` in `<skillsTarget>/<name>/SKILL.md`, or undefined when NOT installed. */
   installedVersion: (skillsTarget: string, name: string) => string | undefined;
   /** Copy `<bundledRoot>/<name>` → `<skillsTarget>/<name>` (recursive). */
@@ -52,6 +54,11 @@ export function seedBundledSkills(deps: SeedBundledSkillsDeps): { seeded: string
   const seeded: string[] = [];
   const skipped: string[] = [];
   for (const name of deps.listSkillNames(deps.bundledRoot)) {
+    const requiredServices = deps.bundledCapabilityServices(deps.bundledRoot, name);
+    if (requiredServices === undefined || requiredServices.length > 0) {
+      skipped.push(name);
+      continue;
+    }
     const installed = deps.installedVersion(deps.skillsTarget, name);
     const bundled = deps.bundledVersion(deps.bundledRoot, name);
     // Seed when not installed, or the bundled version differs (any change → re-seed; the old
@@ -114,6 +121,15 @@ export function defaultSeedBundledSkillsDeps(
     bundledVersion: (root, name) => {
       try {
         return extractVersion(safePath(root, name, "SKILL.md"), (p) => nodeReadFileSync(p, "utf-8"));
+      } catch {
+        return undefined;
+      }
+    },
+    bundledCapabilityServices: (root, name) => {
+      try {
+        const manifest = nodeReadFileSync(safePath(root, name, "SKILL.md"), "utf8");
+        const parsed = parseSkillManifest(manifest);
+        return parsed.ok ? parsed.value.comis?.requires?.capabilityServices ?? [] : undefined;
       } catch {
         return undefined;
       }

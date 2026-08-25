@@ -13,7 +13,7 @@
  * @module
  */
 
-import { existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { stringify, parse } from "yaml";
 import { safePath, loadEnvFile } from "@comis/core";
@@ -552,7 +552,11 @@ export const writeConfigStep: WizardStep = {
 
       // 8. Atomic config write
       const tempPath = configPath + ".tmp";
-      writeFileSync(tempPath, yaml, "utf-8");
+      writeFileSync(tempPath, yaml, { encoding: "utf-8", mode: 0o600 });
+      // The mode option applies only when Node creates the file. Tighten an
+      // existing temp file too, so a process interrupted before rename cannot
+      // carry its older permissions into the authoritative config.
+      chmodSync(tempPath, 0o600);
 
       // Validate the temp file is valid YAML
       try {

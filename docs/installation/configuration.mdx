@@ -18,20 +18,14 @@ import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 | Setting | Value |
 |---------|-------|
 | Default path | `~/.comis/config.yaml` |
-| Custom path | Set `COMIS_CONFIG_PATHS=/path/to/config.yaml` |
-| Multiple files | Colon-separated paths -- later files override earlier ones |
+| Custom paths | Set [`COMIS_CONFIG_PATHS`](/reference/environment-variables#comis_config_paths) |
 | Reload | Config is loaded once at startup. Restart the daemon to pick up changes. |
 
 <Info>
-When you set `COMIS_CONFIG_PATHS`, Comis reads config from that path instead of
-the default. You can point to multiple files using colon-separated paths
-(same convention as `PATH`):
-
-```bash
-COMIS_CONFIG_PATHS="/etc/comis/base.yaml:/etc/comis/overrides.yaml"
-```
-
-Later files override values from earlier ones.
+Set `COMIS_CONFIG_PATHS` to choose one or more files instead of the defaults.
+The [environment-variable reference](/reference/environment-variables#comis_config_paths)
+owns its syntax; the [Config YAML Reference](/reference/config-yaml) owns merge
+precedence and field contracts.
 </Info>
 
 ## Minimal working config
@@ -325,9 +319,8 @@ context engine fields.
 
 ## Advanced configuration
 
-The config schema supports 41 top-level sections. This guide covered the
-essential ones. The remaining sections control memory, security, routing,
-scheduling, monitoring, plugins, and more.
+This guide covers the essential configuration sections. The remaining sections
+control memory, security, routing, scheduling, monitoring, plugins, and more.
 
 <Info>
 For the complete reference of all configuration sections, see
@@ -347,6 +340,6 @@ For the complete reference of all configuration sections, see
     Understand the security protections built into Comis.
   </Card>
   <Card title="Config Reference" icon="book" href="/reference/config-yaml">
-    Complete reference for all 41 configuration sections.
+    Complete reference for every configuration section.
   </Card>
 </CardGroup>

@@ -173,15 +173,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Bridged for per-session `comis explain` visibility (the subagent.steered
   // daemon-side precedent); content-free: closed dimension/channel/capSource labels +
   // ids/numbers ONLY, NEVER a path/host/uid value, an announcement body, or a task.
-  // sandbox_downgrade_refused fires WITHIN the spawning session (clean
-  // landing); the other two ride whichever session bridge is active when they fire.
+  // sandbox_downgrade_refused fires within the spawning session.
   "security.sandbox_downgrade_refused",
-  "subagent.delivery_deadlettered",
-  // The self-healing transient RETRY — the sibling of subagent.delivery_deadlettered.
-  // Emitted by the announcement-batcher via `?.emit`; the self-heal must stay visible
-  // to `comis explain`. Content-free: runId + closed
-  // channelType + attempt count + the transient tag ONLY — never an announcement body / error string.
-  "subagent.delivery_retried",
   // A terminal sub-agent result had no authenticated completion route.
   // Content-free: runId + closed missing-route reason only.
   "subagent.delivery_skipped",
@@ -450,6 +443,19 @@ export const TRAJECTORY_EVENT_TYPES = [
   // before the per-session EventBus bridge subscribes. Counts and duration
   // only — never a URL, page title, response body, or error message.
   "link.prefetch",
+
+  // Managed-run (capability-service) lifecycle on the explain timeline.
+  // DAEMON-emitted by the report/evidence bridges and the cancellation
+  // coordinator (off-turn socket ingress, OUTSIDE the agent/orchestrator
+  // emit-scanner — the capability.audited/background_task precedent), so the
+  // bridge mapping is what records them; APPEND-ONLY beside the tuples above.
+  // Content-free: run/service/attention/evidence ids + closed enums ONLY —
+  // never a report body, an evidence body, a subject, or an external key value.
+  "managed_run.attention_opened",
+  "managed_run.attention_resolved",
+  "managed_run.evidence_accepted",
+  "managed_run.evidence_rejected",
+  "managed_run.revoked",
 ] as const;
 
 /** Closed union of trajectory event type strings. */

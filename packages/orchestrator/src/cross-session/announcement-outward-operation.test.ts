@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "@comis/shared";
-import type { OutwardSendLedgerPort, OutwardSendRecord } from "@comis/core";
+import {
+  createStableAnnouncementOperationId,
+  type OutwardSendLedgerPort,
+  type OutwardSendRecord,
+} from "@comis/core";
 import {
   createAnnouncementOperationDigests,
   createGovernedAnnouncementSender,
-  createStableAnnouncementOperationId,
 } from "./announcement-outward-operation.js";
 
 function makeLedger(overrides: Partial<OutwardSendLedgerPort> = {}): OutwardSendLedgerPort {
   return {
+    lookupTerminalDecision: vi.fn(async () => ok(undefined)),
+    recordTerminalDecision: vi.fn(async () => ok(undefined)),
     allocateStep: vi.fn(async () => ok(7)),
     lookup: vi.fn(async () => ok(undefined)),
     begin: vi.fn(async () => ok(undefined)),
@@ -42,6 +47,23 @@ const request = {
 };
 
 describe("governed announcement sender", () => {
+  it("suppresses a send after a terminal decision", async () => {
+    const ledger = makeLedger({
+      lookupTerminalDecision: vi.fn(async () => ok("discarded")),
+    });
+    const sendToPlatform = vi.fn();
+    const sender = createGovernedAnnouncementSender({ ledger, sendToPlatform });
+
+    const result = await sender.send(request);
+
+    expect(result).toEqual({
+      ok: true,
+      value: { delivered: false, terminalDecision: "discarded" },
+    });
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+    expect(sendToPlatform).not.toHaveBeenCalled();
+  });
+
   it("records the stable operation before one platform attempt and commits its receipt", async () => {
     const order: string[] = [];
     const ledger = makeLedger({
@@ -73,6 +95,7 @@ describe("governed announcement sender", () => {
     expect(result).toEqual(ok({
       delivered: true,
       identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 7 },
+      platformMessageId: "telegram-message-1",
     }));
     expect(order).toEqual(["allocate", "begin", "mark-unknown", "platform", "commit"]);
     expect(ledger.commit).toHaveBeenCalledWith("root-1", 7, "telegram-message-1");
@@ -94,6 +117,9 @@ describe("governed announcement sender", () => {
     await sender.send({
       ...request,
       attachment: {
+        kind: "snapshot",
+        sourceAgentId: "worker-a",
+        sourcePath: "/workspace/report.md",
         path: "/private/report.md",
         fileName: "report.md",
         mimeType: "text/markdown",
@@ -128,6 +154,9 @@ describe("governed announcement sender", () => {
     const result = await sender.send({
       ...request,
       attachment: {
+        kind: "snapshot",
+        sourceAgentId: "worker-a",
+        sourcePath: "/workspace/report.md",
         path: "/private/report.md",
         fileName: "report.md",
         mimeType: "text/markdown",
@@ -283,11 +312,101 @@ describe("governed announcement sender", () => {
       expect(sendToPlatform).toHaveBeenCalledTimes(testCase.platformReceipt === undefined ? 0 : 1);
     }
   });
+
+  it("fails closed when terminal decisions cannot be read", async () => {
+    const ledger = makeLedger({
+      lookupTerminalDecision: vi.fn(async () => err(new Error("terminal unavailable"))),
+    });
+    const result = await createGovernedAnnouncementSender({
+      ledger,
+      sendToPlatform: vi.fn(),
+    }).send(request);
+
+    expect(result).toEqual(ok({ delivered: false, failure: "lookup_blocked" }));
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+  });
+
+  it("rejects mismatched retained operations and accepts an exact committed receipt", async () => {
+    const digests = createAnnouncementOperationDigests(request);
+    if (!digests.ok) throw digests.error;
+    const row: OutwardSendRecord = {
+      id: "root-1:7",
+      rootRunId: "root-1",
+      stepIndex: 7,
+      agentId: "agent-main",
+      channelType: "telegram",
+      channelId: "chat-1",
+      operationKind: "cross_session_announcement",
+      ...digests.value,
+      state: "committed",
+      platformMessageId: "message-a",
+      attemptCount: 1,
+      attemptedAtMs: 1,
+    };
+    const mismatch = await createGovernedAnnouncementSender({
+      ledger: makeLedger({ lookup: vi.fn(async () => ok({ ...row, agentId: "agent-other" })) }),
+      sendToPlatform: vi.fn(),
+    }).send(request);
+    expect(mismatch).toMatchObject({ ok: true, value: { delivered: false, failure: "operation_mismatch" } });
+
+    const committed = await createGovernedAnnouncementSender({
+      ledger: makeLedger({ lookup: vi.fn(async () => ok(row)) }),
+      sendToPlatform: vi.fn(),
+    }).send(request);
+    expect(committed).toEqual(ok({
+      delivered: true,
+      identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 7 },
+      platformMessageId: "message-a",
+    }));
+  });
+
+  it("parks an exact in-flight operation before returning it as retained", async () => {
+    const digests = createAnnouncementOperationDigests(request);
+    if (!digests.ok) throw digests.error;
+    const ledger = makeLedger({
+      lookup: vi.fn(async () => ok({
+        id: "root-1:7",
+        rootRunId: "root-1",
+        stepIndex: 7,
+        agentId: "agent-main",
+        channelType: "telegram",
+        channelId: "chat-1",
+        operationKind: "cross_session_announcement",
+        ...digests.value,
+        state: "send_attempt_started",
+        attemptCount: 1,
+        attemptedAtMs: 1,
+      })),
+    });
+    await expect(createGovernedAnnouncementSender({ ledger, sendToPlatform: vi.fn() }).send(request))
+      .resolves.toMatchObject({ ok: true, value: { delivered: false, failure: "operation_retained" } });
+    expect(ledger.parkUncertain).toHaveBeenCalledOnce();
+  });
+
+  it("parks unavailable transport results and successful sends without receipts", async () => {
+    const unavailable = await createGovernedAnnouncementSender({
+      ledger: makeLedger(),
+      sendToPlatform: async () => err(new Error("transport unavailable")),
+    }).send(request);
+    expect(unavailable).toMatchObject({ ok: true, value: { delivered: false, failure: "transport_failed" } });
+
+    const receiptless = await createGovernedAnnouncementSender({
+      ledger: makeLedger(),
+      sendToPlatform: async () => ok({ delivered: true, status: "accepted" as const }),
+    }).send(request);
+    expect(receiptless).toMatchObject({
+      ok: true,
+      value: { delivered: false, failure: "platform_receipt_missing" },
+    });
+  });
 });
 
 describe("announcement operation fingerprinting", () => {
   it("binds generated-file content but not the private snapshot path", () => {
     const attachment = {
+      kind: "snapshot" as const,
+      sourceAgentId: "worker-a",
+      sourcePath: "/workspace/monthly.csv",
       path: "/private/snapshot-one.csv",
       fileName: "monthly.csv",
       mimeType: "text/csv",
@@ -372,5 +491,47 @@ describe("announcement operation fingerprinting", () => {
       expect(invocation).not.toThrow();
       expect(invocation()).toMatchObject({ ok: false });
     }
+  });
+
+  it("rejects sparse, decorated, and accessor-backed JSON containers", () => {
+    const symbolArray = ["value"];
+    Object.defineProperty(symbolArray, Symbol("extra"), { value: true });
+    const sparseArray = new Array(1);
+    const decoratedArray = ["value"];
+    Object.defineProperty(decoratedArray, "extra", { value: true, enumerable: true });
+    const symbolObject = { value: 1 } as Record<PropertyKey, unknown>;
+    symbolObject[Symbol("extra")] = true;
+    const hiddenObject = { value: 1 };
+    Object.defineProperty(hiddenObject, "hidden", { value: true, enumerable: false });
+
+    for (const extra of [
+      symbolArray,
+      sparseArray,
+      decoratedArray,
+      symbolObject,
+      hiddenObject,
+      [1n],
+    ]) {
+      expect(createAnnouncementOperationDigests({
+        channelType: "telegram",
+        channelId: "chat-1",
+        text: "completion",
+        options: { extra: extra as never },
+      })).toMatchObject({ ok: false });
+    }
+  });
+
+  it("rejects throwing accessors and non-string operation fields", () => {
+    const throwing = Object.defineProperty({}, "channelType", {
+      get() {
+        throw new Error("access unavailable");
+      },
+    });
+    expect(createAnnouncementOperationDigests(throwing as never)).toMatchObject({ ok: false });
+    expect(createAnnouncementOperationDigests({
+      channelType: 1 as never,
+      channelId: "chat-1",
+      text: "completion",
+    })).toMatchObject({ ok: false });
   });
 });

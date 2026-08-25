@@ -19,6 +19,7 @@ function makeScope(overrides: Partial<TerminalScope> = {}): TerminalScope {
     filesystem: "workspace",
     network: "none",
     credentialPaths: [],
+    ephemeralWritablePaths: [],
     uid: "dedicated",
     ...overrides,
   };
@@ -30,6 +31,7 @@ function makeInput(overrides: Partial<ScopeArgsInput> = {}): ScopeArgsInput {
     bwrapPath: "/usr/bin/bwrap",
     workspace: "/ws",
     cwd: "/ws",
+    executablePath: "/opt/operator-tools/bin/worker",
     home: "/home/u",
     dataDir: "/home/u/.comis",
     systemRoPaths: ["/usr", "/bin"],
@@ -102,6 +104,17 @@ describe("buildScopeArgs — least-privilege default scope", () => {
     expect(hasBind(args, "--dev-bind", "/dev/pts", "/dev/pts")).toBe(true);
     expect(indexOfPair(args, "--tmpfs", "/tmp")).toBeGreaterThanOrEqual(0);
   });
+
+  it("ro-binds the verified driven executable when it lives outside every visible scope root", () => {
+    const executablePath = "/opt/operator-tools/bin/worker";
+    const args = buildScopeArgs({
+      ...makeInput(),
+      executablePath,
+    } as ScopeArgsInput & { executablePath: string });
+
+    expect(hasBind(args, "--ro-bind", executablePath, executablePath)).toBe(true);
+    expect(indexOfPair(args, "--ro-bind", executablePath)).toBeLessThan(args.indexOf("--"));
+  });
 });
 
 describe("buildScopeArgs — filesystem dimension", () => {
@@ -117,6 +130,59 @@ describe("buildScopeArgs — filesystem dimension", () => {
   it("home binds the whole home directory (in addition to the workspace)", () => {
     const args = buildScopeArgs(makeInput({ scope: makeScope({ filesystem: "home" }) }));
     expect(hasBind(args, "--bind", "/home/u", "/home/u")).toBe(true);
+  });
+
+  it("ro-binds approved sockets to the fixed host-chosen attachment namespace", () => {
+    const args = buildScopeArgs(makeInput({
+      executionAttachments: [{
+        executionAttachmentId: "execution-attachment_a",
+        sourcePath: "/srv/runtime/worker.sock",
+        targetName: `attachment-${"a".repeat(32)}.sock`,
+        relayIdentity: "ab".repeat(32),
+      }],
+    }));
+    expect(hasBind(
+      args,
+      "--ro-bind",
+      "/srv/runtime/worker.sock",
+      `/run/comis/attachments/attachment-${"a".repeat(32)}.sock`,
+    )).toBe(true);
+    expect(args).toEqual(expect.arrayContaining([
+      "--dir", "/run/comis",
+      "--dir", "/run/comis/attachments",
+      "--chmod", "0711", "/run/comis/attachments",
+    ]));
+  });
+
+  it("overlays only leased worktree Git administration as writable after broad filesystem mounts", () => {
+    const args = buildScopeArgs(makeInput({
+      scope: makeScope({ filesystem: "full" }),
+      workspaceGitMounts: {
+        common: { sourcePath: "/repo/.git", targetPath: "/repo/.git" },
+        worktree: {
+          sourcePath: "/repo/.git/worktrees/task-a/.comis-terminal-git/worktree",
+          targetPath: "/repo/.git/worktrees/task-a",
+        },
+        privateCommon: {
+          sourcePath: "/repo/.git/worktrees/task-a/.comis-terminal-git/common",
+          targetPath: "/ws/.comis-terminal-git/common",
+          systemConfigPath: "/ws/.comis-terminal-git/common/system-config",
+        },
+      },
+    }));
+
+    expect(hasBind(args, "--ro-bind", "/repo/.git", "/repo/.git")).toBe(true);
+    expect(hasBind(args, "--bind", "/repo/.git/worktrees/task-a/.comis-terminal-git/common", "/ws/.comis-terminal-git/common")).toBe(true);
+    expect(hasBind(args, "--bind", "/repo/.git/worktrees/task-a/.comis-terminal-git/worktree", "/repo/.git/worktrees/task-a")).toBe(true);
+    expect(hasBind(args, "--bind", "/repo/.git", "/repo/.git")).toBe(false);
+    expect(args).toEqual(expect.arrayContaining([
+      "--unsetenv", "GIT_DIR",
+      "--setenv", "GIT_COMMON_DIR", "/ws/.comis-terminal-git/common",
+      "--setenv", "GIT_CONFIG_SYSTEM", "/ws/.comis-terminal-git/common/system-config",
+    ]));
+    expect(indexOfPair(args, "--ro-bind", "/repo/.git")).toBeGreaterThan(
+      indexOfPair(args, "--bind", "/"),
+    );
   });
 });
 
@@ -214,31 +280,24 @@ describe("buildScopeArgs — credentialPaths dimension (tool-agnostic)", () => {
     expect(args).not.toContain("--ro-bind-try");
   });
 
-  // Read-only-filesystem vs credentialPaths conflict (live-reproduced on the VPS): when an
-  // operator RO-binds ~/.claude (or an ancestor), bwrap cannot mkdir the
-  // session-env tmpfs mountpoint inside the now-read-only subtree and the WHOLE
-  // jail fails to launch ("Can't mkdir …/.claude/session-env: Read-only file
-  // system"). The carve-out must be dropped in that case.
-  it("OMITS the session-env carve-out tmpfs when a credentialPath RO-binds ~/.claude (its parent)", () => {
-    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths: ["~/.claude"] }) }));
-    expect(indexOfPair(args, "--tmpfs", "/home/u/.claude/session-env")).toBe(-1);
-    // the cred RO-bind itself is still emitted (the operator opt-in still works).
-    expect(hasBind(args, "--ro-bind-try", "/home/u/.claude", "/home/u/.claude")).toBe(true);
-  });
-
-  it("OMITS the carve-out when ~ (the whole home, an ancestor of .claude) is RO-bound", () => {
-    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths: ["~"] }) }));
-    expect(indexOfPair(args, "--tmpfs", "/home/u/.claude/session-env")).toBe(-1);
-  });
-
-  it("KEEPS the session-env carve-out for the default ([]) and unrelated creds (~/.codex, ~/.claude.json file)", () => {
+  it("does not derive writable mounts from credential paths", () => {
     for (const credentialPaths of [[], ["~/.codex"], ["~/.claude.json"]]) {
       const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths }) }));
       expect(
         indexOfPair(args, "--tmpfs", "/home/u/.claude/session-env"),
-        `carve-out must remain for credentialPaths=${JSON.stringify(credentialPaths)}`,
-      ).toBeGreaterThanOrEqual(0);
+        `credentialPaths=${JSON.stringify(credentialPaths)} must stay read-only only`,
+      ).toBe(-1);
     }
+  });
+
+  it("emits only the operator-declared ephemeral writable mount", () => {
+    const scope = {
+      ...makeScope({ credentialPaths: ["~/.agent-state"] }),
+      ephemeralWritablePaths: ["~/.agent-state/runtime"],
+    } as unknown as TerminalScope;
+    const args = buildScopeArgs(makeInput({ scope }));
+    expect(indexOfPair(args, "--tmpfs", "/home/u/.agent-state/runtime")).toBeGreaterThanOrEqual(0);
+    expect(indexOfPair(args, "--tmpfs", "/home/u/.claude/session-env")).toBe(-1);
   });
 });
 
@@ -268,13 +327,14 @@ describe("buildScopeArgs — the always-on ~/.comis carve-out", () => {
     expect(args).not.toContain("/home/u/.comis");
   });
 
-  it("the carve-out is the LAST mount before the -- terminator", () => {
+  it("the carve-out is the final broad mount before the exact executable bind", () => {
     const args = buildScopeArgs(makeInput());
     const carveOut = lastIndexOfPair(args, "--tmpfs", "/home/u/.comis");
     const terminator = args.lastIndexOf("--");
     expect(carveOut).toBeGreaterThanOrEqual(0);
-    // the carve-out tmpfs + its arg sit immediately before "--"
-    expect(carveOut + 2).toBe(terminator);
+    const executableBind = lastIndexOfPair(args, "--ro-bind", "/opt/operator-tools/bin/worker");
+    expect(executableBind).toBeGreaterThan(carveOut);
+    expect(executableBind + 3).toBe(terminator);
   });
 
   it("flagship: at filesystem:full the carve-out index is AFTER the broad host bind", () => {
@@ -289,7 +349,7 @@ describe("buildScopeArgs — the always-on ~/.comis carve-out", () => {
     expect(carveOut).toBeGreaterThan(hostBind);
   });
 
-  it("filesystem:full re-emits --proc/--dev/--tmpfs /tmp AFTER the broad host bind, carve-out still last", () => {
+  it("filesystem:full remounts special filesystems and masks data before the exact executable bind", () => {
     const args = buildScopeArgs(makeInput({ scope: makeScope({ filesystem: "full" }) }));
     const rootBind = indexOfPair(args, "--bind", "/");
     const homeBind = indexOfPair(args, "--bind", "/home/u");
@@ -299,9 +359,11 @@ describe("buildScopeArgs — the always-on ~/.comis carve-out", () => {
     expect(lastIndexOfPair(args, "--proc", "/proc")).toBeGreaterThan(hostBind);
     expect(lastIndexOfPair(args, "--dev", "/dev")).toBeGreaterThan(hostBind);
     expect(lastIndexOfPair(args, "--tmpfs", "/tmp")).toBeGreaterThan(hostBind);
-    // and the carve-out is STILL the last mount
+    // The exact executable is the only later mount; it cannot re-expose the data directory.
     const carveOut = lastIndexOfPair(args, "--tmpfs", "/home/u/.comis");
-    expect(carveOut + 2).toBe(args.lastIndexOf("--"));
+    const executableBind = lastIndexOfPair(args, "--ro-bind", "/opt/operator-tools/bin/worker");
+    expect(executableBind).toBeGreaterThan(carveOut);
+    expect(executableBind + 3).toBe(args.lastIndexOf("--"));
   });
 
   // -- agent-workspace persistence: re-expose the workspace AFTER the carve-out --
@@ -342,10 +404,11 @@ describe("buildScopeArgs — the always-on ~/.comis carve-out", () => {
     expect(reExposesSecret).toBe(false);
   });
 
-  it("the agent-workspace re-bind is the LAST mount before the terminator (wins over the carve-out)", () => {
+  it("the agent-workspace re-bind is the final writable mount before the executable bind", () => {
     const args = buildScopeArgs(makeInput({ workspace: AGENT_WS, cwd: AGENT_WS, dataDir: "/home/u/.comis" }));
     const reBind = lastIndexOfPair(args, "--bind", AGENT_WS);
-    // `--bind src dest` is a TRIPLE, so the terminator sits at reBind + 3.
-    expect(reBind + 3).toBe(args.lastIndexOf("--"));
+    const executableBind = lastIndexOfPair(args, "--ro-bind", "/opt/operator-tools/bin/worker");
+    expect(executableBind).toBeGreaterThan(reBind);
+    expect(executableBind + 3).toBe(args.lastIndexOf("--"));
   });
 });

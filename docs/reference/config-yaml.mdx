@@ -6,9 +6,9 @@ icon: "file-code"
 
 **What this is for:** the single source of truth for everything you can put in `~/.comis/config.yaml`. **Who it's for:** anyone tuning agent behavior, wiring channels, hardening the gateway, or composing layered configs across environments.
 
-Comis uses a single `config.yaml` file (or multiple layered files) to configure every aspect of the system. The configuration contains 41 top-level sections with 54+ nested schemas defining agent behavior, channel adapters, security policies, gateway settings, and more. All schemas use Zod strict validation -- unknown keys are rejected at startup.
+Comis uses a single `config.yaml` file (or multiple layered files) to configure every aspect of the system. Its top-level sections define agent behavior, channel adapters, security policies, gateway settings, capability services, and more. All schemas use Zod strict validation -- unknown keys are rejected at startup.
 
-Config files are specified via the `COMIS_CONFIG_PATHS` environment variable (colon-separated, like the shell `PATH`). See the [Configuration Guide](/installation/configuration) for a step-by-step setup walkthrough.
+Config files are selected with [`COMIS_CONFIG_PATHS`](/reference/environment-variables#comis_config_paths). See the [Configuration Guide](/installation/configuration) for a step-by-step setup walkthrough.
 
 ## Config Loading
 
@@ -154,11 +154,12 @@ The values shown are real (not placeholders). Save it as `~/.comis/config.yaml`,
 
 ## Quick Reference
 
-All 42 top-level configuration sections at a glance:
+Top-level configuration sections at a glance:
 
 | Section | Type | Description |
 |---------|------|-------------|
 | `tenantId` | `string` | Tenant identifier for multi-tenancy |
+| `identity` | `IdentityConfig` | Authenticated platform-subject to principal mappings |
 | `logLevel` | `enum` | Global log level (trace/debug/info/warn/error/fatal) |
 | `dataDir` | `string` | Base data directory for persistent storage |
 | `agentDir` | `string` | SDK agent directory for persistent settings |
@@ -200,6 +201,7 @@ All 42 top-level configuration sections at a glance:
 | `tooling` | `ToolingConfig` | Tool-first capability layer -- MCP/skill hints, install-detour mode |
 | `orchestration` | `OrchestrationConfig` | Small-model DAG-authoring gates (all default `true` — full authoring out of the box; set a flag `false` to opt it out) |
 | `executor` | `ExecutorConfig` | Credential-broker executor configuration (optional; omit unless using the broker) |
+| `capabilityServices` | `CapabilityServicesConfig` | Restart-only linked service topology and managed-run bounds |
 
 ## Core Settings
 
@@ -221,6 +223,34 @@ tenantId: my-project
 logLevel: info
 dataDir: /opt/comis/data
 agentDir: ~/.pi/agent
+```
+
+</Accordion>
+
+<Accordion title="identity.principalMappings">
+
+Trusted mappings from authenticated platform assertions to stable internal
+principals. An unmapped assertion receives a deterministic namespaced principal;
+display names and other adapter metadata are not identity evidence. The section
+defaults to an empty mapping list and is operator-only at runtime.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `principalMappings` | `PrincipalMapping[]` | `[]` | Exact mappings scoped by tenant, agent, channel type, channel instance, and platform subject |
+
+Each mapping requires `tenantId`, `agentId`, `principalId`, and an `assertion`
+with `channelType`, `channelInstanceId`, and `platformSubjectId`.
+
+```yaml
+identity:
+  principalMappings:
+    - tenantId: my-project
+      agentId: assistant
+      assertion:
+        channelType: telegram
+        channelInstanceId: primary-bot
+        platformSubjectId: "123456789"
+      principalId: customer-123
 ```
 
 </Accordion>
@@ -987,6 +1017,13 @@ so warning-level jailbreak-like language can be admitted.
 | `enabled` | `enum` | `"always"` | Requested OS-level sandbox posture for ordinary `exec`. With `"always"`, Comis uses the detected provider, but if no supported provider is available it logs a warning and ordinary `exec` runs on the host. `"never"` disables the sandbox. Use the Linux jailed autonomy or terminal surfaces when unavailable isolation must refuse execution |
 | `readOnlyAllowPaths` | `string[]` | `[]` | Additional filesystem paths exposed read-only inside the sandbox (e.g., `/opt/data`) |
 
+**Terminal writable overlays (agents.*.skills.terminal.allow[].scope)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `credentialPaths` | `string[]` | `[]` | Host credential paths exposed read-only inside the terminal jail. Home-relative values beginning with `~/` are expanded against the daemon account's home. |
+| `ephemeralWritablePaths` | `string[]` | `[]` | Existing host directories replaced inside the jail by empty, non-persistent tmpfs mounts. Every target must be absolute or home-relative and must already exist as a real directory. A missing, unreadable, symlinked, or non-directory target rejects terminal creation before bubblewrap starts and identifies `agents.*.skills.terminal.allow[].scope.ephemeralWritablePaths` as the configuration field to fix. |
+
 #### Secrets (agents.*.secrets)
 
 | Key | Type | Default | Description |
@@ -1386,7 +1423,7 @@ Running without `gateway.tls` on the default loopback bind (`127.0.0.1`) is the 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `id` | `string` | _(required)_ | Unique token identifier |
-| `secret` | `string \| SecretRef` | _(unset)_ | Secret value (min 32 chars; auto-generated if omitted) |
+| `secret` | `string \| SecretRef` | _(unset)_ | Secret value (min 32 chars, enforced after environment or SecretRef resolution; auto-generated only when no value is configured) |
 | `scopes` | `string[]` | `[]` | Allowed scopes (e.g., `["rpc", "ws", "admin"]`) |
 
 **Rate Limit (gateway.rateLimit)**
@@ -1591,11 +1628,11 @@ Security configuration for log redaction, audit logging, permissions, action con
 
 **Delivery (security.agentToAgent.delivery)**
 
-Bounds the self-healing retry on sub-agent completion delivery. See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-delivery-retries).
+Bounds safe durable recovery attempts for sub-agent completion delivery. See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-delivery-retries).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `maxRetries` | `number` | `3` | Maximum retry attempts for a **transient** sub-agent completion-delivery failure (connection reset/refused, socket hang up, timeout, HTTP 5xx, rate limit) before the message is dead-lettered. Range `0`–`10`. Retries use exponential backoff (1s, 2s, 4s, … capped at 30s). A **permanent** failure (budget breach, killed, context exhausted, step-limit) dead-letters immediately regardless of this value. |
+| `maxRetries` | `number` | `3` | Maximum automatic recovery attempts for a ledgerless completion delivery whose platform call definitively failed. Range `0`–`10`; `0` quarantines the retained entry without a recovery attempt. Governed, in-flight, unresolved, validation-blocked, and receipt-ambiguous outcomes are parked immediately and never replayed automatically. |
 
 **Subagent Context (security.agentToAgent.subagentContext)**
 
@@ -2219,12 +2256,147 @@ entry without corresponding source wiring has no runtime effect.
 
 </AccordionGroup>
 
+## Capability Services
+
+`capabilityServices` configures linked external capability-service instances and
+the durable managed-run limits enforced by the daemon. With the default empty
+`instances` list, the platform is inert. The whole section is restart-only and
+operator-controlled: edit the config file, validate it, and restart the daemon;
+runtime `config.patch` and `config.apply` calls cannot change it.
+
+```yaml
+capabilityServices:
+  privateContentDirectory: managed-runs/private
+  reportRetentionMs: 2592000000
+  maxObservedClockSkewMs: 300000
+  recoveryBatchSize: 256
+  requestDeadlineMs: 5000
+  instances:
+    - serviceInstanceId: example-service-1
+      serviceDefinitionId: example.service
+      enabled: true
+      mcpServerName: example-service
+      control:
+        transport: unix
+        socketPath: /opt/comis/data/capability-services/example-service.sock
+        credentialRef: secret://capability-services/example-service-1
+      allowedAgents: [assistant]
+      allowedWorkspaceRoots: [/srv/comis-workspaces]
+      allowedRuntimeRoots: [/srv/example-service/runtime]
+      limits:
+        maxReportBytes: 8192
+        maxEvidenceBytes: 262144
+        maxConcurrentRuns: 8
+        maxReportsPerMinute: 60
+```
+
+An instance may declare `limits` to **tighten** the protocol ceilings for itself:
+`maxReportBytes` (combined report summary + details bytes; ceiling `16384`),
+`maxEvidenceBytes` (decoded evidence body bytes; ceiling `1048576`),
+`maxConcurrentRuns` (how many of the service's runs may be non-terminal at once;
+ceiling `10000`), and `maxReportsPerMinute` (how many reports one run may send
+inside a rolling minute; ceiling `10000`). Each field is optional and can never
+exceed its ceiling — a larger value is rejected at config validation. An absent
+field falls back to the linked definition's own `limits`, then to the protocol
+ceiling. A service that only ever produces small reports or evidence, runs a
+bounded number of concurrent jobs, or emits at a bounded rate can pin a smaller
+cap so an oversized payload, a runaway fan-out, or a report flood — from a bug or
+a compromised service — is refused early rather than at the global limit. A run
+refused for `maxConcurrentRuns` is rejected at activation admission with reason
+`capacity_exceeded`, before any durable binding; a report refused for
+`maxReportsPerMinute` is rejected at report ingress with the retryable
+`rate_limited` error, before any private body is written.
+
+The `serviceDefinitionId` and `mcpServerName` must match a linked contribution.
+The control transport is Unix-socket only; `socketPath` must be normalized,
+absolute, beneath the daemon's canonical owner-only data directory, and at most
+103 UTF-8 bytes. The daemon creates the control socket with mode `0600`.
+`credentialRef` must be a `secret://` reference. Agent IDs must be unique.
+Workspace and runtime roots must be unique, normalized absolute paths narrower
+than a filesystem root.
+
+A linked contribution declares the scopes its instances may request. Each scope
+grants one narrow authority and nothing else, so a service that needs records,
+evidence, or attention never inherits workspace, terminal, or grouping authority:
+
+| Scope | Grants |
+|-------|--------|
+| `health` | Bounded health handshake, diagnostic codes, and run liveness |
+| `report` | Appending bounded reports to a run the instance owns |
+| `evidence` | Storing typed immutable evidence |
+| `attention_response` | Collecting the human response to its own attention report |
+| `workspace_lease` | Holding and releasing an exclusive workspace directory |
+| `terminal_events` | Receiving content-free terminal transitions |
+| `execution_attachment` | A run-scoped attachment beneath an approved runtime root |
+| `managed_run_group` | Reading the host roll-up for a group of runs it already owns |
+| `approval_receipt` | Consuming a one-shot receipt for the exact destructive managed MCP operation Comis approved |
+
+`managed_run_group` needs no filesystem roots. A group is a projection of member
+runs the instance can already read, so it adds a view, never new reach. The
+roll-up reports member state counts and how many members await a human; it holds
+no component names, dependency edges, integration order, or acceptance rules,
+because Comis is not a workflow engine and a group that carried those would make
+it one.
+
+`approval_receipt` grants no general approval lookup and cannot create or
+resolve an approval. After a destructive managed MCP tool is approved, Comis
+binds a short-lived grant to the service instance, owned managed run, MCP
+operation, exact tool arguments, and resolving principal. The authenticated
+service may consume that grant once with `managedRuns.consumeApproval`; an
+identical operation replay returns the original receipt, while an altered,
+expired, cross-run, or cross-instance request is refused. Grants live only in
+daemon memory for 15 minutes. A restart before consumption requires a new
+approval and never restores authority from private MCP metadata.
+
+Linked contributions also declare the managed MCP tool bindings enforced by the
+host. Run commands resolve their model-visible handle within the exact owner
+scope. Comis checks the active authority set first. Only a destructive binding
+may fall back to the exact release-reserved record, allowing an approved cleanup
+or other terminal operation to replay idempotently without restoring its lease,
+attachment, terminal, or worker authority. Read and mutate commands remain
+active-only. Destructive commands remain available after a terminal outcome so
+an authorized service can release retained resources through the normal
+approval and security path.
+When the handle is missing from that owner scope, Comis refuses the call before
+MCP transport, returns the exact bounded authority reason to the agent, and
+records a `precondition` failure with the `managed_mcp_authority` rule and a
+hint naming `managedToolBindings[].runHandleArgument`.
+
+| Key | Type | Default | Validation |
+|-----|------|---------|------------|
+| `instances` | `CapabilityServiceInstanceConfig[]` | `[]` | At most 256 configured instances |
+| `privateContentDirectory` | `string` | `"managed-runs/private"` | Normalized relative path using safe directory segments |
+| `reportRetentionMs` | `integer` | `2592000000` (30 days) | Positive; at most 365 days |
+| `maxObservedClockSkewMs` | `integer` | `300000` | Non-negative; at most 24 hours |
+| `recoveryBatchSize` | `integer` | `256` | 1–10000; page size for complete boot recovery scans |
+| `requestDeadlineMs` | `integer` | `5000` | 100–60000 |
+
+Each instance requires these fields:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `serviceInstanceId` | `string` | Opaque instance identifier |
+| `serviceDefinitionId` | `string` | Definition exported by a linked contribution |
+| `enabled` | `boolean` | Whether the daemon activates the instance at boot |
+| `mcpServerName` | `string` | MCP server owned by the linked definition |
+| `control` | `object` | Unix socket and secret-backed bearer credential |
+| `allowedAgents` | `string[]` | Non-empty set of agents allowed to use the instance |
+| `allowedWorkspaceRoots` | `string[]` | Workspace-lease authority roots; at most 64. Required when — and only when — the definition requests `workspace_lease` |
+| `allowedRuntimeRoots` | `string[]` | Execution-attachment authority roots; at most 64. Required when — and only when — the definition requests `execution_attachment` |
+
+Each executor root and the scope that consumes it must agree in both directions,
+and a mismatch fails startup rather than activating. A root configured for a
+scope the service never requested is authority nothing can use and nothing
+revokes, while a scope with no approved root publishes a capability that fails
+on first use instead of at configuration time. A service that requests neither
+scope — a tool-only or record-only integration — leaves both lists empty.
+
 ## tooling
 
 The tool-first capability layer. Operator-only — agents cannot self-configure capability routing or detour policy. The entire `tooling` tree is added to `IMMUTABLE_CONFIG_PREFIXES` and rejected by `config.patch` from agent-callable surfaces.
 
 <Warning>
-  **Restart required.** Changes to `tooling.capabilityIndex.enabled` and `tooling.installDetours.mode` apply only after the daemon restarts. The `capabilityIndex.enabled` toggle selects between two cached system-prompt shapes (one-line residual vs flat tool dump); in-process reload is not supported. Operator config edits go through the standard `config.patch` / `config.apply` path which validates → writes → 200 ms delayed `SIGUSR1` → process restart.
+  **Restart required.** Changes to `tooling.capabilityIndex.enabled` and `tooling.installDetours.mode` apply only after the daemon restarts. The `capabilityIndex.enabled` toggle selects between two cached system-prompt shapes (one-line residual vs flat tool dump); in-process reload is not supported. Runtime `config.patch` and `config.apply` calls reject the operator-only `tooling` tree, so edit the config file, validate it, and restart the daemon manually.
 </Warning>
 
 Top-level fields:

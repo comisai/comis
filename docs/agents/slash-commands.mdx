@@ -51,10 +51,19 @@ These commands are handled before the general command dispatcher:
 | `/approve [short-id\|all]` | Resolves a pending approval when the approval gate is enabled and wired |
 | `/deny [short-id\|all]` | Denies a pending approval under the same conditions |
 | `/send on\|off\|inherit` | Lets the session owner override the runtime send policy for that session |
+| `/attention <ID> <response>` | Answers an open linked capability-service attention request for the authenticated owner |
 
 The approvals schema defaults off, while guided setup enables it when it creates
 an administrator mapping. Confirm the gate is enabled before relying on
 `/approve` or `/deny`; see [Approvals](/security/approvals).
+
+Managed attention replies are handled before ordinary agent execution. A bare
+reply binds when exactly one open request from an enabled, currently configured
+service instance is unambiguous. Historical requests from removed or disabled
+instances remain available to operator diagnostics but never capture new chat
+messages. Text that names a different managed run remains ordinary chat, while a
+matching run handle can disambiguate concurrent runs. Use
+`/attention <ID> <response>` when a run has multiple open requests.
 
 ## Prompt skills are not slash commands
 

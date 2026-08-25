@@ -1453,6 +1453,274 @@
       "rpc"
     ]
   },
+  "capabilityServices.get": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "serviceInstanceId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "serviceInstanceId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "instance": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "serviceInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "serviceDefinitionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "active",
+                "connected",
+                "degraded",
+                "failed",
+                "stopped"
+              ]
+            },
+            "reasonCodes": {
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "requestedScopes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "health",
+                  "attention_response",
+                  "evidence",
+                  "report",
+                  "workspace_lease",
+                  "terminal_events",
+                  "execution_attachment",
+                  "managed_run_group",
+                  "approval_receipt"
+                ]
+              }
+            },
+            "allowedAgents": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "mcpServerName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "activeRunCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "degradedRunCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "capturedAtMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "allowedWorkspaceRoots": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "allowedRuntimeRoots": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "livenessRequired": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "serviceInstanceId",
+            "serviceDefinitionId",
+            "enabled",
+            "state",
+            "reasonCodes",
+            "requestedScopes",
+            "allowedAgents",
+            "mcpServerName",
+            "activeRunCount",
+            "degradedRunCount",
+            "capturedAtMs",
+            "allowedWorkspaceRoots",
+            "allowedRuntimeRoots",
+            "livenessRequired"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "capabilityServices.list": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "number",
+                "const": 1
+              },
+              "serviceInstanceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "serviceDefinitionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "connected",
+                  "degraded",
+                  "failed",
+                  "stopped"
+                ]
+              },
+              "reasonCodes": {
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "requestedScopes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "health",
+                    "attention_response",
+                    "evidence",
+                    "report",
+                    "workspace_lease",
+                    "terminal_events",
+                    "execution_attachment",
+                    "managed_run_group",
+                    "approval_receipt"
+                  ]
+                }
+              },
+              "allowedAgents": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "mcpServerName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "activeRunCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "degradedRunCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "capturedAtMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "serviceInstanceId",
+              "serviceDefinitionId",
+              "enabled",
+              "state",
+              "reasonCodes",
+              "requestedScopes",
+              "allowedAgents",
+              "mcpServerName",
+              "activeRunCount",
+              "degradedRunCount",
+              "capturedAtMs"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "rows",
+        "total"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "channels.capabilities": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -6932,6 +7200,1138 @@
       "rpc"
     ]
   },
+  "managedAttention.get": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "attentionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "attentionId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "attention": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "attentionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "managedRunId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "open",
+                "response_pending",
+                "delivered",
+                "resolved",
+                "cancelled",
+                "expired"
+              ]
+            },
+            "externalKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "createdAtMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "resolvedAtMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "attentionId",
+            "managedRunId",
+            "status",
+            "createdAtMs"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "managedAttention.list": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "managedRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 500
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "number",
+                "const": 1
+              },
+              "attentionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "managedRunId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "response_pending",
+                  "delivered",
+                  "resolved",
+                  "cancelled",
+                  "expired"
+                ]
+              },
+              "externalKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "createdAtMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "resolvedAtMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "attentionId",
+              "managedRunId",
+              "status",
+              "createdAtMs"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rows",
+        "total",
+        "truncated"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "managedRuns.cancel": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "managedRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "owner_cancelled",
+            "authority_revoked",
+            "budget_exhausted"
+          ]
+        }
+      },
+      "required": [
+        "managedRunId",
+        "operationId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "cancelled",
+            "already_terminal",
+            "not_found"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "preparing",
+            "active",
+            "waiting",
+            "paused",
+            "candidate_complete",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "serviceAcknowledged": {
+          "type": "boolean"
+        },
+        "serviceReasonCode": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "managedRuns.explain": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "managedRunId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "managedRunId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "run": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "managedRunId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "serviceInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "preparing",
+                "active",
+                "waiting",
+                "paused",
+                "candidate_complete",
+                "succeeded",
+                "failed",
+                "cancelled",
+                "unknown"
+              ]
+            },
+            "statusReason": {
+              "type": "string",
+              "enum": [
+                "awaiting_activation",
+                "activation_acknowledged",
+                "activation_rejected",
+                "report_activity",
+                "attention_pending",
+                "service_paused",
+                "verification_pending",
+                "outcome_verified",
+                "failure_verified",
+                "owner_cancelled",
+                "authority_revoked",
+                "recovery_join_missing",
+                "service_state_unavailable",
+                "activation_outcome_unknown",
+                "required_evidence_invalid",
+                "required_evidence_stale"
+              ]
+            },
+            "initiationSource": {
+              "type": "string",
+              "enum": [
+                "user_request",
+                "schedule",
+                "service_event"
+              ]
+            },
+            "agentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tenantId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "openAttentionCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "lastAcceptedReportSequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "lastReducedReportSequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "pendingContinuation": {
+              "type": "boolean"
+            },
+            "terminalSessionCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "hasWorkspaceLease": {
+              "type": "boolean"
+            },
+            "createdAtMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "updatedAtMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "freshness": {
+              "type": "object",
+              "properties": {
+                "capturedAtMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "stateSource": {
+                  "type": "string",
+                  "enum": [
+                    "durable_record",
+                    "reduced_snapshot"
+                  ]
+                },
+                "lastHeartbeatAtMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "livenessStale": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "capturedAtMs",
+                "stateSource",
+                "livenessStale"
+              ],
+              "additionalProperties": false
+            },
+            "principalId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "rootRunId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspacePolicyHash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capturedCapabilityViewHash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capturedAgentCapabilities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "capturedToolIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "workspaceLeaseId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "executionAttachmentIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "terminalSessionIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "managedRunGroupId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "terminalOutcome": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "succeeded",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "recordedAtMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "kind",
+                "recordedAtMs"
+              ],
+              "additionalProperties": false
+            },
+            "custody": {
+              "type": "object",
+              "properties": {
+                "available": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "reasonCode": {
+                  "type": "string",
+                  "enum": [
+                    "stage_not_enabled",
+                    "scope_not_requested",
+                    "backend_unsupported"
+                  ]
+                }
+              },
+              "required": [
+                "available",
+                "reasonCode"
+              ],
+              "additionalProperties": false
+            },
+            "processSummary": {
+              "type": "object",
+              "properties": {
+                "available": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "reasonCode": {
+                  "type": "string",
+                  "enum": [
+                    "stage_not_enabled",
+                    "scope_not_requested",
+                    "backend_unsupported"
+                  ]
+                }
+              },
+              "required": [
+                "available",
+                "reasonCode"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "managedRunId",
+            "serviceInstanceId",
+            "status",
+            "statusReason",
+            "initiationSource",
+            "agentId",
+            "tenantId",
+            "openAttentionCount",
+            "lastAcceptedReportSequence",
+            "lastReducedReportSequence",
+            "pendingContinuation",
+            "terminalSessionCount",
+            "hasWorkspaceLease",
+            "createdAtMs",
+            "updatedAtMs",
+            "freshness",
+            "principalId",
+            "conversationRef",
+            "rootRunId",
+            "workspacePolicyHash",
+            "capturedCapabilityViewHash",
+            "capturedAgentCapabilities",
+            "capturedToolIds",
+            "executionAttachmentIds",
+            "terminalSessionIds",
+            "custody",
+            "processSummary"
+          ],
+          "additionalProperties": false
+        },
+        "likelyRootCause": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "awaiting_service_activation",
+                "healthy",
+                "liveness_stale",
+                "policy_unresolved",
+                "reduction_behind_reports",
+                "run_not_found",
+                "service_instance_absent",
+                "terminal_outcome_recorded",
+                "waiting_on_human"
+              ]
+            },
+            "hint": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "code",
+            "hint"
+          ],
+          "additionalProperties": false
+        },
+        "nextSafeActions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "cancel",
+              "inspect_service",
+              "resolve_attention",
+              "wait"
+            ]
+          }
+        }
+      },
+      "required": [
+        "likelyRootCause",
+        "nextSafeActions"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "managedRuns.get": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "managedRunId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "managedRunId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "run": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "managedRunId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "serviceInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "preparing",
+                "active",
+                "waiting",
+                "paused",
+                "candidate_complete",
+                "succeeded",
+                "failed",
+                "cancelled",
+                "unknown"
+              ]
+            },
+            "statusReason": {
+              "type": "string",
+              "enum": [
+                "awaiting_activation",
+                "activation_acknowledged",
+                "activation_rejected",
+                "report_activity",
+                "attention_pending",
+                "service_paused",
+                "verification_pending",
+                "outcome_verified",
+                "failure_verified",
+                "owner_cancelled",
+                "authority_revoked",
+                "recovery_join_missing",
+                "service_state_unavailable",
+                "activation_outcome_unknown",
+                "required_evidence_invalid",
+                "required_evidence_stale"
+              ]
+            },
+            "initiationSource": {
+              "type": "string",
+              "enum": [
+                "user_request",
+                "schedule",
+                "service_event"
+              ]
+            },
+            "agentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tenantId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "openAttentionCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "lastAcceptedReportSequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "lastReducedReportSequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "pendingContinuation": {
+              "type": "boolean"
+            },
+            "terminalSessionCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "hasWorkspaceLease": {
+              "type": "boolean"
+            },
+            "createdAtMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "updatedAtMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "freshness": {
+              "type": "object",
+              "properties": {
+                "capturedAtMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "stateSource": {
+                  "type": "string",
+                  "enum": [
+                    "durable_record",
+                    "reduced_snapshot"
+                  ]
+                },
+                "lastHeartbeatAtMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "livenessStale": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "capturedAtMs",
+                "stateSource",
+                "livenessStale"
+              ],
+              "additionalProperties": false
+            },
+            "principalId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "rootRunId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspacePolicyHash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capturedCapabilityViewHash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capturedAgentCapabilities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "capturedToolIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "workspaceLeaseId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "executionAttachmentIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "terminalSessionIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "managedRunGroupId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "terminalOutcome": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "succeeded",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "recordedAtMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "kind",
+                "recordedAtMs"
+              ],
+              "additionalProperties": false
+            },
+            "custody": {
+              "type": "object",
+              "properties": {
+                "available": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "reasonCode": {
+                  "type": "string",
+                  "enum": [
+                    "stage_not_enabled",
+                    "scope_not_requested",
+                    "backend_unsupported"
+                  ]
+                }
+              },
+              "required": [
+                "available",
+                "reasonCode"
+              ],
+              "additionalProperties": false
+            },
+            "processSummary": {
+              "type": "object",
+              "properties": {
+                "available": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "reasonCode": {
+                  "type": "string",
+                  "enum": [
+                    "stage_not_enabled",
+                    "scope_not_requested",
+                    "backend_unsupported"
+                  ]
+                }
+              },
+              "required": [
+                "available",
+                "reasonCode"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "managedRunId",
+            "serviceInstanceId",
+            "status",
+            "statusReason",
+            "initiationSource",
+            "agentId",
+            "tenantId",
+            "openAttentionCount",
+            "lastAcceptedReportSequence",
+            "lastReducedReportSequence",
+            "pendingContinuation",
+            "terminalSessionCount",
+            "hasWorkspaceLease",
+            "createdAtMs",
+            "updatedAtMs",
+            "freshness",
+            "principalId",
+            "conversationRef",
+            "rootRunId",
+            "workspacePolicyHash",
+            "capturedCapabilityViewHash",
+            "capturedAgentCapabilities",
+            "capturedToolIds",
+            "executionAttachmentIds",
+            "terminalSessionIds",
+            "custody",
+            "processSummary"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "managedRuns.list": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "serviceInstanceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "preparing",
+            "active",
+            "waiting",
+            "paused",
+            "candidate_complete",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 500
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "number",
+                "const": 1
+              },
+              "managedRunId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "serviceInstanceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "preparing",
+                  "active",
+                  "waiting",
+                  "paused",
+                  "candidate_complete",
+                  "succeeded",
+                  "failed",
+                  "cancelled",
+                  "unknown"
+                ]
+              },
+              "statusReason": {
+                "type": "string",
+                "enum": [
+                  "awaiting_activation",
+                  "activation_acknowledged",
+                  "activation_rejected",
+                  "report_activity",
+                  "attention_pending",
+                  "service_paused",
+                  "verification_pending",
+                  "outcome_verified",
+                  "failure_verified",
+                  "owner_cancelled",
+                  "authority_revoked",
+                  "recovery_join_missing",
+                  "service_state_unavailable",
+                  "activation_outcome_unknown",
+                  "required_evidence_invalid",
+                  "required_evidence_stale"
+                ]
+              },
+              "initiationSource": {
+                "type": "string",
+                "enum": [
+                  "user_request",
+                  "schedule",
+                  "service_event"
+                ]
+              },
+              "agentId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tenantId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "openAttentionCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "lastAcceptedReportSequence": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "lastReducedReportSequence": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "pendingContinuation": {
+                "type": "boolean"
+              },
+              "terminalSessionCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "hasWorkspaceLease": {
+                "type": "boolean"
+              },
+              "createdAtMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "updatedAtMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "freshness": {
+                "type": "object",
+                "properties": {
+                  "capturedAtMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "stateSource": {
+                    "type": "string",
+                    "enum": [
+                      "durable_record",
+                      "reduced_snapshot"
+                    ]
+                  },
+                  "lastHeartbeatAtMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "livenessStale": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "capturedAtMs",
+                  "stateSource",
+                  "livenessStale"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "managedRunId",
+              "serviceInstanceId",
+              "status",
+              "statusReason",
+              "initiationSource",
+              "agentId",
+              "tenantId",
+              "openAttentionCount",
+              "lastAcceptedReportSequence",
+              "lastReducedReportSequence",
+              "pendingContinuation",
+              "terminalSessionCount",
+              "hasWorkspaceLease",
+              "createdAtMs",
+              "updatedAtMs",
+              "freshness"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rows",
+        "total",
+        "truncated"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "mcp.connect": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -11753,6 +13153,7 @@
                 "unavailable",
                 "committed",
                 "retained",
+                "suppressed",
                 "failed"
               ]
             },
@@ -12077,6 +13478,51 @@
             ],
             "additionalProperties": false
           }
+        },
+        "managedRuns": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "number"
+            },
+            "degraded": {
+              "type": "number"
+            },
+            "runs": {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "managedRunId": {
+                    "type": "string"
+                  },
+                  "serviceInstanceId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "statusReason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "managedRunId",
+                  "serviceInstanceId",
+                  "status",
+                  "statusReason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "total",
+            "degraded",
+            "runs"
+          ],
+          "additionalProperties": false
         },
         "contextBudget": {
           "type": "object",
@@ -14186,6 +15632,75 @@
             "turnsSaved",
             "toolCalls",
             "perAgent"
+          ],
+          "additionalProperties": false
+        },
+        "capabilityServices": {
+          "type": "object",
+          "properties": {
+            "runs": {
+              "type": "object",
+              "properties": {
+                "total": {
+                  "type": "number"
+                },
+                "degraded": {
+                  "type": "number"
+                },
+                "degradedRate": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "total",
+                "degraded",
+                "degradedRate"
+              ],
+              "additionalProperties": false
+            },
+            "services": {
+              "type": "object",
+              "properties": {
+                "total": {
+                  "type": "number"
+                },
+                "degraded": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "total",
+                "degraded"
+              ],
+              "additionalProperties": false
+            },
+            "topReasonCodes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "code",
+                  "count"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "worstManagedRunId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "runs",
+            "services",
+            "topReasonCodes"
           ],
           "additionalProperties": false
         }

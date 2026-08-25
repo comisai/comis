@@ -133,6 +133,7 @@ function buildCellArgs(
     bwrapPath: resolveBwrapPath(),
     workspace: opts.workspace,
     cwd: opts.workspace,
+    executablePath: "/bin/sh",
     home: opts.home,
     dataDir: opts.dataDir,
     systemRoPaths: resolvedSystemRoPaths(),
@@ -254,6 +255,7 @@ describe.skipIf(!linuxBwrap)(
           filesystem: "workspace",
           network: "none",
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, {
@@ -276,6 +278,7 @@ describe.skipIf(!linuxBwrap)(
           filesystem: "workspace",
           network: "none",
           credentialPaths: ["~/.claude"],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, {
@@ -318,6 +321,7 @@ describe.skipIf(!linuxBwrap)(
           filesystem: "workspace",
           network: "none",
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, { workspace: ws, home, dataDir: join(home, ".comis") });
@@ -354,6 +358,7 @@ describe.skipIf(!linuxBwrap)(
           filesystem: "workspace",
           network: "none",
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, {
@@ -401,6 +406,7 @@ describe.skipIf(!linuxBwrap)(
           filesystem: "full", // the broadest reach — the carve-out STILL wins
           network: "none",
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, {
@@ -449,6 +455,7 @@ describe.skipIf(!linuxBwrap)(
           filesystem: "workspace",
           network: "none",
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         };
         // Build the FULL production spawn plan (it scrubs the env via the real
@@ -525,6 +532,7 @@ describe.skipIf(!linuxBwrap)(
           filesystem: "workspace",
           network: "none", // --unshare-net, no socket, no proxy
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, {
@@ -576,6 +584,7 @@ describe.skipIf(!linuxBwrap)(
             network: "listed-hosts", // --unshare-net + --bind <relaySocketPath>
             hosts: ["example.com"],
             credentialPaths: [],
+            ephemeralWritablePaths: [],
             uid: "dedicated",
           };
           // cwd MUST be in-bounds (filesystem:workspace binds only the workspace) —
@@ -670,6 +679,7 @@ describe.skipIf(!linuxBwrap)(
           filesystem: "workspace",
           network: "none",
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         };
         // Undefined bwrapPath (provider absent) -> reject BEFORE any spawn.

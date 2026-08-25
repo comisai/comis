@@ -290,6 +290,31 @@ export const SystemHealthReportSchema = z.object({
       ),
     })
     .optional(),
+  /**
+   * The cross-session CAPABILITY-SERVICE / managed-run health slice. Counts,
+   * closed status-reason enums, and one opaque host-minted run id ONLY — never a
+   * body, path, objective, or service credential; the non-strict z.object strips
+   * any extra field. The block is absent when the managed-run store is unwired
+   * (the daemon-less offline CLI) or the window held no managed-run activity, so
+   * a daemon that never used a capability service does not carry an empty block.
+   *
+   * Sourced from the durable managed-run index
+   * (`ManagedRunStorePort.countByStatus`) — runs are content-free durable rows by
+   * construction, so this needs no session-rollup schema change and no contentful
+   * global telemetry. `runs.degraded` counts the `failed` + `unknown` statuses (a
+   * `cancelled` run is an intended outcome, not degradation); `topReasonCodes`
+   * are the top closed status-reason codes across the degraded runs; and
+   * `worstManagedRunId` is the most-recently-updated degraded run to drill into
+   * via `comis managed-runs explain`.
+   */
+  capabilityServices: z
+    .object({
+      runs: z.object({ total: z.number(), degraded: z.number(), degradedRate: z.number() }),
+      services: z.object({ total: z.number(), degraded: z.number() }),
+      topReasonCodes: z.array(z.object({ code: z.string(), count: z.number() })),
+      worstManagedRunId: z.string().optional(),
+    })
+    .optional(),
 });
 
 /** The `obs.system.health` response (the cross-session system digest). Inferred from the Zod schema. */

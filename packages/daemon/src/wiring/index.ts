@@ -13,6 +13,15 @@ export { setupLogging, type LoggingResult } from "./setup-logging.js";
 export { setupObservability, rehydrateSpendFromStore, type ObservabilityResult } from "./setup-observability.js";
 export { setupHealth, type HealthResult, setupMonitoring, type MonitoringResult } from "./setup-health.js";
 export { setupMemory, type MemoryResult } from "./setup-memory.js";
+export {
+  buildManagedRunOperatorContext,
+  MANAGED_RUN_HEARTBEAT_MAX_AGE_MS,
+} from "./managed-run-operator-context.js";
+export {
+  definitionForInstance,
+  setupCapabilityServices,
+  type CapabilityServicePlatform,
+} from "./setup-capability-services.js";
 export { bindLearningOAuthCredentialResolver } from "./setup-learning-judge.js";
 export { setupMedia, createImageGenGetter, type MediaResult } from "./setup-media.js";
 export { createImageProviderSelector, makeUnavailableImagePort } from "./setup-image-provider.js";
@@ -63,6 +72,12 @@ export {
   type GatewayAttachmentPersister,
 } from "./gateway-attachment-persistence.js";
 export { setupDeliveryQueue, type DeliveryQueueResult, setupDeliveryMirror, type DeliveryMirrorResult } from "./setup-delivery.js";
+export {
+  setupManagedRunContinuations,
+  createManagedRunContinuationDelivery,
+  type ManagedRunContinuationsContext,
+} from "./setup-managed-run-continuations.js";
+export { createManagedAttentionReplyBinder } from "./managed-attention-reply-binder.js";
 // The durable-run + resume engine wiring (stores + boot recovery +
 // watchdog + shutdown) + the daemon composition helpers. Gated behind
 // autonomy.durability.enabled.
@@ -99,6 +114,11 @@ export {
   type BackgroundRecoveryRecorderDeps,
   type BackgroundRecoveryTrajectoryInput,
 } from "./background-recovery-recorder.js";
+export {
+  createDeadLetterRecoveryObserver,
+  type DeadLetterRecoveryObserverDeps,
+  type DeadLetterRecoveryObservationInput,
+} from "./dead-letter-recovery-observer.js";
 export { setupTerminalWake, type SetupTerminalWakeDeps, type TerminalWakeContext } from "./setup-terminal-wake.js";
 export type {
   BackgroundCompletionRunnerContext,

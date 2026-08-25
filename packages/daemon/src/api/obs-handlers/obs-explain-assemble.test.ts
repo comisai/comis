@@ -2288,6 +2288,60 @@ describe("assembleIncidentReport — trajectory-derived cost/cache ledger", () =
     data: { degraded: false, turnCount: 1, costUsd, toolStats: {}, breakerTripCount: 0 },
   });
 
+  it("keeps a real failed execution sticky when later same-correlation polls succeed", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.aborted",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: { reason: "budget_exceeded" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "session.summary",
+        seq: 2,
+        sessionKey: SESSION_KEY,
+        data: {
+          degraded: true,
+          endReason: "budget_exceeded",
+          turnCount: 6,
+          costUsd: 0.2,
+          toolStats: {},
+          breakerTripCount: 0,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "session.summary",
+        seq: 3,
+        sessionKey: SESSION_KEY,
+        data: {
+          degraded: false,
+          endReason: "success",
+          turnCount: 1,
+          costUsd: 0.1,
+          toolStats: {},
+          breakerTripCount: 0,
+        },
+      },
+    ]);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata({ sessionEnd: { endReason: "success", degraded: false } }),
+      null,
+      SESSION_KEY,
+      3,
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "budget_exceeded",
+      degraded: true,
+      severity: "failed",
+    });
+  });
+
   it("sums the per-execution session.summary costs instead of trusting the last-write rollup costUsd", () => {
     const signals = toIncidentSignals([
       sessionSummaryRecord(0.13086, 1),

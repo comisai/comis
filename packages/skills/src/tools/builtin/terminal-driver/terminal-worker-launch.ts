@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { systemEnvSnapshot } from "@comis/core";
 
 import type { FakeWorkerChild } from "./terminal-session-registry.js";
+import { TERMINAL_PROCESS_ENTRIES } from "./terminal-process-entry-registry.js";
 
 /**
  * Resolve the absolute path of the compiled standalone worker entry
@@ -33,7 +34,7 @@ import type { FakeWorkerChild } from "./terminal-session-registry.js";
  * The daemon's `resolveWorkerJsPath` delegates here.
  */
 export function resolveWorkerMainPath(): string {
-  return fileURLToPath(new URL("./terminal-worker-main.js", import.meta.url));
+  return fileURLToPath(new URL(`./${TERMINAL_PROCESS_ENTRIES.worker.outputFile}`, import.meta.url));
 }
 
 /**

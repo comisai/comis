@@ -323,13 +323,10 @@ export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   // `health_signal:orchestrate_efficiency` rollup — the finding + this entry MOVE
   // TOGETHER (listing it here without the dedicated branch silently drops it).
   "orchestrate_efficiency",
-  // The three previously-dark daemon-side
-  // orchestration signals each get a dedicated finding below (named violated
-  // dimensions / transient-vs-permanent split / dominant cap source). Excluded from
+  // Daemon-side orchestration signals get dedicated findings below. Excluded from
   // the generic rollup so they are not double-counted — each finding + its entry here
   // MOVE TOGETHER (listing without the dedicated branch silently drops it).
   "sandbox_downgrade_refused",
-  "delivery_deadlettered",
   "node_budget_exceeded",
   // subagent_killed gets the dedicated subagent_stuck_killed finding below
   // (warning rows = health-monitor kills only; parent/operator/system kills are
@@ -506,21 +503,6 @@ export function sandboxDowngradeFromRow(row: DiagnosticRow): { dimensions: strin
       ? parsed.dimensions.filter((d): d is string => typeof d === "string")
       : [];
     return { dimensions };
-  } catch {
-    return null;
-  }
-}
-
-/** `{transient}` from a `delivery_deadlettered` row's details JSON.
- *  Defensive parse — non-deadletter / malformed / missing folds to `null` (ignored).
- *  `transient` true = retries exhausted, false = immediate permanent. Never reads the
- *  runId or any body (the row never carried them). */
-export function deliveryDeadletteredFromRow(row: DiagnosticRow): { transient: boolean } | null {
-  if (row.details === undefined) return null;
-  try {
-    const parsed = JSON.parse(row.details) as { signal?: unknown; transient?: unknown };
-    if (parsed.signal !== "delivery_deadlettered") return null;
-    return { transient: parsed.transient === true };
   } catch {
     return null;
   }

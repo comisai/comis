@@ -28,9 +28,9 @@
  * but forgets the others -> tarball publish-time failure rather than test-time
  * failure.
  *
- * Note on `web`: web is bundled (in bundledDependencies) but has NO namespace
- * re-export and NO mirror file (current convention). `ALL_BUNDLED_PACKAGES`
- * includes web; `NAMESPACED_PACKAGES` excludes it.
+ * `web` and internal runtime packages are bundled but have no namespace
+ * re-export or mirror file. `ALL_BUNDLED_PACKAGES` includes them;
+ * `NAMESPACED_PACKAGES` excludes them.
  *
  * @module
  */
@@ -43,6 +43,9 @@ import { formatViolations } from "../support/architecture-helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
+
+/** Packages bundled only to satisfy installed runtime imports. */
+const INTERNAL_RUNTIME_PACKAGES = new Set(["capability-service-sdk"]);
 
 function readUmbrellaPackageJson(): {
   bundledDependencies: string[];
@@ -70,7 +73,7 @@ function readUmbrellaBundledPackages(): {
   const all = (pkg.bundledDependencies ?? [])
     .filter((s: unknown): s is string => typeof s === "string" && s.startsWith("@comis/"))
     .map((s: string) => s.replace(/^@comis\//, ""));
-  const namespaced = all.filter((p) => p !== "web");
+  const namespaced = all.filter((p) => p !== "web" && !INTERNAL_RUNTIME_PACKAGES.has(p));
   return { namespaced, all };
 }
 
@@ -110,6 +113,35 @@ function readPrepackSource(): string {
 }
 
 describe("umbrella-bundling -- bidirectional 5-way alignment vs bundledDependencies", () => {
+  it("internal runtime packages remain private and present in the umbrella", () => {
+    const bundled = new Set(ALL_BUNDLED_PACKAGES);
+    const violations = [...INTERNAL_RUNTIME_PACKAGES].filter((name) => {
+      const manifest = JSON.parse(
+        readFileSync(resolve(REPO_ROOT, `packages/${name}/package.json`), "utf8"),
+      ) as { private?: boolean };
+      return manifest.private !== true || !bundled.has(name);
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("bundled packages close every internal runtime dependency", () => {
+    const bundled = new Set(ALL_BUNDLED_PACKAGES);
+    const missing = new Set<string>();
+    for (const packageName of ALL_BUNDLED_PACKAGES) {
+      const manifest = JSON.parse(
+        readFileSync(resolve(REPO_ROOT, `packages/${packageName}/package.json`), "utf8"),
+      ) as { dependencies?: Record<string, string> };
+      for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+        if (dependency.startsWith("@comis/") && !bundled.has(dependency.slice("@comis/".length))) {
+          missing.add(`${packageName} -> ${dependency}`);
+        }
+      }
+    }
+
+    expect([...missing].sort()).toEqual([]);
+  });
+
   // Dimension 5 — packages/ directories vs canonical source.
   it("packages/ directories match ALL_BUNDLED_PACKAGES (set equality)", () => {
     const dirs = new Set(readPackagesDirectories());

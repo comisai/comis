@@ -808,6 +808,7 @@ export interface ObservabilityApiDeps {
    */
   clock?: import("@comis/core").ClockPort;
   /** The durable-run store the system assembler reads (`countByStatus`) for the autonomy block. Soft-fail (obsStore? precedent): absent ⇒ the block is OMITTED (offline CLI / non-durability boot). Wired on the SAME object as obsStore/clock by buildRpcDispatchDeps (daemon.ts:893). @optional-field */ durableRuns?: import("@comis/core").DurableRunPort;
+  /** The durable managed-run store the observability surface reads: `countByStatus` for the system-health capabilityServices block (service/run degradation counts + top closed reason codes), and `listByTraceIds` for the obs.explain session→managed-run linkage. Soft-fail (the durableRuns precedent): absent ⇒ those surfaces are OMITTED (offline CLI). Narrowed to the two reads consumed so a test stub need not implement the whole store. Wired from the capability-service platform store by buildRpcDispatchDeps. @optional-field */ managedRunReads?: Pick<import("@comis/core").ManagedRunStorePort, "countByStatus" | "listByTraceIds">;
   /**
    * DI seam for the bundle pipeline.
    * Tests inject a stub that returns ok({ bundleDir: "/tmp/bundle", ... }).
@@ -844,6 +845,15 @@ export interface DaemonApiDeps {
  * from ApiDispatchDeps via structural subtyping at every dispatcher call
  * site (createSessionHandlers(deps), createMemoryHandlers(deps), ...).
  */
+/**
+ * The operator-only view over installed capability services. Absent when the
+ * deployment configures none; the handlers report that rather than omitting
+ * their methods, so an operator's question gets an answer either way.
+ */
+export interface CapabilityServiceApiSlice {
+  readonly managedRuns?: import("./managed-run-context.js").ManagedRunOperatorContext;
+}
+
 export interface ApiDispatchDeps
   extends SessionsApiDeps,
     MemoryApiDeps,
@@ -855,4 +865,5 @@ export interface ApiDispatchDeps
     AuthApiDeps,
     MediaApiDeps,
     ObservabilityApiDeps,
+    CapabilityServiceApiSlice,
     DaemonApiDeps {}

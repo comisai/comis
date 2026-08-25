@@ -126,11 +126,34 @@ describe("resolveDoctorConfig", () => {
       expect(resolution.config?.gateway.tokens[0]?.secret).toBe(TOKEN_48);
       expect(
         resolveDoctorSecretPresence([configPath], "CANARY_SECRET", deps),
-      ).toBe(true);
+      ).toBe("present");
     } finally {
       rmSync(configuredDataDir, { recursive: true, force: true });
       rmSync(fallbackDataDir, { recursive: true, force: true });
       rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports encrypted secret presence as unavailable when the offline key is inaccessible", () => {
+    const dataDir = mkdtempSync(resolve(tmpdir(), "comis-doctor-credential-store-"));
+    const configPath = resolve(dataDir, "config.yaml");
+
+    try {
+      writeFileSync(
+        configPath,
+        [
+          `dataDir: ${dataDir}`,
+          "security:",
+          "  storage: encrypted",
+        ].join("\n"),
+        { mode: 0o600 },
+      );
+
+      expect(resolveDoctorSecretPresence([configPath], "CANARY_SECRET")).toBe(
+        "unavailable",
+      );
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
     }
   });
 

@@ -29,7 +29,7 @@ describe("section-registry parity", () => {
     it("getConfigSections() returns the canonical section list", () => {
       expect(stableStringify(getConfigSections())).toMatchSnapshot();
     });
-    // The 17 schema-serializer-view sections — each as its own snapshot for reviewability.
+    // Every schema-serializer-view section gets its own reviewable snapshot.
     // `diagnostics` sits between `monitoring` and `browser`.
     for (const section of [
       "agents",
@@ -49,6 +49,8 @@ describe("section-registry parity", () => {
       "messages",
       "approvals",
       "tooling",
+      "orchestration",
+      "capabilityServices",
     ]) {
       it(`getConfigSchema("${section}")`, () => {
         expect(stableStringify(getConfigSchema(section))).toMatchSnapshot();
@@ -60,7 +62,7 @@ describe("section-registry parity", () => {
     it("getFieldMetadata() — full flat array", () => {
       expect(stableStringify(getFieldMetadata())).toMatchSnapshot();
     });
-    // The 19 field-metadata-view sections.
+    // Every field-metadata-view section gets its own reviewable snapshot.
     // `diagnostics` sits between `monitoring` and `plugins`.
     for (const section of [
       "agents",
@@ -82,6 +84,8 @@ describe("section-registry parity", () => {
       "embedding",
       "envelope",
       "tooling",
+      "orchestration",
+      "capabilityServices",
     ]) {
       it(`getFieldMetadata("${section}")`, () => {
         expect(stableStringify(getFieldMetadata(section))).toMatchSnapshot();

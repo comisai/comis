@@ -42,11 +42,27 @@ rig_banner() {
   fi
 }
 
+# Return only actionable startup failures appended after the caller's console-log checkpoint. A Node
+# crash can print enough stack frames to push the useful FATAL line beyond a short tail, while an
+# unscoped grep can report a failure from an earlier launch of the same isolated rig.
+rig_actionable_boot_failure() {
+  local _console_log="${1:-}"
+  local _prior_lines="${2:-0}"
+  [ -f "$_console_log" ] || return 0
+  case "$_prior_lines" in
+  "" | *[!0-9]*) _prior_lines=0 ;;
+  esac
+  tail -n "+$((_prior_lines + 1))" "$_console_log" 2>/dev/null \
+    | grep -aE '(^FATAL:|"level":(50|60),)' \
+    | tail -3
+}
+
 # Discard only an obsolete remote-layout block after a caller has selected local mode. This runs
 # before the rendered rig env is sourced so its isolated DATA/GW_PORT values can fill the gap left
 # by the discarded block. Running the same cleanup only inside rig_defaults() is too late: defaults
 # would select ~/.comis and a bare local-up would repoint the operator's everyday install.
 rig_drop_leaked_remote_layout() {
+  local _drop_scope="${1:-paths}"
   if rig_is_local; then
     # A `.live-env` written before RIG_MODE existed assigns the REMOTE layout unconditionally, and
     # the default-assigns below would then KEEP it — silently pointing a "local" run at
@@ -58,8 +74,16 @@ rig_drop_leaked_remote_layout() {
     if [ -n "${COMIS_HOME:-}" ] && [ ! -d "${COMIS_HOME}" ]; then
       _leaked_comis_home="$COMIS_HOME"
       echo "rig: RIG_MODE=local but COMIS_HOME=$COMIS_HOME does not exist here — ignoring the" >&2
-      echo "     remote values from .live-env (COMIS_USER/COMIS_HOME/DATA/PKG/EMU_DIR/GW_PORT). Wrap that" >&2
+      echo "     remote topology from .live-env (service, data, package, emulator, and RPC paths). Wrap that" >&2
       echo "     block in 'if [ \"\${RIG_MODE:-remote}\" = remote ]; then … fi', or set them inline." >&2
+      if [ "$_drop_scope" = "all" ]; then
+        unset COMIS_USER COMIS_HOME COMIS_DATA_DIR COMIS_CONFIG_PATHS COMIS_TRAJECTORY_DIR
+        unset DATA PKG SERVICE GW_PORT KIT_DIR RIG_ENV GWTOKEN
+        unset EMU_DIR EMU_JSON EMU_LOG EMU_TMUX_SESSION
+        unset LOCAL_SUPERVISOR LOCAL_TMUX_SESSION LOCAL_DAEMON_PID_FILE
+        unset _leaked_comis_home
+        return 0
+      fi
       case "${DATA:-}" in
       "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset DATA ;;
       esac
@@ -69,6 +93,19 @@ rig_drop_leaked_remote_layout() {
       case "${EMU_DIR:-}" in
       /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset EMU_DIR ;;
       esac
+      case "${KIT_DIR:-}" in
+      /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset KIT_DIR ;;
+      esac
+      case "${RIG_ENV:-}" in
+      /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset RIG_ENV ;;
+      esac
+      case "${EMU_JSON:-}" in
+      /tmp/*-emu.json | /tmp/comis-emu.json | /root/* | "$_leaked_comis_home"/*) unset EMU_JSON ;;
+      esac
+      case "${EMU_LOG:-}" in
+      /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset EMU_LOG ;;
+      esac
+      [ "${EMU_TMUX_SESSION:-}" = "emu" ] && unset EMU_TMUX_SESSION
       # 4766 is the shared default carried by the obsolete remote block. A non-default value may
       # be an explicit local override and must survive just like an explicit isolated DATA path.
       [ "${GW_PORT:-}" = "4766" ] && unset GW_PORT
@@ -104,6 +141,7 @@ rig_load_persisted_env() {
   if [ -n "$_rig_env_file" ]; then
     # shellcheck disable=SC1090 # the rig env path is selected at run time
     . "$_rig_env_file"
+    rig_drop_leaked_remote_layout all
   fi
   [ "${RIG_LOAD_DEFER_DEFAULTS:-0}" = "1" ] || rig_defaults
 }
@@ -119,7 +157,7 @@ rig_load_env() {
   local -a _explicit_values=()
   local -a _selected_keys=()
   local -a _selected_values=()
-  local _rig_keys="RIG_MODE COMIS_USER COMIS_HOME COMIS_DATA_DIR COMIS_TRAJECTORY_DIR DATA REPO PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON EMU_LOG EMU_TMUX_SESSION LOCAL_SUPERVISOR LOCAL_TMUX_SESSION LOCAL_DAEMON_PID_FILE NODE_ARGS VPS REMOTE_SUDO GWTOKEN EMU_GROUPS"
+  local _rig_keys="RIG_MODE COMIS_USER COMIS_HOME COMIS_DATA_DIR COMIS_TRAJECTORY_DIR DATA REPO PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON EMU_LOG EMU_TMUX_SESSION EMU_MESSAGE_ID_STATE_DIR LOCAL_SUPERVISOR LOCAL_TMUX_SESSION LOCAL_DAEMON_PID_FILE NODE_ARGS VPS REMOTE_SUDO GWTOKEN EMU_GROUPS"
   local _explicit_keys_source="$_rig_keys COMIS_CONFIG_PATHS COMIS_CONFIG GW_HOST WH_BASE WH_PATH SKIP_BUILD PROTECT_CONTINUITY_AFTER_RESTART ALLOW_CONTINUITY_WIPE CONTINUITY_SENTINEL WIPE_CRONS"
 
   for _key in $_explicit_keys_source; do
@@ -135,6 +173,9 @@ rig_load_env() {
   if [ -n "$_live_env" ] && [ -f "$_live_env" ]; then
     # shellcheck disable=SC1090 # the live env path is selected at run time
     . "$_live_env"
+    # This source is the only point where every value is known to come from the reusable live file.
+    # Drop the entire remote topology here; explicit one-run overrides are restored immediately below.
+    rig_drop_leaked_remote_layout all
   fi
   for ((_index = 0; _index < ${#_explicit_keys[@]}; _index++)); do
     export "${_explicit_keys[_index]}=${_explicit_values[_index]}"
@@ -203,6 +244,7 @@ rig_defaults() {
     : "${EMU_JSON:=$DATA/emulator-wiring.json}"
     : "${EMU_LOG:=$DATA/emulator.log}"
     : "${EMU_TMUX_SESSION:=emu-${SERVICE}}"
+    : "${EMU_MESSAGE_ID_STATE_DIR:=$DATA/emulator-message-id-state}"
     : "${LOCAL_SUPERVISOR:=auto}"
   else
     : "${COMIS_USER:=comis}"
@@ -218,8 +260,9 @@ rig_defaults() {
     : "${EMU_JSON:=/tmp/comis-emu.json}"
     : "${EMU_LOG:=/root/emu.log}"
     : "${EMU_TMUX_SESSION:=emu}"
+    : "${EMU_MESSAGE_ID_STATE_DIR:=/var/lib/comis-emu/message-id-state}"
   fi
-  export COMIS_USER COMIS_HOME DATA PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON EMU_LOG EMU_TMUX_SESSION
+  export COMIS_USER COMIS_HOME DATA PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON EMU_LOG EMU_TMUX_SESSION EMU_MESSAGE_ID_STATE_DIR
   [ -n "${REPO:-}" ] && export REPO
   [ -n "${LOCAL_SUPERVISOR:-}" ] && export LOCAL_SUPERVISOR
   [ -n "${COMIS_TRAJECTORY_DIR:-}" ] && export COMIS_TRAJECTORY_DIR
@@ -443,20 +486,35 @@ rig_daemon_pid() {
   # Production units commonly exec an absolute Node path (`/usr/bin/node …`),
   # so a `^node` process-name probe reports an active systemd daemon as absent.
   # Prefer the selected unit's authoritative MainPID and validate that it is a
-  # daemon process; retain a path-tolerant fallback for non-systemd rigs.
+  # daemon process. A campaign may use a small composition wrapper instead of
+  # invoking daemon.js directly; accept it only when the readable wrapper
+  # imports this rig's daemon distribution. Once systemd resolves the selected
+  # unit, fail closed instead of falling through to a sibling daemon's PID.
+  # Retain a path-tolerant fallback only for rigs without a resolvable unit.
   if command -v systemctl >/dev/null 2>&1 && [ -n "${SERVICE:-}" ]; then
-    local _systemd_pid
-    _systemd_pid="$(systemctl show -p MainPID --value "$SERVICE" 2>/dev/null)"
-    case "$_systemd_pid" in
-    '' | 0 | *[!0-9]*) ;;
-    *)
-      if kill -0 "$_systemd_pid" 2>/dev/null \
-        && ps -o command= -p "$_systemd_pid" 2>/dev/null | grep -E '(^|/)node .*daemon\.js' >/dev/null; then
-        printf '%s' "$_systemd_pid"
-        return 0
-      fi
-      ;;
-    esac
+    local _systemd_pid _systemd_command _systemd_entry
+    if ! _systemd_pid="$(systemctl show -p MainPID --value "$SERVICE" 2>/dev/null)"; then
+      _systemd_pid=""
+    else
+      case "$_systemd_pid" in
+      '' | 0 | *[!0-9]*) ;;
+      *)
+        if kill -0 "$_systemd_pid" 2>/dev/null; then
+          _systemd_command="$(ps -o command= -p "$_systemd_pid" 2>/dev/null)"
+          if printf '%s\n' "$_systemd_command" | grep -E '(^|/)node .*daemon\.js' >/dev/null; then
+            printf '%s' "$_systemd_pid"
+            return 0
+          fi
+          _systemd_entry="$(printf '%s\n' "$_systemd_command" | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /\.(mjs|cjs|js)$/) { print $i; exit } }')"
+          if [ -n "$_systemd_entry" ] && rig_entry_uses_daemon_dist "$_systemd_entry"; then
+            printf '%s' "$_systemd_pid"
+            return 0
+          fi
+        fi
+        ;;
+      esac
+      return 0
+    fi
   fi
   pgrep -f '(^|/)node .*daemon\.js' 2>/dev/null | head -1
 }
@@ -492,6 +550,18 @@ rig_daemon_entry() {
   else
     printf ''
   fi
+}
+
+# A deployment may start a composition wrapper instead of the daemon entrypoint directly. Accept
+# that topology only when the wrapper is a readable file that names the selected package's daemon
+# distribution; an unrelated JavaScript entrypoint must still fail the package-coherence gate.
+rig_entry_uses_daemon_dist() {
+  local _entry="${1:-}" _daemon_entry="" _daemon_dist=""
+  [ -f "$_entry" ] || return 1
+  _daemon_entry="$(rig_daemon_entry)"
+  [ -n "$_daemon_entry" ] || return 1
+  _daemon_dist="${_daemon_entry%/*}/"
+  grep -F -- "$_daemon_dist" "$_entry" >/dev/null 2>&1
 }
 
 # Is pm2 supervising this service right now? Local mode only; decides restart transport.

@@ -11,8 +11,8 @@
  * mirrors VERBATIM-in-shape the atomic-durable-write substrate of the journal store —
  * `ensureContainedDir` (dir `0o700`) + `writeRegularFile` (file `0o600`) with `dataDir`
  * as the `confinedBaseDir` ancestor-symlink defense, a boot-time recover scan that
- * SKIPS a corrupt/partial file via `deserializeDescriptor`, the best-effort
- * swallowed-error contract, and an ENOENT-tolerant remove.
+ * SKIPS a corrupt/partial file via `deserializeDescriptor`, failed persistence Results,
+ * and an ENOENT-tolerant remove.
  *
  * The port is INSTANCE-bound to one `(dataDir, agentId)` because
  * `SessionDescriptorStorePort.persist(descriptor)`/`recover()`/`remove(sessionId)` are
@@ -28,8 +28,7 @@
  *   - IDENTITY VERBATIM: the recovered descriptor carries the SAME allowId/owner/scope
  *     it was persisted with (durability changes WHERE not WHAT).
  *   - TOTAL recover: a corrupt-after-crash descriptor is a corrupt-SKIP
- *     (`deserializeDescriptor` → undefined), NEVER a throw; a write fault is swallowed
- *     best-effort (the registry's in-memory handle already exists).
+ *     (`deserializeDescriptor` → undefined), NEVER a throw; a write fault is returned.
  *
  * @module
  */
@@ -38,6 +37,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionDescriptor } from "@comis/skills/tools";
+import { err, ok } from "@comis/shared";
 import {
   createSessionDescriptorStore,
   descriptorDir,
@@ -67,6 +67,7 @@ function makeDescriptor(overrides: Partial<SessionDescriptor> = {}): SessionDesc
       network: "none",
       uid: "dedicated",
       credentialPaths: [],
+      ephemeralWritablePaths: [],
     },
     ...overrides,
   };
@@ -119,7 +120,7 @@ describe("terminal-session-descriptor-persistence (durable descriptor store, rea
     const descriptor = makeDescriptor({
       allowId: "privileged-cli",
       owner: { agentId: AGENT, sessionKey: "" },
-      scope: { filesystem: "listed-paths", network: "listed-hosts", uid: "dedicated", credentialPaths: ["/x"], paths: ["/p"], hosts: ["h"] },
+      scope: { filesystem: "listed-paths", network: "listed-hosts", uid: "dedicated", credentialPaths: ["/x"], ephemeralWritablePaths: [], paths: ["/p"], hosts: ["h"] },
     });
     createSessionDescriptorStore({ dataDir, agentId: AGENT }).persist(descriptor);
 
@@ -188,16 +189,43 @@ describe("terminal-session-descriptor-persistence (durable descriptor store, rea
     expect(() => store.remove("sess-keep")).not.toThrow();
   });
 
-  it("does not throw to the caller when the persist target is unwritable (best-effort)", () => {
+  it("returns a failed result when the persist target is unwritable", () => {
     const fileAsDir = join(dataDir, "not-a-dir");
     writeFileSync(fileAsDir, "x");
     const store = createSessionDescriptorStore({ dataDir: fileAsDir, agentId: AGENT });
-    expect(() => store.persist(makeDescriptor())).not.toThrow();
+    expect(store.persist(makeDescriptor())).toMatchObject({ ok: false });
   });
 
-  it("stays best-effort (never throws) for a degenerate relative dataDir like '.'", () => {
+  it("retains the previous descriptor when an atomic replacement cannot commit", () => {
+    const initial = makeDescriptor({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    });
+    expect(createSessionDescriptorStore({ dataDir, agentId: AGENT }).persist(initial)).toEqual(ok(undefined));
+
+    const replacement = makeDescriptor({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux:991" },
+    });
+    const renameError = new Error("EIO: descriptor rename failed");
+    const failingDeps = {
+      dataDir,
+      agentId: AGENT,
+      renameSync: () => {
+        throw renameError;
+      },
+    } as SessionDescriptorPersistenceDeps & { renameSync: (from: string, to: string) => void };
+
+    expect(createSessionDescriptorStore(failingDeps).persist(replacement)).toEqual(err(renameError));
+    expect(createSessionDescriptorStore({ dataDir, agentId: AGENT }).recover()).toEqual([initial]);
+  });
+
+  it("reports persistence failure for a degenerate relative data directory", () => {
     const store = createSessionDescriptorStore({ dataDir: ".", agentId: AGENT });
-    expect(() => store.persist(makeDescriptor())).not.toThrow();
+    expect(store.persist(makeDescriptor())).toMatchObject({ ok: false });
     expect(() => store.recover()).not.toThrow();
     expect(store.recover()).toHaveLength(0);
     expect(() => store.remove("sess-a")).not.toThrow();
@@ -205,7 +233,7 @@ describe("terminal-session-descriptor-persistence (durable descriptor store, rea
 });
 
 // ---------------------------------------------------------------------------
-// INJECTED-fs idiom — mode-arg spies + the durable write + the genuine-fault swallow
+// INJECTED-fs idiom — mode-arg spies + the durable write + failure propagation
 // (mirrors the journal-store injected-fs idiom; runs on macOS with no real disk).
 // ---------------------------------------------------------------------------
 
@@ -213,25 +241,34 @@ describe("terminal-session-descriptor-persistence (injected fs — mode + durabi
   function spyDeps(): {
     deps: SessionDescriptorPersistenceDeps;
     ensured: Array<{ dir: string; mode: number; confinedBaseDir?: string }>;
-    written: Array<{ path: string; content: string; confinedBaseDir?: string }>;
+    written: Array<{ path: string; content: string; confinedBaseDir?: string; fsyncBeforeSuccess?: true }>;
+    renamed: Array<{ from: string; to: string }>;
   } {
     const ensured: Array<{ dir: string; mode: number; confinedBaseDir?: string }> = [];
-    const written: Array<{ path: string; content: string; confinedBaseDir?: string }> = [];
+    const written: Array<{ path: string; content: string; confinedBaseDir?: string; fsyncBeforeSuccess?: true }> = [];
+    const renamed: Array<{ from: string; to: string }> = [];
     const deps: SessionDescriptorPersistenceDeps = {
       dataDir: "/data",
       agentId: AGENT,
       ensureContainedDir: (opts) => {
         ensured.push({ dir: opts.dir, mode: opts.mode, confinedBaseDir: opts.confinedBaseDir });
+        return ok({ created: true });
       },
       writeRegularFile: (opts) => {
         written.push({
           path: opts.path,
           content: typeof opts.content === "string" ? opts.content : opts.content.toString("utf8"),
           confinedBaseDir: opts.confinedBaseDir,
+          fsyncBeforeSuccess: opts.fsyncBeforeSuccess,
         });
+        return ok({ totalBytes: 1 });
       },
+      renameSync: (from, to) => renamed.push({ from, to }),
+      openSync: () => 7,
+      fsyncSync: vi.fn(),
+      closeSync: vi.fn(),
     };
-    return { deps, ensured, written };
+    return { deps, ensured, written, renamed };
   }
 
   it("creates the descriptors dir at mode 0o700 with dataDir as the confinedBaseDir", () => {
@@ -248,20 +285,35 @@ describe("terminal-session-descriptor-persistence (injected fs — mode + durabi
     const descriptor = makeDescriptor({ sessionId: "sess-a" });
     createSessionDescriptorStore(s.deps).persist(descriptor);
     expect(s.written).toHaveLength(1);
-    expect(s.written[0].path).toBe(join("/data", "terminal-drive", AGENT, "descriptors", "sess-a.json"));
+    expect(s.written[0].path).toMatch(/\/descriptors\/\.sess-a\.[^.]+\.tmp$/u);
     expect(s.written[0].confinedBaseDir).toBe("/data");
+    expect(s.written[0].fsyncBeforeSuccess).toBe(true);
+    expect(s.renamed).toEqual([{
+      from: s.written[0].path,
+      to: join("/data", "terminal-drive", AGENT, "descriptors", "sess-a.json"),
+    }]);
     // The bytes are exactly the SHIPPED serializeDescriptor output (no shape rewrite).
     expect(JSON.parse(s.written[0].content)).toEqual(descriptor);
   });
 
-  it("swallows a GENUINE write fault best-effort (the registry handle already exists)", () => {
+  it("returns a failed result for a thrown write fault", () => {
     const s = spyDeps();
     s.deps.writeRegularFile = () => {
       const e = new Error("EIO: i/o error");
       (e as { code?: string }).code = "EIO";
       throw e;
     };
-    expect(() => createSessionDescriptorStore(s.deps).persist(makeDescriptor())).not.toThrow();
+    expect(createSessionDescriptorStore(s.deps).persist(makeDescriptor())).toMatchObject({ ok: false });
+  });
+
+  it("does not write after confined directory creation returns an error", () => {
+    const s = spyDeps();
+    s.deps.ensureContainedDir = () => err(new Error("directory unavailable"));
+
+    expect(createSessionDescriptorStore(s.deps).persist(makeDescriptor())).toEqual(
+      err(new Error("directory unavailable")),
+    );
+    expect(s.written).toHaveLength(0);
   });
 
   it("remove swallows ENOENT via the injected unlink (explicit-only)", () => {
@@ -273,5 +325,18 @@ describe("terminal-session-descriptor-persistence (injected fs — mode + durabi
     const deps: SessionDescriptorPersistenceDeps = { dataDir: "/data", agentId: AGENT, unlinkSync: unlink };
     expect(() => createSessionDescriptorStore(deps).remove("gone")).not.toThrow();
     expect(unlink).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a descriptor deletion fault instead of claiming authority was removed", () => {
+    const unlinkError = new Error("EIO: descriptor unlink failed");
+    const deps: SessionDescriptorPersistenceDeps = {
+      dataDir: "/data",
+      agentId: AGENT,
+      unlinkSync: () => {
+        throw unlinkError;
+      },
+    };
+
+    expect(createSessionDescriptorStore(deps).remove("sess-a") as unknown).toEqual(err(unlinkError));
   });
 });

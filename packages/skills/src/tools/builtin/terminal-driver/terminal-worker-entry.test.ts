@@ -65,8 +65,9 @@ function makeLogger() {
  * the backend exit by calling `emitExit()` (the live node-pty `onExit` analog —
  * mirrors the pipe stub's `close()`).
  */
-function makeFakeBackend(): {
+function makeFakeBackend(autoExitOnKill = true): {
   spawn: ReturnType<typeof vi.fn>;
+  kill: ReturnType<typeof vi.fn>;
   emit: (chunk: string) => void;
   emitExit: (e?: { exitCode: number; signal?: number }) => void;
   lastSpawn: () => { bin: string; argv: string[] } | undefined;
@@ -75,6 +76,9 @@ function makeFakeBackend(): {
   let onExit: ((e: { exitCode: number; signal?: number }) => void) | undefined;
   let lastBin: string | undefined;
   let lastArgv: string[] | undefined;
+  const kill = vi.fn(() => {
+    if (autoExitOnKill) onExit?.({ exitCode: 143, signal: 15 });
+  });
   const spawn = vi.fn((bin: string, argv: string[]) => {
     lastBin = bin;
     lastArgv = argv;
@@ -88,12 +92,13 @@ function makeFakeBackend(): {
       },
       write: vi.fn(),
       resize: vi.fn(),
-      kill: vi.fn(),
+      kill,
     };
     return handle;
   });
   return {
     spawn,
+    kill,
     emit: (chunk: string) => onData?.(chunk),
     emitExit: (e: { exitCode: number; signal?: number } = { exitCode: 0 }) => onExit?.(e),
     lastSpawn: () =>
@@ -392,7 +397,56 @@ describe("createTerminalWorker — backend selection", () => {
 
     expect(reply.ok).toBe(true);
     expect((reply.result as { backend: string }).backend).toBe("pty");
+    expect((reply.result as { rootPid?: number }).rootPid).toBe(4242);
     expect(fake.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms the confined backend exited before acknowledging a kill frame", async () => {
+    const fake = makeFakeBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: fake.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    const killed = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-kill-1",
+      traceId: TRACE_ID,
+      method: "kill",
+      params: { sessionId: "s1" },
+    });
+    const read = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-read-after-kill",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "s1" },
+    });
+
+    expect(killed.ok).toBe(true);
+    expect(fake.kill).toHaveBeenCalledWith("SIGTERM");
+    expect((read.result as { alive: boolean }).alive).toBe(false);
+  });
+
+  it("keeps the kill acknowledgement pending until the backend emits its exit", async () => {
+    const fake = makeFakeBackend(false);
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: fake.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    let settled = false;
+
+    const killing = worker.handle({
+      sessionId: "s1",
+      requestId: "rq-kill-pending",
+      traceId: TRACE_ID,
+      method: "kill",
+      params: { sessionId: "s1" },
+    }).then((reply) => {
+      settled = true;
+      return reply;
+    });
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    fake.emitExit({ exitCode: 143, signal: 15 });
+    await expect(killing).resolves.toMatchObject({ ok: true });
   });
 
   // The THIRD backend selection — a create frame requesting
@@ -795,6 +849,7 @@ describe("createTerminalWorker — spawn the child verbatim AFTER the bwrap `--`
           filesystem: "workspace",
           network: "none",
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         },
         workspace: "/work/agent-1",
@@ -835,6 +890,7 @@ describe("createTerminalWorker — the scope materializes into the bwrap argv", 
           filesystem: "workspace",
           network: "none",
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         },
         workspace: "/work/agent-1",
@@ -873,7 +929,7 @@ describe("createTerminalWorker — the scope materializes into the bwrap argv", 
         argv: [],
         cols: 80,
         rows: 24,
-        scope: { filesystem: "full", network: "full", credentialPaths: ["~/.claude"], uid: "daemon" },
+        scope: { filesystem: "full", network: "full", credentialPaths: ["~/.claude"], ephemeralWritablePaths: [], uid: "daemon" },
         workspace: "/work/agent-1",
         cwd: "/work/agent-1",
       }),
@@ -919,7 +975,7 @@ describe("createTerminalWorker — the scope materializes into the bwrap argv", 
         argv: [],
         cols: 80,
         rows: 24,
-        scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
+        scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
         workspace: "/work/a",
         cwd: "/work/a",
       }),
@@ -962,7 +1018,7 @@ describe("createTerminalWorker — the scope materializes into the bwrap argv", 
         argv: ["-l"],
         cols: 80,
         rows: 24,
-        scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
+        scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
         workspace: "/work/a",
         cwd: "/work/a",
       }),
@@ -992,7 +1048,7 @@ describe("createTerminalWorker — the scope materializes into the bwrap argv", 
  * assertions without standing up a real proxy server (the LIVE bridge is VPS-only).
  */
 function makeFakeEgressControl(socketPath = "/tmp/e.sock") {
-  const materialize = vi.fn(async (_hosts: string[]) => ({
+  const materialize = vi.fn(async (_hosts: string[], _context: { sessionId: string; durability: "transient" | "durable" }) => ({
     socketPath,
     dispose,
   }));
@@ -1031,6 +1087,7 @@ describe("createTerminalWorker — listed-hosts egress materialization", () => {
           network: "listed-hosts",
           hosts: ["api.example.com"],
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         },
         workspace: "/work/a",
@@ -1040,12 +1097,63 @@ describe("createTerminalWorker — listed-hosts egress materialization", () => {
 
     // materialize was called with exactly the scope's hosts.
     expect(egress.materialize).toHaveBeenCalledTimes(1);
-    expect(egress.materialize).toHaveBeenCalledWith(["api.example.com"]);
+    expect(egress.materialize).toHaveBeenCalledWith(
+      ["api.example.com"],
+      { sessionId: "s1", durability: "transient" },
+    );
     // The returned socket is bound via the composer's relaySocketPath.
     const argv = fake.lastSpawn()?.argv ?? [];
     expect(argv.join(" ")).toContain("--bind /tmp/e.sock /tmp/e.sock");
     // The child env carries HTTPS_PROXY pointing at the in-jail relay loopback.
     expect(recordedEnv?.["HTTPS_PROXY"]).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+
+  it("marks listed-hosts egress durable only when the tmux backend is available", async () => {
+    const egress = makeFakeEgressControl("/tmp/e.sock");
+    const tmuxSpawn = vi.fn((): FakePtyLike => ({
+      pid: 7373,
+      onData: vi.fn(),
+      onExit: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+    }));
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => {
+          throw new Error("tmux path must not load the ordinary pty backend");
+        },
+        loadTmux: { spawn: tmuxSpawn },
+        bwrapPath: "/usr/bin/bwrap",
+        egressControl: egress.egressControl,
+      }),
+    );
+
+    await worker.handle(
+      createFrame({
+        sessionId: "s-durable",
+        bin: "/bin/curl",
+        argv: ["https://api.example.com"],
+        cols: 80,
+        rows: 24,
+        backend: "tmux",
+        scope: {
+          filesystem: "workspace",
+          network: "listed-hosts",
+          hosts: ["api.example.com"],
+          credentialPaths: [],
+          ephemeralWritablePaths: [],
+          uid: "dedicated",
+        },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+
+    expect(egress.materialize).toHaveBeenCalledWith(
+      ["api.example.com"],
+      { sessionId: "s-durable", durability: "durable" },
+    );
   });
 
   it("inserts the RUNNABLE relay-init between bwrap's `--` and the child, and lets the init own the uid drop (no bwrap --uid)", async () => {
@@ -1077,6 +1185,7 @@ describe("createTerminalWorker — listed-hosts egress materialization", () => {
           network: "listed-hosts",
           hosts: ["api.example.com"],
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         },
         workspace: "/work/a",
@@ -1120,7 +1229,7 @@ describe("createTerminalWorker — listed-hosts egress materialization", () => {
         argv: [],
         cols: 80,
         rows: 24,
-        scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
+        scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
         workspace: "/work/a",
         cwd: "/work/a",
       }),
@@ -1145,7 +1254,7 @@ describe("createTerminalWorker — listed-hosts egress materialization", () => {
         argv: [],
         cols: 80,
         rows: 24,
-        scope: { filesystem: "workspace", network: "full", credentialPaths: [], uid: "dedicated" },
+        scope: { filesystem: "workspace", network: "full", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
         workspace: "/work/a",
         cwd: "/work/a",
       }),
@@ -1175,6 +1284,7 @@ describe("createTerminalWorker — listed-hosts egress materialization", () => {
           network: "listed-hosts",
           hosts: ["api.example.com"],
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         },
         workspace: "/work/a",
@@ -1210,7 +1320,7 @@ describe("createTerminalWorker — worker-path fail-closed", () => {
         argv: [],
         cols: 80,
         rows: 24,
-        scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
+        scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
         workspace: "/work/a",
         cwd: "/work/a",
       }),
@@ -1245,6 +1355,7 @@ describe("createTerminalWorker — worker-path fail-closed", () => {
           network: "listed-hosts",
           hosts: ["api.example.com"],
           credentialPaths: [],
+          ephemeralWritablePaths: [],
           uid: "dedicated",
         },
         workspace: "/work/a",
@@ -1597,6 +1708,19 @@ describe("createTerminalWorker — send_text (submit ordering + bracketed paste)
     const reply = await worker.handle(sendTextFrame("ls", { submit: true }));
     expect(reply.ok).toBe(true);
     expect((reply.result as { screen: string }).screen).toBe("");
+  });
+
+  it("send_text after the child exits refuses delivery without writing stale backend input", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emitExit({ exitCode: 0 });
+
+    const reply = await worker.handle(sendTextFrame("too-late", { submit: true }));
+
+    expect(reply.ok).toBe(true);
+    expect(rec.writes).toEqual([]);
+    expect((reply.result as { delivered?: boolean }).delivered).toBe(false);
   });
 });
 
@@ -2529,6 +2653,23 @@ describe("createTerminalWorker — status frame (classifier single-homed in the 
     const view = reply.result as { state: string; exitCode?: number };
     expect(view.state).toBe("exited");
     expect(view.exitCode).toBe(7);
+  });
+
+  it("an exited session read retains bounded raw exit evidence and the exit code", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit(`before-exit ${"x".repeat(10_000)}\nreporter binding rejected\n`);
+    rec.emitExit({ exitCode: 17 });
+    await flushEmulator();
+
+    const reply = await worker.handle(readFrame());
+    expect(reply.ok).toBe(true);
+    const view = reply.result as { alive: boolean; exitCode?: number; exitTail?: string };
+    expect(view.alive).toBe(false);
+    expect(view.exitCode).toBe(17);
+    expect(view.exitTail).toContain("reporter binding rejected");
+    expect(view.exitTail?.length).toBeLessThanOrEqual(8192);
   });
 
   it("an ABSENT session → status degrades to the safe total default (state:'exited', confidence:'high', reason:'exited')", async () => {

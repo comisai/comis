@@ -19,7 +19,11 @@
  * @module
  */
 
-import type { ErrorKind, TimerPort } from "@comis/core";
+import type {
+  CapabilityServiceContributionRegistration,
+  ErrorKind,
+  TimerPort,
+} from "@comis/core";
 import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import type { ChannelActivityRenderer } from "@comis/core";
@@ -46,6 +50,8 @@ import type { ChannelActivityTracker } from "./observability/channel-activity-tr
 import type { DeliveryTracer } from "./observability/delivery-tracer.js";
 import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
+import type { CapabilityServicePlatform } from "./wiring/setup-capability-services.js";
+import type { ManagedRunContinuationsContext } from "./wiring/setup-managed-run-continuations.js";
 
 import type {
   bootstrap,
@@ -166,6 +172,7 @@ export interface DaemonInstance {
   readonly tokenTracker: TokenTracker;
   readonly processMonitor: ProcessMonitor;
   readonly shutdownHandle: ShutdownHandle;
+  readonly capabilityServices: CapabilityServicePlatform;
   readonly cronSchedulers: Map<string, CronScheduler>;
   readonly resetSchedulers: Map<string, SessionResetScheduler>;
   readonly browserServices: Map<string, BrowserService>;
@@ -255,6 +262,13 @@ export interface DaemonOverrides {
    * a real inbound turn. Production must never set this; the override is test-only.
    */
   activityRendererFactory?: (channelType: string) => ChannelActivityRenderer | undefined;
+  /**
+   * Override trusted linked capability-service declarations at the composition
+   * root. Integration tests use this to join a real external service without
+   * teaching the generic runtime about that service; production leaves it
+   * unset and uses the declarations linked into the daemon bundle.
+   */
+  capabilityServiceContributions?: readonly CapabilityServiceContributionRegistration[];
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +391,7 @@ export interface BootContext {
   cachedPort: Awaited<ReturnType<typeof setupMemory>>["cachedPort"];
   memoryAdapter: Awaited<ReturnType<typeof setupMemory>>["memoryAdapter"];
   db: Awaited<ReturnType<typeof setupMemory>>["db"];
+  capabilityServices: CapabilityServicePlatform;
   sessionStore: Awaited<ReturnType<typeof setupMemory>>["sessionStore"];
   memoryApi: Awaited<ReturnType<typeof setupMemory>>["memoryApi"];
   embeddingQueue: Awaited<ReturnType<typeof setupMemory>>["embeddingQueue"];
@@ -612,6 +627,7 @@ export interface BootContext {
   // Notifications + background completion
   notificationContext?: ReturnType<typeof setupNotifications>;
   bgCompletionRunnerContext?: ReturnType<typeof setupBackgroundCompletionRunner>;
+  managedRunContinuations?: ManagedRunContinuationsContext;
   // Terminal-driver wake-FSM — drained on shutdown.
   terminalWakeContext?: ReturnType<typeof setupTerminalWake>;
   // Cross-session + sub-agent runtime
@@ -707,6 +723,7 @@ export interface BootContext {
   shutdownBackgroundProcesses?: ReturnType<typeof setupTools>["shutdownBackgroundProcesses"];
   /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
   proxyTypingCleanup?: ReturnType<typeof setupCrossSession>["proxyTypingCleanup"];
+  closeAnnouncementAdmission?: ReturnType<typeof setupCrossSession>["closeAnnouncementAdmission"];
   /** Output retention housekeeper handle (from setupOutputRetention). Undefined when defaultWorkspaceDir is empty. */
   outputRetentionHandle?: ReturnType<typeof setupOutputRetention>;
 

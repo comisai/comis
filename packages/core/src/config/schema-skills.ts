@@ -149,6 +149,13 @@ const TerminalAllowEntrySchema = z.strictObject({
     network: z.enum(["none", "listed-hosts", "full"]).default("none"),
     hosts: z.array(z.string()).optional(),
     credentialPaths: z.array(z.string()).default([]),
+    ephemeralWritablePaths: z
+      .array(
+        z.string().min(1).refine((value) => value === "~" || value.startsWith("~/") || value.startsWith("/"), {
+          message: "ephemeral writable paths must be absolute or home-relative",
+        }),
+      )
+      .default([]),
     uid: z.enum(["dedicated", "daemon"]).default("dedicated"),
   }),
   /** Auto-answer policy for safe interaction prompts. */

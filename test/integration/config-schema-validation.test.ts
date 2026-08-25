@@ -52,13 +52,8 @@ describe("Config Schema Validation", () => {
       // Snapshot-style guard: bump this count when a new top-level section is
       // added so the change surfaces in code review. Count reflects all scalars
       // plus all object sections currently in AppConfigSchema.shape.
-      // Merge note: #147 removed the top-level `oauth` section (folded into
-      // the unified credential storage), dropping this from 42 → 41.
-      // The top-level `orchestration` section (authoring gates, shipped
-      // gated-off) brought this back to 42.
-      // The top-level `identity` section (typed platform-subject → principal
-      // mappings for ingress identity resolution) brings this to 43.
-      expect(allKeys).toHaveLength(43);
+      // Includes the opt-in capability-service runtime configuration.
+      expect(allKeys).toHaveLength(44);
     });
 
     it("empty config {} produces valid defaults for all sections", () => {

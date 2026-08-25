@@ -99,6 +99,12 @@ export function toolFailureHint(errorText?: string, errorKind?: string): string 
             + `to finish or stop one, or raise ${configKey}`
           );
     }
+    if (runtimeGuard === "managed_mcp_authority") {
+      return (
+        "The managed MCP call was refused before transport; inspect the exact managed-run "
+        + "owner scope and managedToolBindings[].runHandleArgument before retrying from its origin"
+      );
+    }
     // The CLASSIFIER already decided this was a validation failure — trust it rather than
     // re-deriving the class from prose. `isMcpValidationError` below matches MCP transport shapes
     // only, so a PLATFORM tool's argument rejection fell through to the generic bracketed-code

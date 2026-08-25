@@ -27,6 +27,14 @@ packages/*/*.tsbuildinfo
 
 # Testing
 test/
+!test/
+test/*
+!test/confinement-runner/
+test/confinement-runner/*
+!test/confinement-runner/wave4-codex-launcher.sh
+!test/confinement-runner/e0-codex-launcher.sh
+!test/confinement-runner/wave4-report-capture.sh
+!test/confinement-runner/wave4-reporter-client-diagnostic.go
 packages/*/src/**/*.test.ts
 coverage/
 .nyc_output/

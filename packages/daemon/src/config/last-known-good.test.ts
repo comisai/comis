@@ -319,6 +319,64 @@ describe("last-known-good config", () => {
   //   - Malformed YAML returns { saved: false } (fail-safe)
   // ---------------------------------------------------------------------------
   describe("LKG secret guard", () => {
+    it("snapshots schema-defined terminal executable SHA-256 pins", () => {
+      const hash = "0123456789abcdef".repeat(4);
+      const configWithIntegrityPin = yamlStringify({
+        agents: {
+          default: {
+            skills: {
+              terminal: {
+                allow: [
+                  {
+                    id: "pinned-tool",
+                    match: { path: "/usr/bin/example", hash },
+                    scope: {
+                      filesystem: "workspace",
+                      network: "none",
+                      credentialPaths: [],
+                      ephemeralWritablePaths: [],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+      writeFileSync(configPath, configWithIntegrityPin);
+
+      const result = saveLastKnownGood(configPath);
+
+      expect(result.saved).toBe(true);
+      expect(readFileSync(result.path, "utf-8")).toBe(configWithIntegrityPin);
+    });
+
+    it("still refuses a secret-shaped terminal hash value that is not SHA-256", () => {
+      const configWithSecret = yamlStringify({
+        agents: {
+          default: {
+            skills: {
+              terminal: {
+                allow: [{
+                  id: "invalid-pin",
+                  match: {
+                    path: "/usr/bin/example",
+                    hash: "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                  },
+                }],
+              },
+            },
+          },
+        },
+      });
+      writeFileSync(configPath, configWithSecret);
+
+      const result = saveLastKnownGood(configPath);
+
+      expect(result.saved).toBe(false);
+      expect(existsSync(result.path)).toBe(false);
+    });
+
     it("returns { saved: false } when source config contains plaintext Authorization header secret", () => {
       const configWithSecret = yamlStringify({
         integrations: {

@@ -39,11 +39,10 @@
 
 import * as net from "node:net";
 import { unlink } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import type { EgressControlPort, EgressMaterialization } from "@comis/core";
+import { safePath, type EgressControlPort, type EgressMaterialization, type EgressMaterializationContext } from "@comis/core";
 
 /** The minimal structural logger the proxy needs (a subset of `ComisLogger`). */
 export interface EgressProxyLogger {
@@ -70,6 +69,11 @@ export interface TerminalEgressProxyDeps {
   readonly socketDir?: string;
   /** Id generator for the socket filename (injected in tests for determinism). */
   readonly genId?: () => string;
+  /** Detached helper materializer used only for durable tmux sessions. */
+  readonly durableMaterialize?: (
+    hosts: string[],
+    context: EgressMaterializationContext,
+  ) => Promise<EgressMaterialization>;
 }
 
 /** The longest CONNECT request line we will buffer before giving up (anti-DoS). */
@@ -125,7 +129,14 @@ function handleClient(
       logger.warn(
         // `auth` (closed ErrorKind union): a host-not-in-allowlist CONNECT is an
         // authorization denial — the allowlist is the operator's egress policy.
-        { toolName: "terminal_egress_proxy", hint: "egress denied (host not in allowlist)", errorKind: "auth" as const },
+        {
+          toolName: "terminal_egress_proxy",
+          targetHost: target.host,
+          targetPort: target.port,
+          allowedHosts: [...allow].sort(),
+          hint: `Add ${target.host} to the terminal allow entry scope.hosts only if this egress is intended`,
+          errorKind: "auth" as const,
+        },
         "egress CONNECT blocked",
       );
       client.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
@@ -181,9 +192,18 @@ export function createTerminalEgressProxy(
   const genId = deps.genId ?? (() => randomUUID());
 
   return {
-    async materialize(hosts: string[]): Promise<EgressMaterialization> {
+    async materialize(
+      hosts: string[],
+      context: EgressMaterializationContext,
+    ): Promise<EgressMaterialization> {
+      if (context.durability === "durable") {
+        if (deps.durableMaterialize === undefined) {
+          return Promise.reject(new Error("durable terminal egress materializer is unavailable"));
+        }
+        return deps.durableMaterialize(hosts, context);
+      }
       const allow = new Set(hosts);
-      const socketPath = join(socketDir, `comis-egress-${genId()}.sock`);
+      const socketPath = safePath(socketDir, `comis-egress-${genId()}.sock`);
 
       // A stale socket file at this path would make listen() EADDRINUSE — unlink
       // a leftover first (the path is per-session, so this only clears OUR debris).

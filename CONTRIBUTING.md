@@ -141,8 +141,9 @@ Before opening a PR, run the full validation suite:
 pnpm validate
 ```
 
-This runs: `docs:check && build:clean && cycles && cycles:refs && lint:security && test:coverage`.
-All gates must pass before a code change is submitted.
+The root `package.json` owns the ordered gate chain. It covers documentation,
+capability-protocol drift, a clean build, both cycle checks, security lint, and
+coverage. All gates must pass before a code change is submitted.
 
 **Allowlists are shrink-only.** If a PR adds a new entry to any architecture allowlist
 (`test/support/architecture-allowlist.ts`, lint suppression comments, etc.), it will
@@ -212,28 +213,9 @@ Do **not** open public GitHub issues for security vulnerabilities. Instead, foll
 
 ## Project Structure
 
-Comis is a pnpm monorepo with 16 packages in the `packages/` directory. Each package has its own `package.json`, source code, and tests. See the [Developer Guide](https://docs.comis.ai/developer-guide) for detailed architecture documentation and package descriptions.
-
-```
-comis/
-  packages/
-    core/          # Core domain logic, event bus, ports
-    shared/        # Shared types, utilities, constants
-    cli/           # Command-line interface
-    agent/         # AI execution, models, sessions, and safety
-    memory/        # Storage, embeddings, RAG
-    channels/      # Chat platform adapters
-    skills/        # Skill system and sandbox
-    gateway/       # HTTP gateway and API
-    daemon/        # Background process management
-    scheduler/     # Task scheduling
-    infra/         # Infrastructure utilities
-    web/           # Web UI
-    comis/         # Umbrella published package (bundles all @comis/* deps)
-    observability/      # Diagnostics and trace persistence
-    observability-otel/ # Optional OpenTelemetry and Prometheus exporters
-    orchestrator/       # Inbound and execution coordination
-```
+Comis is a pnpm monorepo whose packages live in the `packages/` directory. See
+the authoritative [package inventory](https://docs.comis.ai/developer-guide/packages)
+for current package roles and dependencies.
 
 ## License
 

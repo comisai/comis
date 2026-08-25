@@ -1,7 +1,7 @@
 {
   "name": "@comis/cli",
   "private": true,
-  "version": "1.0.63",
+  "version": "1.0.64",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Command-line interface for the Comis agent runtime",

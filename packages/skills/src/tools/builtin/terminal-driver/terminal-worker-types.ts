@@ -51,6 +51,8 @@ export interface WorkerFsPort {
 /** Structural node-pty session handle (subset of `IPty`): `onData`→ring, `onExit`→markExited (payload ignored — only the exit signal matters), write/resize/kill forwarded. */
 export interface FakePtyLike {
   pid: number;
+  /** Host PID of the confined terminal root. For tmux this is the detached pane PID, not the attach client PID. */
+  rootPid?: number;
   onData(cb: (data: string) => void): void;
   onExit(cb: (e: { exitCode: number; signal?: number }) => void): void;
   write(data: string): void;
@@ -137,7 +139,7 @@ export interface TmuxBackendLike {
  * `terminal-worker-backend-attach.ts`) can type the `state` it feeds; it is NOT a
  * public-surface contract (not re-exported by the barrel) — purely intra-module.
  */
-// @optional-field-count: 13 optional fields — SessionState is the worker's per-session
+// @optional-field-count: 14 optional fields — SessionState is the worker's per-session
 // record: EVERY optional is a genuinely-conditional per-session datum that is present
 // only on a specific path (pty XOR pipe handle; emu/writeFlush/lastSnapshot once the
 // emulator is built; emitter/lastClassifiedSnapshot/lastProgressMs once attention is
@@ -171,6 +173,8 @@ export interface SessionState {
   interactions: number;
   /** The PTY exit code when the backend reported one: captured on the pty `onExit` payload; surfaced by the `status` frame as the `exitCode`. Absent on the pipe close/error path (no code) and while alive. */
   exitCode?: number;
+  /** Set after tmux begins its attached-client teardown sequence. Later tmux chrome is retained in the raw ring but never allowed to clear the final worker screen in the emulator. */
+  tmuxTeardownSeen?: boolean;
   /** Settle ring-grow subscribers (`SettleDeps.onRingChange`), closure-local; `appendRing` notifies these. */
   ringListeners: Set<() => void>;
   /** Settle exit subscribers (onExit half); the pipe close/error + live pty exit notify these. */
@@ -189,6 +193,7 @@ export interface SessionState {
    * cleaned up (no leak). Absent for `none`/`full`.
    */
   egress?: EgressMaterialization;
+  attachmentRelay?: { dispose(): Promise<void> };
 }
 
 // ---------------------------------------------------------------------------
@@ -203,12 +208,16 @@ export interface CreateResult {
   backend: WorkerBackend;
   cols: number;
   rows: number;
+  /** Host PID used only by the daemon to resolve an opaque start identity. */
+  rootPid?: number;
 }
 
 /** Post-action snapshot a mutating handler (send_text/send_key) returns: the SETTLED `{screen,cursor}` subset; `cursor` stays `{0,0}` until the real cursor lands. */
 export interface SendResult {
   screen: string;
   cursor: { x: number; y: number };
+  /** True only when bytes were written to a still-live child backend. */
+  delivered: boolean;
 }
 
 /** The `resize` reply payload (`{ ok }`). */

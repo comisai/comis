@@ -36,6 +36,7 @@ import {
   createSessionDescriptorStore,
   type SessionDescriptorPersistenceDeps,
 } from "./terminal-session-descriptor-persistence.js";
+import { createTerminalRootProcessIdentitySyncResolver } from "./terminal-root-process-identity.js";
 import {
   persistDriveJournal,
   loadDriveJournal,
@@ -47,14 +48,18 @@ import {
   busyOrHung,
   buildTmuxHasSessionArgv,
   buildTmuxKillArgv,
+  buildTmuxPanePidArgv,
   terminalWorkerDir,
   resolveTmuxSocketPath,
   type TerminalDurabilityDeps,
   type TerminalSessionRegistry,
   type DriveJournal,
   type BusySignal,
+  type ManagedTerminalEventSink,
+  type TerminalRootProcessIdentity,
 } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
+import { err, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 
 /**
  * The narrow event-bus surface the durability hooks emit onto (a `Pick`-style contract,
@@ -101,7 +106,6 @@ let cachedTmuxPath: string | undefined | "unresolved" = "unresolved";
 export function resolveDaemonTmuxPath(): string | undefined {
   if (cachedTmuxPath !== "unresolved") return cachedTmuxPath;
   try {
-    // eslint-disable-next-line no-restricted-syntax -- one-shot tmux path resolve at daemon startup
     cachedTmuxPath = execFileSync("which", ["tmux"], { encoding: "utf8" }).trim() || undefined;
   } catch {
     cachedTmuxPath = undefined;
@@ -125,7 +129,6 @@ export function buildIsTmuxAlive(
   tmuxPath: string | undefined,
   socketPath: string,
   run: (bin: string, args: string[]) => void = (bin, args) => {
-    // eslint-disable-next-line no-restricted-syntax -- bounded has-session liveness probe (recover-on-boot + backstop)
     execFileSync(bin, args, { stdio: "ignore" });
   },
 ): (name: string, socket?: string) => boolean {
@@ -149,28 +152,57 @@ export function buildIsTmuxAlive(
 /**
  * Deterministically kill a DURABLE session's detached tmux by name (`tmux -S <socket> kill-session
  * -t <name>`) — the sibling of {@link buildIsTmuxAlive}. The registry calls this on evict of a
- * durable session because the worker-IPC "kill" does NOT reliably terminate a detached, per-boot-
- * socket tmux (a never-tasked webhook drive lingered as an idle `claude` after `kill`; a manual
- * kill-session by name reaped it — webhook-claude-cli-tdd-20260701). Best-effort: a non-zero exit
- * (already gone) or spawn fault is swallowed — the session is de-registered regardless. `run` is
- * injected ONLY for the unit test; production keeps the bounded execFileSync.
+ * durable session because the worker-IPC "kill" does not prove termination of a detached,
+ * per-session tmux. The helper follows the named kill with `has-session`: only a confirmed
+ * non-zero probe permits durable authority retirement, while an alive session or unprovable
+ * spawn fault returns an error. `run` is injected for unit tests; production keeps the
+ * bounded execFileSync.
  */
 export function buildKillTmux(
   tmuxPath: string | undefined,
   socketPath: string,
   run: (bin: string, args: string[]) => void = (bin, args) => {
-    // eslint-disable-next-line no-restricted-syntax -- bounded kill-session teardown (durable evict backstop)
     execFileSync(bin, args, { stdio: "ignore" });
   },
-): (name: string, socket?: string) => void {
-  if (tmuxPath === undefined) return (): void => {};
-  return (name: string, socket?: string): void => {
-    try {
-      const [bin, ...args] = buildTmuxKillArgv({ tmuxPath, socketPath: socket ?? socketPath, name });
-      run(bin!, args);
-    } catch {
-      /* already gone / spawn fault — the session is de-registered regardless (best-effort) */
-    }
+): (name: string, socket?: string) => Result<void, Error> {
+  if (tmuxPath === undefined) return () => err(new Error("tmux termination authority is unavailable"));
+  return (name: string, socket?: string): Result<void, Error> => {
+    const targetSocket = socket ?? socketPath;
+    const [killBin, ...killArgs] = buildTmuxKillArgv({ tmuxPath, socketPath: targetSocket, name });
+    tryCatch(() => run(killBin!, killArgs));
+
+    const [probeBin, ...probeArgs] = buildTmuxHasSessionArgv({ tmuxPath, socketPath: targetSocket, name });
+    const probe = tryCatch(() => run(probeBin!, probeArgs));
+    if (probe.ok) return err(new Error("tmux session remained alive after termination"));
+    const probeError = probe.error as NodeJS.ErrnoException & { status?: number };
+    return typeof probeError.status === "number"
+      ? ok(undefined)
+      : err(probe.error);
+  };
+}
+
+/** Resolve the current pane PID and its non-reusable process start identity. */
+export function buildResolveTmuxRootProcessIdentity(
+  tmuxPath: string | undefined,
+  socketPath: string,
+  run: (bin: string, args: string[]) => string = (bin, args) => execFileSync(
+    bin,
+    args,
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+  ).trim(),
+  resolveIdentity: (pid: number) => TerminalRootProcessIdentity | undefined = createTerminalRootProcessIdentitySyncResolver(),
+): (name: string, socket?: string) => TerminalRootProcessIdentity | undefined {
+  if (tmuxPath === undefined) return () => undefined;
+  return (name, socket) => {
+    const [bin, ...args] = buildTmuxPanePidArgv({
+      tmuxPath,
+      socketPath: socket ?? socketPath,
+      name,
+    });
+    const queried = tryCatch(() => run(bin!, args).trim());
+    if (!queried.ok || !/^\d+$/u.test(queried.value)) return undefined;
+    const pid = Number(queried.value);
+    return Number.isSafeInteger(pid) && pid > 0 ? resolveIdentity(pid) : undefined;
   };
 }
 
@@ -186,6 +218,7 @@ export interface AgentTerminalDurabilityInputs {
   /** The operator `worker.stuckMs` window the busy-vs-hung verdict compares against. */
   readonly workerStuckMs: number;
   readonly nowMs: () => number;
+  readonly managedTerminalEvents?: ManagedTerminalEventSink;
 }
 
 /**
@@ -209,15 +242,26 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
 } {
   const tmuxSocketPath = resolveTmuxSocketPath(terminalWorkerDir(i.dataDir));
   const isTmuxAlive = buildIsTmuxAlive(resolveDaemonTmuxPath(), tmuxSocketPath);
-  const killTmuxSession = buildKillTmux(resolveDaemonTmuxPath(), tmuxSocketPath);
+  const tmuxPath = resolveDaemonTmuxPath();
+  const killTmuxSession = buildKillTmux(tmuxPath, tmuxSocketPath);
+  const resolveTmuxRootProcessIdentity = buildResolveTmuxRootProcessIdentity(tmuxPath, tmuxSocketPath);
   const storeDeps: SessionDescriptorPersistenceDeps = { dataDir: i.dataDir, agentId: i.agentId };
   const descriptorStore = createSessionDescriptorStore(storeDeps);
+  const publishRecovery = (info: { sessionId: string; managedRunId?: string; workspaceLeaseId?: string; serviceInstanceId?: string }, transition: "recovered" | "lost"): void => {
+    if (info.managedRunId === undefined || info.workspaceLeaseId === undefined || info.serviceInstanceId === undefined || i.managedTerminalEvents === undefined) return;
+    suppressError(i.managedTerminalEvents.publish({ managedRunId: info.managedRunId, workspaceLeaseId: info.workspaceLeaseId, serviceInstanceId: info.serviceInstanceId, terminalSessionId: info.sessionId, transition }), "buildAgentTerminalDurability managed recovery transition", (message) => i.logger.debug({ sessionId: info.sessionId, step: "managed_terminal_recovery_suppressed" }, message));
+  };
 
   const durability: TerminalDurabilityDeps = {
     descriptorStore,
     isTmuxAlive,
     killTmuxSession,
-    onReattached: ({ sessionId, agentId }) => {
+    resolveTmuxRootProcessIdentity,
+    ...(i.managedTerminalEvents?.retire === undefined
+      ? {}
+      : { retireManagedSession: i.managedTerminalEvents.retire }),
+    onReattached: (info) => {
+      const { sessionId, agentId } = info;
       // The re-attach ran under the SAME persisted allow-entry; the content-free record carries
       // ids only (the screen the drive resumed on rides the detached tmux, never the bus).
       //
@@ -230,8 +274,10 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
       // (it fires here regardless of any subscriber), NOT the bus event — by design.
       i.eventBus.emit("terminal:drive_reattached", { sessionId, agentId, reason: "tmux_alive", timestamp: i.nowMs() });
       i.logger.info({ sessionId, agentId, step: "drive_reattached" }, "terminal durable drive re-attached on recover-on-boot");
+      publishRecovery(info, "recovered");
     },
-    onUnrecoverable: ({ sessionId, agentId, reason }) => {
+    onUnrecoverable: (info) => {
+      const { sessionId, agentId, reason } = info;
       // A genuinely-gone durable session → the EXISTING lost state + a content-free unrecoverable
       // reason (the journal is PRESERVED by the holder; the wake notify layer adds `failed`).
       // errorKind is the literal "dependency" (a gone backend) — the closed-union invariant
@@ -248,6 +294,7 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
         { sessionId, agentId, reason, hint: `a durable terminal drive could not be re-attached (${reason}); flipped lost with the journal preserved for a fresh drive`, errorKind: "dependency" as const, step: "drive_unrecoverable" },
         "terminal durable drive unrecoverable on recover-on-boot",
       );
+      publishRecovery(info, "lost");
     },
   };
 

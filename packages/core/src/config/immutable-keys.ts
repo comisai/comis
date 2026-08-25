@@ -114,8 +114,8 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
   // Authenticated platform-subject mappings define storage authority.
   "identity",
 
-  // Linked contribution selection and instance activation are boot topology.
-  "contributions",
+  // Linked capability-service selection and instance activation are boot topology.
+  "capabilityServices",
   // Existing plugin activation is the current linked-extension topology.
   "plugins",
 

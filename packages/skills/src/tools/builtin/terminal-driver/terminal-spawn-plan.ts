@@ -36,14 +36,28 @@
  */
 
 import { homedir } from "node:os";
-import { existsSync } from "node:fs";
-import { resolve as resolvePath, sep as pathSep } from "node:path";
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { isAbsolute, relative, resolve as resolvePath, sep as pathSep } from "node:path";
 
-import { safePath, type EgressControlPort, type EgressMaterialization } from "@comis/core";
+import { safePath, type EgressControlPort, type EgressMaterialization, type EgressMaterializationContext } from "@comis/core";
+import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
 import {
   buildScopeArgs as defaultBuildScopeArgs,
+  MANAGED_WORKSPACE_GIT_ENVIRONMENT_KEYS,
   SYSTEM_RO_PATHS,
 } from "./terminal-scope-args.js";
 import { scrubChildEnv as defaultScrubChildEnv, secretEnvKeysIn } from "./terminal-env-scrub.js";
@@ -51,6 +65,18 @@ import {
   buildEgressRelayLaunch as defaultBuildEgressRelayLaunch,
   type EgressRelayLaunch,
 } from "./terminal-egress-relay.js";
+import {
+  materializeExecutionAttachmentRelays as defaultMaterializeExecutionAttachmentRelays,
+  type AttachmentRelayMaterialization,
+} from "./terminal-attachment-relay.js";
+import type { ExecutionAttachmentRelayMaterializer } from "./terminal-durable-attachment-relay.js";
+import {
+  MANAGED_TERMINAL_ATTACHMENT_IDENTITY_ENVIRONMENT,
+  MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT,
+  MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT,
+  managedTerminalAttachmentTargetPath,
+  type ManagedTerminalExecutionAttachment,
+} from "./terminal-managed-binding.js";
 
 /**
  * The net-new uid/gid the dedicated-uid posture drops to inside the jail
@@ -77,6 +103,7 @@ export const LEAST_PRIVILEGE_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
   credentialPaths: [],
+  ephemeralWritablePaths: [],
   uid: "dedicated",
 };
 
@@ -107,10 +134,31 @@ export interface SpawnPlanComposers {
    * `browser.noSandbox` precedent). Default/absent ⇒ the fail-closed jail.
    */
   unsafeDisableSandbox?: boolean;
+  materializeExecutionAttachmentRelays?: ExecutionAttachmentRelayMaterializer;
+}
+
+const EPHEMERAL_WRITABLE_PATH_CONFIG = "agents.*.skills.terminal.allow[].scope.ephemeralWritablePaths";
+
+function validateEphemeralWritablePaths(scope: TerminalScope, home: string): Result<void, Error> {
+  for (const configuredPath of scope.ephemeralWritablePaths) {
+    const expanded = configuredPath === "~"
+      ? home
+      : configuredPath.startsWith("~/")
+        ? resolvePath(home, configuredPath.slice(2))
+        : configuredPath;
+    const inspected = tryCatch(() => lstatSync(expanded));
+    if (!inspected.ok || !inspected.value.isDirectory() || inspected.value.isSymbolicLink()) {
+      return err(new EphemeralWritablePathUnavailableError(expanded));
+    }
+  }
+  return ok(undefined);
 }
 
 /** The session geometry + identity the plan needs (off the create frame). */
 export interface SpawnPlanInput {
+  /** Opaque session identity and lifetime for session-bound egress materialization. */
+  sessionId: string;
+  durability: EgressMaterializationContext["durability"];
   /** The operator-declared scope (least-privilege default applied upstream). */
   scope: TerminalScope;
   /** The driven command (daemon-canonical) — placed verbatim AFTER bwrap's `--`. */
@@ -119,6 +167,8 @@ export interface SpawnPlanInput {
   argv: string[];
   /** The session workspace root (always --bind RW). */
   workspace: string;
+  /** Host-resolved Git administration mounts for a managed linked worktree. */
+  workspaceGitMounts?: ManagedWorkspaceGitMounts;
   /** The --chdir target. */
   cwd: string;
   /** `os.homedir()` (injected for testability — the home/credential roots). */
@@ -133,6 +183,8 @@ export interface SpawnPlanInput {
    * env. Passed in (not read here) so the plan stays a pure transform.
    */
   env: NodeJS.ProcessEnv;
+  /** Server-resolved Unix sockets; never sourced from terminal tool parameters. */
+  executionAttachments?: readonly ManagedTerminalExecutionAttachment[];
 }
 
 /** The composed spawn arguments + the egress handle to dispose on teardown. */
@@ -164,6 +216,7 @@ export interface SpawnPlan {
    * for `none`/`full`.
    */
   egress?: EgressMaterialization;
+  attachmentRelay?: AttachmentRelayMaterialization;
 }
 
 /** Raised when the jail cannot be materialized (no provider) — fail-closed. */
@@ -173,6 +226,315 @@ export class JailUnavailableError extends Error {
     super("no sandbox provider: cannot materialize the terminal scope jail");
     this.name = "JailUnavailableError";
   }
+}
+
+/** Raised when attachment confinement is required but cannot be materialized. */
+export class AttachmentSandboxUnavailableError extends Error {
+  readonly errorKind = "sandbox_unavailable" as const;
+  constructor() {
+    super("sandbox_unavailable: execution attachments require an enforceable bubblewrap jail");
+    this.name = "AttachmentSandboxUnavailableError";
+  }
+}
+
+/** Raised before bubblewrap when an operator-declared writable overlay has no safe mountpoint. */
+export class EphemeralWritablePathUnavailableError extends Error {
+  readonly errorKind = "precondition" as const;
+  constructor(target: string) {
+    super(`${EPHEMERAL_WRITABLE_PATH_CONFIG} target is unavailable: ${target}; create it as a directory before starting the terminal`);
+    this.name = "EphemeralWritablePathUnavailableError";
+  }
+}
+
+/** Raised when an authority-backed linked worktree has unsafe or unreadable Git administration. */
+export class ManagedWorkspaceGitUnavailableError extends Error {
+  readonly errorKind = "precondition" as const;
+  constructor() {
+    super("managed workspace Git administration is unavailable; recreate the workspace lease from a valid linked Git worktree");
+    this.name = "ManagedWorkspaceGitUnavailableError";
+  }
+}
+
+/** Canonical host source and the exact path recorded in the worktree marker. */
+export interface ManagedWorkspaceGitMounts {
+  readonly common: {
+    readonly sourcePath: string;
+    readonly targetPath: string;
+  };
+  readonly worktree: {
+    readonly sourcePath: string;
+    readonly targetPath: string;
+  };
+  readonly privateCommon: {
+    readonly sourcePath: string;
+    readonly targetPath: string;
+    readonly systemConfigPath: string;
+  };
+}
+
+const MANAGED_GIT_DIRECTORY = ".comis-terminal-git";
+const MANAGED_GIT_SOURCE_RECORD = "source.json";
+const MAX_GIT_CONTROL_FILE_BYTES = 16 * 1024 * 1024;
+const MANAGED_GIT_HOST_EXCLUDE = `/${MANAGED_GIT_DIRECTORY}/`;
+
+function readManagedGitFile(path: string, maxBytes = MAX_GIT_CONTROL_FILE_BYTES): Buffer {
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes) {
+    throw new Error("managed workspace Git control file is unavailable");
+  }
+  return readFileSync(path);
+}
+
+function makeManagedGitDirectory(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o777 });
+  chmodSync(path, 0o777);
+}
+
+function writeManagedGitFile(path: string, content: string | Buffer): void {
+  writeFileSync(path, content, { mode: 0o666 });
+  chmodSync(path, 0o666);
+}
+
+function copyManagedGitFile(source: string, target: string): void {
+  writeManagedGitFile(target, readManagedGitFile(source));
+}
+
+function ensureManagedGitHostExclusion(commonDir: string): void {
+  const infoPath = safePath(commonDir, "info");
+  if (!existsSync(infoPath)) mkdirSync(infoPath, { recursive: true });
+  const infoStat = lstatSync(infoPath);
+  if (!infoStat.isDirectory() || infoStat.isSymbolicLink()) {
+    throw new Error("managed workspace Git exclusion directory is unavailable");
+  }
+  const excludePath = safePath(infoPath, "exclude");
+  const existing = existsSync(excludePath)
+    ? readManagedGitFile(excludePath).toString("utf8")
+    : "";
+  if (existing.split(/\r?\n/u).includes(MANAGED_GIT_HOST_EXCLUDE)) return;
+  const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+  appendFileSync(excludePath, `${separator}${MANAGED_GIT_HOST_EXCLUDE}\n`, { mode: 0o666 });
+}
+
+function resolveManagedGitHead(commonDir: string, headText: string): {
+  readonly oid: string;
+  readonly reference?: string;
+} {
+  const trimmed = headText.trim();
+  const referenceMatch = /^ref: (refs\/heads\/.+)$/u.exec(trimmed);
+  if (referenceMatch === null) {
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(trimmed)) {
+      throw new Error("managed workspace Git HEAD is malformed");
+    }
+    return { oid: trimmed };
+  }
+  const reference = referenceMatch[1]!;
+  const referencePath = safePath(commonDir, ...reference.split("/"));
+  if (existsSync(referencePath)) {
+    const oid = readManagedGitFile(referencePath, 4_096).toString("utf8").trim();
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(oid)) {
+      throw new Error("managed workspace Git branch reference is malformed");
+    }
+    return { oid, reference };
+  }
+  const packedRefsPath = safePath(commonDir, "packed-refs");
+  if (!existsSync(packedRefsPath)) {
+    throw new Error("managed workspace Git branch reference is unavailable");
+  }
+  const packedLine = readManagedGitFile(packedRefsPath).toString("utf8").split(/\r?\n/u)
+    .find((line) => line.endsWith(` ${reference}`));
+  const oid = packedLine?.slice(0, packedLine.indexOf(" "));
+  if (oid === undefined || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(oid)) {
+    throw new Error("managed workspace Git packed branch reference is malformed");
+  }
+  return { oid, reference };
+}
+
+function loadManagedWorkspaceGitMounts(
+  workspace: string,
+  commonDir: string,
+  commonTarget: string,
+  gitDir: string,
+  gitDirTarget: string,
+): ManagedWorkspaceGitMounts {
+  const privateRootSourcePath = safePath(gitDir, MANAGED_GIT_DIRECTORY);
+  const privateRootSourceStat = lstatSync(privateRootSourcePath);
+  if (!privateRootSourceStat.isDirectory() || privateRootSourceStat.isSymbolicLink()) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
+  const privateRoot = realpathSync(privateRootSourcePath);
+  const canonicalGitDir = realpathSync(gitDir);
+  if (privateRoot !== safePath(canonicalGitDir, MANAGED_GIT_DIRECTORY)) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
+  const privateRootTarget = safePath(workspace, MANAGED_GIT_DIRECTORY);
+  const privateRootTargetStat = lstatSync(privateRootTarget);
+  if (!privateRootTargetStat.isDirectory() || privateRootTargetStat.isSymbolicLink()) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
+  const canonicalPrivateRootTarget = realpathSync(privateRootTarget);
+  const canonicalWorkspace = realpathSync(workspace);
+  if (canonicalPrivateRootTarget !== safePath(canonicalWorkspace, MANAGED_GIT_DIRECTORY)) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
+  const sourceRecord = JSON.parse(
+    readManagedGitFile(safePath(privateRoot, MANAGED_GIT_SOURCE_RECORD), 4_096).toString("utf8"),
+  ) as unknown;
+  if (
+    typeof sourceRecord !== "object"
+    || sourceRecord === null
+    || (sourceRecord as { commonDir?: unknown }).commonDir !== commonDir
+    || (sourceRecord as { gitDir?: unknown }).gitDir !== gitDir
+  ) {
+    throw new Error("managed workspace private Git administration belongs to another worktree");
+  }
+  const privateWorktreeTarget = safePath(privateRootTarget, "worktree");
+  const privateCommonTarget = safePath(privateRootTarget, "common");
+  const privateWorktree = safePath(privateRoot, "worktree");
+  const privateCommon = safePath(privateRoot, "common");
+  const privateWorktreeStat = lstatSync(privateWorktree);
+  const privateCommonStat = lstatSync(privateCommon);
+  const privateWorktreeTargetStat = lstatSync(privateWorktreeTarget);
+  const privateCommonTargetStat = lstatSync(privateCommonTarget);
+  if (
+    !privateWorktreeStat.isDirectory()
+    || privateWorktreeStat.isSymbolicLink()
+    || !privateCommonStat.isDirectory()
+    || privateCommonStat.isSymbolicLink()
+    || !privateWorktreeTargetStat.isDirectory()
+    || privateWorktreeTargetStat.isSymbolicLink()
+    || !privateCommonTargetStat.isDirectory()
+    || privateCommonTargetStat.isSymbolicLink()
+  ) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
+  const canonicalPrivateWorktree = realpathSync(privateWorktree);
+  const canonicalPrivateCommon = realpathSync(privateCommon);
+  for (const canonicalPath of [canonicalPrivateWorktree, canonicalPrivateCommon]) {
+    const descendant = relative(privateRoot, canonicalPath);
+    if (descendant.length === 0 || descendant === ".." || descendant.startsWith(`..${pathSep}`) || isAbsolute(descendant)) {
+      throw new Error("managed workspace private Git administration is unavailable");
+    }
+  }
+  for (const targetPath of [privateWorktreeTarget, privateCommonTarget]) {
+    const canonicalTarget = realpathSync(targetPath);
+    const descendant = relative(canonicalPrivateRootTarget, canonicalTarget);
+    if (
+      descendant.length === 0
+      || descendant === ".."
+      || descendant.startsWith(`..${pathSep}`)
+      || isAbsolute(descendant)
+    ) {
+      throw new Error("managed workspace private Git administration is unavailable");
+    }
+  }
+  ensureManagedGitHostExclusion(commonDir);
+  return {
+    common: { sourcePath: commonDir, targetPath: commonTarget },
+    worktree: { sourcePath: canonicalPrivateWorktree, targetPath: gitDirTarget },
+    privateCommon: {
+      sourcePath: canonicalPrivateCommon,
+      targetPath: privateCommonTarget,
+      systemConfigPath: safePath(privateCommonTarget, "system-config"),
+    },
+  };
+}
+
+function ensureManagedWorkspaceGitTargets(workspace: string): void {
+  const privateRootTarget = safePath(workspace, MANAGED_GIT_DIRECTORY);
+  if (!existsSync(privateRootTarget)) makeManagedGitDirectory(privateRootTarget);
+  const privateRootTargetStat = lstatSync(privateRootTarget);
+  if (!privateRootTargetStat.isDirectory() || privateRootTargetStat.isSymbolicLink()) {
+    throw new Error("managed workspace private Git administration is unavailable");
+  }
+  for (const targetPath of [
+    safePath(privateRootTarget, "worktree"),
+    safePath(privateRootTarget, "common"),
+  ]) {
+    if (!existsSync(targetPath)) makeManagedGitDirectory(targetPath);
+    const targetStat = lstatSync(targetPath);
+    if (
+      !targetStat.isDirectory()
+      || targetStat.isSymbolicLink()
+    ) {
+      throw new Error("managed workspace private Git administration is unavailable");
+    }
+  }
+}
+
+function materializeManagedWorkspaceGitMounts(
+  workspace: string,
+  commonDir: string,
+  commonTarget: string,
+  gitDir: string,
+  gitDirTarget: string,
+): ManagedWorkspaceGitMounts {
+  const privateRootSource = safePath(gitDir, MANAGED_GIT_DIRECTORY);
+  const privateRootTarget = safePath(workspace, MANAGED_GIT_DIRECTORY);
+  ensureManagedWorkspaceGitTargets(workspace);
+  if (existsSync(privateRootSource)) {
+    return loadManagedWorkspaceGitMounts(workspace, commonDir, commonTarget, gitDir, gitDirTarget);
+  }
+  if ([workspace, commonDir, commonTarget, gitDir, gitDirTarget].some((path) => /[\r\n]/u.test(path))) {
+    throw new Error("managed workspace Git paths contain unsupported control characters");
+  }
+  const objectsPath = safePath(commonDir, "objects");
+  const objectsStat = lstatSync(objectsPath);
+  if (!objectsStat.isDirectory() || objectsStat.isSymbolicLink()) {
+    throw new Error("managed workspace Git object database is unavailable");
+  }
+  const head = readManagedGitFile(safePath(gitDir, "HEAD"), 4_096).toString("utf8");
+  const resolvedHead = resolveManagedGitHead(commonDir, head);
+  const temporaryRoot = mkdtempSync(`${privateRootSource}-`);
+  try {
+    chmodSync(temporaryRoot, 0o777);
+    const privateWorktree = safePath(temporaryRoot, "worktree");
+    const privateCommon = safePath(temporaryRoot, "common");
+    makeManagedGitDirectory(privateWorktree);
+    makeManagedGitDirectory(privateCommon);
+    makeManagedGitDirectory(safePath(privateCommon, "objects"));
+    makeManagedGitDirectory(safePath(privateCommon, "objects", "info"));
+    makeManagedGitDirectory(safePath(privateCommon, "refs"));
+    makeManagedGitDirectory(safePath(privateCommon, "info"));
+    writeManagedGitFile(safePath(privateWorktree, "HEAD"), head);
+    writeManagedGitFile(safePath(privateCommon, "HEAD"), head);
+    writeManagedGitFile(safePath(privateWorktree, "commondir"), `${safePath(privateRootTarget, "common")}\n`);
+    writeManagedGitFile(safePath(privateWorktree, "gitdir"), `${safePath(workspace, ".git")}\n`);
+    const indexPath = safePath(gitDir, "index");
+    if (existsSync(indexPath)) copyManagedGitFile(indexPath, safePath(privateWorktree, "index"));
+    const worktreeConfigPath = safePath(gitDir, "config.worktree");
+    const hasWorktreeConfig = existsSync(worktreeConfigPath);
+    if (hasWorktreeConfig) copyManagedGitFile(worktreeConfigPath, safePath(privateWorktree, "config.worktree"));
+    const sparseCheckoutPath = safePath(gitDir, "info", "sparse-checkout");
+    if (existsSync(sparseCheckoutPath)) {
+      makeManagedGitDirectory(safePath(privateWorktree, "info"));
+      copyManagedGitFile(sparseCheckoutPath, safePath(privateWorktree, "info", "sparse-checkout"));
+    }
+    const repositoryVersion = resolvedHead.oid.length === 64 ? "1" : "0";
+    const objectFormat = resolvedHead.oid.length === 64 ? "\n[extensions]\n\tobjectFormat = sha256" : "";
+    const worktreeConfig = hasWorktreeConfig
+      ? `${objectFormat.length === 0 ? "\n[extensions]" : ""}\n\tworktreeConfig = true`
+      : "";
+    writeManagedGitFile(safePath(privateCommon, "config"), `[core]\n\trepositoryformatversion = ${repositoryVersion}\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true${objectFormat}${worktreeConfig}\n`);
+    writeManagedGitFile(safePath(privateCommon, "system-config"), `[safe]\n\tdirectory = ${JSON.stringify(workspace)}\n`);
+    writeManagedGitFile(safePath(privateCommon, "objects", "info", "alternates"), `${safePath(commonTarget, "objects")}\n`);
+    writeManagedGitFile(safePath(privateCommon, "info", "exclude"), `/${MANAGED_GIT_DIRECTORY}/\n`);
+    if (resolvedHead.reference !== undefined) {
+      const privateReference = safePath(privateCommon, ...resolvedHead.reference.split("/"));
+      makeManagedGitDirectory(resolvePath(privateReference, ".."));
+      writeManagedGitFile(privateReference, `${resolvedHead.oid}\n`);
+    }
+    const shallowPath = safePath(commonDir, "shallow");
+    if (existsSync(shallowPath)) copyManagedGitFile(shallowPath, safePath(privateCommon, "shallow"));
+    writeManagedGitFile(
+      safePath(temporaryRoot, MANAGED_GIT_SOURCE_RECORD),
+      `${JSON.stringify({ schemaVersion: 1, commonDir, gitDir })}\n`,
+    );
+    renameSync(temporaryRoot, privateRootSource);
+  } catch (cause) {
+    if (existsSync(temporaryRoot)) rmSync(temporaryRoot, { recursive: true, force: true });
+    throw cause;
+  }
+  return loadManagedWorkspaceGitMounts(workspace, commonDir, commonTarget, gitDir, gitDirTarget);
 }
 
 /**
@@ -235,6 +597,76 @@ function isCwdWithinBase(cwd: string, base: string): boolean {
 }
 
 /**
+ * Resolve the shared Git directory for an authority-backed linked worktree.
+ * A normal in-workspace `.git` directory and a non-Git workspace need no extra
+ * mount. A linked marker is accepted only when its canonical per-worktree
+ * directory is a strict child of both the canonical and marker-addressed common
+ * directory's `worktrees` subtree; malformed or escaped markers fail closed.
+ */
+export function resolveManagedWorkspaceGitMounts(
+  workspace: string,
+): Result<ManagedWorkspaceGitMounts | undefined, Error> {
+  const resolved = tryCatch(() => {
+    const marker = safePath(workspace, ".git");
+    if (!existsSync(marker)) return undefined;
+    const markerStat = lstatSync(marker);
+    if (markerStat.isDirectory()) return undefined;
+    if (!markerStat.isFile()) throw new Error("managed workspace Git marker is not a regular file");
+
+    const markerText = readFileSync(marker, "utf8");
+    if (markerText.length > 4_096) throw new Error("managed workspace Git marker exceeds the bounded size");
+    const markerMatch = /^gitdir: ([^\r\n]+)\r?\n?$/u.exec(markerText);
+    if (markerMatch === null) throw new Error("managed workspace Git marker is malformed");
+    const gitDirCandidate = isAbsolute(markerMatch[1]!)
+      ? resolvePath(markerMatch[1]!)
+      : resolvePath(workspace, markerMatch[1]!);
+    const gitDir = realpathSync(gitDirCandidate);
+
+    const commonMarker = safePath(gitDir, "commondir");
+    const commonText = readFileSync(commonMarker, "utf8");
+    if (commonText.length > 4_096) throw new Error("managed workspace Git common marker exceeds the bounded size");
+    const commonRelative = commonText.replace(/\r?\n$/u, "");
+    if (commonRelative.length === 0 || commonRelative.includes("\n") || commonRelative.includes("\r")) {
+      throw new Error("managed workspace Git common marker is malformed");
+    }
+    const commonTarget = isAbsolute(commonRelative)
+      ? resolvePath(commonRelative)
+      : resolvePath(gitDirCandidate, commonRelative);
+    const commonDir = realpathSync(commonTarget);
+    const worktreesRoot = safePath(commonDir, "worktrees");
+    const targetWorktreesRoot = resolvePath(commonTarget, "worktrees");
+    if (
+      gitDir === worktreesRoot
+      || !isCwdWithinBase(gitDir, worktreesRoot)
+      || gitDirCandidate === targetWorktreesRoot
+      || !isCwdWithinBase(gitDirCandidate, targetWorktreesRoot)
+    ) {
+      throw new Error("managed workspace Git directory is outside the common worktree administration root");
+    }
+    return isCwdWithinBase(commonTarget, workspace)
+      ? undefined
+      : materializeManagedWorkspaceGitMounts(
+        workspace,
+        commonDir,
+        commonTarget,
+        gitDir,
+        gitDirCandidate,
+      );
+  });
+  return resolved.ok ? ok(resolved.value) : err(resolved.error);
+}
+
+/**
+ * Materialize and validate lease-private Git administration at the daemon
+ * authority boundary. The worker repeats validation before composing mounts,
+ * but never needs write access to an arbitrary leased worktree.
+ */
+export function prepareManagedWorkspaceGit(workspace: string): Result<void, Error> {
+  const resolved = resolveManagedWorkspaceGitMounts(workspace);
+  return resolved.ok ? ok(undefined) : err(new ManagedWorkspaceGitUnavailableError());
+}
+
+/**
  * Fail-closed (typed) when `cwd` is not contained by the scope's bound paths. `full`
  * binds everything → no check. Throws {@link CwdOutsideScopeError} (errorKind
  * `permission_denied`, message names `cwd`) so the worker maps it to an `ok:false`
@@ -265,6 +697,19 @@ export async function buildSpawnPlan(
   composers: SpawnPlanComposers,
 ): Promise<SpawnPlan> {
   const scrubChildEnv = composers.scrubChildEnv ?? defaultScrubChildEnv;
+  if ((input.executionAttachments?.length ?? 0) > 0 && (composers.unsafeDisableSandbox === true || composers.bwrapPath === undefined)) {
+    throw new AttachmentSandboxUnavailableError();
+  }
+  const childEnv = scrubChildEnv(input.env);
+  const terminalType = childEnv.TERM?.trim();
+  if (terminalType === undefined || terminalType.length === 0 || terminalType === "dumb" || terminalType === "unknown") {
+    childEnv.TERM = "xterm-256color";
+  }
+  if (input.workspaceGitMounts !== undefined) {
+    for (const key of MANAGED_WORKSPACE_GIT_ENVIRONMENT_KEYS) delete childEnv[key];
+    childEnv.GIT_COMMON_DIR = input.workspaceGitMounts.privateCommon.targetPath;
+    childEnv.GIT_CONFIG_SYSTEM = input.workspaceGitMounts.privateCommon.systemConfigPath;
+  }
 
   // Operator opt-out of the jail (`skills.terminal.unsafeDisableSandbox`). For constrained hosts
   // that cannot run bwrap: run the driven CLI DIRECTLY. NO filesystem/network/uid confinement (the
@@ -280,7 +725,7 @@ export async function buildSpawnPlan(
     return {
       bin: input.bin,
       argv: input.argv,
-      env: scrubChildEnv(input.env),
+      env: childEnv,
       cwd: input.cwd,
       unsandboxed: true,
     };
@@ -290,11 +735,14 @@ export async function buildSpawnPlan(
   if (composers.bwrapPath === undefined) {
     throw new JailUnavailableError();
   }
+  const bwrapPath = composers.bwrapPath;
   const buildScopeArgs = composers.buildScopeArgs ?? defaultBuildScopeArgs;
   const buildEgressRelayLaunch =
     composers.buildEgressRelayLaunch ?? defaultBuildEgressRelayLaunch;
 
   const { scope } = input;
+  const writablePaths = validateEphemeralWritablePaths(scope, input.home);
+  if (!writablePaths.ok) throw writablePaths.error;
   // Fail-closed: the agent-supplied cwd (the jail --chdir target) MUST sit within a
   // path the scope binds — reject typed + EARLY (before any egress socket / spawn), not
   // as an opaque `bwrap: Can't chdir`. filesystem:full binds everything → no check.
@@ -310,7 +758,10 @@ export async function buildSpawnPlan(
       // listed-hosts demands an egress port; absent ⇒ fail-closed (no open net).
       throw new JailUnavailableError();
     }
-    egress = await composers.egressControl.materialize(scope.hosts ?? []);
+    egress = await composers.egressControl.materialize(
+      scope.hosts ?? [],
+      { sessionId: input.sessionId, durability: input.durability },
+    );
     relaySocketPath = egress.socketPath;
     relay = buildEgressRelayLaunch({
       socketPath: egress.socketPath,
@@ -321,17 +772,37 @@ export async function buildSpawnPlan(
     });
   }
 
+  let attachmentRelay: AttachmentRelayMaterialization | undefined;
+  let executionAttachments = input.executionAttachments;
+  if (dedicatedUid !== undefined && (executionAttachments?.length ?? 0) > 0) {
+    const materialized = await (composers.materializeExecutionAttachmentRelays === undefined
+      ? defaultMaterializeExecutionAttachmentRelays(executionAttachments ?? [], dedicatedUid)
+      : composers.materializeExecutionAttachmentRelays(
+          executionAttachments ?? [],
+          dedicatedUid,
+          { sessionId: input.sessionId, durability: input.durability },
+        ));
+    if (!materialized.ok) {
+      if (egress !== undefined) await fromPromise(egress.dispose());
+      throw materialized.error;
+    }
+    attachmentRelay = materialized.value;
+    executionAttachments = materialized.value.attachments;
+  }
+
   // For listed-hosts the relay-init (above) performs the uid drop AFTER bringing
   // `lo` up as userns-root, so the bwrap jail itself must NOT pre-drop via `--uid`
   // (that would strip CAP_NET_ADMIN and break the loopback-up). For every other
   // network mode bwrap drops the uid directly (no relay in the path).
   const bwrapUid = scope.network === "listed-hosts" ? undefined : dedicatedUid;
 
-  const scopeArgs = buildScopeArgs({
+  const scopeArgsResult = tryCatch(() => buildScopeArgs({
     scope,
-    bwrapPath: composers.bwrapPath,
+    bwrapPath,
     workspace: input.workspace,
+    workspaceGitMounts: input.workspaceGitMounts,
     cwd: input.cwd,
+    executablePath: input.bin,
     home: input.home,
     dataDir: input.dataDir,
     systemRoPaths: input.systemRoPaths,
@@ -346,7 +817,14 @@ export async function buildSpawnPlan(
     // also strips them. The PTY backend is covered by the scrubChildEnv(input.env) below;
     // this is the backend-independent half (TERM-ENV-GATEWAY-TOKEN-LEAK).
     extraUnsetEnvKeys: secretEnvKeysIn(input.env),
-  });
+    executionAttachments,
+  }));
+  if (!scopeArgsResult.ok) {
+    if (attachmentRelay !== undefined) await fromPromise(attachmentRelay.dispose());
+    if (egress !== undefined) await fromPromise(egress.dispose());
+    throw scopeArgsResult.error;
+  }
+  const scopeArgs = scopeArgsResult.value;
 
   // scopeArgs = [bwrapPath, ...args, "--"]. The child (and, for listed-hosts, the
   // relay-as-init wrapper) go AFTER that `--`.
@@ -359,8 +837,14 @@ export async function buildSpawnPlan(
 
   // bwrap forwards the spawner env to the child (no --clearenv): scrub it, then for
   // listed-hosts merge the relay's HTTPS_PROXY/HTTP_PROXY over the scrubbed env.
+  delete childEnv[MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT];
+  delete childEnv[MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT];
+  delete childEnv[MANAGED_TERMINAL_ATTACHMENT_IDENTITY_ENVIRONMENT];
+  const soleAttachment = executionAttachments?.length === 1
+    ? executionAttachments[0]
+    : undefined;
   const env: NodeJS.ProcessEnv = {
-    ...scrubChildEnv(input.env),
+    ...childEnv,
     ...(relay?.proxyEnv ?? {}),
     // We ALWAYS run the CLI inside THIS bwrap jail (the spawn throws JailUnavailableError
     // otherwise), so tell a sandbox-aware CLI it is already bubblewrapped → it skips nesting
@@ -371,6 +855,11 @@ export async function buildSpawnPlan(
     // POST-scrub: scrubChildEnv blanket-strips CLAUDE_CODE_* (so it would erase this otherwise —
     // which is exactly why the jailed claude never detected the outer jail and nested).
     CLAUDE_CODE_BUBBLEWRAP: "1",
+    ...(soleAttachment === undefined ? {} : {
+      [MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT]: managedTerminalAttachmentTargetPath(soleAttachment.targetName),
+      [MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT]: soleAttachment.targetName,
+      [MANAGED_TERMINAL_ATTACHMENT_IDENTITY_ENVIRONMENT]: soleAttachment.relayIdentity,
+    }),
   };
 
   return {
@@ -378,11 +867,15 @@ export async function buildSpawnPlan(
     argv: afterSeparator,
     env,
     egress,
+    attachmentRelay,
   };
 }
 
 /** The create-frame fields {@link planSpawnFromCreateFrame} reads. */
 export interface CreateFrameSpawnParams {
+  /** Opaque session identity and resolved backend lifetime. */
+  sessionId: string;
+  durability: EgressMaterializationContext["durability"];
   /** The driven command (daemon-canonical). */
   bin: string;
   /** The driven command argv. */
@@ -393,6 +886,9 @@ export interface CreateFrameSpawnParams {
   workspace?: string;
   /** The --chdir target. */
   cwd?: string;
+  /** Server-stamped authority signal; never accepted from terminal tool parameters. */
+  managedWorkspace?: boolean;
+  executionAttachments?: readonly ManagedTerminalExecutionAttachment[];
 }
 
 /**
@@ -413,17 +909,25 @@ export async function planSpawnFromCreateFrame(
   const home = homedir();
   const scope = params.scope ?? LEAST_PRIVILEGE_SCOPE;
   const workspace = params.workspace ?? home;
+  const gitCommon = params.managedWorkspace === true
+    ? resolveManagedWorkspaceGitMounts(workspace)
+    : ok<ManagedWorkspaceGitMounts | undefined>(undefined);
+  if (!gitCommon.ok) throw new ManagedWorkspaceGitUnavailableError();
   return buildSpawnPlan(
     {
+      sessionId: params.sessionId,
+      durability: params.durability,
       scope,
       bin: params.bin,
       argv: params.argv,
       workspace,
+      workspaceGitMounts: gitCommon.value,
       cwd: params.cwd ?? workspace,
       home,
       dataDir: safePath(home, ".comis"),
       systemRoPaths: SYSTEM_RO_PATHS.filter((sp) => existsSync(sp)),
       env,
+      executionAttachments: params.executionAttachments,
     },
     composers,
   );

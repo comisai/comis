@@ -75,6 +75,7 @@ const RetainedOutwardLedgerRowSchema = z.strictObject({
 type RetainedOutwardLedgerRow = z.infer<typeof RetainedOutwardLedgerRowSchema>;
 
 const retainedOutwardLedgerMapper = createRowMapper(RetainedOutwardLedgerRowSchema);
+const tableSqlMapper = createRowMapper(z.strictObject({ sql: z.string().nullable() }));
 
 function retainedDigest(row: RetainedOutwardLedgerRow): string {
   if (row.content_digest.length === 64) return row.content_digest;
@@ -163,7 +164,7 @@ function upgradeRetainedOutwardLedger(db: Database.Database): void {
         agent_id              TEXT NOT NULL,
         channel_type          TEXT NOT NULL,
         channel_id            TEXT NOT NULL,
-        operation_kind        TEXT NOT NULL CHECK(operation_kind IN ('message_send','message_reply','message_react','cross_session_announcement','retained_unclassified')),
+        operation_kind        TEXT NOT NULL CHECK(operation_kind IN ('attachment_send','message_send','message_reply','message_react','cross_session_announcement','retained_unclassified')),
         operation_fingerprint TEXT NOT NULL,
         state                 TEXT NOT NULL CHECK(state IN ('send_attempt_started','unknown_after_send','committed','failed','unresolved')),
         platform_message_id   TEXT,
@@ -211,6 +212,50 @@ function upgradeRetainedOutwardLedger(db: Database.Database): void {
   replace.immediate(parsed.value);
 }
 
+function upgradeOutwardLedgerOperationKinds(db: Database.Database): void {
+  const table = tableSqlMapper.parseOptionalRow(db.prepare(`
+    SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'outward_send_ledger'
+  `).get());
+  if (!table.ok) throw new Error(`Outward ledger schema validation failed: ${table.error.message}`);
+  if (table.value?.sql?.includes("'attachment_send'")) return;
+  db.transaction(() => {
+    db.exec(`
+      ALTER TABLE outward_send_ledger RENAME TO outward_send_ledger_previous;
+      CREATE TABLE outward_send_ledger (
+        id                    TEXT PRIMARY KEY,
+        root_run_id           TEXT NOT NULL,
+        step_index            INTEGER NOT NULL,
+        agent_id              TEXT NOT NULL,
+        channel_type          TEXT NOT NULL,
+        channel_id            TEXT NOT NULL,
+        operation_kind        TEXT NOT NULL CHECK(operation_kind IN ('attachment_send','message_send','message_reply','message_react','cross_session_announcement','retained_unclassified')),
+        operation_fingerprint TEXT NOT NULL,
+        state                 TEXT NOT NULL CHECK(state IN ('send_attempt_started','unknown_after_send','committed','failed','unresolved')),
+        platform_message_id   TEXT,
+        content_digest        TEXT NOT NULL,
+        reconcile_outcome     TEXT CHECK(reconcile_outcome IS NULL OR reconcile_outcome = 'unresolved'),
+        attempt_count         INTEGER NOT NULL DEFAULT 0,
+        last_error            TEXT,
+        created_at_ms         INTEGER NOT NULL,
+        updated_at_ms         INTEGER NOT NULL
+      );
+      INSERT INTO outward_send_ledger (
+        id, root_run_id, step_index, agent_id, channel_type, channel_id,
+        operation_kind, operation_fingerprint, state, platform_message_id,
+        content_digest, reconcile_outcome, attempt_count, last_error,
+        created_at_ms, updated_at_ms
+      )
+      SELECT
+        id, root_run_id, step_index, agent_id, channel_type, channel_id,
+        operation_kind, operation_fingerprint, state, platform_message_id,
+        content_digest, reconcile_outcome, attempt_count, last_error,
+        created_at_ms, updated_at_ms
+      FROM outward_send_ledger_previous;
+      DROP TABLE outward_send_ledger_previous;
+    `);
+  }).immediate();
+}
+
 /**
  * Create the `outward_send_ledger` table + its UNIQUE idempotency index and the
  * partial recovery-scan index idempotently.
@@ -229,7 +274,7 @@ export function ensureOutwardLedgerTable(db: Database.Database): void {
       agent_id            TEXT NOT NULL,
       channel_type        TEXT NOT NULL,
       channel_id          TEXT NOT NULL,
-      operation_kind      TEXT NOT NULL CHECK(operation_kind IN ('message_send','message_reply','message_react','cross_session_announcement','retained_unclassified')),
+      operation_kind      TEXT NOT NULL CHECK(operation_kind IN ('attachment_send','message_send','message_reply','message_react','cross_session_announcement','retained_unclassified')),
       operation_fingerprint TEXT NOT NULL,
       state               TEXT NOT NULL CHECK(state IN ('send_attempt_started','unknown_after_send','committed','failed','unresolved')),
       platform_message_id TEXT,
@@ -242,6 +287,7 @@ export function ensureOutwardLedgerTable(db: Database.Database): void {
     )
   `);
   upgradeRetainedOutwardLedger(db);
+  upgradeOutwardLedgerOperationKinds(db);
   // The idempotency key. A repeated (root_run_id, step_index)
   // collides here, so a second begin() is the "already in flight" err — there is
   // NO second outward send.
@@ -272,6 +318,23 @@ export function ensureOutwardLedgerTable(db: Database.Database): void {
       updated_at_ms      INTEGER NOT NULL,
       PRIMARY KEY (root_run_id, operation_id),
       UNIQUE (root_run_id, step_index)
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS outward_send_operator_decisions (
+      root_run_id         TEXT NOT NULL,
+      operation_id       TEXT NOT NULL CHECK(length(operation_id) = 64 AND operation_id NOT GLOB '*[^0-9a-f]*'),
+      outcome            TEXT NOT NULL CHECK(outcome IN ('delivered','discarded')),
+      decided_at_ms      INTEGER NOT NULL,
+      PRIMARY KEY (root_run_id, operation_id)
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS outward_send_no_reply_decisions (
+      root_run_id         TEXT NOT NULL,
+      operation_id       TEXT NOT NULL CHECK(length(operation_id) = 64 AND operation_id NOT GLOB '*[^0-9a-f]*'),
+      decided_at_ms      INTEGER NOT NULL,
+      PRIMARY KEY (root_run_id, operation_id)
     )
   `);
 }

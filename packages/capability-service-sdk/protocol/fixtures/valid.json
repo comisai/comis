@@ -1,0 +1,658 @@
+{
+  "class": "valid",
+  "name": "canonical request response and private metadata examples",
+  "steps": [
+    {
+      "expectation": "accept",
+      "payload": {
+        "agentId": "agent_a",
+        "approvalRequestId": "10000000-0000-4000-8000-000000000001",
+        "conversationRef": "conversation_a",
+        "operationId": "operation_prepare",
+        "rootRunId": "root-run_a",
+        "serviceInstanceId": "service-instance_a",
+        "traceId": "40000000-0000-4000-8000-000000000004",
+        "workspacePolicyHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "schemaExpectation": "accept",
+      "target": "mcp-call-context"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "expiresAt": "2030-01-01T00:00:00.000Z",
+        "externalRunRef": "external-run_a",
+        "registrationNonce": "registration-nonce_a",
+        "requestedAttachment": {
+          "kind": "unix_socket",
+          "relayIdentity": "abababababababababababababababababababababababababababababababab",
+          "sourcePath": "/approved/runtime/task-a/service.sock"
+        },
+        "requestedWorkspace": {
+          "rootHint": "/approved/workspaces/task-a"
+        },
+        "state": "prepared"
+      },
+      "schemaExpectation": "accept",
+      "target": "mcp-managed-run-result"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "expiresAt": "2030-01-01T00:00:00.000Z",
+        "members": [
+          {
+            "expiresAt": "2030-01-01T00:00:00.000Z",
+            "externalRunRef": "external-run_group-member-a",
+            "registrationNonce": "registration-nonce_group-member-a",
+            "requestedAttachment": {
+              "kind": "unix_socket",
+              "relayIdentity": "abababababababababababababababababababababababababababababababab",
+              "sourcePath": "/approved/runtime/group-task-a/service.sock"
+            },
+            "requestedWorkspace": {
+              "rootHint": "/approved/workspaces/group-task-a"
+            },
+            "state": "prepared"
+          }
+        ],
+        "registrationNonce": "group-registration-nonce_a",
+        "state": "prepared"
+      },
+      "schemaExpectation": "accept",
+      "target": "mcp-managed-run-group-result"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_activate",
+        "jsonrpc": "2.0",
+        "method": "managedRunGroups.activate",
+        "params": {
+          "managedRunGroupId": "managed-run-group_a",
+          "members": [
+            {
+              "attachmentTargetName": "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock",
+              "executionAttachmentId": "execution-attachment_group-member-a",
+              "externalRunRef": "external-run_group-member-a",
+              "managedRunId": "managed-run_group-member-a",
+              "registrationNonce": "registration-nonce_group-member-a",
+              "workspaceLeaseId": "workspace-lease_group-member-a"
+            }
+          ],
+          "operationId": "operation_group_activate",
+          "registrationNonce": "group-registration-nonce_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_activate",
+        "jsonrpc": "2.0",
+        "result": {
+          "activatedAtMs": 1800000000000,
+          "managedRunGroupId": "managed-run-group_a",
+          "members": [
+            {
+              "managedRunId": "managed-run_group-member-a",
+              "outcome": "completed"
+            }
+          ]
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "group-activate-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_rollup",
+        "jsonrpc": "2.0",
+        "method": "managedRunGroups.getHostRollup",
+        "params": {
+          "managedRunGroupId": "managed-run-group_a",
+          "operationId": "operation_group_rollup"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_rollup",
+        "jsonrpc": "2.0",
+        "result": {
+          "activeCustodyCount": 1,
+          "attentionCount": 0,
+          "managedRunGroupId": "managed-run-group_a",
+          "memberManagedRunIds": [
+            "managed-run_group-member-a"
+          ],
+          "stateCounts": {
+            "active": 1
+          },
+          "updatedAtMs": 1800000000000
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "group-get-host-rollup-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_abandon",
+        "jsonrpc": "2.0",
+        "method": "managedRunGroups.abandon",
+        "params": {
+          "disposition": "preserve",
+          "managedRunGroupId": "managed-run-group_a",
+          "members": [
+            {
+              "externalRunRef": "external-run_group-member-a",
+              "managedRunId": "managed-run_group-member-a",
+              "registrationNonce": "registration-nonce_group-member-a"
+            }
+          ],
+          "operationId": "operation_group_abandon",
+          "reason": "owner_cancelled",
+          "registrationNonce": "group-registration-nonce_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_group_abandon",
+        "jsonrpc": "2.0",
+        "result": {
+          "disposition": "preserve",
+          "managedRunGroupId": "managed-run-group_a",
+          "members": [
+            {
+              "managedRunId": "managed-run_group-member-a",
+              "outcome": "completed"
+            }
+          ],
+          "state": "abandoned"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "group-abandon-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_handshake",
+        "jsonrpc": "2.0",
+        "method": "capabilityServices.handshake",
+        "params": {
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "operationId": "operation_handshake",
+          "protocolId": "comis.capability-service/1",
+          "requestedScopes": [
+            "health",
+            "attention_response",
+            "evidence",
+            "report",
+            "workspace_lease",
+            "terminal_events",
+            "execution_attachment",
+            "managed_run_group",
+            "approval_receipt"
+          ],
+          "serviceInstanceId": "service-instance_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_handshake",
+        "jsonrpc": "2.0",
+        "result": {
+          "activeScopes": [
+            "health",
+            "attention_response",
+            "evidence",
+            "report",
+            "workspace_lease",
+            "terminal_events",
+            "execution_attachment",
+            "managed_run_group",
+            "approval_receipt"
+          ],
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "limits": {
+            "maxEvidenceBytes": 1048576,
+            "maxGroupMembers": 16,
+            "maxInFlightRequests": 32,
+            "maxLineBytes": 1441792,
+            "maxReportBytes": 16384,
+            "maxRequestBytes": 1441792,
+            "maxResponseBytes": 65536,
+            "reportRetentionDays": 30
+          },
+          "protocolId": "comis.capability-service/1",
+          "serviceInstanceId": "service-instance_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "handshake-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "consume-approval_a",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.consumeApproval",
+        "params": {
+          "approvalRequestId": "10000000-0000-4000-8000-000000000001",
+          "managedRunId": "managed-run_a",
+          "mcpOperationId": "operation_prepare",
+          "operationId": "consume-approval_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "consume-approval_a",
+        "jsonrpc": "2.0",
+        "result": {
+          "approvalRequestId": "10000000-0000-4000-8000-000000000001",
+          "approvedAtMs": 1800000000000,
+          "consumedAtMs": 1800000000100,
+          "expiresAtMs": 1800000900000,
+          "managedRunId": "managed-run_a",
+          "mcpOperationId": "operation_prepare",
+          "operationFingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+          "resolvingPrincipalId": "user_a",
+          "state": "consumed"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "consume-approval-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_attention_response",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.receiveAttentionResponse",
+        "params": {
+          "externalKey": "backend-id-format",
+          "managedRunId": "managed-run_a",
+          "operationId": "operation_attention_response"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_attention_response",
+        "jsonrpc": "2.0",
+        "result": {
+          "externalKey": "backend-id-format",
+          "managedRunId": "managed-run_a",
+          "response": "Use monotonic issue-N values.",
+          "state": "delivered"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "receive-attention-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_evidence",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.putEvidence",
+        "params": {
+          "bodyBase64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9wdWxsLzE3",
+          "contentHash": "ce58b0fb87ca71053fac0559671447e5e506386bcb705e535b33a92b2d928c0d",
+          "delivery": {
+            "kind": "reference"
+          },
+          "evidenceRef": "evidence_a",
+          "expiresAtMs": 1900000000000,
+          "kind": "delivery_reference",
+          "managedRunId": "managed-run_a",
+          "observedAtMs": 1800000000000,
+          "operationId": "operation_evidence",
+          "subjectDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "verificationLevel": "adapter_verified"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_evidence",
+        "jsonrpc": "2.0",
+        "result": {
+          "contentHash": "ce58b0fb87ca71053fac0559671447e5e506386bcb705e535b33a92b2d928c0d",
+          "evidenceRef": "evidence_a",
+          "managedRunId": "managed-run_a",
+          "retainedUntilMs": 1900000000000,
+          "verificationLevel": "adapter_verified"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "put-evidence-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_activate",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.activate",
+        "params": {
+          "attachmentTargetName": "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+          "executionAttachmentId": "execution-attachment_a",
+          "externalRunRef": "external-run_a",
+          "managedRunId": "managed-run_a",
+          "operationId": "operation_activate",
+          "registrationNonce": "registration-nonce_a",
+          "workspaceLeaseId": "workspace-lease_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "expiresAt": "2030-01-01T00:00:00.000Z",
+        "externalRunRef": "external-run_without_workspace",
+        "registrationNonce": "registration-nonce_without_workspace",
+        "state": "prepared"
+      },
+      "schemaExpectation": "accept",
+      "target": "mcp-managed-run-result"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_activate_without_workspace",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.activate",
+        "params": {
+          "externalRunRef": "external-run_without_workspace",
+          "managedRunId": "managed-run_without_workspace",
+          "operationId": "operation_activate_without_workspace",
+          "registrationNonce": "registration-nonce_without_workspace"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_activate",
+        "jsonrpc": "2.0",
+        "result": {
+          "activatedAtMs": 1800000000000,
+          "externalRunRef": "external-run_a",
+          "managedRunId": "managed-run_a",
+          "state": "active"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "activate-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_cancel",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.cancel",
+        "params": {
+          "managedRunId": "managed-run_a",
+          "operationId": "operation_cancel",
+          "reason": "owner_cancelled"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_cancel",
+        "jsonrpc": "2.0",
+        "result": {
+          "acknowledgedAtMs": 1800000000000,
+          "managedRunId": "managed-run_a",
+          "state": "cancelling"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "cancel-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_release",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.release",
+        "params": {
+          "disposition": "reap_safe",
+          "managedRunId": "managed-run_a",
+          "operationId": "operation_release",
+          "releasedAtMs": 1800000000000,
+          "workspaceLeaseId": "workspace-lease_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_release",
+        "jsonrpc": "2.0",
+        "result": {
+          "disposition": "reap_safe",
+          "managedRunId": "managed-run_a",
+          "releasedAtMs": 1800000000000,
+          "state": "released",
+          "workspaceLeaseId": "workspace-lease_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "release-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_report",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.report",
+        "params": {
+          "artifactRefs": [
+            "evidence_a"
+          ],
+          "kind": "progress",
+          "managedRunId": "managed-run_a",
+          "observedAtMs": 1800000000000,
+          "operationId": "operation_report",
+          "serviceReportId": "service-report_a",
+          "summary": "Synthetic progress report"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_terminal_created",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.terminalEvent",
+        "params": {
+          "managedRunId": "managed-run_a",
+          "operationId": "operation_terminal_created",
+          "terminalSessionId": "terminal-session_a",
+          "transition": "created",
+          "workspaceLeaseId": "workspace-lease_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_terminal_created",
+        "jsonrpc": "2.0",
+        "result": {
+          "managedRunId": "managed-run_a",
+          "terminalSessionId": "terminal-session_a",
+          "transition": "created"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "terminal-event-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_report",
+        "jsonrpc": "2.0",
+        "result": {
+          "acceptedSequence": 1,
+          "managedRunId": "managed-run_a",
+          "retainedUntilMs": 1900000000000,
+          "serviceReportId": "service-report_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "report-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_health",
+        "jsonrpc": "2.0",
+        "method": "capabilityServices.health",
+        "params": {
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "operationId": "operation_health",
+          "protocolId": "comis.capability-service/1",
+          "serviceInstanceId": "service-instance_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_health",
+        "jsonrpc": "2.0",
+        "result": {
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "observedAtMs": 1800000000000,
+          "protocolId": "comis.capability-service/1",
+          "reasonCodes": [],
+          "serviceInstanceId": "service-instance_a",
+          "status": "healthy"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "health-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_heartbeat",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.heartbeat",
+        "params": {
+          "managedRunId": "managed-run_a",
+          "observedAtMs": 1800000000000,
+          "operationId": "operation_heartbeat"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_heartbeat",
+        "jsonrpc": "2.0",
+        "result": {
+          "acceptedAtMs": 1800000000010,
+          "lastHeartbeatAtMs": 1800000000000,
+          "managedRunId": "managed-run_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "heartbeat-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_abandon",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.abandon",
+        "params": {
+          "disposition": "preserve",
+          "externalRunRef": "external-run_a",
+          "operationId": "operation_abandon",
+          "reason": "owner_cancelled",
+          "registrationNonce": "registration-nonce_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_abandon",
+        "jsonrpc": "2.0",
+        "result": {
+          "disposition": "preserve",
+          "externalRunRef": "external-run_a",
+          "state": "abandoned",
+          "terminalTransition": "unbound_preparation_abandoned"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "abandon-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "error": {
+          "code": -32018,
+          "hint": "Refresh the managed-run state before retrying",
+          "kind": "precondition_failed",
+          "message": "The requested transition is not available",
+          "retryable": false
+        },
+        "id": "operation_example_error",
+        "jsonrpc": "2.0"
+      },
+      "schemaExpectation": "accept",
+      "target": "error-response"
+    }
+  ]
+}

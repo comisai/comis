@@ -7,7 +7,6 @@
 
 import {
   BackgroundTaskOriginSchema,
-  type BackgroundTaskOrigin,
   type BackgroundTaskFailureDiagnostic,
   type BackgroundTaskFailureCode,
   type ErrorKind,
@@ -15,7 +14,21 @@ import {
   type TimerHandle,
 } from "@comis/core";
 import { z } from "zod";
-export type { BackgroundTaskOrigin };
+
+const SortedCapturedToolIdsSchema = z.array(z.string().min(1).max(256)).max(512).refine(
+  (values) => values.every(
+    (value, index) => index === 0 || (values[index - 1] as string).localeCompare(value) < 0,
+  ),
+  "captured tool ids must be unique and sorted",
+);
+
+/** Exact immutable continuation inputs captured before a tool leaves its originating turn. */
+export const BackgroundContinuationOriginSchema = BackgroundTaskOriginSchema.extend({
+  workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/),
+  capturedToolIds: SortedCapturedToolIdsSchema,
+  capturedCapabilityViewHash: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type BackgroundTaskOrigin = z.infer<typeof BackgroundContinuationOriginSchema>;
 
 export const BackgroundTaskStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
 export type BackgroundTaskStatus = z.infer<typeof BackgroundTaskStatusSchema>;
@@ -179,7 +192,7 @@ const PersistedOriginSchema = z.preprocess(
       ? { ...(value as Record<string, unknown>), trustLevel: "guest" }
       : value
   ),
-  BackgroundTaskOriginSchema,
+  BackgroundContinuationOriginSchema,
 );
 
 export const PersistedTaskStateSchema = z.strictObject({

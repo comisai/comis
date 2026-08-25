@@ -24,6 +24,8 @@ export type {
   InfraEvents,
   WebhookFailureReason,
 } from "./events-infra.js";
+export type { CapabilityServiceEvents } from "./events-capability-service.js";
+export type { ManagedRunEvents } from "./events-managed-run.js";
 export type {
   BackgroundRecoveryEvents,
   BackgroundTaskRecoveryScanFailureKind,

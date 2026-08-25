@@ -19,13 +19,17 @@ The interactive setup wizard (`comis init`, `comis configure`) populates the mos
 | Property | Value |
 |----------|-------|
 | **Used by** | Daemon, CLI |
-| **Format** | Colon-separated file paths |
-| **Default** | `~/.comis/config.yaml:~/.comis/config.local.yaml` |
+| **Format** | Comma-separated file paths |
+| **Default** | Unset; the daemon reads `~/.comis/config.yaml` and `~/.comis/config.local.yaml` |
 
-Specifies which YAML configuration files to load, as a colon-separated list (like `PATH`). Files are loaded in order and deep-merged, with later files overriding earlier ones. Non-existent files are silently skipped. The daemon reads this variable at startup to locate config files. The CLI uses it in `config validate` and `pm2 setup` commands. For full details on the config-path syntax and merge behavior, see [Configuration](/installation/configuration).
+Specifies which YAML configuration files to load, as a comma-separated list.
+Files are loaded in order and deep-merged, with later files overriding earlier
+ones. Non-existent files are silently skipped. The daemon reads this variable
+at startup to locate config files. The CLI uses it in `config validate` and
+`pm2 setup` commands.
 
 ```bash
-export COMIS_CONFIG_PATHS="$HOME/.comis/config.yaml:$HOME/.comis/config.local.yaml"
+export COMIS_CONFIG_PATHS="$HOME/.comis/config.yaml,$HOME/.comis/config.local.yaml"
 ```
 
 ### `COMIS_DATA_DIR`
@@ -317,7 +321,11 @@ export COMIS_MSTEAMS_TEST_CONNECTOR=http://127.0.0.1:53999
 
 The AES-256-GCM master encryption key used to encrypt and decrypt secrets stored in `secrets.db`. The key is auto-generated on first boot — you do not need to run `comis secrets init` for a fresh install. The daemon and CLI both resolve this key in the same order: first from the environment, then from `~/.comis/.env`.
 
-Providing this variable explicitly overrides the auto-generated value.
+Providing this variable explicitly overrides the auto-generated value. When it
+is already present in the daemon environment, Comis does not generate or append
+a second master key under the data directory. This supports systemd credentials,
+container secret mounts, and external secret managers without creating a stale
+`<dataDir>/.env` copy.
 
 <Warning>Back up `~/.comis/.env`. This file is the only copy of the auto-generated master key. Losing it makes `secrets.db` permanently unreadable — AES-256-GCM has no key escrow or recovery path.</Warning>
 
@@ -330,6 +338,18 @@ export SECRETS_MASTER_KEY="a1b2c3d4e5f6..."
 To run without the encrypted store, set `security.storage: env` (or `file`) in
 `config.yaml`. The daemon emits a startup WARN when a non-encrypted storage mode
 is active.
+
+### `CANARY_SECRET`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon |
+| **Format** | Non-empty random secret |
+| **Default** | Auto-generated with encrypted storage when absent from both the active store and environment, then written to `~/.comis/.env` (mode 0600) |
+
+The canary seed makes outbound exfiltration markers unpredictable. When an
+external secret manager or the active encrypted store supplies `CANARY_SECRET`,
+Comis uses that value and does not duplicate it under the data directory.
 
 ## OAuth Variables
 
@@ -352,7 +372,7 @@ export OAUTH_OPENAI_CODEX='{"access":"EXAMPLE-access","refresh":"EXAMPLE-refresh
 
 1. **Stored profile wins.** If the OAuth credential store already has a profile for `openai-codex`, the daemon uses it and ignores `OAUTH_OPENAI_CODEX` entirely.
 2. **Env var is a one-time seed.** When the store is empty for the provider, the daemon parses the env var and writes the profile. Subsequent token refreshes update the stored profile, not the env var.
-3. **WARN once on drift.** If the env-var refresh token differs from the stored profile's refresh token, the daemon emits one WARN per (provider, process) with `errorKind: "config_drift"` and `hint: "env-override-ignored"`. Operators clear the drift by either:
+3. **WARN once on drift.** If the env-var refresh token differs from the stored profile's refresh token, the daemon emits one WARN per (provider, process) with `errorKind: "auth"` and `hint: "env-override-ignored"`. Operators clear the drift by either:
    - Running `comis auth logout --profile <id>` then restarting the daemon to re-bootstrap from env, **or**
    - Deleting the env var if the stored profile is the intended source of truth.
 

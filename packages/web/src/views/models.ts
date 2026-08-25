@@ -1181,7 +1181,7 @@ export class IcModelsView extends LitElement {
   // --- Defaults tab ---
 
   /** Patches both defaultProvider and defaultModel atomically in a single config.patch call.
-   * This avoids the race condition where the first patch triggers a daemon restart (SIGUSR1)
+   * This avoids the race condition where the first patch triggers a daemon restart (SIGUSR2)
    * before the second correlated patch can complete. */
   private async _patchModelDefaults(provider: string, model: string): Promise<boolean> {
     const ok = await this._patchConfig("models", {

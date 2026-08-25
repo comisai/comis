@@ -16,6 +16,9 @@ beforeAll(() => {
   registerToolMetadata("test_effect_none", {
     invocationSideEffects: { kind: "always", capabilities: [] },
   });
+  registerToolMetadata("test_effect_external", {
+    invocationSideEffects: { kind: "managed", capabilities: ["task.prepare", "deferred_work"] },
+  });
   registerToolMetadata("test_effect_by_action", {
     invocationSideEffects: {
       kind: "by_action",
@@ -60,6 +63,16 @@ describe("bridge side-effect accumulation", () => {
     expect(summary.schedulingCapabilityInvoked).toBe(false);
     expect(summary.outboundDeliveryCapabilityInvoked).toBe(false);
     expect(summary.deferredWorkCapabilityInvoked).toBe(false);
+  });
+
+  it("retains tracked facts and flags opaque capability declarations", () => {
+    const summary = createBridgeSideEffectSummary();
+    recordToolInvocationSideEffects(summary, "test_effect_external", {});
+
+    expect(summary).toMatchObject({
+      deferredWorkCapabilityInvoked: true,
+      unclassifiedInvocationObserved: true,
+    });
   });
 
   it("uses the exact action or the conservative declared union", () => {

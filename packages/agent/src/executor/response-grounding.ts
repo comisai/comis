@@ -300,7 +300,7 @@ const SCHEDULER_DIRECT_CONFIRMATION = /\b(?:confirmed|updated|scheduled|set)\b/u
 const SCHEDULER_FUTURE_BEHAVIOR =
   /\b(?:will\s+)?(?:not\s+)?(?:run(?:s|ning)?|fir(?:e|es|ing)|send(?:s|ing)?|deliver(?:s|ing)?|skip(?:s|ping)?)\b(?!\s+(?:are|were)\b)/u;
 const SCHEDULER_TEMPORAL_CONTEXT =
-  /\b(?:hourly|daily|weekly|monthly|weekdays?|weekends?|holidays?|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b\d{1,2}:\d{2}\b|\b(?:a\.?m\.?|p\.?m\.?)\b/u;
+  /\b(?:hourly|daily|weekly|monthly|weekdays?|weekends?|holidays?|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/u;
 const SCHEDULER_POLICY_TEMPORAL_CONTEXT = /\b(?:weekdays?|weekends?|holidays?)\b/u;
 
 const SCHEDULER_STATE_EVIDENCE_ACTIONS = new Set([

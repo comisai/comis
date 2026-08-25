@@ -28,6 +28,14 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
   return {
     config: {
       daemon: { logLevels: {} },
+      capabilityServices: {
+        instances: [],
+        privateContentDirectory: "managed-runs/private",
+        reportRetentionMs: 30 * 86_400_000,
+        maxObservedClockSkewMs: 300_000,
+        recoveryBatchSize: 256,
+        requestDeadlineMs: 5_000,
+      },
       gateway: {
         enabled: false,
         host: "0.0.0.0",
@@ -151,8 +159,8 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
           allowAgents: [],
           subAgentRetentionMs: 3_600_000,
           waitTimeoutMs: 60_000,
-          // The announcement batcher reads delivery.maxRetries for
-          // its transient-retry cap (schema-defaulted in real config).
+          // The recovery queue reads delivery.maxRetries for its
+          // durable retry cap (schema-defaulted in real config).
           delivery: { maxRetries: 3 },
         },
         storage: "file" as const,
@@ -375,7 +383,7 @@ describe("daemon main()", () => {
   it("completes full startup sequence with gateway enabled", async () => {
     const { overrides, callOrder } = buildOverrides({
       enabled: true,
-      tokens: [{ id: "test", secret: "s3cret", scopes: ["rpc"] }],
+      tokens: [{ id: "test", secret: "t".repeat(32), scopes: ["rpc"] }],
     });
 
     instances.push(await main(overrides));
@@ -423,12 +431,13 @@ describe("daemon main()", () => {
     expect(instance.shutdownHandle).toBeDefined();
     expect(typeof instance.shutdownHandle.trigger).toBe("function");
     expect(typeof instance.shutdownHandle.dispose).toBe("function");
+    expect(instance.capabilityServices.runtime.getActiveView().instances).toEqual([]);
   });
 
   it("returns gatewayHandle when gateway is enabled", async () => {
     const { overrides, mocks } = buildOverrides({
       enabled: true,
-      tokens: [{ id: "test", secret: "s3cret", scopes: ["rpc"] }],
+      tokens: [{ id: "test", secret: "t".repeat(32), scopes: ["rpc"] }],
     });
 
     const instance = await main(overrides);
@@ -963,9 +972,7 @@ describe("opt-out and same-boot init", () => {
     process.env = originalEnv;
   });
 
-  it("calls writeMasterKeyIfAbsent on first boot with a fresh data directory (encrypted mode)", async () => {
-    // Fresh tmpdir — no .env file present; use a subdirectory so writeMasterKeyIfAbsent
-    // writes there rather than the shared sandbox COMIS_DATA_DIR.
+  it("skips data-directory master-key generation when encrypted mode receives an external key", async () => {
     const { randomBytes } = await import("node:crypto");
     const keyHex = randomBytes(32).toString("hex");
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-first-boot-test-"));
@@ -979,8 +986,7 @@ describe("opt-out and same-boot init", () => {
     const instance = await main(overrides);
     instances.push(instance);
 
-    // writeMasterKeyIfAbsent must have been called with the dataDir on first boot.
-    expect(mockWriteMasterKeyIfAbsent).toHaveBeenCalledWith(freshDataDir);
+    expect(mockWriteMasterKeyIfAbsent).not.toHaveBeenCalled();
 
     delete process.env["SECRETS_MASTER_KEY"];
     rmSync(freshDataDir, { recursive: true, force: true });

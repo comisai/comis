@@ -9,11 +9,13 @@ import {
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import type {
   AnnouncementDeliveryOptions,
+  GovernedAnnouncementFailure,
   GovernedAnnouncementSendOutcome,
-  SendGovernedCompletionAnnouncement,
+  RecoverableAnnouncementSendOutcome,
+  RecoverableCompletionAnnouncementSendRequest,
 } from "@comis/orchestrator";
 
-export type GraphAnnouncementSettlement = "committed" | "retained";
+export type GraphAnnouncementSettlement = "committed" | "retained" | "suppressed";
 
 interface GraphAnnouncementDeliveryParams {
   graphId: string;
@@ -28,7 +30,12 @@ interface GraphAnnouncementDeliveryParams {
 }
 
 interface GraphAnnouncementDeliveryDeps {
-  send?: SendGovernedCompletionAnnouncement;
+  send?: (
+    request: RecoverableCompletionAnnouncementSendRequest,
+  ) => Promise<Result<
+    GovernedAnnouncementSendOutcome | RecoverableAnnouncementSendOutcome,
+    Error
+  >>;
   logger?: {
     warn(fields: Record<string, unknown>, message: string): void;
     error(fields: Record<string, unknown>, message: string): void;
@@ -85,6 +92,7 @@ export async function deliverGovernedGraphAnnouncement(
     channelType: params.channelType,
     channelId: params.channelId,
     text: scrubbed.text,
+    completionKeys: [params.graphId],
     ...(params.options ? { options: params.options } : {}),
   }));
   if (!boundary.ok || !boundary.value.ok) {
@@ -98,6 +106,10 @@ export async function deliverGovernedGraphAnnouncement(
   }
   const outcome = boundary.value.value;
   if (outcome.delivered) return ok("committed");
+  if ("terminalDecision" in outcome) {
+    return ok(outcome.terminalDecision === "delivered" ? "committed" : "suppressed");
+  }
+  if ("status" in outcome) return ok("retained");
 
   const retained = hasRetainedOperationEvidence(outcome);
   deps.logger?.error({
@@ -115,7 +127,7 @@ export async function deliverGovernedGraphAnnouncement(
 }
 
 function hasRetainedOperationEvidence(
-  outcome: Extract<GovernedAnnouncementSendOutcome, { delivered: false }>,
+  outcome: Extract<GovernedAnnouncementSendOutcome, { failure: GovernedAnnouncementFailure }>,
 ): boolean {
   if (outcome.identity === undefined) return false;
   switch (outcome.failure) {

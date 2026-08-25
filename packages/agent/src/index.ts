@@ -9,6 +9,15 @@ export type {
   ExecutionResult,
   ExecutionOverrides,
 } from "./executor/types.js";
+export {
+  createContinuationExecutionEngine,
+  createContinuationRequestContext,
+} from "./continuation/continuation-engine.js";
+export type {
+  ContinuationExecutionEngine,
+  ContinuationExecutionHooks,
+  ContinuationExecutionOutcome,
+} from "./continuation/continuation-engine.js";
 export { retainLastCompleteUserTurns } from "./session/bounded-session-history.js";
 export { pruneAcknowledgedHeartbeatTurn } from "./session/acknowledged-heartbeat-turn.js";
 export { replaceContextStoreHistory } from "./session/context-history-replacement.js";
@@ -494,6 +503,7 @@ export {
 export type { AnnouncementTerminalOutcome } from "./spawn/index.js";
 export { createDeliveryDedup } from "./spawn/index.js";
 export type { DeliveryDedup } from "./spawn/index.js";
+export { createCompletionAnnouncementOperationPlan } from "./spawn/index.js";
 export { comparePosture, resolvePostureFromSkills } from "./spawn/index.js";
 export type {
   SandboxPosture,

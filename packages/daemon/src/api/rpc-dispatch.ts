@@ -89,6 +89,8 @@ import { createOrchestrateReplayHandlers } from "./orchestrate-replay-handlers.j
 // _agentId. Gated on deps.boundedAutonomy being wired (the snapshot source).
 import { createCapabilitiesHandlers } from "./capabilities-handlers.js";
 import { createApprovalHandlers } from "./approval-handlers.js";
+import { createCapabilityServiceHandlers } from "./capability-service-handlers.js";
+import { createManagedRunHandlers } from "./managed-run-handlers.js";
 import { createAgentHandlers } from "./agent-handlers.js";
 import { createObsHandlers } from "./obs-handlers/index.js";
 import { createCacheHandlers } from "./cache-handlers.js";
@@ -386,6 +388,12 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     // cluster slice's required fields (e.g. mcpClientManager, execGit,
     // container) are present alongside the guarded approvalGate.
     ...(deps.approvalGate ? createApprovalHandlers({ ...deps, approvalGate: deps.approvalGate }) : {}),
+    // Registered unconditionally: with no configured capability service the
+    // handlers answer that none is configured, which is the honest response to
+    // an operator asking. Omitting them would surface as "unknown method",
+    // which reads as a broken daemon rather than an empty deployment.
+    ...createManagedRunHandlers({ managedRuns: deps.managedRuns }),
+    ...createCapabilityServiceHandlers({ managedRuns: deps.managedRuns }),
     ...createAgentHandlers({
       ...deps,
       secretManager: deps.container?.secretManager,

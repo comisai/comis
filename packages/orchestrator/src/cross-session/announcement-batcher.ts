@@ -9,22 +9,45 @@
  * @module
  */
 
-import { conversationScopeToSessionKey, scrubSecretsFromText, toSafeErrorLogString, type ChannelEndpoint, type CitationEvidence, type ConversationLocator, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout, type TypedEventBus } from "@comis/core";
+import {
+  conversationScopeToSessionKey,
+  scrubSecretsFromText,
+  toSafeErrorLogString,
+  systemNowMs,
+  systemSetTimeout,
+  systemClearTimeout,
+  systemScheduleTimeout,
+  type CitationEvidence,
+} from "@comis/core";
 import { err, fromPromise, ok, TimeoutError, withTimeout, type Result } from "@comis/shared";
 import {
   buildAnnouncementRewriteInput,
+  createCompletionAnnouncementOperationPlan,
   createDeliveryDedup,
   enforceAnnouncementTerminalOutcome,
   type AnnouncementTerminalOutcome,
   type DeliveryDedup,
 } from "@comis/agent";
-import type { ChannelType } from "./announcement-dead-letter.js";
 import type {
   AnnouncementOperationIdentity,
   CompletionAttachmentRef,
   GovernedAnnouncementFailure,
-  SendGovernedCompletionAnnouncement,
 } from "./announcement-outward-operation.js";
+import {
+  createAnnouncementReservationPlan,
+  type AnnouncementBatchOperation,
+} from "./announcement-batcher-reservations.js";
+import { sendOnce as sendOnceAttempt } from "./announcement-send-once.js";
+import type {
+  AnnouncementBatcher,
+  AnnouncementBatcherDeps,
+  QueuedAnnouncement,
+} from "./announcement-batcher-types.js";
+export type {
+  AnnouncementBatcher,
+  AnnouncementBatcherDeps,
+  QueuedAnnouncement,
+} from "./announcement-batcher-types.js";
 
 /** Hard timeout for the text-only parent candidate execution. A timeout leaves
  *  text-only results quarantined; verified attachments continue without a
@@ -33,270 +56,12 @@ import type {
  *  aligned with the public agent timeout. */
 const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 
-// ---------------------------------------------------------------------------
-// Public interfaces
-// ---------------------------------------------------------------------------
-
-export interface QueuedAnnouncement {
-  announcementText: string;
-  announceChannelType: ChannelType;
-  announceChannelId: string;
-  announceThreadId?: string;
-  callerAgentId: string;
-  callerSessionKey: string;
-  /** Canonical parent conversation authority captured at spawn time. */
-  callerConversation: ConversationLocator;
-  /** Immutable channel endpoint captured from the authenticated caller turn. */
-  destinationEndpoint: ChannelEndpoint;
-  /** Response locale resolved for the originating user turn. */
-  resolvedLanguage?: string;
-  citationEvidence?: CitationEvidence;
-  /** Runtime-owned terminal truth that a model rewrite cannot weaken. */
-  terminalOutcome: AnnouncementTerminalOutcome;
-  /** The child intentionally returned a silent-control response. Attachments
-   * still deliver, but no parent rewrite may manufacture caption text. */
-  suppressText?: boolean;
-  runId: string;
-  /** Idempotency key `${callerSessionKey}::${runId}`. Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
-  idempotencyKey?: string;
-  attachments?: CompletionAttachmentRef[];
-  /**
-   * Outward-ledger tree root, resolved by the caller, stamped onto the parked
-   * decision reservation.
-   *
-   * Load-bearing for recovery, not bookkeeping: `adjudicateReservations` settles
-   * a parked reservation by asking the ledger for the step the send WOULD have
-   * used (`allocateStep(rootRunId, operationId)`). With no root there is nothing
-   * to ask, and the reservation stays parked forever — so a finished
-   * sub-agent's result is never delivered and nothing drains it. Absent when the
-   * caller could not resolve one; it is then omitted rather than guessed.
-   */
-  reservationRootRunId?: string | undefined;
-}
-
-export interface AnnouncementBatcherDeps {
-  eventBus: TypedEventBus;
-  announceToParent: (
-    callerAgentId: string,
-    callerSessionKey: SessionKey,
-    callerConversation: ConversationLocator,
-    text: string,
-    channelType: string,
-    channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence },
-  ) => Promise<string | undefined>;
-  sendToChannel: (channelType: string, channelId: string, text: string, options?: { threadId?: string; extra?: Record<string, unknown> }) => Promise<boolean>;
-  logger?: {
-    debug(obj: Record<string, unknown>, msg: string): void;
-    warn(obj: Record<string, unknown>, msg: string): void;
-  };
-  debounceMs?: number;
-  /** Durable decision reservation and failed-delivery quarantine. */
-  deadLetterQueue?: {
-    enqueue(entry: {
-      announcementText: string;
-      channelType: ChannelType;
-      channelId: string;
-      /** Framework-authenticated owner of the persisted outward operation. */
-      agentId: string;
-      runId: string;
-      sessionKey: string;
-      failedAt: number;
-      attemptCount: number;
-      lastError?: string;
-      threadId?: string;
-      /** Idempotency key `${callerSessionKey}::${runId}`, carried onto the dead-letter entry. */
-      idempotencyKey?: string;
-      rootRunId?: string;
-      stepIndex?: number;
-    }): Promise<Result<void, Error>>;
-    reserveDecision(entry: {
-      idempotencyKey: string;
-      agentId: string;
-      runId: string;
-      announcementText: string;
-      channelType: ChannelType;
-      channelId: string;
-      failedAt: number;
-      threadId?: string;
-    }): Promise<Result<{ created: boolean }, Error>>;
-    resolveDecision(
-      idempotencyKey: string,
-      outcome: "receipt_committed" | "no_reply",
-    ): Promise<Result<boolean, Error>>;
-  };
-  /** Durable single-attempt sender for the irreversible final delivery. */
-  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
-  /**
-   * Shared, BOUNDED delivered-key store. When injected by the
-   * daemon wiring, the SAME instance is also handed to the no-batcher success
-   * branches (`deliverAnnouncement`) and the failure path / DLQ recovery, so
-   * every completion-delivery surface dedups against one set. Absent → the
-   * batcher owns an internal bounded dedup (still capped — never leaks).
-   */
-  deliveryDedup?: DeliveryDedup;
-}
-
-export interface AnnouncementBatcher {
-  enqueue(params: QueuedAnnouncement): Promise<Result<"queued" | "retained", Error>>;
-  flush(): Promise<void>;
-  shutdown(): Promise<void>;
-  readonly pending: number;
-  /** Has this idempotency key already been delivered (success-path dedup)? Shared with the failure path. */
-  hasDelivered(key: string): boolean;
-  /** Mark an idempotency key delivered. Caller marks ONLY after a successful send (never before the await) so a transient retry is preserved. */
-  markDelivered(key: string): void;
-  /**
-   * Is this idempotency key still OWNED by the announcement pipeline — queued
-   * awaiting flush, mid-admission, or retained-uncertain? While true, the
-   * failure sweep must not send its own notice for the key (the enqueued
-   * completion announcement is the one message the recipient gets), closing
-   * the shutdown race where a notice fired for an enqueued-but-unflushed run.
-   */
-  hasPending?(key: string): boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Strip the `[System Message]\n` prefix and trailing LLM instruction line
- * from announcement text, leaving only the task-specific content.
- */
-function stripSystemPrefix(text: string): string {
-  let result = text;
-  // Strip [System Message] prefix
-  if (result.startsWith("[System Message]\n")) {
-    result = result.slice("[System Message]\n".length);
-  }
-  // Strip trailing instruction line
-  const marker = "Inform the user about this completed background task.";
-  const idx = result.lastIndexOf(marker);
-  if (idx !== -1) {
-    result = result.slice(0, idx).trimEnd();
-  }
-  return result;
-}
-
-function containsInternalAnnouncementEnvelope(text: string): boolean {
-  return text.startsWith("[System Message]\n")
-    || text.includes("Inform the user about this completed background task.")
-    || /\[Subagent Result:/iu.test(text)
-    || text.includes("Full result (drill in with read/grep/jq):");
-}
-
-/**
- * Sanitize announcement text for direct user delivery (fallback path).
- * Extracts human-readable content (Summary or Result sections) and strips
- * internal metadata (session keys, file paths, condensation stats, subagent
- * markers, runtime stats). Returns a safe generic message if no extractable
- * content is found.
- * Used for durable decision fallbacks and as the final egress guard when a
- * parent rewrite echoes the internal completion envelope.
- */
-export function sanitizeForUser(text: string): string {
-  const GENERIC_FALLBACK =
-    "A background task completed but the result could not be delivered properly. Please ask me to check on it.";
-
-  // First strip system prefix and trailing instruction (shared cleanup)
-  const stripped = stripSystemPrefix(text);
-
-  // Try to extract "Summary:" content
-  let extracted = extractAnnouncementSection(stripped, "Summary:");
-
-  // If no Summary found, try "Result:" content
-  if (!extracted) {
-    extracted = extractAnnouncementSection(stripped, "Result:");
-  }
-
-  // If neither found, return generic fallback
-  if (!extracted) {
-    return GENERIC_FALLBACK;
-  }
-
-  // Strip internal metadata patterns from extracted text
-  let sanitized = extracted;
-
-  // [Subagent Result: ...] markers
-  sanitized = stripSubagentResultMarkers(sanitized);
-
-  // Session keys (e.g., default:user1:channel:123)
-  sanitized = sanitized.replace(/\b\w+:\w+:[a-z_-]+:\d+\b/g, "");
-
-  // File paths (starting with / or ~)
-  sanitized = sanitized.replace(/(?<![:/\\\w])(?:\/[\w./-]+|~\/[\w./-]+)/g, "");
-
-  // Runtime stats lines (Runtime: ... | Steps: ... | Tokens:)
-  sanitized = sanitized.replace(/Runtime:.*\|.*Steps:.*\|.*Tokens:[^\n]*/g, "");
-
-  // Token counts/costs (Tokens: 500 ... Cost: $0.0050)
-  sanitized = sanitized.replace(/Tokens:\s*\d+.*Cost:\s*\$[\d.]+/g, "");
-
-  // Condensation stats (e.g., "150->50 messages" or "condensed 150 to 50")
-  sanitized = sanitized.replace(/\d+\u2192\d+\s*messages/g, "");
-  sanitized = sanitized.replace(/condensed\s+\d+\s+to\s+\d+/gi, "");
-
-  // Clean up: collapse multiple whitespace/newlines and trim
-  sanitized = sanitized.replace(/\n{3,}/g, "\n\n").replace(/ {2,}/g, " ").trim();
-
-  return sanitized || GENERIC_FALLBACK;
-}
-
-function extractAnnouncementSection(text: string, label: string): string | undefined {
-  const lower = text.toLowerCase();
-  const lowerLabel = label.toLowerCase();
-  let labelStart = lower.startsWith(lowerLabel) ? 0 : lower.indexOf(`\n${lowerLabel}`);
-  if (labelStart === -1) return undefined;
-  if (labelStart > 0) labelStart++;
-  let contentStart = labelStart + label.length;
-  while (contentStart < text.length && /\s/.test(text[contentStart]!)) contentStart++;
-  const terminators = ["\n---", "\n###", "\n[subagent result"];
-  let contentEnd = text.length;
-  for (const terminator of terminators) {
-    const found = lower.indexOf(terminator, contentStart);
-    if (found !== -1 && found < contentEnd) contentEnd = found;
-  }
-  const content = text.slice(contentStart, contentEnd).trim();
-  return content || undefined;
-}
-
-function stripSubagentResultMarkers(text: string): string {
-  const lower = text.toLowerCase();
-  const parts: string[] = [];
-  let cursor = 0;
-  while (cursor < text.length) {
-    const start = lower.indexOf("[subagent result:", cursor);
-    if (start === -1) {
-      parts.push(text.slice(cursor));
-      break;
-    }
-    parts.push(text.slice(cursor, start));
-    const end = text.indexOf("]", start + 1);
-    if (end === -1) break;
-    cursor = end + 1;
-  }
-  return parts.join("");
-}
-
-function replaceAttachedFilePaths(
-  text: string,
-  attachments: readonly CompletionAttachmentRef[],
-): { text: string; replacements: number } {
-  let sanitized = text;
-  let replacements = 0;
-
-  for (const attachment of attachments) {
-    const fileName = attachment.path.split(/[\\/]/).filter(Boolean).at(-1);
-    if (!fileName || !sanitized.includes(attachment.path)) continue;
-    const parts = sanitized.split(attachment.path);
-    replacements += parts.length - 1;
-    sanitized = parts.join(fileName);
-  }
-
-  return { text: sanitized, replacements };
-}
-
+export { sanitizeForUser } from "./announcement-sanitize.js";
+import {
+  containsInternalAnnouncementEnvelope,
+  sanitizeForUser,
+  stripSystemPrefix,
+} from "./announcement-sanitize.js";
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -308,11 +73,12 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const deliveryTails = new Map<string, Promise<void>>();
   const pendingAdmissions = new Set<Promise<Result<"queued" | "retained", Error>>>();
+  const admissionAbort = new AbortController();
   // Keys whose enqueue admission has not yet settled — consulted by hasPending
   // alongside the materialized queues so the failure sweep never fires inside
   // the admission await window.
   const admissionKeys = new Set<string>();
-  const admittedDecisionKeys = new Set<string>();
+  const admittedDecisionKeys = new Map<string, readonly string[]>();
   let accepting = true;
   let shutdownPromise: Promise<void> | undefined;
   // Idempotency keys whose delivery has SUCCEEDED. In-memory floor
@@ -338,79 +104,13 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
    * policy below this boundary; an opaque throw or false result is uncertain
    * and must not be repeated here.
    */
-  async function sendOnce(
+  const sendOnce = (
     item: QueuedAnnouncement,
     text: string,
+    completionKeys: readonly string[],
     attachment?: CompletionAttachmentRef,
     partId?: string,
-  ): Promise<{
-    delivered: boolean;
-    lastError?: string;
-    identity?: AnnouncementOperationIdentity;
-    failure?: GovernedAnnouncementFailure;
-  }> {
-    if (deps.sendGovernedAnnouncement) {
-      const boundary = await fromPromise(deps.sendGovernedAnnouncement({
-        agentId: item.callerAgentId,
-        callerSessionKey: item.callerSessionKey,
-        callerConversation: item.callerConversation,
-        destinationEndpoint: item.destinationEndpoint,
-        runId: item.runId,
-        channelType: item.announceChannelType,
-        channelId: item.announceChannelId,
-        text,
-        ...(partId ? { partId } : {}),
-        ...(attachment ? { attachment } : {}),
-        ...(item.announceThreadId ? { options: { threadId: item.announceThreadId } } : {}),
-      }));
-      if (!boundary.ok || !boundary.value.ok) {
-        return { delivered: false, lastError: "governed announcement boundary failed" };
-      }
-      const outcome = boundary.value.value;
-      if (outcome.delivered) {
-        return { delivered: true, identity: outcome.identity };
-      }
-      return {
-        delivered: false,
-        lastError: outcome.failure,
-        failure: outcome.failure,
-        ...(outcome.identity ? { identity: outcome.identity } : {}),
-      };
-    }
-
-    const attemptDirect = async (): Promise<{
-      delivered: boolean;
-      lastError?: string;
-    }> => {
-      const boundary = await fromPromise(deps.sendToChannel(
-        item.announceChannelType,
-        item.announceChannelId,
-        text,
-        item.announceThreadId ? { threadId: item.announceThreadId } : undefined,
-      ));
-      if (!boundary.ok) {
-        return {
-          delivered: false,
-          lastError: toSafeErrorLogString(boundary.error),
-        };
-      }
-      if (!boundary.value) {
-        return {
-          delivered: false,
-          lastError: "sendToChannel returned false",
-        };
-      }
-      return { delivered: true };
-    };
-
-    const firstAttempt = await attemptDirect();
-    return firstAttempt.delivered
-      ? { delivered: true }
-      : {
-          delivered: false,
-          lastError: firstAttempt.lastError ?? "direct channel send failed",
-        };
-  }
+  ) => sendOnceAttempt(deps, admissionAbort, item, text, completionKeys, attachment, partId);
 
   // -------------------------------------------------------------------------
   // Internal delivery
@@ -433,22 +133,36 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   async function resolveDecisions(
     items: readonly QueuedAnnouncement[],
     outcome: "receipt_committed" | "no_reply",
-  ): Promise<void> {
+  ): Promise<boolean> {
+    return resolveDecisionKeys(
+      items.flatMap((item) => item.idempotencyKey ? [item.idempotencyKey] : []),
+      outcome,
+      items[0]?.runId,
+    );
+  }
+
+  async function resolveDecisionKeys(
+    keys: readonly string[],
+    outcome: "receipt_committed" | "no_reply",
+    runId?: string,
+  ): Promise<boolean> {
     const resolveDecision = deps.deadLetterQueue?.resolveDecision;
-    if (!resolveDecision) return;
-    for (const item of items) {
-      if (!item.idempotencyKey) continue;
-      const boundary = await fromPromise(resolveDecision(item.idempotencyKey, outcome));
+    if (!resolveDecision) return true;
+    let resolved = true;
+    for (const decisionKey of keys) {
+      const boundary = await fromPromise(resolveDecision(decisionKey, outcome));
       if (boundary.ok && boundary.value.ok) continue;
+      resolved = false;
       deps.logger?.warn(
         {
-          runId: item.runId,
+          ...(runId ? { runId } : {}),
           errorKind: "resource" as const,
           hint: "Repair decision-quarantine storage; the safe retained row suppresses replay",
         },
         "Announcement decision reservation could not be resolved",
       );
     }
+    return resolved;
   }
 
   async function sendFinal(
@@ -460,68 +174,210 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     const attachments = items.flatMap((item) =>
       (item.attachments ?? []).map((attachment, index) => ({ item, attachment, index })),
     );
-    const sanitizedCaption = replaceAttachedFilePaths(
+    const operationPlan = createCompletionAnnouncementOperationPlan(
       text,
       attachments.map((entry) => entry.attachment),
     );
-    if (sanitizedCaption.replacements > 0) {
+    if (operationPlan.pathReplacements > 0) {
       deps.logger?.debug(
         {
           batchKey: key,
           runId: first.runId,
-          replacements: sanitizedCaption.replacements,
+          replacements: operationPlan.pathReplacements,
           step: "completion-caption-egress",
         },
         "Attached file paths replaced before completion delivery",
       );
     }
-    const operations: Array<{
-      item: QueuedAnnouncement;
-      text: string;
-      attachment?: CompletionAttachmentRef;
-      partId?: string;
-    }> = attachments.length === 0
-      ? [{ item: first, text: sanitizedCaption.text }]
-      : items.length === 1
-        ? attachments.map((entry, index) => ({
-            ...entry,
-            text: index === 0 ? sanitizedCaption.text : "",
-            partId: `attachment:${entry.index}`,
-          }))
-        : [
-            { item: first, text: sanitizedCaption.text, partId: "summary" },
-            ...attachments.map((entry) => ({
-              ...entry,
-              text: "",
-              partId: `attachment:${entry.index}`,
-            })),
-          ];
+    const operations: AnnouncementBatchOperation[] = operationPlan.operations.map((operation) => {
+      const attachmentEntry = operation.attachmentIndex === undefined
+        ? undefined
+        : attachments[operation.attachmentIndex];
+      return {
+        item: attachmentEntry?.item ?? first,
+        text: operation.text,
+        completionItems: items,
+        ...(attachmentEntry
+          ? { partId: `attachment:${attachmentEntry.index}` }
+          : operation.partId
+            ? { partId: operation.partId }
+            : {}),
+        ...(operation.attachment ? { attachment: operation.attachment } : {}),
+      };
+    });
+
+    const usesDurableAttempt = deps.sendGovernedAnnouncement !== undefined
+      || deps.sendRecoverableAnnouncement !== undefined
+      || deps.sendToChannelWithReceipt !== undefined;
+    if (usesDurableAttempt) {
+      const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
+      const admittedReservationKeys = items.flatMap((item) =>
+        item.idempotencyKey
+          ? (admittedDecisionKeys.get(item.idempotencyKey) ?? [])
+          : []);
+      const reservationPlan = createAnnouncementReservationPlan(
+        operations,
+        admittedReservationKeys,
+      );
+      if (!replaceDecisions || !reservationPlan.ok) {
+        retainItems(items);
+        deps.logger?.warn(
+          {
+            batchKey: key,
+            runId: first.runId,
+            errorKind: "precondition" as const,
+            hint: "Wire atomic operation reservations before governed completion delivery",
+          },
+          "Announcement operations could not be reserved",
+        );
+        return false;
+      }
+      const transitioned = await fromPromise(replaceDecisions(
+        reservationPlan.value.expectedKeys,
+        reservationPlan.value.reservations,
+        admissionAbort.signal,
+      ));
+      if (!transitioned.ok || !transitioned.value.ok) {
+        retainItems(items);
+        deps.logger?.warn(
+          {
+            batchKey: key,
+            runId: first.runId,
+            errorKind: "resource" as const,
+            hint: "Restore decision-quarantine storage before retrying the completion",
+          },
+          "Announcement operation reservations were not persisted",
+        );
+        return false;
+      }
+      if (!transitioned.value.value.created) {
+        retainItems(items);
+        return false;
+      }
+    }
 
     let failure: {
       lastError?: string;
       identity?: AnnouncementOperationIdentity;
       failure?: GovernedAnnouncementFailure;
     } | undefined;
-    for (const operation of operations) {
+    let failedOperationIndex = -1;
+    for (const [operationIndex, operation] of operations.entries()) {
+      if (
+        !deps.sendGovernedAnnouncement
+        && !deps.sendRecoverableAnnouncement
+        && deps.sendToChannelWithReceipt
+      ) {
+        const reservationKey = operation.reservationKey;
+        const beginDeliveryAttempt = deps.deadLetterQueue?.beginDeliveryAttempt;
+        if (!reservationKey || !beginDeliveryAttempt) {
+          failure = { lastError: "operation_retained", failure: "operation_retained" };
+          failedOperationIndex = operationIndex;
+          break;
+        }
+        const completionKeys = operation.completionItems.flatMap((item) =>
+          item.idempotencyKey ? [item.idempotencyKey] : []);
+        const claimed = await fromPromise(beginDeliveryAttempt({
+          announcementText: operation.text,
+          channelType: operation.item.announceChannelType,
+          channelId: operation.item.announceChannelId,
+          agentId: operation.item.callerAgentId,
+          runId: operation.item.runId,
+          sessionKey: operation.item.callerSessionKey,
+          failedAt: systemNowMs(),
+          attemptCount: 0,
+          lastError: "outward_operation_in_flight",
+          idempotencyKey: reservationKey,
+          rootRunId: operation.item.reservationRootRunId
+            ?? `announcement:${operation.item.callerSessionKey}`,
+          completionKeys,
+          retirementKeys: completionKeys,
+          deliveryAuthority: {
+            tenantId: operation.item.callerConversation.conversationScope.tenantId,
+            agentId: operation.item.callerAgentId,
+            conversationRef: operation.item.callerConversation.conversationRef,
+          },
+          destinationEndpoint: operation.item.destinationEndpoint,
+          ...(operation.item.announceThreadId
+            ? { threadId: operation.item.announceThreadId }
+            : {}),
+          ...(operation.partId ? { partId: operation.partId } : {}),
+        }, admissionAbort.signal));
+        if (!claimed.ok || !claimed.value.ok) {
+          failure = { lastError: "operation_retained", failure: "operation_retained" };
+          failedOperationIndex = operationIndex;
+          break;
+        }
+        if (claimed.value.value.terminalDecision !== undefined) continue;
+        if (!claimed.value.value.claimed) {
+          failure = { lastError: "operation_retained", failure: "operation_retained" };
+          failedOperationIndex = operationIndex;
+          break;
+        }
+      }
       const outcome = await sendOnce(
         operation.item,
         operation.text,
+        operation.completionItems.flatMap((item) =>
+          item.idempotencyKey ? [item.idempotencyKey] : []),
         operation.attachment,
         operation.partId,
       );
       if (!outcome.delivered) {
+        if (
+          !deps.sendGovernedAnnouncement
+          && !deps.sendRecoverableAnnouncement
+          && operation.reservationKey
+        ) {
+          await deps.deadLetterQueue?.settleDeliveryAttempt(
+            operation.reservationKey,
+            outcome.platformStatus ?? "unknown",
+          );
+        }
         failure = outcome;
+        failedOperationIndex = operationIndex;
         break;
+      }
+      if (
+        !deps.sendGovernedAnnouncement
+        && !deps.sendRecoverableAnnouncement
+        && operation.reservationKey
+      ) {
+        await deps.deadLetterQueue?.settleDeliveryAttempt(
+          operation.reservationKey,
+          "accepted",
+        );
+      }
+      if (operation.reservationKey && !outcome.terminalDecision) {
+        if (deps.sendGovernedAnnouncement) await resolveDecisionKeys(
+          [operation.reservationKey],
+          "receipt_committed",
+          operation.item.runId,
+        );
       }
     }
     if (failure === undefined) {
-      await resolveDecisions(items, "receipt_committed");
+      if (!usesDurableAttempt) {
+        await resolveDecisions(items, "receipt_committed");
+      }
       markItemsDelivered(items);
       return true;
     }
 
     if (failure.failure === "operation_validation_blocked") {
-      await resolveDecisions(items, "no_reply");
+      const operationsResolved = await resolveDecisionKeys(
+        operations.slice(failedOperationIndex).flatMap((operation) =>
+          operation.reservationKey ? [operation.reservationKey] : []),
+        "no_reply",
+        first.runId,
+      );
+      const decisionsResolved = deps.sendGovernedAnnouncement
+        ? true
+        : await resolveDecisions(items, "no_reply");
+      if (!operationsResolved || !decisionsResolved) {
+        retainItems(items);
+        return false;
+      }
       markItemsDelivered(items);
       deps.eventBus.emit("subagent:delivery_skipped", {
         runId: first.runId,
@@ -555,10 +411,12 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       },
       "Announcement final delivery was not confirmed",
     );
-    if (attachments.length > 0) return false;
+    if (usesDurableAttempt || attachments.length > 0) return false;
     if (!deps.deadLetterQueue) return false;
+    const failedCompletionKeys = items.flatMap((item) =>
+      item.idempotencyKey ? [item.idempotencyKey] : []);
     const queued = await deps.deadLetterQueue.enqueue({
-      announcementText: sanitizedCaption.text,
+      announcementText: operationPlan.operations[0]?.text ?? "",
       channelType: first.announceChannelType,
       channelId: first.announceChannelId,
       agentId: first.callerAgentId,
@@ -566,14 +424,24 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       sessionKey: first.callerSessionKey,
       failedAt: systemNowMs(),
       attemptCount: 0,
-      ...(failure.lastError ? { lastError: failure.lastError } : {}),
+      lastError: failure.lastError ?? "outward_operation_unresolved",
       ...(first.announceThreadId ? { threadId: first.announceThreadId } : {}),
       idempotencyKey: first.idempotencyKey,
+      ...(failedCompletionKeys.length > 0 ? { completionKeys: failedCompletionKeys } : {}),
       ...(failure.identity ? {
         rootRunId: failure.identity.rootRunId,
         stepIndex: failure.identity.stepIndex,
       } : {}),
-    });
+      deliveryAuthority: {
+        tenantId: first.callerConversation.conversationScope.tenantId,
+        agentId: first.callerAgentId,
+        conversationRef: first.callerConversation.conversationRef,
+      },
+      destinationEndpoint: first.destinationEndpoint,
+      ...(failedCompletionKeys.length > 0
+        ? { retirementKeys: failedCompletionKeys }
+        : {}),
+    }, admissionAbort.signal);
     if (!queued?.ok) {
       deps.logger?.warn(
         {
@@ -644,8 +512,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         if (items.some((item) => (item.attachments?.length ?? 0) > 0)) {
           await sendFinal(key, items, "");
         } else {
-          await resolveDecisions(items, "no_reply");
-          markItemsDelivered(items);
+          const resolved = await resolveDecisions(items, "no_reply");
+          if (resolved) markItemsDelivered(items);
+          else retainItems(items);
         }
         return;
       }
@@ -702,8 +571,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             await sendFinal(key, items, "");
             return;
           }
-          await resolveDecisions(items, "no_reply");
-          markItemsDelivered(items);
+          const resolved = await resolveDecisions(items, "no_reply");
+          if (resolved) markItemsDelivered(items);
+          else retainItems(items);
           return;
         }
         const scrubbedCandidate = scrubSecretsFromText(candidate ?? "");
@@ -807,12 +677,39 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     params: QueuedAnnouncement,
   ): Promise<Result<"queued" | "retained", Error>> {
     const idempotencyKey = params.idempotencyKey;
+    const reservationRootRunId = params.reservationRootRunId;
     if (idempotencyKey && (deliveredKeys.has(idempotencyKey) || retainedKeys.has(idempotencyKey))) {
       return ok("retained");
     }
+    if (
+      (params.attachments?.length ?? 0) > 0
+      && !deps.sendGovernedAnnouncement
+    ) {
+      deps.logger?.warn(
+        {
+          runId: params.runId,
+          errorKind: "precondition" as const,
+          hint: "Enable receipt-aware governed attachment delivery before retrying the completion",
+        },
+        "Generated completion file has no governed delivery boundary",
+      );
+      return err(new Error("Generated completion attachment delivery unavailable"));
+    }
 
     const reserveDecision = deps.deadLetterQueue?.reserveDecision;
-    if (deps.sendGovernedAnnouncement && (!idempotencyKey || !reserveDecision)) {
+    const replaceDecisions = deps.deadLetterQueue?.replaceDecisions;
+    const hasAttachments = (params.attachments?.length ?? 0) > 0;
+    const usesDurableAttempt = deps.sendGovernedAnnouncement !== undefined
+      || deps.sendRecoverableAnnouncement !== undefined
+      || deps.sendToChannelWithReceipt !== undefined;
+    if (
+      usesDurableAttempt
+      && (
+        !idempotencyKey
+        || (!hasAttachments && !reserveDecision)
+        || (hasAttachments && !replaceDecisions)
+      )
+    ) {
       deps.logger?.warn(
         {
           runId: params.runId,
@@ -823,25 +720,67 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       );
       return err(new Error("Governed announcement decision reservation unavailable"));
     }
-    if (deps.sendGovernedAnnouncement && idempotencyKey && reserveDecision) {
+    if (deps.sendGovernedAnnouncement && !reservationRootRunId) {
+      deps.logger?.warn(
+        {
+          runId: params.runId,
+          errorKind: "precondition" as const,
+          hint: "Resolve a non-empty outward ledger root for the caller conversation before governed parent rewriting",
+        },
+        "Governed announcement has no adjudicable ledger root",
+      );
+      return err(new Error("Governed announcement ledger root unavailable"));
+    }
+    if (
+      usesDurableAttempt
+      && idempotencyKey
+    ) {
       const safeFallback = sanitizeForUser(params.announcementText);
       const fallbackDisclosure = enforceAnnouncementTerminalOutcome(
         safeFallback,
         params.terminalOutcome,
       );
-      const boundary = await fromPromise(reserveDecision({
-        idempotencyKey,
-        agentId: params.callerAgentId,
-        runId: params.runId,
-        announcementText: fallbackDisclosure.text ?? safeFallback,
-        channelType: params.announceChannelType,
-        channelId: params.announceChannelId,
-        failedAt: systemNowMs(),
-        // Without this the reservation is undrainable — adjudication has no
-        // ledger tree to ask, so a parked completion is never recovered.
-        ...(params.reservationRootRunId ? { rootRunId: params.reservationRootRunId } : {}),
-        ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
-      }));
+      const fallbackText = fallbackDisclosure.text ?? safeFallback;
+      const attachmentPlanSource = createCompletionAnnouncementOperationPlan(
+        params.suppressText ? "" : fallbackText,
+        params.attachments ?? [],
+      );
+      const attachmentOperations: AnnouncementBatchOperation[] = hasAttachments
+        ? attachmentPlanSource.operations.map((operation) => ({
+            item: params,
+            text: operation.text,
+            completionItems: [params],
+            ...(operation.partId ? { partId: operation.partId } : {}),
+            ...(operation.attachment ? { attachment: operation.attachment } : {}),
+          }))
+        : [];
+      const attachmentPlan = attachmentOperations.length > 0
+        ? createAnnouncementReservationPlan(attachmentOperations)
+        : undefined;
+      if (attachmentPlan && !attachmentPlan.ok) return attachmentPlan;
+      const boundary = await fromPromise(
+        attachmentPlan?.ok && replaceDecisions
+          ? replaceDecisions([], attachmentPlan.value.reservations, admissionAbort.signal)
+          : reserveDecision!({
+              idempotencyKey,
+              agentId: params.callerAgentId,
+              runId: params.runId,
+              sessionKey: params.callerSessionKey,
+              announcementText: fallbackText,
+              channelType: params.announceChannelType,
+              channelId: params.announceChannelId,
+              failedAt: systemNowMs(),
+              rootRunId: reservationRootRunId ?? `announcement:${params.callerSessionKey}`,
+              deliveryAuthority: {
+                tenantId: params.callerConversation.conversationScope.tenantId,
+                agentId: params.callerAgentId,
+                conversationRef: params.callerConversation.conversationRef,
+              },
+              destinationEndpoint: params.destinationEndpoint,
+              completionKeys: [idempotencyKey],
+              ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
+            }, admissionAbort.signal),
+      );
       if (!boundary.ok) {
         deps.logger?.warn(
           {
@@ -874,12 +813,26 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         );
         return ok("retained");
       }
-      admittedDecisionKeys.add(idempotencyKey);
+      admittedDecisionKeys.set(
+        idempotencyKey,
+        attachmentPlan?.ok
+          ? attachmentPlan.value.reservations.map((reservation) => reservation.idempotencyKey)
+          : [idempotencyKey],
+      );
     }
 
     const batchKey = JSON.stringify([
       params.callerAgentId,
       params.callerSessionKey,
+      params.callerConversation.conversationScope.tenantId,
+      params.callerConversation.conversationScope.agentId,
+      params.callerConversation.conversationRef,
+      params.destinationEndpoint.channelType,
+      params.destinationEndpoint.channelInstanceId,
+      params.destinationEndpoint.conversationId,
+      params.destinationEndpoint.threadId ?? null,
+      params.destinationEndpoint.conversationKind,
+      params.reservationRootRunId ?? null,
       params.announceChannelType,
       params.announceChannelId,
       params.announceThreadId ?? null,
@@ -965,6 +918,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
 
   function shutdown(): Promise<void> {
     accepting = false;
+    admissionAbort.abort();
     shutdownPromise ??= performShutdown();
     return shutdownPromise;
   }

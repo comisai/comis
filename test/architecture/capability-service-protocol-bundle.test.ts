@@ -1,0 +1,540 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Static contract for the generated capability-service protocol bundle.
+ *
+ * External services consume release artifacts whose bytes and digest are
+ * pinned by the deployment. The private runtime implementation is also
+ * bundled with the npm umbrella because installed daemon and skills packages
+ * import its validators.
+ */
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import Ajv, { type ValidateFunction } from "ajv";
+import addFormats from "ajv-formats";
+import { describe, expect, it } from "vitest";
+import { MAX_MANAGED_RUN_REPORT_BYTES } from "../../packages/core/src/domain/managed-run-content.js";
+import { MANAGED_RUN_GROUP_MAX_MEMBERS } from "../../packages/core/src/domain/managed-run-group.js";
+import { CAPABILITY_SERVICE_BUNDLE_DIGEST } from "../../packages/capability-service-sdk/src/constants.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(here, "../..");
+const SDK_ROOT = resolve(REPO_ROOT, "packages/capability-service-sdk");
+const PROTOCOL_ROOT = resolve(SDK_ROOT, "protocol");
+
+const EXPECTED_METHODS = [
+  "capabilityServices.handshake",
+  "capabilityServices.health",
+  "managedRunGroups.abandon",
+  "managedRunGroups.activate",
+  "managedRunGroups.getHostRollup",
+  "managedRuns.abandon",
+  "managedRuns.activate",
+  "managedRuns.cancel",
+  "managedRuns.consumeApproval",
+  "managedRuns.heartbeat",
+  "managedRuns.putEvidence",
+  "managedRuns.receiveAttentionResponse",
+  "managedRuns.release",
+  "managedRuns.report",
+  "managedRuns.terminalEvent",
+] as const;
+
+const EXPECTED_FIXTURE_CLASSES = [
+  "altered-replay",
+  "boundary-size",
+  "digest-mismatch",
+  "invalid",
+  "unknown-field",
+  "valid",
+  "version-mismatch",
+] as const;
+
+interface ProtocolManifest {
+  readonly protocolId: string;
+  readonly bundleDigest: string;
+  readonly methods: readonly string[];
+  readonly errorKinds: readonly string[];
+  readonly limits: Readonly<Record<string, number>>;
+  readonly mcpMeta: {
+    readonly callContextKey: string;
+    readonly managedRunResultKey: string;
+  };
+  readonly methodCatalog: ReadonlyArray<{
+    readonly method: string;
+    readonly direction: string;
+    readonly callerClass: string;
+    readonly requiredServiceScope: string | null;
+    readonly classification: string;
+    readonly maxRequestBytes: number;
+    readonly maxResponseBytes: number;
+    readonly semanticInvariants: readonly string[];
+    readonly requestSchema: string;
+    readonly responseSchema: string;
+  }>;
+  readonly generator: { readonly command: string; readonly package: string; readonly version: string };
+  readonly fixtureDigestToken: string;
+  readonly artifacts: ReadonlyArray<{ readonly path: string; readonly sha256: string }>;
+}
+
+interface ProtocolFixtureStep {
+  readonly target: string;
+  readonly schemaExpectation?: "accept" | "reject";
+  readonly payload: unknown;
+}
+
+interface ProtocolFixture {
+  readonly class: string;
+  readonly steps: readonly ProtocolFixtureStep[];
+}
+
+function readJson<T>(path: string): T {
+  return JSON.parse(readFileSync(path, "utf8")) as T;
+}
+
+function sha256(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function materializeDigest(value: unknown, token: string, digest: string): unknown {
+  if (value === token) return digest;
+  if (Array.isArray(value)) {
+    return value.map((entry) => materializeDigest(entry, token, digest));
+  }
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      materializeDigest(entry, token, digest),
+    ]),
+  );
+}
+
+function requestMethod(payload: unknown): string | undefined {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return undefined;
+  }
+  const method = (payload as Readonly<Record<string, unknown>>)["method"];
+  return typeof method === "string" ? method : undefined;
+}
+
+describe("capability-service protocol bundle contract", () => {
+  it("keeps the SDK private while bundling its installed runtime", () => {
+    expect(existsSync(resolve(SDK_ROOT, "package.json"))).toBe(true);
+    const sdk = readJson<{ private?: boolean; files?: string[] }>(resolve(SDK_ROOT, "package.json"));
+    const umbrella = readJson<{ bundledDependencies?: string[] }>(
+      resolve(REPO_ROOT, "packages/comis/package.json"),
+    );
+
+    expect(sdk.private).toBe(true);
+    expect(sdk.files).toContain("protocol");
+    expect(umbrella.bundledDependencies).toContain("@comis/capability-service-sdk");
+  });
+
+  it("executes the public protocol drift check against the committed bundle", () => {
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    const output = execFileSync("pnpm", ["capability-protocol:check"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
+
+    expect(output).toContain(`matches ${manifest.bundleDigest}`);
+    expect(output).toContain(`${manifest.artifacts.length} artifacts`);
+  });
+
+  it("states one ratified group ceiling on the wire and in the domain", () => {
+    // The wire limit and the domain ceiling are the SAME ratified number held in
+    // two packages that cannot import each other: the protocol bundle is
+    // dependency-light by design and must not reach into core. Nothing else
+    // makes them agree, and a drift would let the host accept a membership its
+    // own record refuses — or the reverse.
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    expect(manifest.limits.maxGroupMembers).toBe(MANAGED_RUN_GROUP_MAX_MEMBERS);
+  });
+
+  it("pins the protocol identity, method catalog, errors, and limits", () => {
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+
+    expect(manifest.protocolId).toBe("comis.capability-service/1");
+    expect(CAPABILITY_SERVICE_BUNDLE_DIGEST).toBe(manifest.bundleDigest);
+    expect(manifest.methods).toEqual(EXPECTED_METHODS);
+    expect(manifest.errorKinds).toEqual([
+      "bundle_digest_mismatch",
+      "deadline_exceeded",
+      "internal_error",
+      "invalid_params",
+      "invalid_request",
+      "method_not_found",
+      "precondition_failed",
+      "protocol_mismatch",
+      "rate_limited",
+      "replay_conflict",
+      "size_limit_exceeded",
+      "unauthorized_instance",
+    ]);
+    expect(manifest.limits).toEqual({
+      maxEvidenceBytes: 1_048_576,
+      maxGroupMembers: 16,
+      maxInFlightRequests: 32,
+      maxLineBytes: 1_441_792,
+      maxReportBytes: 16_384,
+      maxRequestBytes: 1_441_792,
+      maxResponseBytes: 65_536,
+      reportRetentionDays: 30,
+    });
+    expect(manifest.limits.maxReportBytes).toBe(MAX_MANAGED_RUN_REPORT_BYTES);
+    expect(manifest.generator.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(manifest.mcpMeta).toEqual({
+      callContextKey: "comis.callContext",
+      managedRunResultKey: "comis.managedRun",
+    });
+    expect(manifest.methodCatalog.map((entry) => entry.method)).toEqual(EXPECTED_METHODS);
+    for (const entry of manifest.methodCatalog) {
+      expect(entry).toMatchObject({
+        direction: expect.stringMatching(/^(bidirectional|comis-to-service|service-to-comis)$/),
+        callerClass: expect.stringMatching(/^(both|capability-service|comis-daemon)$/),
+        classification: expect.stringMatching(/^(mutation|read)$/),
+        maxRequestBytes: manifest.limits.maxRequestBytes,
+        maxResponseBytes: manifest.limits.maxResponseBytes,
+      });
+      expect(entry.semanticInvariants.length).toBeGreaterThan(0);
+    }
+    expect(
+      manifest.methodCatalog.find((entry) => entry.method === "managedRuns.putEvidence"),
+    ).toMatchObject({
+      direction: "service-to-comis",
+      callerClass: "capability-service",
+      classification: "mutation",
+      requiredServiceScope: "evidence",
+      semanticInvariants: expect.arrayContaining([
+        "evidence-ref-identical-replay-returns-original-result",
+        "content-hash-must-match-decoded-private-body",
+        "adapter-verification-requires-configured-kind",
+        "host-verification-is-reserved",
+      ]),
+    });
+    expect(
+      manifest.methodCatalog.find((entry) => entry.method === "managedRuns.report")
+        ?.semanticInvariants,
+    ).toContain("utf8-report-content-bytes-at-most-max-report-bytes");
+    expect(
+      manifest.methodCatalog.find((entry) => entry.method === "managedRuns.release"),
+    ).toMatchObject({
+      direction: "service-to-comis",
+      callerClass: "capability-service",
+      classification: "mutation",
+      requiredServiceScope: "workspace_lease",
+      semanticInvariants: expect.arrayContaining([
+        "managed-run-workspace-lease-must-match",
+        "terminal-and-attachment-revocation-precedes-lease-release",
+      ]),
+    });
+    expect(
+      manifest.methodCatalog.find((entry) => entry.method === "managedRuns.terminalEvent"),
+    ).toMatchObject({
+      direction: "comis-to-service",
+      callerClass: "comis-daemon",
+      classification: "mutation",
+      requiredServiceScope: null,
+      semanticInvariants: expect.arrayContaining([
+        "terminal-run-workspace-lease-must-match",
+        "transition-carries-identifiers-only",
+      ]),
+    });
+  });
+
+  it("pins immutable verifier evidence and its host-owned delivery presentation", () => {
+    const valid = readJson<{
+      steps: Array<{ target: string; payload: Record<string, unknown> }>;
+    }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
+    const evidence = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "managedRuns.putEvidence",
+    );
+    const response = valid.steps.find((step) => step.target === "put-evidence-response");
+    const params = evidence?.payload["params"] as Record<string, unknown> | undefined;
+    const result = response?.payload["result"] as Record<string, unknown> | undefined;
+
+    expect(Object.keys(params ?? {}).sort()).toEqual([
+      "bodyBase64",
+      "contentHash",
+      "delivery",
+      "evidenceRef",
+      "expiresAtMs",
+      "kind",
+      "managedRunId",
+      "observedAtMs",
+      "operationId",
+      "subjectDigest",
+      "verificationLevel",
+    ]);
+    expect(params).toMatchObject({
+      managedRunId: expect.any(String),
+      evidenceRef: expect.any(String),
+      kind: "delivery_reference",
+      subjectDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      verificationLevel: "adapter_verified",
+      delivery: { kind: "reference" },
+    });
+    expect(result).toEqual({
+      managedRunId: params?.["managedRunId"],
+      evidenceRef: params?.["evidenceRef"],
+      contentHash: params?.["contentHash"],
+      verificationLevel: params?.["verificationLevel"],
+      retainedUntilMs: params?.["expiresAtMs"],
+    });
+  });
+
+  it("pins content-free terminal transitions to the owning managed run and lease", () => {
+    const valid = readJson<{
+      steps: Array<{ target: string; payload: Record<string, unknown> }>;
+    }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
+    const terminalEvent = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "managedRuns.terminalEvent",
+    );
+    const terminalEventResponse = valid.steps.find(
+      (step) => step.target === "terminal-event-response",
+    );
+    const params = terminalEvent?.payload["params"] as Record<string, unknown> | undefined;
+    const result = terminalEventResponse?.payload["result"] as Record<string, unknown> | undefined;
+
+    expect(Object.keys(params ?? {}).sort()).toEqual([
+      "managedRunId",
+      "operationId",
+      "terminalSessionId",
+      "transition",
+      "workspaceLeaseId",
+    ]);
+    expect(params).toMatchObject({
+      managedRunId: expect.any(String),
+      terminalSessionId: expect.any(String),
+      transition: "created",
+      workspaceLeaseId: expect.any(String),
+    });
+    expect(result).toEqual({
+      managedRunId: params?.["managedRunId"],
+      terminalSessionId: params?.["terminalSessionId"],
+      transition: params?.["transition"],
+    });
+  });
+
+  it("pins activation workspace atomicity and closed abandonment disposition", () => {
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    const valid = readJson<{
+      steps: Array<{ target: string; payload: Record<string, unknown> }>;
+    }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
+    const prepared = valid.steps.find((step) => step.target === "mcp-managed-run-result");
+    const activate = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "managedRuns.activate",
+    );
+    const abandon = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "managedRuns.abandon",
+    );
+    const abandonResponse = valid.steps.find((step) => step.target === "abandon-response");
+    const activateParams = activate?.payload["params"] as Record<string, unknown> | undefined;
+    const abandonParams = abandon?.payload["params"] as Record<string, unknown> | undefined;
+    const abandonResult = abandonResponse?.payload["result"] as Record<string, unknown> | undefined;
+
+    expect(
+      manifest.methodCatalog.find((entry) => entry.method === "managedRuns.activate")
+        ?.semanticInvariants,
+    ).toContain("present-iff-the-preparation-requested-a-workspace");
+    expect(prepared?.payload).toMatchObject({
+      requestedWorkspace: { rootHint: expect.stringMatching(/^\//u) },
+    });
+    expect(activateParams).toMatchObject({ workspaceLeaseId: expect.any(String) });
+    expect(abandonParams).toMatchObject({ disposition: "preserve" });
+    expect(abandonResult).toMatchObject({
+      state: "abandoned",
+      disposition: "preserve",
+      terminalTransition: "unbound_preparation_abandoned",
+    });
+  });
+
+  it("hashes every artifact and derives the overall digest from ordered path-hash pairs", () => {
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    const paths = manifest.artifacts.map((artifact) => artifact.path);
+
+    expect(paths).toEqual([...paths].sort());
+    for (const artifact of manifest.artifacts) {
+      const content = readFileSync(resolve(PROTOCOL_ROOT, artifact.path), "utf8");
+      expect(artifact.sha256, artifact.path).toBe(sha256(content));
+    }
+
+    const digestInput = manifest.artifacts
+      .map((artifact) => `${artifact.path}\0${artifact.sha256}\n`)
+      .join("");
+    expect(manifest.bundleDigest).toBe(sha256(digestInput));
+  });
+
+  it("ships strict request and response schemas for every method", () => {
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    const artifactPaths = new Set(manifest.artifacts.map((artifact) => artifact.path));
+
+    // Follow the manifest's OWN pointers rather than rebuilding a filename
+    // convention beside it. Deriving `schemas/<segment-after-the-dot>` was a
+    // second copy of that knowledge, and it collided the moment a second
+    // namespace reused a verb — managedRunGroups.activate and
+    // managedRuns.activate both wanted "activate.request.schema.json". The
+    // pointers are also what a consumer actually resolves, so checking them
+    // proves more than checking a name we invented.
+    for (const method of EXPECTED_METHODS) {
+      const entry = manifest.methodCatalog.find((candidate) => candidate.method === method);
+      expect(entry, `${method} has a catalog entry`).toBeDefined();
+      expect(artifactPaths, `${method} request schema`).toContain(entry?.requestSchema);
+      expect(artifactPaths, `${method} response schema`).toContain(entry?.responseSchema);
+    }
+    expect(artifactPaths).toContain("schemas/error-response.schema.json");
+    expect(artifactPaths).toContain("schemas/external-run-ref.schema.json");
+    expect(artifactPaths).toContain("schemas/mcp-call-context.schema.json");
+    expect(artifactPaths).toContain("schemas/mcp-managed-run-group-result.schema.json");
+    expect(artifactPaths).toContain("schemas/mcp-managed-run-result.schema.json");
+    expect(artifactPaths).toContain("schemas/service-instance-id.schema.json");
+  });
+
+  it("pins host-owned report authority and the private MCP extension shapes", () => {
+    const valid = readJson<{
+      steps: Array<{ target: string; payload: Record<string, unknown> }>;
+    }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
+    const prepared = valid.steps.find((step) => step.target === "mcp-managed-run-result");
+    const preparedGroup = valid.steps.find(
+      (step) => step.target === "mcp-managed-run-group-result",
+    );
+    const context = valid.steps.find((step) => step.target === "mcp-call-context");
+    const report = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "managedRuns.report",
+    );
+    const reportParams = report?.payload["params"] as Record<string, unknown> | undefined;
+
+    expect(Object.keys(prepared?.payload ?? {}).sort()).toEqual([
+      "expiresAt",
+      "externalRunRef",
+      "registrationNonce",
+      "requestedAttachment",
+      "requestedWorkspace",
+      "state",
+    ]);
+    expect(preparedGroup?.payload).toMatchObject({
+      state: "prepared",
+      registrationNonce: expect.any(String),
+      members: [
+        {
+          externalRunRef: expect.any(String),
+          registrationNonce: expect.any(String),
+          requestedAttachment: {
+            kind: "unix_socket",
+            relayIdentity: expect.stringMatching(/^[a-f0-9]{64}$/u),
+            sourcePath: expect.stringMatching(/^\//u),
+          },
+          requestedWorkspace: { rootHint: expect.stringMatching(/^\//u) },
+        },
+      ],
+    });
+    expect(Object.keys(context?.payload ?? {}).sort()).toEqual([
+      "agentId",
+      "approvalRequestId",
+      "conversationRef",
+      "operationId",
+      "rootRunId",
+      "serviceInstanceId",
+      "traceId",
+      "workspacePolicyHash",
+    ]);
+    expect(reportParams).toMatchObject({
+      managedRunId: expect.any(String),
+      serviceReportId: expect.any(String),
+      kind: "progress",
+    });
+    expect(reportParams).not.toHaveProperty("sequence");
+    expect(reportParams).not.toHaveProperty("state");
+  });
+
+  it("advertises managed-run group authority in the canonical handshake", () => {
+    const valid = readJson<{
+      steps: Array<{ target: string; payload: Record<string, unknown> }>;
+    }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
+    const request = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "capabilityServices.handshake",
+    );
+    const response = valid.steps.find((step) => step.target === "handshake-response");
+    const params = request?.payload["params"] as Record<string, unknown> | undefined;
+    const result = response?.payload["result"] as Record<string, unknown> | undefined;
+
+    expect(params?.["requestedScopes"]).toContain("managed_run_group");
+    expect(result?.["activeScopes"]).toContain("managed_run_group");
+  });
+
+  it("includes every required conformance fixture class", () => {
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    const fixtureArtifacts = manifest.artifacts.filter((artifact) =>
+      artifact.path.startsWith("fixtures/"),
+    );
+    const fixtureClasses = fixtureArtifacts.map((artifact) =>
+      readJson<{ class: string }>(resolve(PROTOCOL_ROOT, artifact.path)).class,
+    );
+
+    expect([...new Set(fixtureClasses)].sort()).toEqual(EXPECTED_FIXTURE_CLASSES);
+  });
+
+  it("matches every fixture's structural outcome against the emitted JSON Schemas", () => {
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    const ajv = new Ajv({ allErrors: true, strict: true });
+    addFormats(ajv);
+    const validators = new Map<string, ValidateFunction>();
+    for (const artifact of manifest.artifacts) {
+      if (!artifact.path.startsWith("schemas/")) continue;
+      validators.set(
+        artifact.path,
+        ajv.compile(readJson(resolve(PROTOCOL_ROOT, artifact.path))),
+      );
+    }
+    const responseSchemas: Readonly<Record<string, string>> = {
+      "abandon-response": "schemas/abandon.response.schema.json",
+      "activate-response": "schemas/activate.response.schema.json",
+      "cancel-response": "schemas/cancel.response.schema.json",
+      "error-response": "schemas/error-response.schema.json",
+      "group-abandon-response": "schemas/groupAbandon.response.schema.json",
+      "group-activate-response": "schemas/groupActivate.response.schema.json",
+      "group-get-host-rollup-response": "schemas/groupGetHostRollup.response.schema.json",
+      "handshake-response": "schemas/handshake.response.schema.json",
+      "health-response": "schemas/health.response.schema.json",
+      "heartbeat-response": "schemas/heartbeat.response.schema.json",
+      "mcp-call-context": "schemas/mcp-call-context.schema.json",
+      "mcp-managed-run-group-result": "schemas/mcp-managed-run-group-result.schema.json",
+      "mcp-managed-run-result": "schemas/mcp-managed-run-result.schema.json",
+      "put-evidence-response": "schemas/putEvidence.response.schema.json",
+      "consume-approval-response": "schemas/consumeApproval.response.schema.json",
+      "receive-attention-response": "schemas/receiveAttentionResponse.response.schema.json",
+      "release-response": "schemas/release.response.schema.json",
+      "report-response": "schemas/report.response.schema.json",
+      "terminal-event-response": "schemas/terminalEvent.response.schema.json",
+    };
+
+    for (const artifact of manifest.artifacts) {
+      if (!artifact.path.startsWith("fixtures/")) continue;
+      const fixture = readJson<ProtocolFixture>(resolve(PROTOCOL_ROOT, artifact.path));
+      for (const [index, step] of fixture.steps.entries()) {
+        expect(step.schemaExpectation, `${artifact.path} step ${index}`).toBeDefined();
+        const payload = materializeDigest(
+          step.payload,
+          manifest.fixtureDigestToken,
+          manifest.bundleDigest,
+        );
+        const method = requestMethod(payload);
+        const schemaPath = method
+          ? manifest.methodCatalog.find((entry) => entry.method === method)?.requestSchema
+          : responseSchemas[step.target];
+        expect(schemaPath, `${artifact.path} step ${index} schema`).toBeDefined();
+        const validator = schemaPath ? validators.get(schemaPath) : undefined;
+        expect(validator, `${artifact.path} step ${index} validator`).toBeDefined();
+        const accepted = validator?.(payload) ?? false;
+        expect(
+          accepted,
+          `${artifact.path} step ${index}: ${JSON.stringify(validator?.errors ?? [])}`,
+        ).toBe(step.schemaExpectation === "accept");
+      }
+    }
+  });
+});

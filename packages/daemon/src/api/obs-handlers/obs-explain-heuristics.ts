@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Deterministic, first-match root-cause registry. It consumes only normalized
- * `IncidentSignals`, performs no I/O, and must reproduce a verdict from the same
- * evidence. Ordering is causal and load-bearing: misclassification precedes its
- * breaker symptom; administrative spend and local step ceilings precede repeated
- * failures; tool/schema/dependency causes precede terminal degradation; named
- * terminal causes remain last. Frozen cost and breaker fixtures pin that order.
+ * Deterministic, first-match root-cause registry over normalized `IncidentSignals`.
+ * Ordering is causal and load-bearing; frozen cost and breaker fixtures pin it.
  * @module
  */
 import type { IncidentSignals } from "@comis/core";
@@ -28,13 +24,14 @@ import { backgroundPendingVerdict, backgroundRecoveryVerdict } from "./obs-expla
 import { backgroundHardTimeoutVerdict } from "./obs-explain-background-timeout-verdict.js";
 import { providerRejectedRequestVerdict } from "./obs-explain-provider-rejection-verdict.js"; // provider_rejected_request verdict (sibling — subdir cap)
 import {
+  executionBudgetExceededVerdict,
   executionAuthFailureVerdict,
   executionDependencyFailureVerdict,
   executionNoProgressLoopVerdict,
   executionTerminalFailureVerdict,
   recallMissVerdict,
 } from "./obs-explain-recall-verdict.js"; // terminal execution / recall verdicts (sibling — subdir cap)
-import { discoveredToolNotActivatedVerdict, groundedResponseReplacementVerdict, toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
+import { discoveredToolNotActivatedVerdict, groundedResponseReplacementVerdict, schedulerStateEvidenceGroundingVerdict, toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
@@ -108,17 +105,14 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     below, and the kill can even race the run's own completion so the
   //     rollup reads clean. Keyed strictly on the bridged subagentKilled signal
   //     with killedBy health_monitor (absent on the established fixtures —
-  //     cannot regress them; deliberate parent/operator kills return null).
+  //     cannot regress them). A deliberate parent/operator kill returns null there
+  //     and falls to the next line's cancellation verdict — terminal, not an alarm.
   subagentStuckKilledVerdict,
-
-  // Deliberate cancellation is terminal but not a stuck-run alarm.
   subagentDeliberatelyKilledVerdict,
 
   // The unresolved child process is upstream of a missing control-plane delivery route.
   subagentBackgroundProcessesAbandonedVerdict,
-
   subagentDeliverySkippedVerdict,
-
   subagentFailedVerdict,
 
   backgroundRecoveryVerdict,
@@ -427,6 +421,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // deterministic recovery completed an invocation. This acute terminal state
   // outranks retained breaker noise from earlier turns.
   toolInvocationStallVerdict,
+
+  schedulerStateEvidenceGroundingVerdict,
 
   backgroundHardTimeoutVerdict, // runtime hard limit causes any breaker it trips
 
@@ -810,6 +806,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     obs-explain-recall-verdict.ts module doc).
   executionAuthFailureVerdict,
   executionDependencyFailureVerdict,
+  executionBudgetExceededVerdict,
   executionNoProgressLoopVerdict,
   groundedResponseReplacementVerdict,
   discoveredToolNotActivatedVerdict,
@@ -980,8 +977,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
-  //  N) fresh_tail_origin_lost — DEAD LAST. A context-shaping advisory, not a
-  //     terminal cause: every acute verdict above out-ranks it.
+  // N) fresh_tail_origin_lost — DEAD LAST; every acute verdict above outranks this advisory.
   freshTailOriginLostVerdict,
 ];
 /** Run the ordered registry; first non-null `RootCause` wins, else `null` (clean session). */
@@ -989,7 +985,11 @@ export function rootCause(s: IncidentSignals): RootCause | null {
   if (s.endReason === "success" && s.degraded === false) {
     const replacement = groundedResponseReplacementVerdict(s);
     if (replacement !== null) return replacement;
-    return discoveredToolNotActivatedVerdict(s);
+    const activationMismatch = discoveredToolNotActivatedVerdict(s);
+    if (activationMismatch !== null) return activationMismatch;
+    const schedulerResponseReplaced =
+      (s.recoveries?.byReason.missing_scheduler_state_evidence ?? 0) > 0;
+    if (!schedulerResponseReplaced) return null;
   }
   for (const h of HEURISTICS) {
     const r = h(s);

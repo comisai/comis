@@ -97,6 +97,35 @@ export type { SessionKey } from "./session-key.js";
 export { SessionStoreError } from "./session-store-error.js";
 
 export {
+  WorkspaceLeaseFilesystemIdentitySchema,
+  WorkspaceLeaseDispositionSchema,
+  WorkspaceLeaseStateSchema,
+  WorkspaceLeaseRecordSchema,
+  parseWorkspaceLeaseRecord,
+} from "./workspace-lease.js";
+export type {
+  WorkspaceLeaseFilesystemIdentity,
+  WorkspaceLeaseDisposition,
+  WorkspaceLeaseState,
+  WorkspaceLeaseRecord,
+} from "./workspace-lease.js";
+export {
+  ExecutionAttachmentFilesystemIdentitySchema,
+  ExecutionAttachmentKindSchema,
+  ExecutionAttachmentStateSchema,
+  ExecutionAttachmentRevocationReasonSchema,
+  ExecutionAttachmentRecordSchema,
+  parseExecutionAttachmentRecord,
+} from "./execution-attachment.js";
+export type {
+  ExecutionAttachmentFilesystemIdentity,
+  ExecutionAttachmentKind,
+  ExecutionAttachmentState,
+  ExecutionAttachmentRevocationReason,
+  ExecutionAttachmentRecord,
+} from "./execution-attachment.js";
+
+export {
   PollInputSchema,
   PollOptionResultSchema,
   NormalizedPollResultSchema,
@@ -274,6 +303,85 @@ export {
   computeReachableToolNames,
 } from "./sub-agent-tool-denylist.js";
 export type { UnreachableToolEntry } from "./sub-agent-tool-denylist.js";
+
+export {
+  ManagedRunStatusSchema,
+  ManagedRunStatusReasonSchema,
+  ManagedRunInitiationSourceSchema,
+  ManagedRunTerminalOutcomeSchema,
+  ManagedRunRecordSchema,
+  parseManagedRunRecord,
+} from "./managed-run.js";
+export type {
+  ManagedRunStatus,
+  ManagedRunStatusReason,
+  ManagedRunInitiationSource,
+  ManagedRunTerminalOutcome,
+  ManagedRunRecord,
+} from "./managed-run.js";
+export {
+  MANAGED_RUN_GROUP_MAX_MEMBERS,
+  MANAGED_RUN_GROUP_PARTIAL_RETENTION_MS,
+  ManagedRunGroupMemberOutcomeSchema,
+  ManagedRunGroupRecordSchema,
+  ManagedRunGroupOperationResultSchema,
+  deriveManagedRunGroupRollup,
+  parseManagedRunGroupRecord,
+  parseManagedRunGroupOperationResult,
+} from "./managed-run-group.js";
+export type {
+  ManagedRunGroupMemberOutcome,
+  ManagedRunGroupRecord,
+  ManagedRunGroupOperationResult,
+  ManagedRunGroupRollupInput,
+  ManagedRunGroupRollupError,
+  ManagedRunGroupRollupErrorKind,
+} from "./managed-run-group.js";
+export {
+  MAX_MANAGED_RUN_REPORT_BYTES,
+  MAX_MANAGED_EVIDENCE_BYTES,
+  MAX_MANAGED_EVIDENCE_PRIVATE_BYTES,
+  ManagedRunReportKindSchema,
+  ManagedRunActivationDescriptorSchema,
+  ManagedRunPreparedStartSchema,
+  ManagedRunPreparedGroupStartSchema,
+  ManagedRunGroupActivationDescriptorSchema,
+  ManagedRunReportInputSchema,
+  ManagedRunReportBodySchema,
+  ManagedRunReportIndexSchema,
+  ManagedEvidenceVerificationLevelSchema,
+  ManagedEvidenceDeliverySchema,
+  ManagedEvidencePrivateBodySchema,
+  ManagedEvidenceIndexSchema,
+} from "./managed-run-content.js";
+export type {
+  ManagedRunReportKind,
+  ManagedRunActivationDescriptor,
+  ManagedRunPreparedStart,
+  ManagedRunPreparedGroupStart,
+  ManagedRunGroupActivationDescriptor,
+  ManagedRunReportInput,
+  ManagedRunReportBody,
+  ManagedRunReportIndex,
+  ManagedEvidenceVerificationLevel,
+  ManagedEvidenceDelivery,
+  ManagedEvidencePrivateBody,
+  ManagedEvidenceIndex,
+} from "./managed-run-content.js";
+export { reduceManagedRunState } from "./managed-run-reducer.js";
+export type {
+  ManagedRunEvidenceHealth,
+  ManagedRunReductionInput,
+  ManagedRunReduction,
+} from "./managed-run-reducer.js";
+export {
+  ManagedRunAttentionStatusSchema,
+  ManagedRunAttentionRecordSchema,
+} from "./managed-run-attention.js";
+export type {
+  ManagedRunAttentionStatus,
+  ManagedRunAttentionRecord,
+} from "./managed-run-attention.js";
 
 // RPC typed-refusal classification — the single source of truth the daemon
 // rpc-dispatch classifier AND the @comis/gateway method-router classifier both

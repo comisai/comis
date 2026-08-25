@@ -101,6 +101,7 @@ The `comis:` block contains fields specific to the Comis platform. These control
 | `comis.os` | string[] | Target operating systems (e.g., `["linux", "darwin"]`). The skill will only load on matching systems. |
 | `comis.requires.bins` | string[] | Required binary executables that must be available on the system (e.g., `["git", "ffmpeg"]`). The skill will not load if any are missing. |
 | `comis.requires.env` | string[] | Required environment variables. The skill will not load if any are unset. |
+| `comis.requires.capabilityServices` | string[] | External capability services the skill requires. Repository-bundled skills with any such requirement are not auto-seeded; the service installer must install them into the selected workspace. |
 | `comis.skill-key` | string | Override the auto-generated skill slug. By default, the slug is derived from the `name` field. |
 | `comis.primary-env` | string | Display and grouping hint for the primary runtime environment. Used for organizational purposes in the dashboard. |
 | `comis.command-dispatch` | string | Metadata tag for command routing. Used by advanced automation to direct invocations to specific handlers. |
@@ -113,6 +114,7 @@ comis:
   requires:
     bins: ["ffmpeg", "git"]
     env: ["OPENAI_API_KEY"]
+    capabilityServices: ["media-renderer"]
   skill-key: "video-processor"
 ```
 

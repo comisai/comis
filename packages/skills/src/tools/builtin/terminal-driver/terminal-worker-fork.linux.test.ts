@@ -17,16 +17,30 @@
  *     fork + frame-pump + IPC server half work end-to-end (no unjailed spawn).
  *   - Part B (`skipIf` no bwrap): real bwrapPath → create a jailed bash PTY, read
  *     its grid, kill it — the full jailed round-trip through the real fork.
+ *   - Part C: a managed terminal can read and write only its leased root, cannot
+ *     reach a sibling lease or service credential, reaches one host Unix socket
+ *     only at its fixed target, and stops every call after confirmed termination.
  *
  * @module
  */
 
 import { describe, it, expect } from "vitest";
-import { realpathSync, existsSync } from "node:fs";
+import {
+  chownSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { resolve as pathResolve } from "node:path";
+import { join, resolve as pathResolve } from "node:path";
+import { createServer } from "node:net";
+import { err, ok, type Result } from "@comis/shared";
 
 import {
   createTerminalSessionCreateTool,
@@ -39,6 +53,15 @@ import { createTerminalSessionRegistry } from "./terminal-session-registry.js";
 import { createSessionCaps } from "./terminal-caps.js";
 import { buildProductionSpawnWorker } from "./terminal-worker-launch.js";
 import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
+import { managedTerminalAttachmentTargetPath } from "./terminal-managed-binding.js";
+import {
+  buildTmuxHasSessionArgv,
+  buildTmuxKillArgv,
+  tmuxSocketPathForSession,
+} from "./terminal-tmux-backend.js";
+import { terminalWorkerDir } from "./terminal-worker-main.js";
+import type { SessionDescriptor } from "./terminal-reattach-match.js";
+import type { SessionDescriptorStorePort } from "./terminal-session-reattach.js";
 
 function isLinux(): boolean {
   return process.platform === "linux";
@@ -61,6 +84,31 @@ function bwrapPathOrUndefined(): string | undefined {
   }
 }
 
+function tmuxPathOrUndefined(): string | undefined {
+  try {
+    return execFileSync("which", ["tmux"], { encoding: "utf8" }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function tmuxExitStatus(argv: string[]): Result<number | null, Error> {
+  const [command, ...args] = argv;
+  if (command === undefined) return err(new Error("tmux command is unavailable"));
+  const completed = spawnSync(command, args, { stdio: "ignore" });
+  return completed.error === undefined ? ok(completed.status) : err(completed.error);
+}
+
+function killTmuxAndConfirm(tmuxPath: string, name: string, socketPath?: string): Result<void, Error> {
+  if (socketPath === undefined) return err(new Error("tmux socket authority is unavailable"));
+  tmuxExitStatus(buildTmuxKillArgv({ tmuxPath, socketPath, name }));
+  const probe = tmuxExitStatus(buildTmuxHasSessionArgv({ tmuxPath, socketPath, name }));
+  if (!probe.ok) return probe;
+  return probe.value === 0
+    ? err(new Error("tmux session remained alive after termination"))
+    : ok(undefined);
+}
+
 function realShell(): string {
   for (const c of ["/bin/bash", "/usr/bin/bash", "/bin/sh"]) {
     try {
@@ -76,6 +124,7 @@ const WORKSPACE_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
   credentialPaths: [],
+  ephemeralWritablePaths: [],
   uid: "dedicated",
 };
 
@@ -193,6 +242,204 @@ describe.skipIf(!isLinux() || !distBuilt)(
         await registry.cleanup();
       },
       45000,
+    );
+
+    it.skipIf(!bwrapPathOrUndefined() || !tmuxPathOrUndefined() || !existsSync("/usr/bin/python3") || process.getuid?.() !== 0)(
+      "Part C: preserves a confined managed attachment across worker replacement until confirmed revocation",
+      async () => {
+        const scratch = realpathSync(mkdtempSync(join(tmpdir(), "terminal-attachment-")));
+        const dataDir = join(scratch, "data");
+        const workspace = join(scratch, "workspace");
+        const siblingWorkspace = join(scratch, "sibling-workspace");
+        const leasedMarkerPath = join(workspace, "lease-marker.txt");
+        const leasedWritePath = join(workspace, "lease-write.txt");
+        const siblingMarkerPath = join(siblingWorkspace, "sibling-marker.txt");
+        const siblingWritePath = join(siblingWorkspace, "sibling-write.txt");
+        const serviceCredentialPath = join(dataDir, "service-control.credential");
+        const sourcePath = join(scratch, "worker.sock");
+        const targetName = `attachment-${"a".repeat(32)}.sock`;
+        const targetPath = managedTerminalAttachmentTargetPath(targetName);
+        mkdirSync(dataDir, { mode: 0o700 });
+        mkdirSync(workspace, { mode: 0o700 });
+        chownSync(workspace, 65534, 65534);
+        mkdirSync(siblingWorkspace, { mode: 0o700 });
+        writeFileSync(leasedMarkerPath, "LEASE_MARKER", { mode: 0o600 });
+        chownSync(leasedMarkerPath, 65534, 65534);
+        writeFileSync(siblingMarkerPath, "SIBLING_MARKER", { mode: 0o600 });
+        writeFileSync(serviceCredentialPath, "CONTROL_CREDENTIAL_MARKER", { mode: 0o600 });
+        let calls = 0;
+        const server = createServer((socket) => {
+          socket.once("data", () => {
+            calls += 1;
+            socket.end("ATTACHMENT_OK\n");
+          });
+        });
+        await new Promise<void>((resolveListen, rejectListen) => {
+          server.once("error", rejectListen);
+          server.listen(sourcePath, () => resolveListen());
+        });
+        const descriptors = new Map<string, SessionDescriptor>();
+        const descriptorStore: SessionDescriptorStorePort = {
+          persist: (descriptor) => {
+            descriptors.set(descriptor.sessionId, descriptor);
+            return ok(undefined);
+          },
+          recover: () => Array.from(descriptors.values()),
+          remove: (sessionId) => {
+            descriptors.delete(sessionId);
+            return ok(undefined);
+          },
+        };
+        const tmuxPath = tmuxPathOrUndefined();
+        if (tmuxPath === undefined) throw new Error("tmux binary disappeared after test selection");
+        const makeRegistry = () => createTerminalSessionRegistry({
+          spawnWorker: buildProductionSpawnWorker(distWorkerMainPath(), dataDir),
+          logger: noopLogger,
+          nowMs: () => Date.now(),
+          bwrapPath: bwrapPathOrUndefined(),
+          tmuxSocketForSession: (sessionId) =>
+            tmuxSocketPathForSession(terminalWorkerDir(dataDir), sessionId),
+          durability: {
+            descriptorStore,
+            killTmuxSession: (name, socketPath) =>
+              killTmuxAndConfirm(tmuxPath, name, socketPath),
+            resolveTmuxRootProcessIdentity: () => Array.from(descriptors.values())[0]?.rootProcessIdentity,
+            retireManagedSession: async () => ok(undefined),
+          },
+          resolveRootProcessIdentity: async (pid) => ({ pid, startIdentity: `test:${pid}` }),
+          cleanupWorkspace: () => undefined,
+        });
+        let registry = makeRegistry();
+        const owner = { agentId: "agent-attachment-linux", sessionKey: "session-attachment-linux" };
+        const python = [
+          "import pathlib,socket,sys,time",
+          "source,target,leased_marker,leased_write,sibling_marker,sibling_write,credential=sys.argv[1:8]",
+          "print('LEASE_READ_OK' if pathlib.Path(leased_marker).read_text() == 'LEASE_MARKER' else 'LEASE_READ_WRONG', flush=True)",
+          "pathlib.Path(leased_write).write_text('LEASE_WRITE_OK')",
+          "print('LEASE_WRITE_OK', flush=True)",
+          "for label,path in [('SIBLING',sibling_marker),('CONTROL_CREDENTIAL',credential)]:",
+          " try:",
+          "  pathlib.Path(path).read_text(); print(label + '_EXPOSED', flush=True)",
+          " except OSError:",
+          "  print(label + '_BLOCKED', flush=True)",
+          "try:",
+          " pathlib.Path(sibling_write).write_text('SIBLING_WRITE_EXPOSED'); print('SIBLING_WRITE_EXPOSED', flush=True)",
+          "except OSError:",
+          " print('SIBLING_WRITE_BLOCKED', flush=True)",
+          "probe=socket.socket(socket.AF_UNIX)",
+          "try:",
+          " probe.connect(source); print('SOURCE_EXPOSED', flush=True); probe.close()",
+          "except OSError:",
+          " print('SOURCE_BLOCKED', flush=True)",
+          "attachment_mode=pathlib.Path(target).parent.stat().st_mode & 0o777",
+          "print('ATTACHMENT_DIR_RELAY_TRAVERSAL' if attachment_mode == 0o711 else 'ATTACHMENT_DIR_MODE_' + oct(attachment_mode), flush=True)",
+          "attachment_calls=0",
+          "while True:",
+          " call=socket.socket(socket.AF_UNIX); call.connect(target); call.sendall(b'PING')",
+          " response=call.recv(64).decode().strip(); call.close(); attachment_calls += 1",
+          " if attachment_calls <= 2: print(response, flush=True)",
+          " time.sleep(0.05)",
+        ].join("\n");
+
+        try {
+          const created = await registry.create({
+            allowId: "python-attachment-probe",
+            bin: "/usr/bin/python3",
+            argv: [
+              "-c",
+              python,
+              sourcePath,
+              targetPath,
+              leasedMarkerPath,
+              leasedWritePath,
+              siblingMarkerPath,
+              siblingWritePath,
+              serviceCredentialPath,
+            ],
+            cols: 100,
+            rows: 30,
+            durable: true,
+            scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
+            workspace,
+            cwd: workspace,
+            managedBinding: {
+              managedRunId: "managed-run_attachment",
+              workspaceLeaseId: "workspace-lease_attachment",
+              serviceInstanceId: "service-instance_attachment",
+            },
+            executionAttachments: [{
+              executionAttachmentId: "execution-attachment_a",
+              sourcePath,
+              targetName,
+              relayIdentity: "ab".repeat(32),
+            }],
+          }, owner);
+          let screen = "";
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            screen = (await registry.read(created.sessionId, owner)).screen;
+            if (
+              screen.includes("LEASE_READ_OK")
+              && screen.includes("LEASE_WRITE_OK")
+              && screen.includes("SIBLING_BLOCKED")
+              && screen.includes("SIBLING_WRITE_BLOCKED")
+              && screen.includes("CONTROL_CREDENTIAL_BLOCKED")
+              && screen.includes("SOURCE_BLOCKED")
+              && screen.includes("ATTACHMENT_DIR_RELAY_TRAVERSAL")
+              && screen.includes("ATTACHMENT_OK")
+              && calls >= 2
+            ) break;
+            await new Promise((resolvePoll) => setTimeout(resolvePoll, 25));
+          }
+          expect(screen).toContain("LEASE_READ_OK");
+          expect(screen).not.toContain("LEASE_READ_WRONG");
+          expect(screen).toContain("LEASE_WRITE_OK");
+          expect(readFileSync(leasedWritePath, "utf8")).toBe("LEASE_WRITE_OK");
+          expect(screen).toContain("SIBLING_BLOCKED");
+          expect(screen).not.toContain("SIBLING_EXPOSED");
+          expect(screen).toContain("SIBLING_WRITE_BLOCKED");
+          expect(screen).not.toContain("SIBLING_WRITE_EXPOSED");
+          expect(existsSync(siblingWritePath)).toBe(false);
+          expect(screen).toContain("CONTROL_CREDENTIAL_BLOCKED");
+          expect(screen).not.toContain("CONTROL_CREDENTIAL_EXPOSED");
+          expect(screen).toContain("SOURCE_BLOCKED");
+          expect(screen).not.toContain("SOURCE_EXPOSED");
+          expect(screen).toContain("ATTACHMENT_DIR_RELAY_TRAVERSAL");
+          expect(screen).toContain("ATTACHMENT_OK");
+          expect(calls).toBeGreaterThanOrEqual(2);
+
+          await registry.cleanup();
+          await new Promise((resolveWorkerExit) => setTimeout(resolveWorkerExit, 300));
+          const callsBeforeReplacement = calls;
+          registry = makeRegistry();
+          let recoveredAlive = false;
+          for (let attempt = 0; attempt < 200; attempt += 1) {
+            const recovered = await registry.read(created.sessionId, owner);
+            recoveredAlive = recovered.alive;
+            if (recoveredAlive && calls >= callsBeforeReplacement + 2) break;
+            await new Promise((resolvePoll) => setTimeout(resolvePoll, 50));
+          }
+          expect(recoveredAlive).toBe(true);
+          expect(calls).toBeGreaterThanOrEqual(callsBeforeReplacement + 2);
+
+          await expect(registry.terminateAndConfirm(created.sessionId, owner)).resolves.toEqual({
+            ok: true,
+            value: undefined,
+          });
+          expect(descriptors.size).toBe(0);
+          await new Promise((resolveDrain) => setTimeout(resolveDrain, 150));
+          const callsAfterRevocation = calls;
+          await new Promise((resolveProbe) => setTimeout(resolveProbe, 250));
+          expect(calls).toBe(callsAfterRevocation);
+        } finally {
+          await registry.cleanup();
+          for (const descriptor of descriptors.values()) {
+            killTmuxAndConfirm(tmuxPath, descriptor.tmuxName, descriptor.tmuxSocket);
+          }
+          await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+          rmSync(scratch, { recursive: true, force: true });
+        }
+      },
+      60000,
     );
   },
 );

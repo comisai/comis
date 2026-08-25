@@ -1,0 +1,133 @@
+// SPDX-License-Identifier: Apache-2.0
+import type {
+  ManagedRunReportKind,
+  ManagedEvidenceVerificationLevel,
+} from "../domain/managed-run-content.js";
+import type { ManagedRunStatus } from "../domain/managed-run.js";
+
+/** Content-free managed-run binding transitions. */
+export interface ManagedRunEvents {
+  "managed_run:prepared": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    agentId: string;
+    timestamp: number;
+  };
+  "managed_run:activated": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    agentId: string;
+    durationMs: number;
+    timestamp: number;
+  };
+  "managed_run:activation_rejected": {
+    managedRunId?: string;
+    serviceInstanceId: string;
+    agentId: string;
+    reasonCode: "activation_rejected" | "agent_not_allowed" | "attachment_not_allowed" | "capacity_exceeded" | "invalid_preparation" | "preparation_expired" | "replay_conflict" | "service_unavailable" | "workspace_not_allowed";
+    timestamp: number;
+  };
+  "managed_run:activation_unknown": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    agentId: string;
+    reasonCode: "activation_outcome_unknown" | "recovery_join_missing" | "service_state_unavailable";
+    timestamp: number;
+  };
+  "managed_run:report_accepted": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    sequence: number;
+    kind: ManagedRunReportKind;
+    durationMs: number;
+    timestamp: number;
+  };
+  "managed_run:report_rejected": {
+    managedRunId?: string;
+    serviceInstanceId?: string;
+    reasonCode: "invalid_report" | "managed_run_not_found" | "observed_time_out_of_bounds" | "rate_limited" | "replay_conflict" | "state_mismatch" | "storage_failure";
+    timestamp: number;
+  };
+  "managed_run:continuation_completed": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    throughReportSequence: number;
+    status: ManagedRunStatus;
+    pendingAfterCurrent: boolean;
+    durationMs: number;
+    timestamp: number;
+  };
+  "managed_run:attention_opened": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    attentionId: string;
+    timestamp: number;
+  };
+  "managed_run:attention_resolved": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    attentionId: string;
+    timestamp: number;
+  };
+  "managed_run:attention_response_bound": {
+    managedRunId: string;
+    attentionId: string;
+    agentId: string;
+    durationMs: number;
+    timestamp: number;
+  };
+  "managed_run:attention_response_delivered": {
+    managedRunId: string;
+    attentionId: string;
+    serviceInstanceId: string;
+    durationMs: number;
+    timestamp: number;
+  };
+  "managed_run:attention_response_delivery_failed": {
+    managedRunId?: string;
+    serviceInstanceId?: string;
+    reasonCode: "attention_not_found" | "invalid_request" | "managed_run_not_found" | "state_mismatch" | "storage_failure";
+    timestamp: number;
+  };
+  "managed_run:evidence_accepted": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    evidenceRef: string;
+    verificationLevel: ManagedEvidenceVerificationLevel;
+    deliveryKind: "none" | "reference" | "attachment";
+    timestamp: number;
+  };
+  "managed_run:evidence_rejected": {
+    managedRunId?: string;
+    serviceInstanceId?: string;
+    reasonCode: "delivery_policy_mismatch" | "evidence_stale" | "invalid_evidence" | "managed_run_not_found" | "replay_conflict" | "state_mismatch" | "verification_not_allowed";
+    timestamp: number;
+  };
+  "managed_run:revoked": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    reasonCode: "authority_revoked" | "budget_exhausted" | "owner_cancelled";
+    timestamp: number;
+  };
+  "managed_run:recovery_quarantined": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    reason: "record_validation_failed";
+    timestamp: number;
+  };
+  "managed_run:recovery_failed": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    reasonCode: "reconciliation_failed";
+    timestamp: number;
+  };
+  "managed_run:recovery_completed": {
+    activatedCount: number;
+    cancelledCount: number;
+    unknownCount: number;
+    invalidCount: number;
+    failedCount: number;
+    durationMs: number;
+    timestamp: number;
+  };
+}

@@ -878,28 +878,31 @@ export interface MessagingEvents {
   // Dead-letter queue events
   // -------------------------------------------------------------------------
 
-  /** Failed announcement persisted to dead-letter queue */
+  /** Announcement delivery or parent-decision evidence persisted durably. */
   "announcement:dead_lettered": {
     runId: string;
+    /** Owning user session for explain/diagnostic attribution. */
+    sessionKey: string;
     channelType: string;
-    reason: string;
+    reason: "delivery_failed" | "parent_decision_reserved";
     timestamp: number;
   };
 
   /**
-   * A STANDING count of background-task announcements held in the dead-letter
-   * store, emitted on each non-zero transition of the health tick.
+   * The current background-task announcement recovery state.
    *
-   * Distinct from `announcement:dead_lettered`, which fires once per failed
-   * DELIVERY. A parent-decision reservation — written when the parent turn that
-   * should adjudicate a completion dies before deciding — is never enqueued and
-   * never drained, so it produced no event at all. Live, a user's completed
-   * chart set sat in that state and the only trace was one daemon WARN; the
-   * system-health view, the documented first stop for triage, was structurally
-   * blind to it. Counts only.
+   * Distinct from `announcement:dead_lettered`, which fires once per durable
+   * admission. `pendingCount` requires an operator; `activeRecoveryCount` still
+   * belongs to automatic recovery. A zero pending count clears older warnings.
    */
   "announcement:quarantine_pending": {
     pendingCount: number;
+    activeRecoveryCount: number;
+    timestamp: number;
+  };
+
+  /** Durable quarantine storage could not be read, so its standing count is unknown. */
+  "announcement:quarantine_read_failed": {
     timestamp: number;
   };
 

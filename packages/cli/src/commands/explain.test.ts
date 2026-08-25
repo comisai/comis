@@ -328,6 +328,45 @@ describe("comis explain default (table) renders key report fields", () => {
     expect(() => JSON.parse(output)).toThrow();
   });
 
+  it("renders bounded tool failure details without requiring raw log inspection", async () => {
+    const failureReport = {
+      ...FAKE_REPORT,
+      failures: [{
+        seq: 1709,
+        toolName: "terminal_session_create",
+        classifiedFailureBy: "sdk_iserror",
+        transportOk: false,
+        errorKind: "validation",
+        failureCode: "invalid_value",
+        resultDigest: "844fb9bb9919",
+        resultBytes: 154,
+        errorPreview: "managed terminal handles are invalid; copy both exact handles from a fresh launch plan",
+      }],
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(failureReport),
+      close(): void {},
+      onNotification(): void {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "explain",
+      "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+    ]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Failures:");
+    expect(output).toContain("terminal_session_create [invalid_value]");
+    expect(output).toContain("errorKind=validation");
+    expect(output).toContain("transportOk=false");
+    expect(output).toContain("managed terminal handles are invalid; copy both exact handles from a fresh launch plan");
+  });
+
   it("renders a trace without a session-total caveat when the requested reference is a trace", async () => {
     const { client } = captureClient();
     vi.mocked(withClient).mockImplementation(async (fn) => fn(client));

@@ -66,6 +66,7 @@ function makeDescriptor(overrides: Partial<SessionDescriptor> = {}): SessionDesc
       filesystem: "workspace",
       network: "none",
       credentialPaths: [],
+      ephemeralWritablePaths: [],
       uid: "dedicated",
     },
     cols: 80,
@@ -119,6 +120,7 @@ describe("terminal-reattach-match — reattachDecision (the re-attach decision, 
         network: "listed-hosts",
         hosts: ["api.internal"],
         credentialPaths: ["~/.codex"],
+        ephemeralWritablePaths: [],
         uid: "dedicated",
       },
     });
@@ -156,6 +158,23 @@ describe("terminal-reattach-match — reattachDecision (the re-attach decision, 
     expect(isTmuxAlive).not.toHaveBeenCalledWith(""); // never probe a falsy name
   });
 
+  it("preserves but never re-attaches a managed descriptor whose root process identity was not persisted", () => {
+    const descriptor = {
+      ...makeDescriptor(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    };
+    const isTmuxAlive = vi.fn(() => true);
+
+    expect(reattachDecision(descriptor, isTmuxAlive)).toEqual({
+      action: "failed",
+      sessionId: "abc",
+      reason: "managed_root_identity_unavailable",
+    });
+    expect(isTmuxAlive).not.toHaveBeenCalled();
+  });
+
   it("never throws on a wholly-degenerate descriptor (undefined-ish) — yields the SAFE failed shape", () => {
     // The registry's recover loop must survive a corrupt-after-crash descriptor; the
     // decision is TOTAL even for an input that is not a well-formed descriptor.
@@ -169,6 +188,21 @@ describe("terminal-reattach-match — reattachDecision (the re-attach decision, 
 });
 
 describe("terminal-reattach-match — serialize/deserialize round-trip (the durable recovery contract)", () => {
+  it("round-trips managed run lease service and root-process identity for restart recovery", () => {
+    const desc = {
+      ...makeDescriptor(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      rootProcessIdentity: {
+        pid: 4123,
+        startIdentity: "linux-proc-start-991",
+      },
+    } as unknown as SessionDescriptor;
+
+    expect(deserializeDescriptor(serializeDescriptor(desc))).toEqual(desc);
+  });
+
   it("round-trips a fully-populated descriptor through serialize → deserialize unchanged", () => {
     const desc = makeDescriptor({
       sessionId: "sess-rt",
@@ -179,6 +213,7 @@ describe("terminal-reattach-match — serialize/deserialize round-trip (the dura
         filesystem: "home",
         network: "full",
         credentialPaths: ["~/.gemini"],
+        ephemeralWritablePaths: [],
         uid: "daemon",
       },
       cols: 120,
@@ -262,6 +297,7 @@ describe("terminal-reattach-match — serialize/deserialize round-trip (the dura
         filesystem: "listed-paths",
         network: "listed-hosts",
         credentialPaths: ["~/.aws/credentials"],
+        ephemeralWritablePaths: [],
         uid: "dedicated",
         paths: ["/work/repo", "/work/cache"],
         hosts: ["api.example.com", "registry.example.com"],
@@ -277,12 +313,12 @@ describe("terminal-reattach-match — serialize/deserialize round-trip (the dura
   it("rejects a scope whose paths or hosts array carries a non-string element (corrupt-skip — the identity must be well-typed)", () => {
     const badPaths = {
       ...makeDescriptor(),
-      scope: { filesystem: "listed-paths", network: "none", credentialPaths: [], uid: "dedicated", paths: ["/ok", 42 as unknown as string] },
+      scope: { filesystem: "listed-paths", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated", paths: ["/ok", 42 as unknown as string] },
     };
     expect(deserializeDescriptor(badPaths)).toBeUndefined();
     const badHosts = {
       ...makeDescriptor(),
-      scope: { filesystem: "workspace", network: "listed-hosts", credentialPaths: [], uid: "dedicated", hosts: ["ok.example.com", 7 as unknown as string] },
+      scope: { filesystem: "workspace", network: "listed-hosts", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated", hosts: ["ok.example.com", 7 as unknown as string] },
     };
     expect(deserializeDescriptor(badHosts)).toBeUndefined();
   });

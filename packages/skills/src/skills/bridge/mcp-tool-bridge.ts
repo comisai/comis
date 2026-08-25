@@ -16,13 +16,27 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema } from "typebox";
-import { registerToolMetadata, wrapExternalContent, tryGetContext, type WrapExternalContentOptions } from "@comis/core";
-import { extractMcpServerName } from "@comis/shared";
+import {
+  registerToolMetadata,
+  wrapExternalContent,
+  tryGetContext,
+  type ApprovalGate,
+  type ApprovalResolution,
+  type WrapExternalContentOptions,
+} from "@comis/core";
+import { extractMcpServerName, type Result } from "@comis/shared";
 export { extractMcpServerName };
+import { resolveApprovalRequestContext } from "../../platform-tools/approval-request-context.js";
 import { resolveSourceProfile, type ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
-import type { McpToolDefinition, McpClientManager, McpToolCallResult } from "../integrations/mcp-client/index.js";
+import type {
+  McpToolDefinition,
+  McpClientManager,
+  McpPrivateMeta,
+  McpToolCallResult,
+} from "../integrations/mcp-client/index.js";
 import { sanitizeMcpToolResult } from "../../tools/integrations/mcp-result-sanitizer.js";
 import { truncateJsonAware } from "./json-truncate.js";
+import { collectMcpImageBlocks, type McpImageResultPolicy } from "./mcp-result-images.js";
 
 // ---------------------------------------------------------------------------
 // Diagnostic logger interface
@@ -31,6 +45,55 @@ import { truncateJsonAware } from "./json-truncate.js";
 /** Minimal pino-compatible logger for MCP bridge diagnostic logging. */
 interface McpBridgeLogger {
   debug(obj: Record<string, unknown>, msg: string): void;
+}
+
+/** Stable call identity supplied to the trusted private-metadata bridge. */
+export interface McpPrivateMetadataCall {
+  readonly serverName: string;
+  readonly toolName: string;
+  readonly qualifiedName: string;
+  readonly toolCallId: string;
+  readonly params: Readonly<Record<string, unknown>>;
+  readonly approvalGrant?: {
+    readonly resolution: ApprovalResolution;
+    readonly toolName: string;
+    readonly action: string;
+    readonly fingerprintParams: Readonly<Record<string, unknown>>;
+  };
+}
+
+/**
+ * Trusted host seam for MCP metadata that must not enter tool parameters or
+ * model-visible result content. The request hook runs after model parameters
+ * are fixed; the result hook consumes `_meta` before the AgentTool result is
+ * constructed.
+ */
+export interface McpPrivateMetadataBridge {
+  resolveRegistrationMetadata?(input: Omit<McpPrivateMetadataCall, "toolCallId" | "params">): {
+    readonly actionClassification: "read" | "mutate" | "destructive";
+    readonly invocationSideEffects: readonly string[];
+  } | undefined;
+  createRequestMeta(
+    input: McpPrivateMetadataCall,
+  ): Promise<Result<McpPrivateMeta | undefined, Error>>;
+  acceptResultMeta(
+    input: McpPrivateMetadataCall & { readonly meta: McpPrivateMeta | undefined },
+  ): Promise<Result<void, Error>>;
+  discardCall(input: McpPrivateMetadataCall): void;
+}
+
+class ManagedMcpAuthorityRefusal extends Error {
+  constructor(readonly authorityError: Error) {
+    super(authorityError.message, { cause: authorityError });
+    this.name = "ManagedMcpAuthorityRefusal";
+  }
+}
+
+function boundedManagedAuthorityReason(error: Error): string {
+  const maxChars = 512;
+  return error.message.length <= maxChars
+    ? error.message
+    : `${error.message.slice(0, maxChars)}…`;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +324,13 @@ export function sanitizeMcpToolName(qualifiedName: string): string {
  *   filtered out). Filtering runs BEFORE the `.map()` below, so excluded tools
  *   never receive an AgentTool wrapper and never enter the agent's tool registry
  *   — the agent simply does not see them.
+ * @param approvalGate - Existing host approval subsystem. Operator-classified
+ *   destructive managed tools fail closed when the gate is unavailable and
+ *   reach the external service only after an affirmative resolution.
+ * @param imageResults - Host policy for `image` content blocks in tool results:
+ *   the sanitizer every block must pass before it becomes model-visible, the
+ *   per-call cap, and a content-free drop callback. Absent ⇒ image blocks are
+ *   dropped with a notice in the text result (never silently).
  * @returns AgentTool instances ready for the agent executor
  */
 export function mcpToolsToAgentTools(
@@ -280,6 +350,9 @@ export function mcpToolsToAgentTools(
     truncatedSize: number;
     traceId: string;
   }) => void,
+  privateMetadataBridge?: McpPrivateMetadataBridge,
+  approvalGate?: ApprovalGate,
+  imageResults?: McpImageResultPolicy,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   /** Log the content shape of an execute() return value for content-loss diagnosis. */
@@ -299,6 +372,7 @@ export function mcpToolsToAgentTools(
         hasDetails: !!result.details,
         firstBlockType: firstBlock?.type,
         firstBlockTextLen: firstBlock?.type === "text" ? (firstBlock as { text: string }).text.length : undefined,
+        imageBlockCount: result.content?.filter((block) => block.type === "image").length ?? 0,
         isError,
       },
       "MCP bridge execute() result shape",
@@ -339,9 +413,26 @@ export function mcpToolsToAgentTools(
     const externalMutationHint =
       tool.annotations?.readOnlyHint === false
       || tool.annotations?.destructiveHint === true;
+    const managedMetadata = privateMetadataBridge?.resolveRegistrationMetadata?.({
+      serverName,
+      toolName: tool.name,
+      qualifiedName: tool.qualifiedName,
+    });
+    const managedReadOnly = managedMetadata?.actionClassification === "read";
     registerToolMetadata(sanitizedName, {
       searchHint: tool.description ?? "",
-      ...(externalMutationHint && { externalMutationHint: true }),
+      ...(managedMetadata === undefined
+        ? (externalMutationHint && { externalMutationHint: true })
+        : {
+          actionClassification: managedMetadata.actionClassification,
+          isReadOnly: managedReadOnly,
+          isConcurrencySafe: managedReadOnly,
+          externalMutationHint: managedMetadata.actionClassification !== "read",
+          invocationSideEffects: {
+            kind: "managed" as const,
+            capabilities: managedMetadata.invocationSideEffects,
+          },
+        }),
     });
 
     return {
@@ -356,26 +447,98 @@ export function mcpToolsToAgentTools(
         params: unknown,
         signal?: AbortSignal,
       ): Promise<AgentToolResult<{ success: boolean }>> {
+        let approvalGrant: McpPrivateMetadataCall["approvalGrant"];
+        if (managedMetadata?.actionClassification === "destructive") {
+          if (approvalGate === undefined) {
+            throw new Error(
+              "Managed MCP destructive action refused because the approval gate is unavailable",
+            );
+          }
+          const approvalContext = resolveApprovalRequestContext();
+          if (!approvalContext.ok) {
+            throw new Error(
+              `Managed MCP destructive action refused: ${approvalContext.error.message}`,
+            );
+          }
+          const resolution = await approvalGate.requestApproval({
+            toolName: sanitizedName,
+            action: `mcp.${serverName}.${tool.name}`,
+            params: { serverName, toolName: tool.name },
+            fingerprintParams: {
+              serverName,
+              toolName: tool.name,
+              arguments: params,
+            },
+            ...approvalContext.value,
+          });
+          if (!resolution.approved) {
+            throw new Error(
+              `Managed MCP destructive action was not approved: ${resolution.reason ?? "approval was denied"}`,
+            );
+          }
+          approvalGrant = Object.freeze({
+            resolution,
+            toolName: sanitizedName,
+            action: `mcp.${serverName}.${tool.name}`,
+            fingerprintParams: Object.freeze({
+              serverName,
+              toolName: tool.name,
+              arguments: params,
+            }),
+          });
+        }
+        const privateMetadataCall: McpPrivateMetadataCall = {
+          serverName,
+          toolName: tool.name,
+          qualifiedName: tool.qualifiedName,
+          toolCallId: _toolCallId,
+          params: params as Readonly<Record<string, unknown>>,
+          ...(approvalGrant === undefined ? {} : { approvalGrant }),
+        };
         let result: Awaited<ReturnType<McpClientManager["callTool"]>>;
         try {
-          result = signal === undefined
-            ? await callTool(tool.qualifiedName, params as Record<string, unknown>)
-            : await callTool(tool.qualifiedName, params as Record<string, unknown>, signal);
+          const privateRequestMeta = privateMetadataBridge === undefined
+            ? undefined
+            : await privateMetadataBridge.createRequestMeta(privateMetadataCall);
+          if (privateRequestMeta && !privateRequestMeta.ok) {
+            throw new ManagedMcpAuthorityRefusal(privateRequestMeta.error);
+          }
+          if (privateRequestMeta?.value !== undefined) {
+            result = await callTool(
+              tool.qualifiedName,
+              params as Record<string, unknown>,
+              signal,
+              privateRequestMeta.value,
+            );
+          } else if (signal !== undefined) {
+            result = await callTool(
+              tool.qualifiedName,
+              params as Record<string, unknown>,
+              signal,
+            );
+          } else {
+            result = await callTool(tool.qualifiedName, params as Record<string, unknown>);
+          }
         } catch (error: unknown) {
+          privateMetadataBridge?.discardCall(privateMetadataCall);
           // Defense-in-depth: callTool returns Result and should never throw.
           // Throwing here is deliberate: pi-agent-core is the immediate boundary
           // that converts this exception into an isError=true tool result.
-          const message = error instanceof Error ? error.message : String(error);
-          const crashText = `MCP tool "${tool.qualifiedName}" crashed unexpectedly: ${message}`;
+          const failureText = error instanceof ManagedMcpAuthorityRefusal
+            ? `MCP tool "${tool.qualifiedName}" refused before transport: `
+              + `[managed_mcp_authority] ${boundedManagedAuthorityReason(error.authorityError)}`
+            : `MCP tool "${tool.qualifiedName}" crashed unexpectedly: `
+              + (error instanceof Error ? error.message : String(error));
           const crashResult = {
-            content: [{ type: "text" as const, text: crashText }],
+            content: [{ type: "text" as const, text: failureText }],
             details: { success: false },
           };
           logResult(crashResult, _toolCallId, sanitizedName, true);
-          throw new Error(crashText, { cause: error });
+          throw new Error(failureText, { cause: error });
         }
 
         if (!result.ok) {
+          privateMetadataBridge?.discardCall(privateMetadataCall);
           const errorText = `MCP tool error: ${result.error.message}`;
           const errorResult = {
             content: [{ type: "text" as const, text: errorText }],
@@ -386,6 +549,24 @@ export function mcpToolsToAgentTools(
         }
 
         const value: McpToolCallResult = result.value;
+
+        if (privateMetadataBridge !== undefined && value.isError) {
+          privateMetadataBridge.discardCall(privateMetadataCall);
+        } else if (privateMetadataBridge !== undefined) {
+          const accepted = await privateMetadataBridge.acceptResultMeta({
+            ...privateMetadataCall,
+            meta: value.privateMeta,
+          });
+          if (!accepted.ok) {
+            const errorText = "MCP private result metadata was rejected by the host";
+            const errorResult = {
+              content: [{ type: "text" as const, text: errorText }],
+              details: { success: false },
+            };
+            logResult(errorResult, _toolCallId, sanitizedName, true);
+            throw new Error(errorText, { cause: accepted.error });
+          }
+        }
 
         const capText = (text: string): string => {
           const profile = resolveSourceProfile(sanitizedName, toolSourceProfiles?.[sanitizedName]);
@@ -449,10 +630,22 @@ export function mcpToolsToAgentTools(
           });
         }
 
-        const successResult = {
-          content: [{ type: "text" as const, text: textParts || "Tool returned no text content" }],
-          details: { success: true },
-        };
+        // Image blocks are sanitized, capped, and prefixed with a runtime-authored
+        // notice (mcp-result-images.ts). Text stays first so it survives context
+        // pruning; when the server returned images only, the notice is the first
+        // block, so "no text content" never masks an image result.
+        const images = await collectMcpImageBlocks(value.content, imageResults, {
+          server: serverName,
+          tool: tool.name,
+          traceId: tryGetContext()?.traceId ?? "",
+        });
+        const content: AgentToolResult<{ success: boolean }>["content"] = [];
+        if (textParts) content.push({ type: "text", text: textParts });
+        else if (!images.notice) content.push({ type: "text", text: "Tool returned no text content" });
+        if (images.notice) content.push({ type: "text", text: images.notice });
+        content.push(...images.images);
+
+        const successResult = { content, details: { success: true } };
         logResult(successResult, _toolCallId, sanitizedName, false);
         return successResult;
       },

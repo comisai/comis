@@ -18,7 +18,8 @@
  *   - POST /control/chats/:id/reactions   { fromUserId, botMessageId, emoji }
  *   - POST /control/chats/:id/reset                                        → { ok: true }
  *
- * Writes the wiring to `EMU_JSON` (default `/tmp/comis-emu.json`) and prints `EMU_UP {json}`.
+ * Writes owner-only wiring to `EMU_JSON` (default `/tmp/comis-emu.json`) and
+ * prints a credential-free `EMU_UP {json}` summary.
  * Group chats (negative ids) are pre-created on request via EMU_GROUPS env
  * (a JSON array of { chatId, members:[{id,firstName,username?}], botId,
  * botUsername, supergroup?, forum? }).
@@ -26,11 +27,12 @@
  * TEST-HARNESS — lives under the test tree; consumes only the @comis-free
  * emulator subtree (node: built-ins at runtime; grammy is type-only / erased).
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createTgEmulator } from "../emulators/telegram/tg-emulator.js";
 import { registerControlApi } from "../harness/control-api.js";
 import {
-  nextStandaloneMessageIdBase,
+  reserveStandaloneMessageIdBase,
+  resolveStandaloneMessageIdReservationDirectory,
   assertValidGroupSpec,
   toCreateGroupChatOptions,
   type StandaloneGroupSpec,
@@ -47,7 +49,12 @@ const priorState = existsSync(WIRING_PATH)
       }
     })()
   : undefined;
-const messageIdBase = nextStandaloneMessageIdBase(priorState);
+const messageIdBase = reserveStandaloneMessageIdBase(
+  priorState,
+  resolveStandaloneMessageIdReservationDirectory(
+    process.env["EMU_MESSAGE_ID_STATE_DIR"],
+  ),
+);
 
 const emu = createTgEmulator({ botToken: BOT_TOKEN, initialMessageId: messageIdBase });
 registerControlApi(emu.backend, emu);
@@ -83,8 +90,9 @@ const info = {
   messageIdBase,
   groups: groups.map((g) => g.chatId),
 };
-writeFileSync(WIRING_PATH, JSON.stringify(info, null, 2));
-console.log("EMU_UP " + JSON.stringify(info));
+writeFileSync(WIRING_PATH, JSON.stringify(info, null, 2), { mode: 0o600 });
+chmodSync(WIRING_PATH, 0o600);
+console.log("EMU_UP " + JSON.stringify({ ...info, botToken: "[REDACTED]" }));
 
 const stop = async (): Promise<void> => {
   try {

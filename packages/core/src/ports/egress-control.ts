@@ -54,17 +54,25 @@ export interface EgressMaterialization {
   socketPath: string;
   /**
    * Tear down the materialized egress: close the proxy server and unlink the
-   * socket file. Called at session teardown by the registry that owns the
-   * session lifetime. Idempotent — a second call after the socket is already
-   * gone must resolve, not throw.
+   * socket file. Durable materializations may be detached from the requesting
+   * worker and self-retire with the owning terminal session. Explicit teardown
+   * remains idempotent.
    */
   dispose(): Promise<void>;
 }
 
+/** Session lifetime the egress implementation must match. */
+export interface EgressMaterializationContext {
+  /** Opaque terminal identity used only to bind durable helper lifetime. */
+  sessionId: string;
+  /** Durable helpers survive the disposable worker and retire with the tmux session. */
+  durability: "transient" | "durable";
+}
+
 export interface EgressControlPort {
   /**
-   * Stand up a no-secret host-allowlist CONNECT proxy bound to `hosts` and return
-   * the unix socket to bind-mount into the jail. Called ONLY for
+   * Stand up a no-secret host-allowlist CONNECT proxy bound to `hosts`, matching
+   * the supplied terminal lifetime, and return the unix socket to bind-mount into the jail. Called ONLY for
    * `network: listed-hosts`. The proxy `CONNECT`s only to a host in `hosts`
    * (exact host match); every other target is refused with a 403-class response
    * and no upstream dial. It injects nothing into the stream (no-secret — it is
@@ -73,5 +81,8 @@ export interface EgressControlPort {
    * For `network: none` the caller never invokes this (deny-all). For
    * `network: full` the caller uses `--share-net` and does not involve this port.
    */
-  materialize(hosts: string[]): Promise<EgressMaterialization>;
+  materialize(
+    hosts: string[],
+    context: EgressMaterializationContext,
+  ): Promise<EgressMaterialization>;
 }

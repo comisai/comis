@@ -108,6 +108,7 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
           network: "listed-hosts",
           hosts: ["api.anthropic.com"],
           credentialPaths: ["~/.claude"],
+          ephemeralWritablePaths: ["~/.claude/session-env"],
           uid: "dedicated",
         },
         autoAnswer: "all",
@@ -141,6 +142,7 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
     expect(parsed.allow[0]!.match.argsPrefix).toEqual(["-lc"]);
     expect(parsed.allow[0]!.scope.filesystem).toBe("listed-paths");
     expect(parsed.allow[0]!.scope.credentialPaths).toEqual(["~/.claude"]);
+    expect(parsed.allow[0]!.scope.ephemeralWritablePaths).toEqual(["~/.claude/session-env"]);
     expect(parsed.allow[0]!.consent.acknowledgedRisk).toBe(true);
     expect(parsed.allow[0]!.brokerDecoy?.tokenSource).toBe("comis-oauth");
   });
@@ -166,6 +168,12 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
     (withNestedUnknown.allow as Array<{ scope: Record<string, unknown> }>)[0]!.scope.extra = "x";
     const result = TerminalDriverConfigSchema.safeParse(withNestedUnknown);
     expect(result.success).toBe(false);
+  });
+
+  it("rejects an ephemeral writable path that cannot be resolved inside the jail", () => {
+    const invalid = structuredClone(validCfg);
+    invalid.allow[0]!.scope.ephemeralWritablePaths = ["relative/runtime"];
+    expect(TerminalDriverConfigSchema.safeParse(invalid).success).toBe(false);
   });
 
   it("applies the documented defaults (allow=[], credentialPaths=[], autoAnswer=safe-only)", () => {

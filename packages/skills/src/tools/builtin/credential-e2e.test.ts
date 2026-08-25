@@ -80,6 +80,7 @@ function minimalSandboxArgs(): string[] {
     "--unshare-net",
     "--ro-bind", "/usr", "/usr",
     "--ro-bind", "/bin", "/bin",
+    "--symlink", "/usr/lib", "/lib",
     "--symlink", "/usr/lib64", "/lib64",
     "--proc", "/proc",
     "--dev", "/dev",

@@ -47,6 +47,7 @@ import { err, ok, type Result } from "@comis/shared";
 import {
   isPermanentError,
   systemNowMs,
+  toSafeErrorLogString,
   type ComisLogger,
   type OutwardOperationKind,
   type OutwardSendLedgerPort,
@@ -430,6 +431,7 @@ export async function wrapOutwardSend(
       {
         rootRunId,
         stepIndex,
+        err: toSafeErrorLogString(sent.error),
         errorKind: "dependency" as const,
         hint: "the delivery outcome is uncertain; verify the platform manually before any retry",
       },

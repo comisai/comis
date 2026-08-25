@@ -60,7 +60,7 @@ export interface AllowMatch {
  * primitive (JSDoc :17, :24-25) and must not pull `zod` / the config module in.
  *
  * The defaults are LEAST-PRIVILEGE (`filesystem: "workspace"`, `network: "none"`,
- * `credentialPaths: []`, `uid: "dedicated"`) — applied by the config schema's
+ * `credentialPaths: []`, `ephemeralWritablePaths: []`, `uid: "dedicated"`) — applied by the config schema's
  * `.default(...)`, so an entry that omits a sub-field already arrives least-privilege.
  * Scope is OPERATOR-DIALABLE ONLY: the agent has no tool param that can
  * set or widen it (the create tool's TypeBox params expose no `scope` field).
@@ -82,6 +82,13 @@ export interface TerminalScope {
    * Default `[]` = bind nothing (least-privilege).
    */
   credentialPaths: readonly string[];
+  /**
+   * Operator-listed paths materialized as per-jail writable tmpfs mounts after the
+   * read-only credential binds. `~`/`~/` expands to the user's home. The operator
+   * must ensure each mountpoint's parent is visible in the jail. Default `[]` keeps
+   * every credential path read-only without adding a writable submount.
+   */
+  ephemeralWritablePaths: readonly string[];
   /** Child uid (default `dedicated` = a net-new uid ≠ the daemon). */
   uid: "dedicated" | "daemon";
 }

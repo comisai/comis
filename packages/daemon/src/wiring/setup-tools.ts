@@ -7,7 +7,7 @@
 
 import { resolve } from "node:path";
 import { resolveSkillDiscoveryPaths } from "./setup-agents/skill-discovery-paths.js";
-import type { AgentCapability, AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, DeliveryOrigin, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort, DurableRunPort, OutwardSendLedgerPort } from "@comis/core";
+import type { AgentCapability, AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, DeliveryOrigin, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort, DurableRunPort, OutwardSendLedgerPort, ClockPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -39,12 +39,14 @@ import {
   TOOL_GROUPS,
   assembleToolPipeline,
   mcpToolsToAgentTools,
+  createManagedMcpPrivateMetadataBridge,
   extractServerToolFilters,
   type LinkRunner,
   type McpClientManager,
   type ToolSourceProfile,
   type PlatformToolProvider,
 } from "@comis/skills";
+import { err, ok } from "@comis/shared";
 import type { RpcCall } from "@comis/skills/platform-tools";
 
 // Tool capability adapters + factories (exec/process/apply-patch, file-state
@@ -67,8 +69,8 @@ import {
   type MediaPersistenceService,
   type TerminalSessionRegistry,
 } from "@comis/skills/tools";
-// Terminal-driver wiring extracted to setup-terminal-tools.ts (file-size cap).
 import { wireAgentTerminalTools, buildTerminalEgressDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
+import { createManagedTerminalRevoker, createManagedTerminalToolDeps } from "./managed-terminal-binding.js";
 import {
   buildTerminalWakeDurability,
   type WakeDurabilityConfig,
@@ -81,7 +83,7 @@ import { setupChildProcessCleanup } from "./setup-child-process-cleanup.js";
 // Agent-scoped rpcCall factory (the _capabilities injection point)
 // extracted to setup-tools-capabilities.ts (file-size cap).
 import { makeCreateAgentRpcCall } from "./setup-tools-capabilities.js";
-
+import { createMcpImageResultPolicy } from "./setup-tools-mcp-images.js";
 // Descriptor registry on the `./platform-tools` subpath. Replaces the
 // prior inline 38-call enumeration of `createXTool(agentRpc, ...)`
 // factories.
@@ -101,7 +103,7 @@ import type { BrokerContextDeps } from "./setup-broker-activation.js";
 import type { CapabilityLayerHandle } from "./setup-capability-endpoint-boot.js";
 import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
 import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tools-coordinator.js"; // role:coordinator narrowing
-
+import type { CapabilityServicePlatform } from "./setup-capability-services.js";
 /**
  * Platform tools whose schemas expose capability-gated orchestration actions.
  * Omitting the whole schema is the honest posture when the agent does not hold
@@ -116,7 +118,6 @@ const PLATFORM_TOOL_CAPABILITY_REQUIREMENTS = new Map<string, AgentCapability>([
 ]);
 
 // Deps / Result types
-
 /** Dependencies for tool assembly setup. */
 // @optional-field-count: composition-root deps; each optional field is an independent capability
 // seam (image/video/sandbox/broker/lcd/timers/cap), present only when configured — a sub-object
@@ -129,6 +130,8 @@ export interface ToolsDeps {
    *  Both optional; absent ⇒ no index → the outward-send wrap is a pass-through. */
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
+  capabilityServices: Pick<CapabilityServicePlatform, "runtime" | "store" | "workspaceLeases" | "attachments" | "attachmentAuthority" | "control" | "activationCoordinator" | "groupActivationCoordinator" | "approvalGrants" | "bindTerminalRevoker">;
+  clock: ClockPort;
   /** Durable checkpoint store used by orchestrate resume. */
   durableRuns?: DurableRunPort;
   /** Per-agent config map (container.config.agents). */
@@ -329,9 +332,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   /** Per-agent ProcessRegistry instances for background process lifecycle management. */
   const processRegistries = new Map<string, ProcessRegistry>();
 
-  /** Per-agent TerminalSessionRegistry instances; closure-local, lazily built. */
+  /** Per-agent registries; closure-local and lazily built. */
   const terminalRegistries = new Map<string, TerminalSessionRegistry>();
-
+  deps.capabilityServices.bindTerminalRevoker?.(createManagedTerminalRevoker(
+    terminalRegistries, deps.capabilityServices.store, () => deps.clock.now(),
+  ));
   const terminalEgress = buildTerminalEgressDeps(skillsLogger, sandboxProvider); // built ONCE, injected per-agent
 
   /** Agents we've already logged the no-sandbox WARN for. Per-agent assembly
@@ -388,7 +393,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   });
 
   /** Create MCP tools from connected servers (extracted to bypass profile filtering). */
-  function getMcpTools(toolSourceProfiles?: Record<string, Partial<ToolSourceProfile>>): ReturnType<PlatformToolProvider> {
+  function getMcpTools(toolSourceProfiles?: Record<string, Partial<ToolSourceProfile>>, privateMetadataBridge?: ReturnType<typeof createManagedMcpPrivateMetadataBridge>): ReturnType<PlatformToolProvider> {
     const mcpTools = mcpClientManager.getTools();
     if (mcpTools.length === 0) return [];
     const agentMcpTools = mcpToolsToAgentTools(
@@ -411,6 +416,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // in scope — stamps the timestamp and does the emit. Payload carries only
       // sizes + identifiers, never the truncated content.
       (e) => eventBus.emit("mcp:server:result_truncated", { ...e, timestamp: systemNowMs() }),
+      privateMetadataBridge, approvalGate, createMcpImageResultPolicy(skillsLogger),
     );
     return agentMcpTools;
   }
@@ -420,6 +426,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     agentId: string,
     options?: AssembleToolsOptions,
   ): Promise<Awaited<ReturnType<typeof assembleToolPipeline>>> {
+    const managedMcpActiveView = deps.capabilityServices.runtime.getActiveView();
+    const capturedToolIds = { current: undefined as readonly string[] | undefined };
     const includePlatform = options?.includePlatformTools ?? true;
     const toolGroups = options?.toolGroups;
     const sharedPaths = options?.sharedPaths;
@@ -472,6 +480,30 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     const heldCapabilities = options?.autonomyParent === undefined
       ? resolvedAutonomy.capabilities
       : attenuateCaps(options.autonomyParent.caps, resolvedAutonomy.capabilities);
+    const managedMcpPrivateMetadataBridge = createManagedMcpPrivateMetadataBridge({
+      agentId,
+      activeView: managedMcpActiveView,
+      capturedAgentCapabilities: heldCapabilities,
+      getCapturedToolIds: () => capturedToolIds.current,
+      nowMs: () => deps.clock.now(),
+      resolveRootRunId: (rootAgentId, sessionKey) => {
+        const resolved = deps.resolveRootRunId?.(rootAgentId, sessionKey);
+        return resolved === undefined
+          ? err(new Error("trusted root-run resolver is unavailable"))
+          : resolved.ok
+            ? ok(resolved.value)
+            : err(new Error(resolved.error.message));
+      },
+      getManagedRunByExternalRef: (scope, serviceInstanceId, externalRunRef, availability) =>
+        deps.capabilityServices.store.getByExternalRunRef(
+          scope, serviceInstanceId, externalRunRef, availability,
+        ),
+      activatePrepared: (input) => deps.capabilityServices.activationCoordinator.activatePrepared({ ...input, authority: { ...input.authority, capturedAgentCapabilities: [...input.authority.capturedAgentCapabilities], capturedToolIds: [...input.authority.capturedToolIds] } }),
+      activatePreparedGroup: (input) => deps.capabilityServices.groupActivationCoordinator
+        .activatePreparedGroup({ ...input, authority: { ...input.authority, capturedAgentCapabilities: [...input.authority.capturedAgentCapabilities], capturedToolIds: [...input.authority.capturedToolIds] } }),
+      bindApprovalGrant: (input) => deps.capabilityServices.approvalGrants.bind(input),
+      logger: skillsLogger,
+    });
 
     // Use the agent's own skills config (SkillsConfigSchema defaults apply if not specified).
     const skillsConfig: SkillsConfig = agentConfig?.skills ?? SkillsConfigSchema.parse({});
@@ -782,8 +814,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // Orchestrate tool — built by buildAutonomyToolWiring above.
       if (orchestrateTool && securityBoundary === undefined) tools.push(orchestrateTool);
 
-      // Terminal driver: per-agent registry + nine never-export tools (durability
-      // wired inside). wireAgentTerminalTools folds the base deps + operator config in one call.
+      // Terminal driver: per-agent registry + nine never-export tools; wiring folds in durability and operator config.
       if (securityBoundary === undefined) {
         wireAgentTerminalTools(
           tools,
@@ -798,6 +829,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
             ...terminalEgress,
             timers: deps.timers,
             agentWorkspaceDir,
+            ...createManagedTerminalToolDeps({ ...deps.capabilityServices, validateAttachment: deps.capabilityServices.attachmentAuthority.validateActive, logger: skillsLogger, nowMs: () => deps.clock.now() }),
+            managedAttachmentSandboxAvailable: Boolean(terminalEgress.bwrapPath) && !skillsConfig.terminal?.unsafeDisableSandbox,
           },
           skillsConfig.terminal,
         );
@@ -879,7 +912,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       const basePlatformProvider = platformToolProvider;
       platformToolProvider = () => {
         const baseTools = basePlatformProvider();
-        const mcpTools = getMcpTools(toolSourceProfiles);
+        const mcpTools = getMcpTools(toolSourceProfiles, managedMcpPrivateMetadataBridge);
         if (mcpTools.length > 0) {
           skillsLogger.debug(
             { agentId, mcpToolCount: mcpTools.length },
@@ -890,7 +923,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       };
     }
 
-    return assembleToolPipeline({
+    const assembledTools = await assembleToolPipeline({
       config: skillsConfig,
       workspacePath: agentWorkspaceDir,
       secretManager,
@@ -907,6 +940,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       hiddenPaths: securityBoundary?.hiddenPaths,
       hiddenReadAllowPaths,
     });
+    capturedToolIds.current = Object.freeze(assembledTools.map((tool) => tool.name));
+    return assembledTools;
   }
 
   /**
@@ -959,7 +994,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     // Per-agent terminal attention config (allow-entry autoAnswer/hintPatterns + caps); read per-wake.
     getTerminalAttentionConfig: (agentId: string) =>
       deriveTerminalAttentionConfig((agents[agentId] ?? agents[defaultAgentId])?.skills?.terminal),
-    // The durable wake deps the composition root spreads into setupTerminalWake.
     terminalDurability,
   };
 }

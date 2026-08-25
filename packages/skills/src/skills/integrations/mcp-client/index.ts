@@ -57,6 +57,7 @@ export type {
   McpToolDefinition,
   McpToolCallResult,
   McpToolCallContent,
+  McpPrivateMeta,
   McpClientManagerDeps,
   McpOAuthDeps,
   McpClientManager,
@@ -236,9 +237,9 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
     getConnection: (name) => getConnection(state, name),
     getAllConnections: () => getAllConnections(state),
     getTools: (): McpToolDefinition[] => listAllTools(state),
-    callTool: (qualifiedName, args, signal) => signal === undefined
+    callTool: (qualifiedName, args, signal, privateMeta) => signal === undefined && privateMeta === undefined
       ? callTool(state, effectiveDeps, qualifiedName, args)
-      : callTool(state, effectiveDeps, qualifiedName, args, signal),
+      : callTool(state, effectiveDeps, qualifiedName, args, signal, privateMeta),
     reconnect: (name, credentials) => reconnectServer(state, effectiveDeps, name, credentials),
   };
 }

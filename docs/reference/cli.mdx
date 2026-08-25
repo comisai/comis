@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis currently ships **33 top-level command groups**. Some commands call the
+Comis currently ships **36 top-level command groups**. Some commands call the
 running daemon over JSON-RPC; others inspect or update local state. The built-in
 `--help` output is authoritative for the installed version.
 
@@ -694,6 +694,11 @@ Raw message history (`lcd_messages`) is **never modified** by any repair action 
 
 Quick view of system health issues. Unlike `doctor` which shows all checks, `health` shows only failures and warnings by default. Exits with code 1 when failures exist, making it suitable for CI pipelines.
 
+Secret-posture findings distinguish a confirmed missing secret from a store that the local CLI
+cannot inspect. When the configured encrypted store credential is service-scoped, an
+`unavailable` warning does not mean `CANARY_SECRET` is absent; verify the selected store with
+`comis secrets list` or rerun the check from the service credential context before changing it.
+
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-c, --config <paths...>` | `string[]` | - | Config file paths |
@@ -1280,16 +1285,18 @@ Reset sessions, configuration, or the entire workspace. Requires explicit confir
 |------|------|---------|-------------|
 | `--yes` | `boolean` | `false` | Skip confirmation prompt |
 | `-c, --config <path>` | `string` | - | Config file path for resolving data directory |
+| `--tenant <tenantId>` | `string` | - | Required with the `sessions` target |
+| `--agent <agentId>` | `string` | - | Required with the `sessions` target |
 
-- **sessions** -- Deletes all conversation sessions (tries RPC first, falls back to direct database removal)
+- **sessions** -- Deletes conversation sessions in the required tenant/agent scope through the daemon. If the daemon is unreachable, the command warns and falls back to removing the entire `memory.db`, not just that scope.
 - **config** -- Removes `config.yaml` and `.env` from the config directory
 - **workspace** -- Removes the entire data directory and config files
 
 <Warning>The `workspace` target deletes all data including sessions, memory, logs, and configuration. This cannot be undone.</Warning>
 
 ```bash
-# Clear all sessions
-comis reset sessions --yes
+# Clear all sessions in one tenant/agent scope
+comis reset sessions --tenant default --agent default --yes
 
 # Full workspace reset
 comis reset workspace --yes
@@ -1496,6 +1503,8 @@ This is the correct command when you want the model to explicitly forget a conve
 |------|------|---------|-------------|
 | `--memory` | `boolean` | `false` | Also clear the conversation's RAG memories — the full-forget path. Deletes every memory row matching this session (both paired-conversation memories **and** LCD-distilled episodic memories) for the agent + tenant scope, then unlinks them from consolidated observations (an observation built only from this session is deleted; one corroborated by other sessions is kept with the reference removed). The CLI prints the deleted count. If the daemon has no memory store wired, the flag is reported as unavailable (a stderr warning) and only LCD history + the session transcript are cleared. |
 | `--purge-derived` | `boolean` | `false` | Only meaningful with `--memory`. Escalates to deleting **every** consolidated observation derived from this session — even those still corroborated by other sessions (nuclear forget). Destructive; use only when a complete erasure of anything learned from the session is required. |
+| `--tenant <tenantId>` | `string` | - | Required tenant scope |
+| `--agent <agentId>` | `string` | - | Required agent scope |
 | `--yes` | `boolean` | `false` | Required — skip the confirmation prompt (the command exits with an error if omitted) |
 
 <Warning>
@@ -1517,13 +1526,13 @@ comis sessions inspect "default:agent:default:user123:telegram"
 comis sessions delete "default:agent:default:user123:telegram" --yes
 
 # Full conversation reset (clears LCD history + session transcript — irreversible, requires --yes)
-comis sessions reset "default:agent:default:user123:telegram" --yes
+comis sessions reset "default:agent:default:user123:telegram" --tenant default --agent default --yes
 
 # Also clear RAG memories for this session (the full-forget path — prints deleted count)
-comis sessions reset "default:agent:default:user123:telegram" --memory --yes
+comis sessions reset "default:agent:default:user123:telegram" --tenant default --agent default --memory --yes
 
 # Nuclear forget — also purge consolidated observations derived from this session
-comis sessions reset "default:agent:default:user123:telegram" --memory --purge-derived --yes
+comis sessions reset "default:agent:default:user123:telegram" --tenant default --agent default --memory --purge-derived --yes
 ```
 
 #### `sessions backup`
@@ -1675,7 +1684,14 @@ There is deliberately no offline mode. While the daemon is running it is the onl
 
 Assemble an `IncidentReport` for a single agent session — a bounded, causal post-mortem (outcome, cost, per-tool stats, normalized failures, circuit-breaker timeline, large-result offloads, recall health — including degraded/failed recall lanes — session-wide activity-finalize tallies, and a deterministic likely root cause). No LLM is invoked. The authoritative evidence-source and report-field contract is [`obs.explain`](/reference/json-rpc#obs-explain); this command is its CLI surface, backed by `ObsExplainContract`.
 
-The positional argument is routed automatically by shape: a **`root-` run id** (an autonomy run's `rootRunId` — the synthetic in-process `root-session-<sessionKey>` or a real spawned-run lease id; checked **first** because a synthetic root contains `:` but must route as a run id, not a session key) is passed as `rootRunId`; otherwise an **execution-graph id** (either `--graph`, or an id with local terminal metadata at `<dataDir>/graph-runs/<id>/_run-metadata.json`) is passed as `graphId`; otherwise a **session key** (the [current agent-scoped format](/agents/sessions#session-scope-key), containing `:`) is passed as `sessionKey`; otherwise a UUID-shaped **trace ID or sub-agent run ID** is passed through the `traceId` field. The daemon canonicalizes a trace ID, sub-agent run ID, `rootRunId`, *or* `graphId` to its session key first, so every form reports on the same session — the trace, session, and run forms produce the identical report, and the graph form adds the `graph` block below. A `rootRunId` is the **`comis system-health` → `comis explain` drill-down target**: paste the `worstRootRunId` that [`comis system-health`](#comis-system-health)'s autonomy block names straight in, and the report renders that run's `spawnTree`. A failed child shown in that tree can be drilled into by passing its sub-agent run ID directly. An unresolvable identifier surfaces an honest `session_not_found`, never a clean-looking empty report.
+The default table view prints every bounded normalized failure under `Failures:`,
+including sequence, tool name, machine failure code, `errorKind`, transport
+status, classifier, and the report's bounded redacted preview. This is the
+operator path for the exact failed tool and actionable validation message; raw
+daemon logs are not required. `--format json` emits the same `failures[]`
+records structurally.
+
+The positional argument is routed automatically by shape: a **`root-` run id** (an autonomy run's `rootRunId` — the synthetic in-process `root-session-<generation UUID>-<base64url formatted session key>` or a real spawned-run lease id; checked **first** because the reserved `root-` shape identifies a run before the session/trace classifiers) is passed as `rootRunId`; otherwise an **execution-graph id** (either `--graph`, or an id with local terminal metadata at `<dataDir>/graph-runs/<id>/_run-metadata.json`) is passed as `graphId`; otherwise a **session key** (the [current agent-scoped format](/agents/sessions#session-scope-key), containing `:`) is passed as `sessionKey`; otherwise a UUID-shaped **trace ID or sub-agent run ID** is passed through the `traceId` field. The daemon canonicalizes a trace ID, sub-agent run ID, `rootRunId`, *or* `graphId` to its session key first, so every form reports on the same session — the trace, session, and run forms produce the identical report, and the graph form adds the `graph` block below. A `rootRunId` is the **`comis system-health` → `comis explain` drill-down target**: paste the `worstRootRunId` that [`comis system-health`](#comis-system-health)'s autonomy block names straight in, and the report renders that run's `spawnTree`. A failed child shown in that tree can be drilled into by passing its sub-agent run ID directly. An unresolvable identifier surfaces an honest `session_not_found`, never a clean-looking empty report.
 
 When the argument resolved to an execution-graph run, the report carries a `graph` block and the table view renders it as `Graph: <status> · <graphId> · <succeeded>/<total> succeeded · <failed> failed · <skipped> skipped · notification=<disposition>`, followed by one indented line per node (`<nodeId>: <status> · <durationMs> · attempts=<n>`, plus `run=<subAgentRunId>` when the node spawned one). `notification=` is the terminal disposition of the graph's aggregate completion announcement — see [`obs.explain`](/reference/json-rpc#obs-explain) for the block's full shape and the meaning of each disposition. An unresolvable graph id surfaces an honest `graph_not_found` verdict naming the missing run metadata, never a clean-looking empty report.
 
@@ -1698,6 +1714,8 @@ multi-part delivery, and show whether a durable child was suspended and resumed
 across daemon restart. None of these fields exposes the attachment body or
 provider output.
 
+When the session prepared any managed ([capability-service](/reference/config-yaml#capability-services)) runs, the report carries a `managedRuns` block — the managed runs this session prepared, linked by the trace ids the session's trajectory ran: `total`, `degraded` (the `failed` + `unknown` runs; a `cancelled` run is an intended outcome), and one `runs[]` row per run with its `managedRunId`, `serviceInstanceId`, and closed `status`/`statusReason` (ids + closed enums + counts only — never a report body, workspace path, objective, or credential, safe to paste). This is the session→managed-run drill-down: paste a `managedRunId` into [`comis managed-runs explain`](#comis-managed-runs) for that external-service run's own root cause, without a raw-log join. Reconstructed from the durable managed-run store, so `--offline` shows it too (it reads the same local `memory.db`). Absent when the session prepared no managed run.
+
 When a scheduled job's [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) **woke** the model, the report folds a content-free `cronWakeGate` fact for that fire — the job id, the `wake` verdict, the gate's `durationMs`, its tool-call count, and the model turns it saved (ids and counts only, never the gate's gathered finding). A **skipped** fire is different: it runs no model and opens no session, so it never reaches `comis explain`. The argument is a session key, trace ID, or `rootRunId` — **never a cron job id**. To inspect a job's skipped fires read its run history (`cron.runs`), and for the cross-job skip-rate and turns-saved use [`comis system-health`](#comis-system-health).
 
 When the session was a proactive check over [inferred follow-up tasks](/operations/scheduler#task-extraction), the report carries a content-free `taskCheck` block — the attempt's `rootRunId`, `attemptId`, and `correlationId`, its `lifecycle` (`started` / `terminal`), the terminal `outcome`, whether it ran `live` or through `ownership_recovery`, and the `deliveredChunks` / `failedChunks` / `ambiguousChunks` counts. A `dismissed` outcome also carries `suppressionReason`, so **"the check ran but the user got nothing"** is answered by the report instead of inferred from a silent success: `heartbeat_token` (the model declined with the bare `HEARTBEAT_OK` token), `ack_under_threshold` (`HEARTBEAT_OK` plus residual text within `ack_max_chars`), `empty_reply` (an empty reply or a `NO_REPLY` / `[SILENT]` marker), or `visibility_filter` (a non-critical alert withheld because `show_alerts` is off) — see the [heartbeat response rules](/agent-tools/scheduling#heartbeat-manage-agent-heartbeat) for the classifier those names come from. The table view renders the block as `Task check: <outcome, or the lifecycle when no outcome was reached> · attempt=… · correlation=… · root=… · delivered=… failed=… ambiguous=… · suppression=…`, with `suppression=none` when the attempt was not suppressed. Identifiers, labels, and counts only — never the task text, the check-in body, or the originating conversation.
@@ -1718,7 +1736,7 @@ comis explain 6ba7b810-9dad-11d1-80b4-00c04fd430c8 --depth full
 
 # Drill into an autonomy run by its rootRunId (the `comis system-health` worstRootRunId) —
 # resolves the run to its session and renders the run's spawn-tree
-comis explain "root-session-default:agent:default:user123:telegram"
+comis explain "root-session-11111111-1111-4111-8111-111111111111-ZGVmYXVsdDphZ2VudDpkZWZhdWx0OnVzZXI6dGVsZWdyYW06MTcxNzAwMDAwMA"
 
 # Post-mortem an execution graph — resolves to the caller's session and adds the
 # graph block (per-node states plus the completion-announcement disposition)
@@ -1796,6 +1814,8 @@ The acute-degradation root cause (`system_acute_degradation`) names the **worst 
 
 When the daemon runs **unattended/durable** runs, the report carries an `autonomy` block: the cross-run run count + degraded rate (sourced from the **crash-surviving** `durable_run_checkpoints` table, so it survives a hard crash), the `orphaned` / `resumed` / `revoked` / `killed` counts (`killed` is separable from `revoked` because a hard `run.kill` and a cooperative `lease.revoke` emit distinct events), the autonomy breaker-trip + budget-breach counts, the window cost, and the worst degraded run's `worstRootRunId` (orphaned > killed > revoked) so you can paste it straight into `comis explain` for its spawn-tree. The orphaned/revoked/killed counts also surface as dedicated `durable_orphaned` / `autonomy_revoked` / `autonomy_killed` findings, and a degraded autonomy run drives the top-ranked `system_autonomy_degradation` root cause. Counts + the worst run's id only — never a lease bearer, an orphan-reason body, or a secret; safe to paste. The block is **absent** under `--offline` (the daemon-less CLI has no durable-store edge) or on a non-durability boot — an honest coverage degradation, not a silent zero.
 
+When installed [capability services](/reference/config-yaml#capability-services) ran managed work over the window, the report carries a `capabilityServices` block and a `managed_run_degradation` finding: the managed-run count and **degraded rate** (the `failed` + `unknown` statuses — a `cancelled` run is an intended outcome, not degradation), the affected **service count**, the top closed **status-reason codes** across the degraded runs (e.g. `service_state_unavailable` / `failure_verified` / `required_evidence_stale`), and the most-recently-updated degraded run's `worstManagedRunId` so you can paste it into `comis managed-runs explain` for its likely root cause and repair knob. Sourced from the durable managed-run index (managed runs are content-free durable rows by construction), so it needs no contentful global telemetry — counts, closed reason codes, and one opaque host-minted run id only; never a report body, workspace path, objective, or service credential, safe to paste. The block is **absent** when the window held no managed-run activity (a daemon that never used a capability service carries no empty block) or under `--offline` (the daemon-less CLI has no managed-run-store edge) — an honest coverage degradation, not a silent zero.
+
 When cron jobs ran a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) over the window, the report carries a `cronWakeGate` efficiency block and a `cron_wake_gate_efficiency` finding: the gated-fire total, the skip count and **skip-rate**, the **fail-open count and rate**, the model **turns saved**, and the gate's own **tool-call cost**, rolled up per agent (counts and agent ids only — never the gate's gathered findings or script, safe to paste). A high skip-rate is usually the gate *working* (most polls found nothing), not a fault; the three signals worth inspecting are a **100% skip-rate on a monitor you expect to fire**, a **high fail-open rate** (the gate crashed/timed-out/over-capped every fire — it saves nothing and costs its own run, yet reads `skipRate 0` like a busy monitor), and **tool calls exceeding turns saved** (a gate that costs more than it saves). Because a skip opens no session, this is the cross-job lens for it — pair it with `cron.runs jobName "<job>"` for a single job's per-fire decisions.
 
 This is the cross-session **sibling** of `comis explain` (single-session). It is a **remote admin RPC** over the operator's gateway token — DISTINCT from `comis health`, the **local daemon doctor** that runs offline checks with no RPC. (`comis health` is unaffected; this is a separate command.)
@@ -1828,6 +1848,102 @@ comis system-health --since 24 --offline
 ```
 
 Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`) — unless `--offline`. Unreachable-gateway calls fall back to the offline assembly automatically; a token rejection surfaces the auth error (with the `--offline` tip) instead of masking the misconfiguration.
+
+---
+
+### `comis capability-services`
+
+The operator view over installed capability services and the external work they
+own. A capability service is a separately installed process that contributes
+agent tools and durable external-work lifecycle; these commands show the **host**
+half of that relationship — whether authority bound, which host records a run
+holds, and whether the service is still reporting. The product that owns a run
+explains what its task means; that is its own CLI's job.
+
+| Subcommand | Options | Purpose |
+|------------|---------|---------|
+| `list` | `--format table\|json` | List every configured instance and its current host state |
+| `get <serviceInstanceId>` | `--format table\|json` | Show one instance's declared scopes, approved roots, and liveness obligation |
+
+```bash
+# Which services are installed, and are they usable?
+comis capability-services list
+comis capability-services get example-service-1
+
+# What external work exists, across every conversation this daemon holds?
+comis managed-runs list
+comis managed-runs list --service example-service-1 --state unknown --limit 50
+
+# Why is this one stuck?
+comis managed-runs explain <managedRunId>
+
+# Stop it on host authority
+comis managed-runs cancel <managedRunId>
+
+# Which runs are waiting on a person rather than on the machine?
+comis managed-attention list --run <managedRunId>
+```
+
+`explain` returns a deterministic verdict over the durable record — no model, so
+the same run always produces the same answer — plus the next actions that are
+actually reachable for its current state. Causes are ordered so the outer fault
+wins: a service instance missing from configuration outranks a stale heartbeat,
+which outranks a run that is merely waiting on a human.
+
+Two rules keep the output safe to paste into a review. No command returns a
+report body, a question, or an artifact: those live in the confined content
+store and reach a human through the owning product. And no instance row carries
+a socket path, a credential reference, or a resolved secret.
+
+Capabilities that have not shipped are labelled rather than omitted — `custody`
+and `processes` read `not available` with a reason code, because a blank field
+would otherwise read as "no operator holds custody" or "no processes are
+running".
+
+`cancel` records the host's decision before it notifies the service, and the
+decision stands when the service is unreachable. In that case the command says
+the service has not confirmed yet and will reconcile on its next handshake; it
+does not report the cancel as failed, because the authority record already says
+cancelled.
+
+All three groups are admin-scoped and carry no agent route, so an agent turn —
+including a prompt-injected one — can never reach them. They need a reachable
+daemon: there is no offline projection of another process's authority record
+that would be safe to present as current.
+
+---
+
+### `comis managed-runs`
+
+Inspects, explains, and cancels the external work bound to this daemon.
+
+| Subcommand | Options | Purpose |
+|------------|---------|---------|
+| `list` | `--service <id>`, `--agent <id>`, `--state <status>`, `--limit <count>`, `--format table\|json` | List durable runs, optionally filtered; default limit `100`, maximum `500` |
+| `get <managedRunId>` | `--format table\|json` | Show one run's durable authority record |
+| `explain <managedRunId>` | `--format table\|json` | Return the deterministic likely cause and reachable next actions |
+| `cancel <managedRunId>` | `--operation <operationId>`, `--format table\|json` | Record host-authority cancellation; the default operation ID is stable for the run |
+
+`--state` accepts `preparing`, `active`, `waiting`, `paused`,
+`candidate_complete`, `succeeded`, `failed`, `cancelled`, or `unknown`.
+
+See
+[`comis capability-services`](#comis-capability-services) above for the full
+usage, the content rules, and the cancellation semantics.
+
+---
+
+### `comis managed-attention`
+
+Lists the durable questions managed runs are waiting on — identifiers and
+status only, never the question itself, which belongs to the principal it was
+routed to.
+
+| Subcommand | Options | Purpose |
+|------------|---------|---------|
+| `list` | `--run <managedRunId>`, `--limit <count>`, `--format table\|json` | List attention records, optionally for one run; default limit `100`, maximum `500` |
+
+See [`comis capability-services`](#comis-capability-services) above.
 
 ---
 

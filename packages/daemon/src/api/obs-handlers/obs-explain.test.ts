@@ -199,6 +199,86 @@ describe("bindObsExplainHandlers", () => {
     expect(r.likelyRootCause?.code).toBe("output_starved");
   });
 
+  it("links a session to the managed runs it prepared, content-free, via readLinkedManagedRuns", async () => {
+    const traceId = "trace-managed-run-a";
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [
+        { traceSchema: "comis-trajectory", type: "model.completed", traceId, seq: 1, data: { stopReason: "stop", durationMs: 5, inputTokens: 10, outputTokens: 2 } },
+        { traceSchema: "comis-trajectory", type: "session.summary", traceId, seq: 2, data: { endReason: "success", degraded: false, turnCount: 1, costUsd: 0.01 } },
+      ],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({ agentId: "a1", sessionEnd: { type: "session_end", endReason: "success", degraded: false } }),
+      readDiagnosticsRollup: async () => null,
+      // The reader is asked with the trace ids the session ran; return two runs,
+      // one degraded (unknown), one active.
+      readLinkedManagedRuns: async (traceIds) => traceIds.includes(traceId)
+        ? [
+            { managedRunId: "managed-run_a", serviceInstanceId: "service_x", status: "active", statusReason: "activation_acknowledged", traceId },
+            { managedRunId: "managed-run_b", serviceInstanceId: "service_y", status: "unknown", statusReason: "service_state_unavailable", traceId },
+          ]
+        : [],
+    };
+    const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
+    const r = (await handlers["obs.explain"]!({
+      sessionKey: "tenant_a:user_a:chan",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+
+    expect(r.managedRuns).toBeDefined();
+    expect(r.managedRuns?.total).toBe(2);
+    // degraded == failed + unknown; here just the unknown run.
+    expect(r.managedRuns?.degraded).toBe(1);
+    expect(r.managedRuns?.runs.map((run) => run.managedRunId).sort()).toEqual([
+      "managed-run_a",
+      "managed-run_b",
+    ]);
+    // Content-free: ids + closed enums only — the linking trace stays out of the
+    // report row, and no body/path/objective can appear.
+    expect(Object.keys(r.managedRuns!.runs[0]!).sort()).toEqual([
+      "managedRunId",
+      "serviceInstanceId",
+      "status",
+      "statusReason",
+    ]);
+  });
+
+  it("omits the managedRuns block when the session prepared no managed runs", async () => {
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [
+        { traceSchema: "comis-trajectory", type: "session.summary", traceId: "t", seq: 1, data: { endReason: "success", degraded: false, turnCount: 1 } },
+      ],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({ agentId: "a1" }),
+      readDiagnosticsRollup: async () => null,
+      readLinkedManagedRuns: async () => [],
+    };
+    const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
+    const r = (await handlers["obs.explain"]!({
+      sessionKey: "tenant_a:user_a:chan",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+    expect(r.managedRuns).toBeUndefined();
+  });
+
+  it("produces no managedRuns block when the reader cannot resolve the linkage (no store wired)", async () => {
+    // A fixture reader that omits readLinkedManagedRuns entirely — the daemon-less
+    // offline boot with no managed-run store. The section is presence-conditional.
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [
+        { traceSchema: "comis-trajectory", type: "session.summary", traceId: "t", seq: 1, data: { endReason: "success", degraded: false, turnCount: 1 } },
+      ],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({ agentId: "a1" }),
+      readDiagnosticsRollup: async () => null,
+    };
+    const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
+    const r = (await handlers["obs.explain"]!({
+      sessionKey: "tenant_a:user_a:chan",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+    expect(r.managedRuns).toBeUndefined();
+  });
+
   it("a rejected final delivery overrides a clean execution summary with an honest delivery failure", async () => {
     const traceId = "trace-delivery-rejected";
     const reader: IncidentSourceReader = {

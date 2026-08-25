@@ -1,12 +1,15 @@
 // _rig.mjs — ONE place that decides where the rig lives, shared by every box-side .mjs helper.
 // (deploy-scripts.sh globs *.mjs to /root/, so this module rides along and `./…` imports resolve.)
 //
-// Resolution order for every value (first hit wins):
+// Resolution order for ordinary values (first hit wins):
 //   1. explicit env  (COMIS_SRC, COMIS_DATA_DIR/DATA, COMIS_USER, COMIS_HOME, CHATID, SERVICE,
 //      GW_PORT, EMU_DIR, GWTOKEN/COMIS_GATEWAY_TOKEN)
 //   2. /root/comis-rig.env — rendered ON the box by deploy-scripts.sh from the local .live-env
 //      (lines are `export K="${K:-value}"`, so bash sourcing keeps explicit-env-wins too)
 //   3. auto-detection / the standard-install defaults.
+// Gateway authentication is deliberately stricter: an explicit COMIS_GATEWAY_TOKEN wins, then the
+// token is resolved offline from the selected DATA/config store, and GWTOKEN is only a bootstrap
+// fallback. That prevents a rendered token from silently authenticating against a different rig.
 //
 // Code root: BOTH layouts are supported transparently —
 //   installed package  <root>/node_modules/@comis/<pkg>/dist/…   (install.sh / npm i -g comisai)
@@ -133,7 +136,7 @@ export const requireCodeRoot = (name) => {
 export const ensureRpcEnv = () => {
   if (!process.env.COMIS_CONFIG_PATHS) process.env.COMIS_CONFIG_PATHS = `${dataDir}/config.yaml`;
   let tok = process.env.COMIS_GATEWAY_TOKEN;
-  if (!tok && isLocal) {
+  if (!tok) {
     try {
       const childEnv = {
         ...process.env,
@@ -149,8 +152,8 @@ export const ensureRpcEnv = () => {
       ).trim();
       if (resolved.length >= 32) tok = resolved;
     } catch {
-      // A selected local store may not exist during initial setup. The explicit
-      // helper token remains the final fallback for that pre-bootstrap state.
+      // A selected store may not exist during initial setup. The explicit helper
+      // token remains the final fallback for that pre-bootstrap state.
     }
   }
   tok = pick(tok, process.env.GWTOKEN, fileVars.GWTOKEN);

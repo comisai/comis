@@ -45,6 +45,7 @@
  * @module
  */
 
+import { createHash } from "node:crypto";
 import { resolve as pathResolve } from "node:path";
 
 import type { FakePtyLike } from "./terminal-worker-types.js";
@@ -103,11 +104,13 @@ function tmuxSocketHead(tmuxPath: string, socketPath: string | undefined): strin
  * costs, so the drive's own memory bounds concurrency long before server count matters.
  *
  * Lives under the data dir (NEVER `/tmp`: systemd `PrivateTmp=yes` gives each daemon start a
- * fresh private `/tmp`, so a `/tmp` socket is unreachable from a restarted daemon). Short by
- * design — well under the ~108-char `AF_UNIX` `sun_path` limit even with a uuid session id.
+ * fresh private `/tmp`, so a `/tmp` socket is unreachable from a restarted daemon). The
+ * filename uses a compact deterministic digest instead of the raw session id so isolated
+ * deployment roots remain below Linux's 108-byte `AF_UNIX` `sun_path` limit.
  */
 export function tmuxSocketPathForSession(dir: string, sessionId: string): string {
-  return pathResolve(dir, `tmux-${sessionId}.sock`);
+  const sessionDigest = createHash("sha256").update(sessionId, "utf8").digest("base64url").slice(0, 22);
+  return pathResolve(dir, `t-${sessionDigest}.sock`);
 }
 
 /**
@@ -170,6 +173,11 @@ export function buildTmuxAttachArgv(opts: { tmuxPath: string; socketPath?: strin
   return [...tmuxSocketHead(opts.tmuxPath, opts.socketPath), "attach", "-t", opts.name];
 }
 
+/** Build the content-free pane-root PID query used to persist process identity. */
+export function buildTmuxPanePidArgv(opts: { tmuxPath: string; socketPath?: string; name: string }): string[] {
+  return [...tmuxSocketHead(opts.tmuxPath, opts.socketPath), "display-message", "-p", "-t", opts.name, "#{pane_pid}"];
+}
+
 /**
  * Build `tmux -S <socket> set-option -t <name> <option> <value>` — the per-session driving
  * config. The backend sets `status off` (no tmux status-bar chrome polluting the streamed
@@ -226,6 +234,8 @@ export interface TmuxBackendDeps {
    * fake. TRUE ⇒ attach the existing session; FALSE ⇒ create then attach.
    */
   hasSession: (name: string) => boolean;
+  /** Resolve the detached pane's root PID after create/reattach. */
+  queryRootPid?: (name: string) => number | undefined;
   /**
    * Run a one-shot tmux command synchronously (new-session / set-option / kill-session) —
    * production = `execFileSync`, tests inject a recorder. May throw on a non-zero exit; the
@@ -265,7 +275,7 @@ export interface TmuxBackendDeps {
  * (the worker's `reattach` handler) then replies `ok:false`, NEVER a fresh CLI.
  */
 export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefined {
-  const { sessionId, bin, argv, cols, rows, tmuxPath, socketPath, hasSession, runOneShot, spawnAttachPty, forceAttachOnly } =
+  const { sessionId, bin, argv, cols, rows, tmuxPath, socketPath, hasSession, queryRootPid, runOneShot, spawnAttachPty, forceAttachOnly } =
     deps;
   const name = tmuxSessionName(sessionId);
 
@@ -306,8 +316,10 @@ export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefine
   // ONLY on genuine session death — the streaming analog of the pty backend, NOT a one-shot
   // capture-pane (whose close used to fire onExit immediately → the drivability bug).
   const pty = spawnAttachPty(name);
+  const rootPid = queryRootPid?.(name);
   return {
     pid: pty.pid,
+    ...(rootPid === undefined ? {} : { rootPid }),
     onData: (cb: (data: string) => void) => pty.onData(cb),
     onExit: (cb: (e: { exitCode: number; signal?: number }) => void) => pty.onExit(cb),
     write: (data: string) => pty.write(data),

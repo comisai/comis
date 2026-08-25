@@ -85,6 +85,32 @@ describe("system prompt compiler facade", () => {
     expect(compiled.stableOperatorPolicyPrefix).not.toContain("Temporary state");
   });
 
+  it("keeps consecutive continuation prompt prefixes identical under unchanged policy", () => {
+    const operatorPolicy = [{
+      id: "workspace:agents",
+      sourceKind: "operator" as const,
+      trust: "trusted" as const,
+      stability: "stable" as const,
+      content: "Use the configured managed capability surface.",
+      contentHash: "a".repeat(64),
+      maxChars: 200,
+    }];
+    const first = compileRichSystemPrompt({
+      instructionSections: operatorPolicy,
+      extraSystemPrompt: "First bounded continuation snapshot.",
+      executionModel: { provider: "provider_a", model: "model_a" },
+    });
+    const second = compileRichSystemPrompt({
+      instructionSections: operatorPolicy,
+      extraSystemPrompt: "Second bounded continuation snapshot.",
+      executionModel: { provider: "provider_a", model: "model_a" },
+    });
+
+    expect(second.stableEnginePrefix).toBe(first.stableEnginePrefix);
+    expect(second.stableOperatorPolicyPrefix).toBe(first.stableOperatorPolicyPrefix);
+    expect(second.dynamicRuntimePreamble).not.toBe(first.dynamicRuntimePreamble);
+  });
+
   it("keeps untouched default input below the full prompt budget", () => {
     const compiled = compileRichSystemPrompt({ promptMode: "full" });
     expect(Math.ceil(compiled.report.totalChars / 4)).toBeLessThanOrEqual(1_000);

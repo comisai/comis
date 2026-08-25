@@ -1,0 +1,43 @@
+{
+  "name": "@comis/capability-service-sdk",
+  "private": true,
+  "version": "1.0.64",
+  "author": "Moshe Anconina",
+  "license": "Apache-2.0",
+  "description": "Schemas and generated release artifacts for the Comis capability-service protocol",
+  "keywords": ["comis", "capability-service", "protocol", "json-rpc", "schema"],
+  "engines": { "node": ">=22.19.0" },
+  "files": ["dist", "protocol"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comisai/comis.git",
+    "directory": "packages/capability-service-sdk"
+  },
+  "homepage": "https://github.com/comisai/comis#readme",
+  "bugs": {
+    "url": "https://github.com/comisai/comis/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "protocol:generate": "tsx scripts/generate-protocol.ts",
+    "protocol:check": "tsx scripts/generate-protocol.ts --check",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "tsx": "4.22.5",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

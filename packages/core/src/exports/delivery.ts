@@ -18,6 +18,12 @@ export { chunkForDelivery } from "../delivery/chunk-for-delivery.js";
 export type { ChunkForDeliveryOptions } from "../delivery/chunk-for-delivery.js";
 export { chunkBlocks } from "../delivery/block-chunker.js";
 export { createAttachmentSendReceipt } from "../delivery/attachment-send-receipt.js";
+export {
+  createStableAnnouncementChunkOperationId,
+  createStableAnnouncementChunkPartId,
+  createStableAnnouncementOperationId,
+  isStableAnnouncementChunkPartId,
+} from "../delivery/announcement-operation-id.js";
 // Note: block-chunker's ChunkMode + ChunkOptions are intentionally NOT
 // re-exported — block-chunker's "paragraph"/"newline"/"sentence"/"length"
 // ChunkMode collides with the streaming-config ChunkMode in
@@ -27,6 +33,7 @@ export { createAttachmentSendReceipt } from "../delivery/attachment-send-receipt
 export {
   createRetryEngine,
   createBlockRetryGuard,
+  classifySendError,
   isSafeToRetrySendError,
   AMBIGUOUS_SEND_OUTCOME_ERROR,
   EXPLICIT_SEND_REJECTION_ERROR,
@@ -74,6 +81,10 @@ export {
 export type {
   DeliveryStrategy,
   DeliveryAdapter,
+  DeliveryChunkSendInput,
+  DeliveryChunkSendOutcome,
+  DeliveryChunkSender,
+  DeliveryChunkManifest,
   DeliverToChannelOptions,
   ChunkDeliveryResult,
   DeliveryResult,

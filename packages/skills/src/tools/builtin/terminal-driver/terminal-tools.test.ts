@@ -61,6 +61,7 @@ const DEFAULT_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
   credentialPaths: [],
+  ephemeralWritablePaths: [],
   uid: "dedicated",
 };
 
@@ -134,6 +135,7 @@ interface FakeRegistry extends TerminalSessionRegistry {
   /** The sessionIds each `status` round-trip was called with. */
   statusCalls: string[];
   killCalls: string[];
+  terminateCalls: string[];
   sendTextCalls: SendTextCall[];
   sendKeyCalls: SendKeyCall[];
   resizeCalls: ResizeCall[];
@@ -160,6 +162,7 @@ function makeFakeRegistry(overrides?: {
   const readOptsCalls: Array<ReadOptions | undefined> = [];
   const statusCalls: string[] = [];
   const killCalls: string[] = [];
+  const terminateCalls: string[] = [];
   const sendTextCalls: SendTextCall[] = [];
   const sendKeyCalls: SendKeyCall[] = [];
   const resizeCalls: ResizeCall[] = [];
@@ -175,6 +178,7 @@ function makeFakeRegistry(overrides?: {
     readOptsCalls,
     statusCalls,
     killCalls,
+    terminateCalls,
     sendTextCalls,
     sendKeyCalls,
     resizeCalls,
@@ -188,7 +192,7 @@ function makeFakeRegistry(overrides?: {
       createCalls.push(req);
       capturedOwners.push({ method: "create", owner });
       if (overrides?.createImpl) return overrides.createImpl(req);
-      return { sessionId: "sess-1", allowId: req.allowId, cols: req.cols, rows: req.rows };
+      return { sessionId: req.sessionId ?? "sess-1", allowId: req.allowId, cols: req.cols, rows: req.rows };
     },
     async read(id: string, owner: SessionOwner, opts?: ReadOptions): Promise<TerminalView> {
       readCalls.push(id);
@@ -240,6 +244,12 @@ function makeFakeRegistry(overrides?: {
       killCalls.push(id);
       capturedOwners.push({ method: "kill", owner });
       listing = listing.filter((s) => s.sessionId !== id);
+    },
+    async terminateAndConfirm(id: string, owner: SessionOwner) {
+      terminateCalls.push(id);
+      capturedOwners.push({ method: "terminateAndConfirm", owner });
+      handles.delete(id);
+      return { ok: true as const, value: undefined };
     },
     // The public owner-scoped eviction entry the send_* tool
     // layer drives on a maxInteractions/wall_clock cap breach. Records the (id, owner,
@@ -294,6 +304,7 @@ function baseDeps(
     // rejected/evicted), so the existing delegation tests are unaffected. A
     // cap test injects createSessionCaps(limits, now) (or a spy double).
     caps: createSessionCaps(undefined, () => 1000),
+    prepareManagedWorkspaceGit: () => ({ ok: true, value: undefined }),
     ...overrides,
   };
 }
@@ -424,6 +435,480 @@ function makeCapsSpy(limits: SessionLimits | undefined, now: () => number): Sess
 // ---------------------------------------------------------------------------
 
 describe("terminal-tools — create gate + canonicalization + observability", () => {
+  it("exposes managed run and workspace lease handles as an optional paired create path", () => {
+    const tool = createTerminalSessionCreateTool(baseDeps(makeFakeRegistry()));
+    const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
+
+    expect(Object.keys(properties)).toEqual(expect.arrayContaining([
+      "managedRunId",
+      "workspaceLeaseId",
+    ]));
+  });
+
+  it("resolves paired managed handles to the leased root and durably binds the created terminal identity", async () => {
+    const rootProcessIdentity = { pid: 4123, startIdentity: "linux-proc-start-991" };
+    const registry = makeFakeRegistry({
+      createImpl: async (req) => ({
+        sessionId: req.sessionId!,
+        allowId: req.allowId,
+        cols: req.cols,
+        rows: req.rows,
+        rootProcessIdentity,
+      } as unknown as CreateResult),
+    });
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved",
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [{
+          executionAttachmentId: "execution-attachment_a",
+          sourcePath: "/srv/runtime/run-a.sock",
+          targetName: `attachment-${"a".repeat(32)}.sock`,
+          relayIdentity: "ab".repeat(32),
+        }],
+      })),
+      reserve: vi.fn(async () => ({ kind: "bound" })),
+      bind: vi.fn(async () => ({ kind: "bound" })),
+      release: vi.fn(async () => ({ kind: "released" })),
+    };
+    const eventBus = makeCapturingBus();
+    const managedTerminalEvents = { publish: vi.fn(async () => ({ ok: true as const, value: undefined })) };
+    const prepareManagedWorkspaceGit = vi.fn(() => ({ ok: true as const, value: undefined }));
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      eventBus,
+      managedBinding,
+      managedTerminalEvents,
+      managedAttachmentSandboxAvailable: true,
+      prepareManagedWorkspaceGit,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    const result = await tool.execute("call-managed", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never);
+
+    expect(managedBinding.resolve).toHaveBeenCalledWith({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      owner: { agentId: "agent-1", sessionKey: "" },
+    });
+    expect(prepareManagedWorkspaceGit).toHaveBeenCalledWith("/approved/workspaces/run-a");
+    expect(prepareManagedWorkspaceGit.mock.invocationCallOrder[0])
+      .toBeLessThan(managedBinding.reserve.mock.invocationCallOrder[0]!);
+    expect(registry.createCalls[0]).toMatchObject({
+      workspace: "/approved/workspaces/run-a",
+      cwd: "/approved/workspaces/run-a",
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+      executionAttachments: [{
+        executionAttachmentId: "execution-attachment_a",
+        sourcePath: "/srv/runtime/run-a.sock",
+        targetName: `attachment-${"a".repeat(32)}.sock`,
+        relayIdentity: "ab".repeat(32),
+      }],
+    });
+    expect(managedBinding.bind).toHaveBeenCalledWith({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      terminalSessionId: expect.any(String),
+      rootProcessIdentity,
+      owner: { agentId: "agent-1", sessionKey: "" },
+    });
+    expect(result.details).toMatchObject({
+      sessionId: expect.any(String),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      executionAttachments: [{
+        executionAttachmentId: "execution-attachment_a",
+        targetPath: `/run/comis/attachments/attachment-${"a".repeat(32)}.sock`,
+      }],
+    });
+    expect(JSON.stringify(result.details)).not.toContain("/srv/runtime/run-a.sock");
+    expect(JSON.stringify(result.details)).not.toContain("ab".repeat(32));
+    expect(eventBus.events.find((event) => event.event === "terminal:session_state")?.payload)
+      .toMatchObject({
+        sessionId: expect.any(String),
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+      });
+    expect(managedTerminalEvents.publish.mock.calls.map(([event]) => event)).toEqual([
+      {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+        terminalSessionId: expect.any(String),
+        transition: "created",
+      },
+      {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+        terminalSessionId: expect.any(String),
+        transition: "running",
+      },
+    ]);
+  });
+
+  it("retires a managed terminal when service launch admission is rejected", async () => {
+    const rootProcessIdentity = { pid: 4123, startIdentity: "linux-proc-start-991" };
+    const registry = makeFakeRegistry({
+      createImpl: async (req) => ({
+        sessionId: req.sessionId!,
+        allowId: req.allowId,
+        cols: req.cols,
+        rows: req.rows,
+        rootProcessIdentity,
+      }),
+    });
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+      reserve: vi.fn(async () => ({ kind: "bound" as const })),
+      bind: vi.fn(async () => ({ kind: "bound" as const })),
+      release: vi.fn(async () => ({ kind: "released" as const })),
+    };
+    const managedTerminalEvents = {
+      publish: vi.fn(async () => ({
+        ok: false as const,
+        error: new Error("managed terminal transition rejected: precondition_failed"),
+      })),
+    };
+    const caps = makeCapsSpy(undefined, () => 1000);
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+      managedTerminalEvents,
+      caps,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-managed-admission-rejected", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/managed terminal admission failed.*precondition_failed/u);
+
+    expect(managedTerminalEvents.publish).toHaveBeenCalledOnce();
+    expect(registry.terminateCalls).toHaveLength(1);
+    expect(managedBinding.release).toHaveBeenCalledOnce();
+    expect(caps.startSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it("retires a managed terminal when the lifecycle bridge is unavailable", async () => {
+    const registry = makeFakeRegistry({
+      createImpl: async (req) => ({
+        sessionId: req.sessionId!, allowId: req.allowId, cols: req.cols, rows: req.rows,
+        rootProcessIdentity: { pid: 4123, startIdentity: "linux-proc-start-991" },
+      }),
+    });
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a", workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a", canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+      reserve: vi.fn(async () => ({ kind: "bound" as const })),
+      bind: vi.fn(async () => ({ kind: "bound" as const })),
+      release: vi.fn(async () => ({ kind: "released" as const })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-managed-bridge-unavailable", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/managed terminal admission failed.*lifecycle bridge is unavailable/u);
+
+    expect(registry.terminateCalls).toHaveLength(1);
+    expect(managedBinding.release).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a managed launch before reservation when private Git preparation fails", async () => {
+    const registry = makeFakeRegistry();
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+      reserve: vi.fn(async () => ({ kind: "bound" as const })),
+      bind: vi.fn(async () => ({ kind: "bound" as const })),
+      release: vi.fn(async () => ({ kind: "released" as const })),
+    };
+    const logger = makeCapturingLogger();
+    const eventBus = makeCapturingBus();
+    const prepareManagedWorkspaceGit = vi.fn(() => ({
+      ok: false as const,
+      error: new Error("linked worktree administration is invalid"),
+    }));
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      logger,
+      eventBus,
+      managedBinding,
+      prepareManagedWorkspaceGit,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-managed-git-invalid", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(
+      /managed terminal workspace Git preparation failed: linked worktree administration is invalid/u,
+    );
+
+    expect(managedBinding.reserve).not.toHaveBeenCalled();
+    expect(registry.createCalls).toEqual([]);
+    expect(logger.logs).toContainEqual(expect.objectContaining({
+      level: "warn",
+      obj: expect.objectContaining({
+        errorKind: "precondition",
+        step: "managed-git-prepare",
+      }),
+    }));
+    expect(eventBus.events).toContainEqual(expect.objectContaining({
+      event: "terminal:spawn_failed",
+      payload: expect.objectContaining({ errorKind: "precondition" }),
+    }));
+  });
+
+  it("returns sandbox_unavailable before launch when approved attachments cannot be confined", async () => {
+    const registry = makeFakeRegistry();
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [{
+          executionAttachmentId: "execution-attachment_a",
+          sourcePath: "/srv/runtime/run-a.sock",
+          targetName: `attachment-${"a".repeat(32)}.sock`,
+          relayIdentity: "ab".repeat(32),
+        }],
+      })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+      managedAttachmentSandboxAvailable: false,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-managed-unavailable", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/\[sandbox_unavailable\]/u);
+    expect(registry.createCalls).toEqual([]);
+  });
+
+  it("returns sandbox_unavailable for a managed terminal when no sandbox provider exists", async () => {
+    const registry = makeFakeRegistry();
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      detectProvider: () => undefined,
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-managed-no-provider", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/\[sandbox_unavailable\]/u);
+    expect(managedBinding.resolve).not.toHaveBeenCalled();
+    expect(registry.createCalls).toEqual([]);
+  });
+
+  it("rejects an unpaired managed handle before spawning a terminal", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry));
+
+    await expect(tool.execute("call-unpaired", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+    } as never)).rejects.toThrow(/managedRunId.*workspaceLeaseId|workspaceLeaseId.*managedRunId/i);
+    expect(registry.createCalls).toHaveLength(0);
+  });
+
+  it("rejects redaction sentinels before resolving managed terminal authority", async () => {
+    const registry = makeFakeRegistry();
+    const managedBinding = {
+      resolve: vi.fn(async () => ({ kind: "rejected" as const, reason: "managed_run_not_found" })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-redacted-managed-handles", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "[REDACTED]",
+      workspaceLeaseId: "[REDACTED]",
+    } as never)).rejects.toThrow(/managed terminal handles are invalid.*fresh launch plan/iu);
+    expect(managedBinding.resolve).not.toHaveBeenCalled();
+    expect(registry.createCalls).toHaveLength(0);
+  });
+
+  it("kills a newly-created terminal when durable managed-run binding is refused without releasing its lease", async () => {
+    const registry = makeFakeRegistry({
+      createImpl: async (req) => ({
+        sessionId: req.sessionId!,
+        allowId: req.allowId,
+        cols: req.cols,
+        rows: req.rows,
+        rootProcessIdentity: { pid: 4123, startIdentity: "linux-proc-start-991" },
+      }),
+    });
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved",
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+      reserve: vi.fn(async () => ({ kind: "bound" })),
+      bind: vi.fn(async () => ({ kind: "rejected", reason: "ownership_mismatch" })),
+      release: vi.fn(async () => ({ kind: "released" })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-bind-refused", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/managed terminal binding/i);
+
+    expect(registry.terminateCalls).toHaveLength(1);
+    expect(managedBinding.bind).toHaveBeenCalledOnce();
+    expect(managedBinding.release).toHaveBeenCalledOnce();
+  });
+
+  it("reserves the durable terminal identity before spawning and refuses release races", async () => {
+    const rootProcessIdentity = { pid: 4123, startIdentity: "linux-proc-start-991" };
+    const order: string[] = [];
+    const registry = makeFakeRegistry({
+      createImpl: async (req) => {
+        order.push("spawn");
+        return {
+          sessionId: req.sessionId!,
+          allowId: req.allowId,
+          cols: req.cols,
+          rows: req.rows,
+          rootProcessIdentity,
+        };
+      },
+    });
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+      reserve: vi.fn(async () => {
+        order.push("reserve");
+        return { kind: "bound" as const };
+      }),
+      bind: vi.fn(async () => ({ kind: "rejected" as const, reason: "release_reserved" })),
+      release: vi.fn(async () => ({ kind: "released" as const })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-release-race", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/release_reserved/u);
+
+    expect(order).toEqual(["reserve", "spawn"]);
+    expect(registry.terminateCalls).toHaveLength(1);
+    expect(managedBinding.release).toHaveBeenCalledOnce();
+  });
+
+  it("delegates managed retirement to the registry without duplicate lifecycle publication", async () => {
+    const handles = new Map<string, SessionHandle>([["terminal-session_a", {
+      sessionId: "terminal-session_a",
+      allowId: "bash",
+      command: "/bin/bash",
+      status: "running",
+      cols: 80,
+      rows: 24,
+      lastActivity: 1,
+      startedAt: 1,
+      owner: { agentId: "agent-1", sessionKey: "" },
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    }]]);
+    const registry = makeFakeRegistry({ handles });
+    const managedTerminalEvents = { publish: vi.fn(async () => undefined) };
+    const tool = createTerminalSessionKillTool(baseDeps(registry, { managedTerminalEvents } as unknown as Partial<TerminalToolDeps>));
+
+    await tool.execute("kill-managed", { sessionId: "terminal-session_a" });
+
+    expect(registry.killCalls).toEqual(["terminal-session_a"]);
+    expect(managedTerminalEvents.publish).not.toHaveBeenCalled();
+  });
+
   it("rejects a non-allowlisted command with permission_denied and never spawns", async () => {
     const registry = makeFakeRegistry();
     const tool = createTerminalSessionCreateTool(baseDeps(registry));
@@ -593,6 +1078,7 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
       network: "listed-hosts",
       hosts: ["api.example.com"],
       credentialPaths: ["~/.claude"],
+      ephemeralWritablePaths: [],
       uid: "dedicated",
     };
     const registry = makeFakeRegistry();
@@ -636,6 +1122,7 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
       filesystem: "workspace",
       network: "none",
       credentialPaths: [],
+      ephemeralWritablePaths: [],
       uid: "dedicated",
     };
     const registry = makeFakeRegistry();
@@ -649,7 +1136,7 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
     const rawParams: Record<string, unknown> = {
       allowId: "bash",
       command: realBashPath(),
-      scope: { filesystem: "full", network: "full", credentialPaths: ["~/.claude"], uid: "daemon" },
+      scope: { filesystem: "full", network: "full", credentialPaths: ["~/.claude"], ephemeralWritablePaths: [], uid: "daemon" },
     };
     await tool.execute("call-1", rawParams);
 
@@ -854,6 +1341,32 @@ describe("terminal-tools — the read tool delegates to boundedReadDigest", () =
     expect(view.screen, "the raw secret must be redacted (redact preserved)").not.toContain(secret);
     expect(view.screen).toContain("[REDACTED]");
     expect(view.screen, "the wrap (prompt-injection defense) must be preserved").toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+  });
+
+  it("an exited terminal tail is bounded, ANSI-cleaned, redacted, and wrapped", async () => {
+    const secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({
+        screen: "[exited]",
+        cursor: { x: 0, y: 0 },
+        cols: 80,
+        rows: 24,
+        alt: false,
+        alive: false,
+        exitCode: 1,
+        exitTail: `\u001b[31mreporter failed ${secret}\u001b[0m`,
+      } as unknown as TerminalView),
+    });
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView & { exitCode?: number; exitTail?: string };
+    expect(view.exitCode).toBe(1);
+    expect(view.exitTail).toContain("reporter failed");
+    expect(view.exitTail).not.toContain(secret);
+    expect(view.exitTail).not.toContain("\u001b");
+    expect(view.exitTail).toContain("[REDACTED]");
+    expect(view.exitTail).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
   });
 
   it("the read-tool description names the digest default", () => {

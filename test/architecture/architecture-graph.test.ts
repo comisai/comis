@@ -15,7 +15,7 @@
  *
  * Also asserts:
  *   - test/architecture/tsconfig.madge.json `paths` block has exactly
- *     14 entries (12 workspace packages + 2 skills subpaths; `web` and
+ *     15 entries (13 workspace packages + 2 skills subpaths; `web` and
  *     `comis` umbrella excluded). Regression coverage; the count grew
  *     from 12 to 14 with the skills package split.
  *
@@ -67,6 +67,7 @@ const WORKSPACE_PACKAGES = [
   "infra",
   "memory",
   "scheduler",
+  "capability-service-sdk",
   "skills",
   "agent",
   "channels",
@@ -118,6 +119,8 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // One-arrow (observability never imports memory): no cycle.
   memory: new Set(["shared", "core", "observability"]),
   scheduler: new Set(["shared", "core"]),
+  // Protocol schemas are a leaf package with no @comis/* dependency.
+  "capability-service-sdk": new Set(),
   // skills: no infra edge. Logger type imports from @comis/core; isDocker
   // lives at packages/core/src/runtime/is-docker.ts.
   //
@@ -134,7 +137,7 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // shared/core/observability/scheduler (none of which reach skills — see the
   // agent entry's "no skills entry here" note), so skills → agent introduces no
   // cycle (verified via cycles + cycles:refs).
-  skills: new Set(["shared", "core", "observability", "agent"]),
+  skills: new Set(["shared", "core", "observability", "agent", "capability-service-sdk"]),
   // agent: structurally references skills' types only (comments) — no actual
   // import edge, so no skills entry here. No @comis/infra edge: logger
   // contract types canonically live in @comis/core. No @comis/memory edge:
@@ -182,6 +185,7 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
     "channels",
     "orchestrator",
     "gateway",
+    "capability-service-sdk",
   ]),
 };
 
@@ -238,7 +242,7 @@ function readTsconfigRefs(pkg: string): Set<string> {
 }
 
 describe("architecture-graph -- dual-graph alignment", () => {
-  it("test/architecture/tsconfig.madge.json paths block has exactly 14 @comis/* entries", () => {
+  it("test/architecture/tsconfig.madge.json paths block has exactly 15 @comis/* entries", () => {
     const tsconfigMadge = JSON.parse(
       readFileSync(TSCONFIG_MADGE_PATH, "utf8"),
     ) as {
@@ -248,8 +252,8 @@ describe("architecture-graph -- dual-graph alignment", () => {
     const keys = Object.keys(paths);
     expect(
       keys.length,
-      "tsconfig.madge.json must have exactly 14 paths entries (12 workspace packages + 2 skills subpaths)",
-    ).toBe(14);
+      "tsconfig.madge.json must have exactly 15 paths entries (13 workspace packages + 2 skills subpaths)",
+    ).toBe(15);
     for (const k of keys) {
       expect(
         k.startsWith("@comis/"),

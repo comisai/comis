@@ -66,6 +66,8 @@ See [Requirements](/installation/requirements) for platform details.
     New setups default to `security.storage: encrypted`. The wizard stores
     collected credentials in `~/.comis/secrets.db` and writes the
     `SECRETS_MASTER_KEY` to `~/.comis/.env` with owner-only permissions.
+    The generated `config.yaml`, `.env`, and credential database are created
+    with owner-only file permissions (`0600`), inside owner-only directories.
 
     Back up `~/.comis/.env` to a secure location. Comis has no key escrow:
     losing the master key makes the encrypted credential database unreadable.

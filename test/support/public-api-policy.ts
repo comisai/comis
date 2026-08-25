@@ -797,6 +797,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── capability-service self-declared limits ──
+      // The limits schema and its inferred type are reached through the instance
+      // and definition config schemas that embed `limits:
+      // CapabilityServiceLimitsSchema`, and through
+      // resolveEffectiveCapabilityServiceLimits (which IS consumed by the daemon
+      // capability-service setup) — never by a direct named import. They are the
+      // documented config contract for the `limits` block in
+      // docs/reference/config-yaml.mdx.
+      "CapabilityServiceLimitsSchema",
+      "CapabilityServiceLimits",
       // ── tool.invoke surface + ResultRef (interface-first) ──
       // TOOL_CAPABILITY_MAP/TOOL_ROUTE_MAP are the single source of truth for
       // the tool.invoke surface; ResultRef + its pure threshold/GC math are the
@@ -1825,6 +1835,26 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // (composed into `API_CONTRACTS_ORDERED` intra-package — the walker
       // skips self-imports).
       "OBSERVABILITY_CONTRACTS",
+      // Operator surface over installed capability services and their managed
+      // runs. The four managed-run contracts and four capability-service
+      // contracts have in-repo consumers via
+      // packages/daemon/src/api/{managed-run,capability-service}-handlers.ts
+      // (each used as a computed property key). The two aggregator arrays are
+      // composed into API_CONTRACTS_ORDERED intra-package, which the walker
+      // skips as a self-import — the OBSERVABILITY_CONTRACTS rationale above.
+      "MANAGED_RUNS_CONTRACTS",
+      "CAPABILITY_SERVICES_CONTRACTS",
+      // The response schemas are the documented wire shape of that surface, the
+      // same rationale as IncidentReportSchema: an external operator client
+      // validates what the daemon returned before rendering it, and the daemon
+      // side reaches these through the contract objects rather than by name.
+      "ManagedRunFreshnessSchema",
+      "ManagedRunSummarySchema",
+      "ManagedRunDetailSchema",
+      "ManagedRunUnavailableCapabilitySchema",
+      "CapabilityServiceInstanceStateSchema",
+      "CapabilityServiceInstanceSummarySchema",
+      "ManagedAttentionSummarySchema",
       // Workspace-umbrella contracts (36 methods spanning 5 handler-factory
       // files that share the WorkspaceApiDeps cluster slice):
       //   - workspace-handlers.ts  (12 methods)
@@ -2309,6 +2339,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OutwardSendBeginInput",
       "ReconcileSendQuery",
       "ReconcileSendOutcome",
+      // Durable delivery-recovery port shapes, following the
+      // OutwardSendLedgerPort precedent directly above. Each names a field or
+      // parameter in a port that orchestrator and daemon implement, but every
+      // one is structurally satisfiable — an attachment union, a
+      // `readonly string[]` chunk manifest, a two-field response ref, a chunk
+      // sender callback — so implementers match the shape without importing
+      // the name and the consumer scan sees no importer. The names are the
+      // documented contract regardless; dropping them from the barrel would
+      // leave the port surface describable only by duplicating its shapes.
+      "AnnouncementDeadLetterAttachment",
+      "AnnouncementTextChunkManifest",
+      "AnnouncementToolResultResponseRef",
+      "DeliveryChunkSender",
+      "DeliveryChunkManifest",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,

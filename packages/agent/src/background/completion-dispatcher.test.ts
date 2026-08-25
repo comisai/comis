@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
-import { TypedEventBus, createConversationRef, type BackgroundTaskOrigin } from "@comis/core";
+import { TypedEventBus, createConversationRef } from "@comis/core";
+import type { BackgroundTaskOrigin } from "./background-task-types.js";
 import { createCompletionDispatcher, STATES } from "./completion-dispatcher.js";
 import type { BackgroundTask } from "./background-task-types.js";
 
@@ -39,6 +40,9 @@ function makeOrigin(): BackgroundTaskOrigin {
     trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
+    workspacePolicyHash: "a".repeat(64),
+    capturedToolIds: [],
+    capturedCapabilityViewHash: "b".repeat(64),
   };
 }
 

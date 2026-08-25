@@ -3,6 +3,38 @@
 
 // Schemas (for direct validation or extension)
 export { AppConfigSchema } from "./schema.js";
+export {
+  CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+  CapabilityServiceScopeSchema,
+  CapabilityServiceEvidencePolicySchema,
+  CapabilityServiceDefinitionSchema,
+  CapabilityServiceInstanceConfigSchema,
+  CapabilityServiceLimitsSchema,
+  ManagedToolActionClassificationSchema,
+  ManagedToolBehaviorSchema,
+  ManagedToolBindingSchema,
+  buildCapabilityServiceActivationPlan,
+  resolveEffectiveCapabilityServiceLimits,
+} from "./capability-service-contributions.js";
+export type {
+  CapabilityServiceScope,
+  CapabilityServiceEvidencePolicy,
+  CapabilityServiceDefinition,
+  CapabilityServiceLimits,
+  ManagedToolActionClassification,
+  ManagedToolBehavior,
+  ManagedToolBinding,
+  PlannedManagedToolBinding,
+  CapabilityServiceInstanceConfig,
+  CapabilityServiceContributionSection,
+  CapabilityServiceContributionRegistration,
+  PlannedCapabilityServiceDefinition,
+  PlannedCapabilityServiceInstance,
+  CapabilityServiceActivationPlan,
+  CapabilityServicePlanError,
+} from "./capability-service-contributions.js";
+export { CapabilityServicesConfigSchema } from "./schema-capability-services.js";
+export type { CapabilityServicesConfig } from "./schema-capability-services.js";
 export { IdentityConfigSchema } from "./schema-identity.js";
 export type { IdentityConfig } from "./schema-identity.js";
 export { ApprovalsConfigSchema, ApprovalRuleSchema, checkApprovalsConfig } from "./schema-approvals.js";

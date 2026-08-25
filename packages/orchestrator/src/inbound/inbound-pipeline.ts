@@ -147,6 +147,8 @@ export interface InboundPipelineDeps {
    * when absent, button callbacks fall through to the normal pipeline.
    */
   interactiveCallbackRouter?: InteractiveCallbackRouter;
+  /** Owner-scoped durable attention reply binding before ordinary chat activation. */
+  managedAttentionReplies: import("@comis/core").ManagedAttentionReplyPort | undefined;
   /** Deliver a graph report after the signed callback router validates its owner. */
   onGraphReportRequest?: (
     graphId: string,

@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("node:fs", () => ({
+  chmodSync: vi.fn(),
   existsSync: vi.fn(() => false),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
@@ -65,7 +66,7 @@ vi.mock("../../util/offline-secrets-store.js", () => ({
   offlineSecretSet: vi.fn(() => ({ ok: true, value: undefined })),
 }));
 
-import { existsSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { AppConfigSchema, loadEnvFile } from "@comis/core";
 import { offlineSecretSet } from "../../util/offline-secrets-store.js";
 import type { ProviderConfig, WizardPrompter, WizardState, Spinner } from "../index.js";
@@ -159,6 +160,21 @@ describe("writeConfigStep", () => {
     expect(renameSync).toHaveBeenCalledWith(
       expect.stringContaining(".tmp"),
       expect.stringContaining("config.yaml"),
+    );
+  });
+
+  it("creates the atomic config temp file with owner-only permissions", async () => {
+    await writeConfigStep.execute(populatedState(), createMockPrompter());
+
+    const tempWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.endsWith("config.yaml.tmp"),
+    );
+
+    expect(tempWriteCall).toBeDefined();
+    expect(tempWriteCall?.[2]).toEqual({ encoding: "utf-8", mode: 0o600 });
+    expect(chmodSync).toHaveBeenCalledWith(
+      expect.stringContaining("config.yaml.tmp"),
+      0o600,
     );
   });
 

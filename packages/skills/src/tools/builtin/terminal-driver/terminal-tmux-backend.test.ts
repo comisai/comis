@@ -78,6 +78,7 @@ function makeFake(over: { hasSession?: boolean } = {}) {
     tmuxPath: "/usr/bin/tmux",
     socketPath: SOCK,
     hasSession: () => over.hasSession ?? false,
+    queryRootPid: () => 9191,
     runOneShot: (argv) => oneShot.push(argv),
     spawnAttachPty: (name) => {
       attachName = name;
@@ -183,12 +184,23 @@ describe("terminal-tmux-backend — pure command builders (every command -S the 
     // fallback. And it isolates faults: killing one drive's server cannot take down another's.
     const a = tmuxSocketPathForSession("/data/x/terminal-worker", "sess-aaa");
     const b = tmuxSocketPathForSession("/data/x/terminal-worker", "sess-bbb");
-    expect(a).toBe(resolve("/data/x/terminal-worker", "tmux-sess-aaa.sock"));
+    expect(a).toMatch(/^\/data\/x\/terminal-worker\/t-[A-Za-z0-9_-]{22}\.sock$/u);
+    expect(a).toBe(tmuxSocketPathForSession("/data/x/terminal-worker", "sess-aaa"));
     expect(a).not.toBe(b);
+    expect(a).not.toContain("sess-aaa");
     expect(a.startsWith("/tmp")).toBe(false);
     // Must stay well under the ~108-char AF_UNIX sun_path limit for a real uuid session id.
     const real = tmuxSocketPathForSession("/home/comis/.comis/terminal-worker", "551429eb-ddb9-4666-b800-8b6a17e1324a");
     expect(real.length).toBeLessThan(108);
+  });
+
+  it("keeps isolated deployment socket paths below the Linux AF_UNIX limit", () => {
+    const socket = tmuxSocketPathForSession(
+      "/home/service-user/campaigns/capability-validation/comis-data/terminal-worker",
+      "551429eb-ddb9-4666-b800-8b6a17e1324a",
+    );
+
+    expect(Buffer.byteLength(socket, "utf8")).toBeLessThan(108);
   });
 
   it("buildTmuxHasSessionArgv probes by name on the same socket (the re-attach decision)", () => {
@@ -236,6 +248,7 @@ describe("terminal-tmux-backend — createTmuxBackend create-vs-re-attach decisi
     const f = makeFake({ hasSession: false });
     const handle = createTmuxBackend(f.deps());
     expect(handle?.pid).toBe(4242); // the attach pty's pid
+    expect(handle?.rootPid).toBe(9191); // the detached pane's process, not the attach client
     // It created the detached session under the deterministic name, on the -S socket.
     const created = f.oneShot.find((a) => a.includes("new-session"));
     expect(created).toBeDefined();

@@ -30,8 +30,7 @@ if rig_is_local; then
   RIG_HELPER="$HERE/_rig.sh"
   KIT_DIR="$HERE"
 else
-  RIG_HELPER="/root/_rig.sh"
-  KIT_DIR="/root"
+  RIG_HELPER="$KIT_DIR/_rig.sh"
   VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
   if ! out="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$VPS" 'echo ok' 2>&1)"; then
     fail "ssh" "$VPS unreachable: $(printf '%s' "$out" | tail -1)"
@@ -52,11 +51,13 @@ cat >"$FACTS_SCRIPT" <<'FACTS'
 if [ "${RIG_MODE:-remote}" = local ]; then
   dpid="$(rig_daemon_pid)"
   echo "service=$([ -n "$dpid" ] && echo active || echo inactive)"
-  echo "unitexec=$(ps -o command= -p "${dpid:-0}" 2>/dev/null | grep -oE '[^ ]*daemon\.js' | head -1)"
+  unitexec="$(ps -o command= -p "${dpid:-0}" 2>/dev/null | grep -oE '[^ ;}]+\.m?js' | head -1)"
 else
   echo "service=$(systemctl is-active "$SERVICE" 2>/dev/null)"
-  echo "unitexec=$(systemctl show -p ExecStart "$SERVICE" 2>/dev/null | grep -oE '[^ ]*daemon\.js' | head -1)"
+  unitexec="$(systemctl show -p ExecStart "$SERVICE" 2>/dev/null | grep -oE '[^ ;}]+\.m?js' | head -1)"
 fi
+echo "unitexec=$unitexec"
+echo "unitwrapper=$(rig_entry_uses_daemon_dist "$unitexec" && echo ok || echo unrelated)"
 echo "pkg=$([ -f "$PKG/node_modules/@comis/daemon/dist/daemon.js" ] || [ -f "$PKG/packages/daemon/dist/daemon.js" ] && echo ok || echo missing)"
 echo "kit=$([ -f "$KIT_DIR/_rig.mjs" ] && [ -f "$KIT_DIR/revoke.mjs" ] && echo ok || echo missing)"
 echo "rigenv=$([ -f "$RIG_ENV" ] && echo ok || echo missing)"
@@ -74,10 +75,17 @@ if [ "$(get service)" = "active" ]; then
 else
   fail "service" "$(rig_is_local && echo "no daemon process — ./restart-daemon.sh" || echo "$SERVICE is '$(get service)'")"
 fi
-case "$(get unitexec)" in
+unitexec="$(get unitexec)"
+case "$unitexec" in
 "$PKG"/*) pass "pkg-path" "daemon entry is under \$PKG" ;;
 "") warn "pkg-path" "no daemon entry found for $SERVICE" ;;
-*) fail "pkg-path" "daemon runs $(get unitexec) — NOT under PKG=$PKG (.live-env points at the wrong install)" ;;
+*)
+  if [ "$(get unitwrapper)" = "ok" ]; then
+    pass "pkg-path" "service wrapper imports the daemon distribution under \$PKG"
+  else
+    fail "pkg-path" "daemon runs $unitexec — NOT under PKG=$PKG (.live-env points at the wrong install)"
+  fi
+  ;;
 esac
 [ "$(get pkg)" = "ok" ] && pass "install" "daemon dist present at \$PKG" || fail "install" "no daemon dist under $PKG — $(rig_is_local && echo 'run pnpm build' || echo 'run install-vps.sh')"
 [ "$(get kit)" = "ok" ] && pass "kit" "helpers present ($KIT_DIR/_rig.mjs, revoke.mjs)" || fail "kit" "kit helpers missing at $KIT_DIR — run deploy-scripts.sh"
@@ -102,7 +110,7 @@ if [ -n "${GWTOKEN:-}" ] && [ "${boxlen:-0}" -ge 32 ] 2>/dev/null; then
 fi
 
 # THE load-bearing probe: the token the rig helpers actually use must open a live RPC.
-rpc="$(remote_root "node '$KIT_DIR/revoke.mjs' capabilities.introspect 2>/dev/null" | head -c 40)"
+rpc="$(remote_root "RIG_ENV='$RIG_ENV' node '$KIT_DIR/revoke.mjs' capabilities.introspect 2>/dev/null" | head -c 40)"
 case "$rpc" in
 RESULT:*) pass "rpc-token" "capabilities.introspect answers (rig token live)" ;;
 ERROR:*) fail "rpc-token" "RPC rejected — token rotated/wrong? re-run deploy-scripts.sh (auto-fetch), then retry" ;;

@@ -46,12 +46,15 @@ data directory.
 │   └── trace-exports/       # comis trace export output — one comis-trace-<sid8>-<ts>/ dir per export
 ├── workspace-<agentId>/     # named-agent workspaces (one per extra agent)
 ├── terminal-drive/          # durable terminal-driver state (default; absent only with drive.durable: false)
-│   └── <agentId>/journals/<sessionId>.json
+│   └── <agentId>/
+│       ├── journals/<sessionId>.json
+│       └── descriptors/<sessionId>.json # recoverable session identity
+├── managed-runs/private/   # owner-private capability-service content (default path)
 ├── models/                  # auto-downloaded ML model caches
 │   └── whisper/             # local STT whisper model (downloaded once on first use, reused)
 ├── agents/                  # per-agent RPC state (subagent results, etc.)
 ├── background-tasks/        # background task state files
-├── skills/                  # seeded skill library — bundled claude-code/codex/skill-creator skills (re-seeded on version change) + any added skills
+├── skills/                  # seeded bundled skill library plus operator-added skills
 │   └── <name>/SKILL.md      # one dir per skill (the agent auto-discovers these by description)
 ├── identity/
 │   └── device.json          # Ed25519 device identity (auto-generated)
@@ -72,6 +75,7 @@ Some entries only appear under specific conditions.
 - `workspace/trace-exports/` — created only after the **first** `comis trace export` (or an owner `/export-trajectory`); each export writes one `comis-trace-<sid8>-<ts>/` directory under the agent's workspace. Absent until then.
 - Named workspaces like `workspace-myagent/` — appear only when you define more than one agent.
 - `terminal-drive/` — the per-agent **durable** terminal drive-state journals. A durable drive is the **default** (`drive.durable: true`), so this appears whenever an agent runs a terminal drive; absent only for an explicit `drive.durable: false` (non-durable) drive or on a tmux-less host.
+- `managed-runs/private/` — appears only after an enabled capability service creates owner-private managed-run content. A custom `capabilityServices.privateContentDirectory` replaces this default path.
 - `models/whisper/` — created only after the **first** voice transcription that uses the keyless in-process local STT engine (when `integrations.media.transcription.provider` resolves to `local` without a `local.baseUrl` server). Absent on a fresh install and whenever local STT never runs.
 - `models/tts/` — created only after the **first** voice reply that uses the keyless in-process offline TTS engine (when `integrations.media.tts.provider` resolves to `local`/`piper`). A separate subdir from `models/whisper/`. Absent on a fresh install and whenever local TTS never runs.
 </Note>
@@ -90,6 +94,8 @@ Your main configuration file. The daemon reads it at every startup. You edit thi
 ### `config.last-good.yaml`
 
 A copy of `config.yaml` snapshotted after every successful daemon startup. If the daemon crashes on boot, this file lets you roll back.
+
+Before copying, the daemon refuses configurations containing plaintext secrets. Valid 64-hex SHA-256 pins under `agents.*.skills.terminal.allow[].match.hash` are integrity metadata rather than credentials, so they remain in the recovery snapshot; secret-shaped or malformed values in the same field are still rejected.
 
 **Written by:** the daemon automatically, after logging "Comis daemon started".
 **Safe to delete?** Yes. The next successful start re-creates it. You lose the ability to roll back until then.
@@ -127,6 +133,18 @@ Never commit `.env` to version control. It contains unencrypted credentials. Com
 ### `memory.db`
 
 The main SQLite database. It stores conversation sessions, long-term memory entries, delivery queue state, observability rows, DAG context engine tables, embedding cache, and more. This is the most important file in the data directory.
+
+Capability-service managed runs also keep their durable state transitions,
+content-free report/evidence indexes, attention and operation records,
+continuation claims, workspace leases, execution attachments, and managed
+terminal bindings here. Each execution attachment retains its filesystem
+identity and public relay identity so restart recovery and terminal launch use
+the same run-bound authority. A continuation execution failure reduces its exact
+accepted report interval to `unknown` and settles that interval without immediate
+replay. The same SQLite transaction records whether that reduced interval must
+settle as `completed` or `failed`, so restart recovery cannot recompute or change
+the outcome. A later accepted report advances the cursor and schedules the next
+continuation; an abandoned claim remains recoverable after restart.
 
 The observability rows live in the `obs_diagnostics` table, grouped by a `category` label. Among them, `model_health` is a one-shot diagnostic recorded once per boot that captures the daemon's load-level recall signals — whether an embedding provider is available, whether the GGUF reranker loaded, and whether the reranker model is present on disk. It carries booleans only (no model paths, no secrets) and lets the system health lens explain why recall was degraded on a given daemon without grepping the log.
 
@@ -234,6 +252,12 @@ that scope.
 | **RAG memory** | `memory_*` | **Durable.** Distilled facts learned from conversations. Cleared per-session via `comis sessions reset --memory` (deletes paired + LCD-distilled memories by `source_session_key` and unlinks consolidated observations; `--purge-derived` also purges derived observations). |
 | **SDK session JSONL** | `~/.comis/workspace/sessions/.../<key>.jsonl` | **Disposable and owner-only (`0600`)** — the SDK's per-session working transcript after mandatory secret redaction. Existing nested session artifacts are hardened at daemon startup. Routinely deleted by the operator (housekeeping) and wiped by `comis sessions reset`. |
 
+Secret redaction preserves exact, fixed-shape runtime identities needed for replay,
+including conversation references and Comis-minted managed-run/workspace-lease
+handles. Those handles already appear in the owner-only launch-plan result and are
+not service credentials; credential-shaped values under the same field names are
+still redacted.
+
 <Note>
 The SDK session JSONL is **disposable**. Deleting it directly (for any reason — operator housekeeping, `rm`, daemon restart) is always treated as "continue": the LCD store keeps its full history and appends the fresh transcript as a continuation. The daemon cannot distinguish disk-space housekeeping from a deliberate reset, so it never infers forget from a file deletion — it always continues. To perform an explicit reset, use `comis sessions reset` which clears both layers atomically.
 </Note>
@@ -244,11 +268,11 @@ The SDK session JSONL is **disposable**. Deleting it directly (for any reason �
 
 ```bash
 # Reset a conversation (clears LCD history + session transcript — irreversible):
-comis sessions reset <sessionKey> --yes
+comis sessions reset <sessionKey> --tenant <tenantId> --agent <agentId> --yes
 # Also clear RAG memories for this session (the full-forget path):
-comis sessions reset <sessionKey> --memory --yes
+comis sessions reset <sessionKey> --tenant <tenantId> --agent <agentId> --memory --yes
 # Nuclear forget — also purge consolidated observations derived from this session:
-comis sessions reset <sessionKey> --memory --purge-derived --yes
+comis sessions reset <sessionKey> --tenant <tenantId> --agent <agentId> --memory --purge-derived --yes
 ```
 
 `sessions reset` clears two layers atomically: the LCD lossless-store history (dag mode) and the daemon sessionStore working transcript (both modes). A follow-up turn has no prior context regardless of which context engine the session uses.
@@ -257,6 +281,25 @@ See [CLI Reference](/reference/cli#comis-sessions) for the full command referenc
 
 **Written by:** the daemon continuously during operation.
 **Safe to delete?** Deleting it erases all conversation history, stored memories, pending deliveries, and cached embeddings. The daemon will recreate an empty database on next start, but you lose all data permanently.
+
+---
+
+### `managed-runs/private/`
+
+Private capability-service activation descriptors, report bodies, evidence bodies,
+and attention content. The path is relative to the data directory and is selected
+by `capabilityServices.privateContentDirectory`; `managed-runs/private` is the
+default. Comis creates the root and every scope directory with owner-only `0700`
+permissions. Scope and body filenames are SHA-256-derived, while `memory.db`
+stores the owner-scoped content-free index, content hash, byte length, retention,
+and relative path.
+
+**Written by:** linked capability-service activation, report, evidence, and
+attention flows.
+
+**Safe to delete?** No while managed runs remain active or recoverable. Missing or
+hash-mismatched bodies fail closed as unavailable evidence, so preserve this tree
+together with `memory.db` when backing up or restoring managed-run state.
 
 ---
 
@@ -370,9 +413,9 @@ Output of [`comis trace export`](/operations/incident-bundle) and the owner `/ex
 
 ### `terminal-drive/`
 
-Durable drive-state journals for the [terminal-driver](/agent-tools/terminal-driver), written **only** when an agent runs a durable drive (`drive.durable: true`). Each journal lives at `terminal-drive/<agentId>/journals/<sessionId>.json` — one small JSON file per driven session, beside (but distinct from) the agent's persistent `projects/` working directory under `workspace/`.
+Durable drive-state journals for the [terminal-driver](/agent-tools/terminal-driver), written **only** when an agent runs a durable drive (`drive.durable: true`). Each journal lives at `terminal-drive/<agentId>/journals/<sessionId>.json` — one small JSON file per driven session, beside (but distinct from) the agent's persistent `projects/` working directory under `workspace/`. A matching content-free reattach descriptor lives under `terminal-drive/<agentId>/descriptors/` only while the session remains recoverable. Descriptor updates use a flushed temporary file, atomic rename, and directory flush; a failed replacement therefore leaves the prior descriptor available for cleanup. A normal durable exit retires that descriptor immediately; a managed exit retains it until named tmux termination, local run/lease/terminal retirement, and descriptor deletion are all durably confirmed.
 
-The journal is what lets a long autonomous drive **survive a daemon restart**: a durable drive launches the driven CLI inside a detached tmux server that outlives the daemon, and the journal records the compact drive state — the objective, the last screen classification, the prompts already answered, and the steps tried — so on restart the driver **re-attaches to the live tmux session and resumes** instead of starting over or re-answering prompts. A genuinely-gone session is reported as failed with its journal preserved.
+The journal is what lets a long autonomous drive **survive a daemon restart**: a durable drive launches the driven CLI inside a detached tmux server that outlives the daemon, and the journal records the compact drive state — the objective, the last screen classification, the prompts already answered, and the steps tried — so on restart the driver **re-attaches to the live tmux session and resumes** instead of starting over or re-answering prompts. Managed recovery also requires the live pane PID and process-start identity to exactly match the descriptor. Missing or mismatched identity is kept only for safe cleanup and is never re-attached as the original run. A genuinely-gone session is reported as failed with its journal preserved.
 
 The journal is **content-free and secret-redacted** (no captured terminal output, no message bodies, no credentials — secrets are scrubbed before anything is recorded), written atomically with mode `0o600` inside a `0o700` per-agent directory. It is reaped at the session's end of life.
 
@@ -489,12 +532,28 @@ Because it carries the gateway token, the handle is written with mode `0o600` (o
 
 ### `dead-letters.jsonl`
 
-A JSONL **snapshot** of announcement-delivery failures that exhausted in-process retries (channel down, bot blocked, etc.), plus any parked parent-decision reservations. The delivery system replays these on provider recovery and expires entries after one hour.
+A JSONL **snapshot** of retained announcement-delivery failures, active producer ownership, parked parent-decision reservations, and bounded evidence for invalid rows. Active ownership records carry the authoritative session, tool-result, or graph producer identity so restart recovery can remove retired producers without inventing a completion. On provider recovery the delivery system replays only entries whose outcome is safe to retry. Exhausted, expired, ambiguous, and invalid records remain parked until an operator records a decision with `comis quarantine`.
 
 The file tracks the queue rather than accumulating: every change rewrites it atomically, and it is **removed** as soon as the queue drains to zero. It therefore exists only while something is actually pending — if the daemon logged a quarantine WARN and this file is absent, the quarantine has since **resolved**, not vanished. Look for the matching resolution line (`Committed dead-letter operation removed without replay`, or `Dead-letter entry delivered successfully`) rather than treating the announcement as lost.
 
+Ledgerless replay guards are stored separately under
+`dead-letters.jsonl.terminal-decisions/`. The `decisions/` and `retirements/`
+subdirectories contain content-free JSON records, sharded by the first two
+characters of their SHA-256 digest. Decision records suppress repeated delivery;
+retirement records keep those guards until the authoritative session, tool
+result, or graph producer can no longer replay. Records are written atomically,
+and invalid, oversized, or misplaced records appear in the quarantine health
+surface without disabling unrelated guards. Ledger-governed decisions use the
+indexed SQLite outward terminal-decision store instead.
+
+Back up and restore `dead-letters.jsonl` together with the complete
+`dead-letters.jsonl.terminal-decisions/` directory. Omitting either side can
+lose pending ownership or replay suppression. Do not edit digest records while
+the daemon is running; after an offline repair, `quarantine list` reloads the
+collections and reports any corruption that remains.
+
 **Written by:** the announcement delivery subsystem.
-**Safe to delete?** Yes. Pending re-deliveries are dropped; entries auto-expire after one hour anyway.
+**Safe to delete?** No. Deleting it discards delivery evidence and pending outcomes. Do not edit or remove it while the daemon is running; the live queue is the authority and may rewrite the snapshot. Use `node packages/cli/dist/cli.js quarantine list` and `quarantine release` for operator decisions.
 
 ---
 
@@ -569,15 +628,27 @@ A Unix domain socket (`0600`, owner-only) created for the **loopback capability 
 To migrate to a new machine, back up these items:
 
 ```bash
+optional_state=()
+for path in \
+  "$HOME/.comis/.env" \
+  "$HOME/.comis/secrets.db" \
+  "$HOME/.comis/managed-runs/private"; do
+  [[ -e "$path" ]] && optional_state+=("$path")
+done
+
 tar -czf comis-backup.tar.gz \
   ~/.comis/config.yaml \
-  ~/.comis/.env \
   ~/.comis/memory.db \
-  ~/.comis/secrets.db \
-  ~/.comis/workspace
+  ~/.comis/workspace \
+  "${optional_state[@]}"
 ```
 
 `config.last-good.yaml`, `logs/`, `traces/`, and `ecosystem.config.js` are machine-specific or regenerated and do not need to be included.
+
+If `capabilityServices.privateContentDirectory` uses a non-default relative
+path, include that path beneath the data directory instead. Restore it together
+with `memory.db`; the SQLite indexes and owner-private bodies are one durable
+managed-run state set.
 
 <Note>
 If you use `secrets.db`, make sure you also have your `SECRETS_MASTER_KEY` stored somewhere safe. Without it the database is unreadable, even with the file itself.
@@ -585,11 +656,10 @@ If you use `secrets.db`, make sure you also have your `SECRETS_MASTER_KEY` store
 
 ## Custom location
 
-By default Comis resolves config from `~/.comis/config.yaml` and `~/.comis/config.local.yaml`. You can override this with `COMIS_CONFIG_PATHS`, a colon-separated list of absolute paths:
-
-```bash
-COMIS_CONFIG_PATHS="/etc/comis/config.yaml:/home/me/.comis/config.yaml" node packages/daemon/dist/daemon.js
-```
+By default Comis resolves config from `~/.comis/config.yaml` and
+`~/.comis/config.local.yaml`. Override those locations with
+[`COMIS_CONFIG_PATHS`](/reference/environment-variables#comis_config_paths),
+whose environment-variable reference owns the list syntax.
 
 The data directory (`~/.comis/`) is separately controlled by `COMIS_DATA_DIR`. See [Configuration](/installation/configuration) for a full reference.
 
@@ -626,12 +696,18 @@ rm -rf ~/.comis
 node packages/cli/dist/cli.js init
 ```
 
-To reset only conversation history while keeping your config and credentials:
+To reset one conversation while keeping configuration, credentials, unrelated
+memory, and capability-service state:
 
 ```bash
-rm ~/.comis/memory.db
-# The daemon recreates an empty database on next start
+comis sessions reset <sessionKey> --tenant <tenantId> --agent <agentId> --yes
 ```
+
+Do not remove `memory.db` as a conversation-reset shortcut. It also contains
+long-term memory, delivery state, managed runs, leases, attachments, and terminal
+authority. If an intentional full workspace reset removes it, remove the
+configured `capabilityServices.privateContentDirectory` in the same reset so its
+owner-private bodies do not become orphaned.
 
 To reset logs only:
 

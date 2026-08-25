@@ -1,0 +1,35 @@
+{
+  "class": "unknown-field",
+  "name": "unknown handshake parameter",
+  "steps": [
+    {
+      "expectation": "reject",
+      "expectedErrorKind": "invalid_params",
+      "payload": {
+        "id": "operation_unknown",
+        "jsonrpc": "2.0",
+        "method": "capabilityServices.handshake",
+        "params": {
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "operationId": "operation_unknown",
+          "protocolId": "comis.capability-service/1",
+          "requestedScopes": [
+            "health",
+            "attention_response",
+            "evidence",
+            "report",
+            "workspace_lease",
+            "terminal_events",
+            "execution_attachment",
+            "managed_run_group",
+            "approval_receipt"
+          ],
+          "serviceInstanceId": "service-instance_a",
+          "unrecognized": true
+        }
+      },
+      "schemaExpectation": "reject",
+      "target": "request"
+    }
+  ]
+}

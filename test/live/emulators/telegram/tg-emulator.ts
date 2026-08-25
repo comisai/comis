@@ -1326,6 +1326,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     };
     if (text !== undefined) ro.text = text;
     if (typeof body["parse_mode"] === "string") ro.parseMode = body["parse_mode"];
+    if (body["reply_markup"] !== undefined) ro.replyMarkup = body["reply_markup"];
     record(chatId, ro);
 
     return okEnvelope({

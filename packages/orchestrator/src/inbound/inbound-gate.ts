@@ -11,7 +11,7 @@
  */
 
 import type { AutoReplyEngineConfig, ChannelPort, ConversationRef, DeliverToChannelOptions, NormalizedMessage, ResolvedTurnScope, SessionKey } from "@comis/core";
-import { emitObservationalEventSafely, formatSessionKey, systemNowMs } from "@comis/core";
+import { emitObservationalEventSafely, formatSessionKey, systemNowMs, toSafeErrorLogString } from "@comis/core";
 // Command parsers/matchers live inside this orchestrator package; use local
 // relative imports so the gate does not pull them via @comis/agent.
 import { parseSlashCommand } from "../commands/index.js";
@@ -43,6 +43,7 @@ export type GateDeps = Pick<
   | "getResetTriggers"
   | "approvalGate"
   | "interactiveCallbackRouter"
+  | "managedAttentionReplies"
   | "onGraphReportRequest"
   | "handleConfigCommand"
   | "handleSlashCommand"
@@ -169,6 +170,167 @@ async function routeInteractiveCallback(
   return true;
 }
 
+type ParsedAttentionReply =
+  | { readonly kind: "not_applicable" }
+  | { readonly kind: "invalid_explicit" }
+  | { readonly kind: "reply"; readonly text: string; readonly attentionId?: string };
+
+function parseAttentionReply(text: string | undefined): ParsedAttentionReply {
+  const trimmed = text?.trim();
+  if (trimmed === undefined || trimmed.length === 0) return { kind: "not_applicable" };
+  if (/^\/attention(?:\s|$)/iu.test(trimmed)) {
+    const explicit = /^\/attention\s+(\S+)\s+([\s\S]+)$/iu.exec(trimmed);
+    if (explicit === null || explicit[2]?.trim().length === 0) return { kind: "invalid_explicit" };
+    return {
+      kind: "reply",
+      attentionId: explicit[1],
+      text: explicit[2].trim(),
+    };
+  }
+  if (trimmed.startsWith("/")) return { kind: "not_applicable" };
+  return { kind: "reply", text: trimmed };
+}
+
+/** Bind owner text to durable managed attention before ordinary chat activation. */
+async function routeManagedAttentionReply(
+  deps: GateDeps,
+  adapter: ChannelPort,
+  msg: NormalizedMessage,
+  agentId: string,
+  turnScope: ResolvedTurnScope,
+  conversationRef: ConversationRef,
+): Promise<boolean> {
+  if (deps.managedAttentionReplies === undefined) return false;
+  const parsed = parseAttentionReply(msg.text);
+  if (parsed.kind === "not_applicable") return false;
+  if (parsed.kind === "invalid_explicit") {
+    await deps.deliveryService.deliverToChannel(
+      adapter,
+      msg.channelId,
+      localized(deps, msg, agentId, "attention.usage"),
+      inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+    );
+    return true;
+  }
+
+  const startedAtMs = systemNowMs();
+  const bound = await deps.managedAttentionReplies.bind(
+    {
+      kind: "owner",
+      tenantId: turnScope.conversation.tenantId,
+      agentId: turnScope.conversation.agentId,
+      principalId: turnScope.principal.principalId,
+      conversationRef,
+    },
+    {
+      operationId: `attention-reply:${turnScope.endpoint.channelInstanceId}:${conversationRef}:${msg.id}`,
+      ...(parsed.attentionId === undefined ? {} : { attentionId: parsed.attentionId }),
+      text: parsed.text,
+      respondedAtMs: startedAtMs,
+    },
+  );
+  if (!bound.ok) {
+    deps.logger.warn({
+      step: "managed-attention-reply",
+      agentId,
+      err: toSafeErrorLogString(bound.error),
+      hint: "Check capability-service storage health, then ask the user to retry the attention response",
+      errorKind: "resource" as const,
+    }, "Managed attention response binding failed");
+    await deps.deliveryService.deliverToChannel(
+      adapter,
+      msg.channelId,
+      localized(deps, msg, agentId, "attention.unavailable"),
+      inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+    );
+    return true;
+  }
+
+  if (bound.value.kind === "bound") {
+    const durationMs = Math.max(0, systemNowMs() - startedAtMs);
+    deps.logger.info({
+      step: "managed-attention-reply",
+      agentId,
+      managedRunId: bound.value.attention.managedRunId,
+      attentionId: bound.value.attention.attentionId,
+      durationMs,
+    }, "Managed attention response bound");
+    emitObservationalEventSafely(deps, "managed_run:attention_response_bound", {
+      managedRunId: bound.value.attention.managedRunId,
+      attentionId: bound.value.attention.attentionId,
+      agentId,
+      durationMs,
+      timestamp: systemNowMs(),
+    });
+    await deps.deliveryService.deliverToChannel(
+      adapter,
+      msg.channelId,
+      localized(deps, msg, agentId, "attention.response_bound", {
+        id: bound.value.attention.attentionId,
+      }),
+      inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+    );
+    return true;
+  }
+
+  if (bound.value.kind === "not_applicable") {
+    deps.logger.info({
+      step: "managed-attention-reply",
+      agentId,
+      outcome: "external_run_mismatch",
+      durationMs: Math.max(0, systemNowMs() - startedAtMs),
+    }, "Inbound text names a different managed run and remains ordinary chat");
+    return false;
+  }
+
+  if (bound.value.reason === "none_open" && parsed.attentionId === undefined) {
+    deps.logger.debug({
+      step: "managed-attention-reply",
+      agentId,
+      durationMs: Math.max(0, systemNowMs() - startedAtMs),
+    }, "Inbound text has no open managed attention target");
+    return false;
+  }
+
+  let response: string;
+  switch (bound.value.reason) {
+    case "ambiguous":
+      response = localized(deps, msg, agentId, "attention.multiple", {
+        choices: bound.value.candidateAttentionIds.map((id) => `- ${id}`).join("\n"),
+      });
+      break;
+    case "handle_not_found":
+    case "none_open":
+      response = localized(deps, msg, agentId, "attention.not_found", {
+        id: parsed.attentionId ?? "unknown",
+      });
+      break;
+    case "already_answered":
+      response = localized(deps, msg, agentId, "attention.already_answered", {
+        id: parsed.attentionId ?? "unknown",
+      });
+      break;
+    default: {
+      const exhaustive: never = bound.value.reason;
+      response = exhaustive;
+    }
+  }
+  deps.logger.info({
+    step: "managed-attention-reply",
+    agentId,
+    outcome: bound.value.reason,
+    candidateCount: bound.value.candidateAttentionIds.length,
+    durationMs: Math.max(0, systemNowMs() - startedAtMs),
+  }, "Managed attention response requires clarification");
+  await deps.deliveryService.deliverToChannel(
+    adapter,
+    msg.channelId,
+    response,
+    inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+  );
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Gate function
 // ---------------------------------------------------------------------------
@@ -203,6 +365,17 @@ export async function evaluateInboundGate(
     adapter,
     msg,
     sessionKey,
+    agentId,
+    turnScope,
+    conversationRef,
+  )) {
+    return { action: "handled" };
+  }
+
+  if (await routeManagedAttentionReply(
+    deps,
+    adapter,
+    msg,
     agentId,
     turnScope,
     conversationRef,

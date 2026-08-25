@@ -174,12 +174,12 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // crosses the bus.
   "subagent:steered": "subagent.steered",
 
-  // Three sub-agent-lifecycle
+  // Sub-agent lifecycle
   // events bridged for per-session `comis explain` visibility (the subagent:steered
   // precedent). security:sandbox_downgrade_refused is agent-emitted (sub-agent-runner.ts)
   // and fires WITHIN the spawning session → lands cleanly in that trajectory;
-  // subagent:delivery_deadlettered (orchestrator) + subagent:budget_exceeded (daemon
-  // coordinator) ride whichever session bridge is active. Content-free translators
+  // and subagent:budget_exceeded (daemon coordinator) ride whichever session bridge
+  // is active. Content-free translators
   // (translate-orchestration-payload.ts) forward closed labels/ids/numbers ONLY — never
   // a path/host/uid value, an announcement body, or a task. These ALSO feed
   // the system health view via obs-persistence-wiring (the daemon-wide aggregate surface).
@@ -193,15 +193,6 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "subagent:killed": "subagent.killed",
   "subagent:routed_child_preserved": "subagent.routed_child_preserved",
   "subagent:background_processes_abandoned": "subagent.background_processes_abandoned",
-  "subagent:delivery_deadlettered": "subagent.delivery_deadlettered",
-  // The self-healing transient RETRY
-  // — the sibling of subagent:delivery_deadlettered. Emitted by the announcement-batcher
-  // via `?.emit`. Bridged here for
-  // per-session visibility (how many retries a completion took before landing). Content-free
-  // (translate-orchestration-payload.ts): runId + closed channelType + attempt count + transient tag
-  // ONLY. NOTE: unlike its deadlettered sibling, retried is trajectory-only for now (NOT yet a system
-  // health_signal/finding — a self-healed retry as a daemon-wide aggregate is a follow-up).
-  "subagent:delivery_retried": "subagent.delivery_retried",
   "subagent:delivery_skipped": "subagent.delivery_skipped",
   "subagent:budget_exceeded": "subagent.budget_exceeded",
 
@@ -519,6 +510,20 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "observability:spend_warning": "spend.warning",
   "observability:spend_exceeded": "spend.exceeded",
   "observability:spend_unpriceable": "spend.unpriceable",
+
+  // ---- Managed-run (capability-service) lifecycle ----
+  // DAEMON-emitted by the report/evidence bridges and the cancellation
+  // coordinator (off-turn socket ingress), so the agent/orchestrator emit-scanner
+  // arch gate does NOT require them (the capability:audited daemon-emitted
+  // precedent); mapped here so a managed run's attention/evidence/revoke lifecycle
+  // reaches `comis explain`. Content-free translators (translate-managed-run-payload.ts)
+  // forward run/service/attention/evidence ids + closed enums ONLY — never a
+  // report/evidence body, a subject digest, or an external key value.
+  "managed_run:attention_opened": "managed_run.attention_opened",
+  "managed_run:attention_resolved": "managed_run.attention_resolved",
+  "managed_run:evidence_accepted": "managed_run.evidence_accepted",
+  "managed_run:evidence_rejected": "managed_run.evidence_rejected",
+  "managed_run:revoked": "managed_run.revoked",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**

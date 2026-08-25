@@ -11,7 +11,11 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
-import { classifyMcpErrorType, extractErrorText } from "./bridge-event-handlers.js";
+import {
+  classifyMcpErrorType,
+  classifyRuntimeToolGuard,
+  extractErrorText,
+} from "./bridge-event-handlers.js";
 
 const MAX_ERROR_TEXT_CHARS = 2000;
 
@@ -65,5 +69,13 @@ describe("classifyMcpErrorType", () => {
       "validation",
     );
     expect(classifyMcpErrorType('MCP error -32602: Input validation error: "too_big"')).toBe("validation");
+  });
+});
+
+describe("classifyRuntimeToolGuard", () => {
+  it("recognizes a managed MCP authority refusal before transport", () => {
+    expect(classifyRuntimeToolGuard(
+      "[managed_mcp_authority] managed-run handle is unavailable in the active owner scope",
+    )).toBe("managed_mcp_authority");
   });
 });

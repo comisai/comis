@@ -9,8 +9,8 @@
  * @module
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { describe, it, expect, afterAll, afterEach } from "vitest";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { judgeAnswer, sweepSecrets } from "./judge.js";
@@ -22,6 +22,11 @@ import { judgeAnswer, sweepSecrets } from "./judge.js";
 const JUDGE_PROVIDER_KEY = "COMIS_LIVE_JUDGE_PROVIDER";
 const JUDGE_API_KEY_KEY = "COMIS_LIVE_JUDGE_API_KEY";
 const JUDGE_MODEL_KEY = "COMIS_LIVE_JUDGE_MODEL";
+const TEST_TMP_BASE = mkdtempSync(join(tmpdir(), "comis-judge-test-"));
+
+afterAll(() => {
+  rmSync(TEST_TMP_BASE, { recursive: true, force: true });
+});
 
 afterEach(() => {
   delete process.env[JUDGE_PROVIDER_KEY];
@@ -141,10 +146,8 @@ describe("judgeAnswer — non-skip path (env present, stubbed judge)", () => {
 // ---------------------------------------------------------------------------
 
 describe("sweepSecrets", () => {
-  const TEST_TMP_BASE = join(tmpdir(), "judge-test");
-
   it("Test 3: sweepSecrets on nonexistent dir is a no-op (does not throw)", () => {
-    expect(() => sweepSecrets("/tmp/nonexistent-dir-12345-judge-test")).not.toThrow();
+    expect(() => sweepSecrets(join(TEST_TMP_BASE, "nonexistent"))).not.toThrow();
   });
 
   it("Test 4: sweepSecrets throws SECRET LEAK for sk-* credential shape", () => {

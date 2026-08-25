@@ -90,6 +90,21 @@ describe("deterministic localization", () => {
       .toEqual({ ok: true, value: "Session reset." });
   });
 
+  it("renders managed attention acknowledgement and ambiguity prompts", () => {
+    const localization = createDeterministicLocalization();
+
+    expect(localization.render({
+      key: "attention.response_bound",
+      locale: "en",
+      values: { id: "attention_a" },
+    })).toEqual({ ok: true, value: "Response recorded for attention request attention_a." });
+    expect(localization.render({
+      key: "attention.multiple",
+      locale: "en",
+      values: { choices: "- attention_a\n- attention_b" },
+    })).toMatchObject({ ok: true, value: expect.stringContaining("/attention <ID> <response>") });
+  });
+
   it("rejects unsupported approval outcomes and renders port errors safely", () => {
     const localization = createDeterministicLocalization();
     const invalid = localization.render({

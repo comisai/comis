@@ -4,7 +4,7 @@ description: "Package roles, key exports, and dependency relationships"
 icon: "cubes"
 ---
 
-Comis is structured as a monorepo with 16 TypeScript packages under `packages/`.
+Comis is structured as a monorepo with 17 TypeScript packages under `packages/`.
 Each package has a focused responsibility and exports a public API through its
 package entry point. Cross-package consumers use those public exports rather
 than another package's internal source paths.
@@ -28,6 +28,7 @@ All packages use ES modules (`"type": "module"`), strict TypeScript with `compos
 | daemon | `@comis/daemon` | Orchestrator, observability, graph coordinator | `DaemonInstance`, wiring, graph coordinator |
 | observability | `@comis/observability` | Diagnostics substrate: queued writer, payload bounding, sanitization, cache-trace runtime, EventBus bridge, cache-stats aggregation and RPC | Diagnostics runtime, cache-trace recorder, stats aggregator |
 | observability-otel | `@comis/observability-otel` | Opt-in OpenTelemetry and Prometheus export extension | OTLP signals, Prometheus metrics exporter |
+| capability-service-sdk | `@comis/capability-service-sdk` | Private schemas and deterministic artifacts for the capability-service protocol | Strict Zod contracts, JSON Schemas, conformance fixtures, bundle manifest |
 | orchestrator | `@comis/orchestrator` | Inbound pipeline, execution coordination, channel-manager, command queue, routing, and cross-session messaging | Pipeline coordinator, channel manager, command router |
 | comis | `comisai` | Umbrella package (namespace re-exports) and `comis` CLI bin | Namespace re-exports of all sub-packages |
 | web | `@comis/web` | Lit + Vite + Tailwind standalone SPA | Web dashboard views and components |
@@ -54,7 +55,11 @@ observability packages; it also manages startup, shutdown, and signals.
 **`@comis/web`** is a standalone single-page application built with Lit web components, Vite for bundling, and Tailwind CSS for styling. It communicates with the daemon exclusively through the gateway's HTTP and WebSocket APIs.
 
 <Note>
-The published umbrella package is named `comisai` on npm (the directory is `packages/comis/`). It bundles all `@comis/*` workspace packages and exposes a `comis` CLI binary. Subpath imports such as `comisai/core` or `comisai/agent` are exposed via the umbrella's `exports` map.
+The published umbrella package is named `comisai` on npm (the directory is `packages/comis/`). It bundles the runtime `@comis/*` workspace packages, including the private capability-service SDK needed by the daemon and skills packages, and exposes a `comis` CLI binary. Subpath imports such as `comisai/core` or `comisai/agent` are exposed via the umbrella's `exports` map. The SDK remains private and has no standalone npm publication or `comisai` subpath export.
+</Note>
+
+<Note>
+A capability service written in another language consumes the protocol through **release assets**, not through npm. Every `vX.Y.Z` release carries `comis-capability-service-protocol-vX.Y.Z.tar.gz` — the generated JSON Schemas, conformance fixtures, and bundle manifest — alongside a `comis-capability-service-protocol-vX.Y.Z.manifest.json` sidecar that states the protocol identity and `bundleDigest` without unpacking the archive. Pin the release asset rather than a repository commit: the asset's bytes are fixed for the tag that produced them, and the digest is the value the daemon asserts at handshake.
 </Note>
 
 ## Dependency relationships
@@ -75,6 +80,9 @@ dependency graph. At a high level:
 - `observability-otel` is the opt-in telemetry extension; `web` is the
   standalone SPA; `comisai` is the umbrella package that re-exports the
   workspace packages.
+- `capability-service-sdk` owns strict protocol schemas and deterministic
+  cross-language artifacts. The daemon and skills packages consume its runtime
+  contracts, and `comisai` bundles it as an internal dependency.
 
 ## Package Boundary Rules
 

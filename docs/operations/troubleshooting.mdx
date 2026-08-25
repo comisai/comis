@@ -413,7 +413,11 @@ ERROR above in the startup log.
           scopes: ["rpc", "ws", "admin"]
     ```
 
-    The token secret must be at least 32 characters long.
+    The token secret must be at least 32 characters long. The daemon enforces
+    this after resolving environment references and `SecretRef` values; an
+    explicitly configured short value stops startup instead of being replaced
+    by an ephemeral token. The startup error names the failing selector and
+    resolved length without printing the credential.
   </Accordion>
 
   <Accordion title="Shutdown timeout exceeded, forcing exit">
@@ -637,7 +641,7 @@ See [Resilience Architecture](/agents/resilience) for how these systems work tog
 
     1. Check the provider's status page for ongoing outages
     2. Wait for automatic recovery -- the system emits a `provider:recovered` event when the provider comes back
-    3. Check the dead-letter queue for missed announcements (`~/.comis/dead-letters.jsonl`)
+    3. Check the content-free quarantine view: `node packages/cli/dist/cli.js quarantine list`
   </Accordion>
 
   <Accordion title="Ghost run detected and force-failed">
@@ -663,14 +667,14 @@ See [Resilience Architecture](/agents/resilience) for how these systems work tog
     announcement:dead_lettered
     ```
 
-    **What happened:** Announcement delivery failed and entries were saved to the dead-letter queue (`~/.comis/dead-letters.jsonl`). Retry will be attempted up to 5 times.
+    **What happened:** Announcement delivery failed and the outcome was retained in the dead-letter queue. Safe automatic retry may be attempted up to `security.agentToAgent.delivery.maxRetries` times; exhausted, expired, ambiguous, and invalid records remain quarantined for an operator decision.
 
     **How to fix:**
 
     1. Check channel connectivity -- is the bot still connected to the channel?
     2. Verify the bot token is still valid
-    3. Entries auto-expire after 1 hour
-    4. On provider recovery the dead-letter queue drains automatically
+    3. Run `node packages/cli/dist/cli.js quarantine list` to inspect the content-free retained state
+    4. On provider recovery, safe retryable entries drain automatically. Reconcile parked rows and release each one explicitly as `delivered` or `discarded`
   </Accordion>
 
   <Accordion title="Execution pipeline timeout -- canned error sent to user">

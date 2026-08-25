@@ -45,10 +45,10 @@ flowchart TD
     WD -->|timeout| FAIL_NOTIFY["Failure notification\n(no LLM needed)"]
     WD -->|success| ANNOUNCE["Success announcement"]
 
-    ANNOUNCE -->|delivery fails| CLS{"Transient?"}
-    CLS -->|transient| RETRY["Retry w/ backoff\nup to maxRetries"]
-    CLS -->|permanent| DLQ["Dead-letter queue\n5 retries over 1 hour"]
-    RETRY -->|exhausted| DLQ
+    ANNOUNCE -->|delivery fails| DLQ["Durable recovery queue"]
+    DLQ -->|ledgerless + definitive| RETRY["Recovery sweep\nup to maxRetries"]
+    DLQ -->|governed or ambiguous| PARK["Park for proof or operator"]
+    RETRY -->|exhausted| PARK
     RETRY -->|succeeds| RESP
 
     subgraph "Provider Health Monitor"
@@ -179,27 +179,38 @@ This section describes the ordinary sub-agent announcement path. Promoted
 background-task continuations use the durable outbox described
 [below](#promoted-background-continuation-delivery).
 
-When an ordinary announcement delivery fails terminally — a permanent failure, or a
-transient one whose [retries are exhausted](#self-healing-delivery-retries)
-(for example, the channel stays unreachable) — the message is saved to a
-persistent dead-letter queue backed by a JSONL file at
+When an ordinary announcement delivery is not confirmed, its recovery state is
+saved to a persistent dead-letter queue backed by a JSONL file at
 `~/.comis/dead-letters.jsonl`.
 
-- **Retry policy:** Up to 5 retries per entry
-- **Maximum age:** 1 hour -- entries older than this are expired and discarded
+- **Retry policy:** Up to `security.agentToAgent.delivery.maxRetries` automatic
+  attempts per ungoverned entry; exhaustion
+  parks the entry for an operator decision instead of discarding it
+- **Retention window:** After 1 hour an ungoverned entry is parked and no longer
+  retried automatically; it remains durable until an operator releases it
 - **Automatic drain:** On `provider:recovered` events, the queue drains
-  automatically, delivering all queued messages
+  automatically, delivering only entries whose outcome is safe to retry. A
+  ledger-governed ambiguous send is parked rather than replayed
 - **What the operator sees:** `announcement:dead_lettered` events when entries
   are queued, `announcement:dead_letter_delivered` events when they are
-  successfully delivered on retry, and an INFO log line per entry that clears
+  successfully delivered on retry, standing quarantine health signals, and the
+  content-free `comis quarantine list` control plane
+- **Invalid rows:** A malformed, incompatible, truncated, or oversized row is
+  isolated as bounded non-replayable evidence. It cannot block valid rows or
+  their recovery, contributes to retained capacity, and requires an explicit
+  release
+- **Capacity:** `maxEntries` is a hard retained-item limit. New reservations
+  and failed-delivery rows are rejected before they would exceed it; existing
+  evidence is never evicted, and same-size recovery transitions remain allowed
 - **File lifetime:** the JSONL is a snapshot of the queue, not an append-only
   log — it is rewritten on every change and removed once the queue drains. An
   absent file means nothing is pending, so a quarantine WARN with no file means
   that quarantine already resolved
 
-The dead-letter queue ensures that transient failures do not cause permanent
-message loss. Even during extended provider outages, announcements are preserved
-and delivered once the provider recovers.
+The dead-letter queue ensures that admitted transient failures do not cause
+permanent message loss. During extended provider outages, retained
+announcements remain preserved until delivery is proven or an operator records
+a decision, while new governed sends are backpressured at capacity.
 
 ### Delivery idempotency
 
@@ -266,50 +277,38 @@ mismatch returns an allocation-blocked outcome before any platform call.
 security:
   agentToAgent:
     delivery:
-      maxRetries: 3   # default — max transient delivery retries before dead-lettering (0–10)
+      maxRetries: 3   # default — safe durable recovery attempts before quarantine (0–10)
 ```
 
 - **`security.agentToAgent.delivery.maxRetries`** (default `3`, range `0`–`10`)
-  bounds how many times a *transient* delivery failure is retried before the
-  message is dead-lettered. Permanent failures are dead-lettered immediately.
+  bounds automatic recovery attempts for ledgerless failures whose platform call
+  definitively failed. Governed or ambiguous outcomes are parked immediately and
+  never replayed automatically.
 
 ### Self-healing delivery retries
 
-When a completion delivery falls back to a direct channel send and that send
-fails, the batcher classifies the failure before deciding what to do. The
-classifier does a case-insensitive substring match on the failure message:
+The batcher makes one final platform attempt. An opaque failure is retained
+before control returns, because repeating it could duplicate a send that the
+platform accepted without returning a receipt. The durable recovery worker then
+separates outcomes by authority:
 
-- **Transient** — retried up to
-  `security.agentToAgent.delivery.maxRetries` times (default `3`, range `0`–`10`)
-  with exponential backoff (1s, 2s, 4s, … capped at 30s) before dead-lettering.
-  The common case (a momentary `ECONNRESET`/`ETIMEDOUT`) self-heals on the next
-  attempt instead of being dead-lettered on the first blip. The exact transient
-  set is the transport errnos and connection phrases —
+- **Ledgerless definitive failures** can be retried by a later recovery sweep,
+  up to `security.agentToAgent.delivery.maxRetries` attempts. Recovery sweeps run
+  on their normal interval and provider-recovery signals.
+- **Governed, in-flight, unresolved, validation-blocked, or receipt-ambiguous
+  outcomes** are never replayed automatically. They remain durable until the
+  ledger proves a receipt or an operator records a terminal decision.
 
-  ```
-  etimedout, econnreset, econnrefused, epipe, enetunreach, eai_again,
-  socket hang up, fetch failed, network request failed,
-  connection reset, connection refused
-  ```
-
-  — plus the pre-existing transient classes: `timeout` / "timed out",
-  `rate limit` / `429`, provider or HTTP 5xx (any bare `5xx` code), and
-  `circuit` / `breaker`.
-- **Permanent** — dead-lettered immediately, with no wasted retries:
-  `budget` / "cost limit", `killed`, context-exhausted (`context` + `exhaust`) /
-  `loop`, `max steps` / "step limit", and anything otherwise unclassified.
-
-- **What the operator sees:** a `subagent:delivery_retried` event per retry
-  attempt and a `subagent:delivery_deadlettered` event when a delivery is finally
-  dead-lettered (its `transient` flag records whether retries were exhausted or
-  the failure was permanent). Both carry counts and ids only — never the
-  announcement text or the error string. See the
+- **What the operator sees:** retry-stage DEBUG logs, followed by an
+  `announcement:dead_lettered` event only after the completion is durably
+  retained. The event carries session attribution and a closed admission reason,
+  never announcement text or an error string. See the
   [Event Bus reference](/developer-guide/event-bus) for the exact payloads.
 
-This is a two-tier delivery path — announcement through the parent, then a
-direct channel send with classify-and-retry. It deliberately stops there: there
-is no further steer/handoff/external-delivery escalation tier beyond the
-dead-letter queue.
+This is a two-tier delivery path — announcement through the parent, then one
+governed channel attempt followed by durable recovery or quarantine. It
+deliberately stops there: there is no further steer, handoff, or external
+delivery escalation tier beyond the dead-letter queue.
 
 ## Ghost sweep
 
@@ -408,7 +407,7 @@ Three circuit breakers run inside Comis, each with its own scope:
 | Breaker | Scope | File |
 |---|---|---|
 | **Provider health breaker** | Per LLM provider — opens after consecutive failures, blocks all calls during cooldown | `packages/agent/src/safety/circuit-breaker.ts` |
-| **Tool retry breaker** | Per tool — classifies tool errors and decides whether to retry, fall back, or surface the error | `packages/agent/src/safety/tool-retry-breaker.ts` |
+| **Tool retry breaker** | Per execution for foreground calls, with executor-scoped health for durable background settlements — classifies tool errors and decides whether to retry, fall back, or surface the error | `packages/agent/src/safety/tool-retry-breaker.ts` |
 | **Layer circuit breaker** | Per context-engine layer — disables a layer for the rest of the session after 3 consecutive failures | `packages/agent/src/context-engine/context-engine.ts` |
 | **Summarizer spend breaker** | Per tenant — bounds DAG summarization LLM spend with a rolling per-tenant token cap and opens after consecutive summarizer failures; degrades to truncation-only assembly (no LLM call) | `packages/agent/src/safety/summarizer-spend-breaker.ts` |
 

@@ -36,6 +36,29 @@ function makeSignals(overrides?: Partial<IncidentSignals>): IncidentSignals {
 }
 
 describe("obs-explain-heuristics", () => {
+  it("returns scheduler evidence replacement as the delivered-response cause", () => {
+    const result = rootCause(makeSignals({
+      endReason: "success",
+      degraded: false,
+      recoveries: {
+        total: 1,
+        succeeded: 1,
+        byReason: { missing_scheduler_state_evidence: 1 },
+      },
+    }));
+
+    expect(result).toEqual({
+      code: "scheduler_state_evidence_grounding",
+      detail:
+        "the scheduler-state evidence guard replaced the model response because no successful current-turn cron receipt supported the detected claim",
+      suggestedNextSteps: [
+        "compare the original session response with the delivered message to confirm the deterministic replacement",
+        "inspect the response-grounding scheduler claim matcher when the original response contains no reminder or scheduled-job claim",
+        "use a successful current-turn cron list or status receipt before affirming mutable scheduler state",
+      ],
+    });
+  });
+
   it("prefers an MCP credential failure code over its downstream breaker symptom", () => {
     const r = rootCause(
       makeSignals({
@@ -1590,6 +1613,18 @@ describe("obs-explain-heuristics", () => {
     }));
 
     expect(result?.code).not.toBe("execution_terminal_failure");
+  });
+
+  it("names a terminal execution budget abort without relying on a tool failure", () => {
+    const result = rootCause(makeSignals({
+      endReason: "budget_exceeded",
+      degraded: true,
+      abortReason: "budget_exceeded",
+    }));
+
+    expect(result?.code).toBe("execution_budget_exceeded");
+    expect(result?.detail).toContain("budget_exceeded");
+    expect(result?.suggestedNextSteps.join(" ")).toContain("budget");
   });
 
   it("a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {

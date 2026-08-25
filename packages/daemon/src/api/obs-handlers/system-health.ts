@@ -60,6 +60,7 @@ import {
   type SystemHealthReport,
   type ClockPort,
   type DurableRunPort,
+  type ManagedRunStorePort,
 } from "@comis/core";
 import { reduceSystemWindow, type ObservabilityStore } from "@comis/memory";
 import { pipelineAuthoringGate } from "@comis/observability";
@@ -74,6 +75,7 @@ import {
 } from "./system-findings.js";
 import { computeAutonomySlice } from "./system-autonomy.js";
 import { computeCronWakeGateSlice } from "./system-cron-wake-gate.js";
+import { computeCapabilityServicesSlice } from "./system-capability-services.js";
 import { reconcileBillingTotal } from "./obs-metrics.js";
 import { mergePreSessionMessageFailures } from "./message-lifecycle-diagnostics.js";
 import type { BillingEstimator } from "../../observability/billing-estimator.js";
@@ -379,6 +381,7 @@ export async function assembleSystemHealthReport(
     dataDir: string;
     clock: ClockPort;
     durableRuns?: DurableRunPort;
+    managedRunHealth?: Pick<ManagedRunStorePort, "countByStatus">;
     billingEstimator?: Pick<BillingEstimator, "total">;
     startupTimestamp?: number;
   },
@@ -471,6 +474,37 @@ export async function assembleSystemHealthReport(
   // The gated cron-fire rows → the cronWakeGate slice + rollup finding.
   const cronWakeGate = deps.obsStore?.queryDiagnostics({ category: "cron_wake_gate", sinceMs }) ?? [];
 
+  // The CAPABILITY-SERVICE / managed-run health slice. Sourced from the durable
+  // managed-run index (countByStatus) — content-free by construction, so it needs
+  // no session-rollup change and no contentful global telemetry. Soft-fail read
+  // (the durableRuns precedent): an unwired store or a read error degrades to
+  // undefined (the block is omitted), never throws. Reuses the ONE sinceMs window.
+  const managedRunCountsResult = await deps.managedRunHealth?.countByStatus({
+    kind: "administration",
+    updatedSinceMs: sinceMs,
+  });
+  const managedRunCounts =
+    managedRunCountsResult !== undefined && managedRunCountsResult.ok
+      ? managedRunCountsResult.value
+      : undefined;
+  const capabilityServices = computeCapabilityServicesSlice(managedRunCounts);
+  // A degraded managed-run population is an acute, operator-actionable finding —
+  // surface it in findings[] with counts + one closed reason code (no bodies), so
+  // it is visible in the top-N table, not only in the structured section.
+  const capabilityServiceFinding: Finding | undefined =
+    capabilityServices === undefined || capabilityServices.runs.degraded === 0
+      ? undefined
+      : {
+          code: "managed_run_degradation",
+          detail:
+            `${capabilityServices.runs.degraded} managed run(s) degraded across `
+            + `${capabilityServices.services.degraded} service(s); top reason: `
+            + `${capabilityServices.topReasonCodes[0]?.code ?? "unknown"}`,
+          count: capabilityServices.runs.degraded,
+          hint:
+            "run comis managed-runs explain on the worst run for its likely root cause and repair knob",
+        };
+
   // The pre-committed pipeline-authoring decision verdict (the gate metric for
   // enabling small-model DAG authoring). PURE + deterministic: the windowed
   // pipeline_authoring rows -> the aggregate -> the gate. No-data -> defer.
@@ -502,6 +536,7 @@ export async function assembleSystemHealthReport(
       cronWakeGate,
     ),
     ...(preSessionFailureFinding === undefined ? [] : [preSessionFailureFinding]),
+    ...(capabilityServiceFinding === undefined ? [] : [capabilityServiceFinding]),
   ].sort((left, right) => right.count - left.count || left.code.localeCompare(right.code));
   const configPostureFinding = allFindings.find((finding) => finding.code === "config_posture");
   const truncations: TruncationEntry[] = [];
@@ -673,6 +708,11 @@ export async function assembleSystemHealthReport(
     // (honest degradation; the schema field is optional, so an absent block
     // round-trips). Present otherwise.
     ...(cronWakeGateSlice !== undefined ? { cronWakeGate: cronWakeGateSlice } : {}),
+    // The capability-service / managed-run health block (counts + closed reason
+    // codes + the worst run id ONLY). Conditionally spread so a daemon with no
+    // managed-run activity — or the offline CLI with no managed-run store — omits
+    // the field entirely (honest degradation; the schema field is optional).
+    ...(capabilityServices !== undefined ? { capabilityServices } : {}),
     suggestedNextSteps,
     truncations,
     coverage: {
@@ -716,6 +756,7 @@ export function bindSystemHealthHandlers(deps: ObsHandlerDeps): Record<string, R
           dataDir,
           clock: deps.clock!,
           durableRuns: deps.durableRuns,
+          managedRunHealth: deps.managedRunReads,
           billingEstimator: deps.billingEstimator,
           startupTimestamp: deps.startupTimestamp,
         },

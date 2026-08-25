@@ -19,7 +19,6 @@ import {
   TypedEventBus,
   createConversationRef,
   safePath,
-  type BackgroundTaskOrigin,
   type TimerHandle,
 } from "@comis/core";
 import { err, ok } from "@comis/shared";
@@ -28,6 +27,7 @@ import type {
   BackgroundRecoveryRecorderFailure,
   BackgroundRecoveryRecorderFailureKind,
 } from "./background-task-manager.js";
+import type { BackgroundTaskOrigin } from "./background-task-types.js";
 
 function makeRecorderFailure(
   kind: BackgroundRecoveryRecorderFailureKind,
@@ -70,6 +70,9 @@ function makeOrigin(): BackgroundTaskOrigin {
     trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
+    workspacePolicyHash: "a".repeat(64),
+    capturedToolIds: [],
+    capturedCapabilityViewHash: "b".repeat(64),
   };
 }
 

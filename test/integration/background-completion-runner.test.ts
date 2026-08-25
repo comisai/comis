@@ -33,10 +33,9 @@ import { fileURLToPath } from "node:url";
 import { startTestDaemon, type TestDaemonHandle } from "../support/daemon-harness.js";
 import { createFakeClock } from "../support/fake-clock.js";
 import { createFakeTimers } from "../support/fake-timers.js";
-import { createBackgroundTaskManager, loadTask } from "@comis/agent";
+import { createBackgroundTaskManager, loadTask, type BackgroundTaskOrigin } from "@comis/agent";
 import { EchoChannelAdapter } from "@comis/channels";
 import { createConversationRef, TypedEventBus } from "@comis/core";
-import type { BackgroundTaskOrigin } from "@comis/core";
 import { ok } from "@comis/shared";
 import { createCompletionRecovery } from "../../packages/agent/dist/background/completion-recovery.js";
 import { createBackgroundTaskRecoveryController } from "../../packages/agent/dist/background/background-task-recovery-controller.js";
@@ -57,6 +56,7 @@ const TEST_SESSION_KEY = "test:test-user:bg-completion-test";
 const TEST_AGENT_ID = "default";
 const TEST_CHANNEL_TYPE = "echo";
 const TEST_CHANNEL_ID = "bg-completion-test";
+let capturedWorkspacePolicyHash = "a".repeat(64);
 
 /**
  * Build a BackgroundTaskOrigin for test use.
@@ -117,6 +117,9 @@ function makeTestOrigin(
     trustLevel: "user" as const,
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
+    workspacePolicyHash: capturedWorkspacePolicyHash,
+    capturedToolIds: [],
+    capturedCapabilityViewHash: "b".repeat(64),
     ...Object.fromEntries(
       Object.entries(over).filter(
         ([key]) => !["agentId", "sessionKey", "channelType", "channelId", "userId"].includes(key),
@@ -185,6 +188,12 @@ describe("background-task completion re-triggers agent session (integration)", (
     });
 
     handle = await startTestDaemon({ configPath });
+
+    const policy = await handle.daemon.container.workspacePolicyPort?.load(TEST_AGENT_ID);
+    if (policy === undefined || !policy.ok) {
+      throw new Error("Background completion integration requires a loaded workspace policy snapshot");
+    }
+    capturedWorkspacePolicyHash = policy.value.combinedHash;
 
     // Register the echo adapter so the delivery-queue drainer and direct
     // message.send dispatch can find it. Mirrors delivery-queue-recurring.test.ts.

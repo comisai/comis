@@ -3,12 +3,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createConversationLocator } from "@comis/core";
+import { err, ok } from "@comis/shared";
 import type { DeadLetterEntry } from "./announcement-dead-letter.js";
 import {
+  createParentDecisionReservationStore,
+  isAnnouncementChannelType,
+  isAnnouncementProducerRecoveryOutcome,
   readDeadLetterEntries,
+  readDeadLetterSnapshot,
   writeDeadLetterEntries,
   type DeadLetterWriteOperations,
+  type ParentDecisionReservationRecord,
 } from "./announcement-dead-letter-file.js";
+
+const ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS = 100_000;
 
 const randomBytes = vi.hoisted(() => vi.fn(() => Buffer.from("01020304", "hex")));
 
@@ -18,16 +27,34 @@ vi.mock("node:crypto", async (importOriginal) => ({
 }));
 
 function makeEntry(): DeadLetterEntry {
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId: "agent-a",
+    partition: { kind: "agent" },
+  });
+  if (!locator.ok) throw locator.error;
   return {
     id: "entry-1",
     announcementText: "sensitive completion",
     channelType: "telegram",
     channelId: "chat-1",
+    agentId: "agent-a",
     runId: "run-1",
     sessionKey: "default:agent-a:telegram:chat-1:user_a",
     failedAt: 1,
     attemptCount: 0,
     lastAttemptAt: 1,
+    deliveryAuthority: {
+      tenantId: "default",
+      agentId: "agent-a",
+      conversationRef: locator.value.conversationRef,
+    },
+    destinationEndpoint: {
+      channelType: "telegram",
+      channelInstanceId: "test-instance",
+      conversationId: "chat-1",
+      conversationKind: "direct",
+    },
   };
 }
 
@@ -67,11 +94,70 @@ function createRecordingOperations(
   };
 }
 
+function makeDecision(overrides: Record<string, unknown> = {}) {
+  const entry = makeEntry();
+  return {
+    idempotencyKey: "operation-a",
+    agentId: entry.agentId ?? "agent-a",
+    runId: entry.runId,
+    sessionKey: entry.sessionKey,
+    announcementText: entry.announcementText,
+    channelType: entry.channelType,
+    channelId: entry.channelId,
+    failedAt: entry.failedAt,
+    rootRunId: "root-a",
+    deliveryAuthority: entry.deliveryAuthority!,
+    destinationEndpoint: entry.destinationEndpoint!,
+    completionKeys: ["operation-a"],
+    ...overrides,
+  };
+}
+
+function makeReservation(
+  overrides: Partial<ParentDecisionReservationRecord> = {},
+): ParentDecisionReservationRecord {
+  return {
+    ...makeDecision(),
+    recordType: "parent_decision_reservation",
+    id: "reservation-a",
+    ...overrides,
+  } as ParentDecisionReservationRecord;
+}
+
+function makeReservationStore(overrides: Record<string, unknown> = {}) {
+  let reservations: ParentDecisionReservationRecord[] = [];
+  const deps = {
+    load: vi.fn(async () => ok(undefined)),
+    hasDeliveryKey: vi.fn(() => false),
+    getReservations: vi.fn(() => reservations),
+    persist: vi.fn(async () => ok(undefined)),
+    canPersistReservationCount: vi.fn(() => true),
+    replaceReservations: vi.fn((next: readonly ParentDecisionReservationRecord[]) => {
+      reservations = [...next];
+    }),
+    logger: { error: vi.fn() },
+    ...overrides,
+  };
+  return {
+    deps,
+    store: createParentDecisionReservationStore(deps),
+    setReservations(next: ParentDecisionReservationRecord[]) {
+      reservations = next;
+    },
+  };
+}
+
 describe("announcement dead-letter file", () => {
   let directory: string | undefined;
 
   afterEach(async () => {
     if (directory) await rm(directory, { recursive: true, force: true });
+  });
+
+  it("accepts contributed channel identifiers and rejects control characters", () => {
+    expect(isAnnouncementChannelType("plugin.acme-chat")).toBe(true);
+    expect(isAnnouncementChannelType("plugin/acme\nchat")).toBe(false);
+    expect(isAnnouncementChannelType("")).toBe(false);
   });
 
   it("atomically round-trips a durable queue snapshot", async () => {
@@ -86,6 +172,27 @@ describe("announcement dead-letter file", () => {
     expect(await readDeadLetterEntries(filePath)).toEqual({
       ok: true,
       value: [entry],
+    });
+  });
+
+  it("rejects snapshots beyond bounded bytes and physical rows", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    await writeFile(filePath, "{}\n{}\n{}\n", { encoding: "utf8", mode: 0o600 });
+
+    await expect(readDeadLetterSnapshot(filePath, undefined, {
+      maxRows: 2,
+      maxBytes: 1_024,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter snapshot exceeds the row limit" },
+    });
+    await expect(readDeadLetterSnapshot(filePath, undefined, {
+      maxRows: 10,
+      maxBytes: 4,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter snapshot exceeds the byte limit" },
     });
   });
 
@@ -218,34 +325,310 @@ describe("announcement dead-letter file", () => {
     });
   });
 
-  it("fails closed when any persisted JSONL row is malformed", async () => {
+  it("rejects invalid in-memory rows before replacing a durable snapshot", async () => {
     directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
     const filePath = join(directory, "dead-letters.jsonl");
-    const original = `${JSON.stringify(makeEntry())}\n{"broken":\n`;
+    const entry = makeEntry();
+    await writeDeadLetterEntries(filePath, [entry]);
+    const original = await readFile(filePath, "utf8");
+
+    const result = await writeDeadLetterEntries(filePath, [
+      { recordType: "parent_decision_reservation", id: "incomplete" } as never,
+    ]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { state: "snapshot_unchanged" },
+    });
+    expect(await readFile(filePath, "utf8")).toBe(original);
+  });
+
+  it("rejects a tool recovery response above its durable contract", () => {
+    expect(isAnnouncementProducerRecoveryOutcome({
+      kind: "tool_result",
+      terminalReason: "completed",
+      completedAtMs: 1,
+      response: "x".repeat(ANNOUNCEMENT_TOOL_RESULT_RESPONSE_MAX_CHARS + 1),
+      stats: { runtimeMs: 1, totalTokens: 1, totalCost: 0 },
+    })).toBe(false);
+  });
+
+  it("accepts a bounded tool recovery response with a scoped materialized reference", () => {
+    expect(isAnnouncementProducerRecoveryOutcome({
+      kind: "tool_result",
+      terminalReason: "completed",
+      completedAtMs: 1,
+      response: "bounded response",
+      responseRef: {
+        kind: "session_metadata",
+        operationId: "scoped-operation",
+      },
+      stats: { runtimeMs: 1, totalTokens: 1, totalCost: 0 },
+    })).toBe(true);
+  });
+
+  it("accepts an exact graph recovery announcement payload", () => {
+    expect(isAnnouncementProducerRecoveryOutcome({
+      kind: "graph",
+      terminalReason: "completed",
+      completedAtMs: 1,
+      announcementText: "durable graph result",
+      extra: { buttons: [[{ text: "Open", callback_data: "graph:open" }]] },
+    })).toBe(true);
+  });
+
+  it("rejects an oversized in-memory row before replacing a durable snapshot", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    const entry = makeEntry();
+    await writeDeadLetterEntries(filePath, [entry]);
+    const original = await readFile(filePath, "utf8");
+
+    const result = await writeDeadLetterEntries(filePath, [{
+      ...entry,
+      announcementText: "x".repeat(1_048_577),
+    }]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { state: "snapshot_unchanged" },
+    });
+    expect(await readFile(filePath, "utf8")).toBe(original);
+  });
+
+  it("bounds oversized persisted evidence and never exposes it in the operator record", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    const oversized = "private-marker-" + "x".repeat(1_048_577);
+    await writeFile(filePath, `${oversized}\n`, { encoding: "utf8", mode: 0o600 });
+
+    const result = await readDeadLetterEntries(filePath);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: [{
+        recordType: "invalid_record",
+        reason: "oversized_row",
+        rawTruncated: true,
+      }],
+    });
+    if (!result.ok) throw result.error;
+    const record = result.value[0] as Record<string, unknown>;
+    expect(String(record.rawLine).length).toBeLessThanOrEqual(4_096);
+    expect(String(record.rawDigest)).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("isolates an oversized persisted row that otherwise matches the schema", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    const oversized = {
+      ...makeEntry(),
+      announcementText: "x".repeat(1_048_577),
+    };
+    await writeFile(filePath, `${JSON.stringify(oversized)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+
+    await expect(readDeadLetterEntries(filePath)).resolves.toMatchObject({
+      ok: true,
+      value: [{
+        recordType: "invalid_record",
+        reason: "oversized_row",
+      }],
+    });
+  });
+
+  it("isolates a malformed row while preserving valid persisted rows", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    const second = { ...makeEntry(), id: "entry-2", runId: "run-2" };
+    const original = `${JSON.stringify(makeEntry())}\n{"broken":\n${JSON.stringify(second)}\n`;
     const logger = { warn: vi.fn() };
     await writeFile(filePath, original, { encoding: "utf8", mode: 0o600 });
 
     const result = await readDeadLetterEntries(filePath, logger);
 
-    expect(result).toMatchObject({ ok: false });
+    expect(result).toMatchObject({
+      ok: true,
+      value: [
+        { id: "entry-1", runId: "run-1" },
+        {
+          recordType: "invalid_record",
+          reason: "invalid_json",
+          sourceLine: 2,
+          rawBytes: 10,
+        },
+        { id: "entry-2", runId: "run-2" },
+      ],
+    });
     expect(logger.warn).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
+        invalidRowCount: 1,
         errorKind: "precondition",
-        hint: "repair or quarantine the malformed dead-letter file before accepting or draining announcements",
-      },
-      "Malformed dead-letter file blocked",
+        hint: "review and explicitly release invalid dead-letter records; valid announcements remain available",
+      }),
+      "Invalid dead-letter rows quarantined",
     );
     expect(await readFile(filePath, "utf8")).toBe(original);
   });
 
-  it("fails closed when a JSON row lacks the dead-letter storage contract", async () => {
+  it("classifies a JSON row outside the dead-letter storage contract", async () => {
     directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
     const filePath = join(directory, "dead-letters.jsonl");
     await writeFile(filePath, "{}\n", { encoding: "utf8", mode: 0o600 });
 
     await expect(readDeadLetterEntries(filePath)).resolves.toMatchObject({
-      ok: false,
+      ok: true,
+      value: [{
+        recordType: "invalid_record",
+        reason: "schema_mismatch",
+        sourceLine: 1,
+        rawBytes: 2,
+      }],
     });
     expect(await readFile(filePath, "utf8")).toBe("{}\n");
+  });
+
+  it("isolates a governed row whose authenticated recovery route is incomplete", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    const entry = {
+      ...makeEntry(),
+      rootRunId: "root-1",
+      stepIndex: 1,
+    };
+    delete (entry as Partial<DeadLetterEntry>).destinationEndpoint;
+    await writeFile(filePath, `${JSON.stringify(entry)}\n`, { encoding: "utf8", mode: 0o600 });
+
+    await expect(readDeadLetterEntries(filePath)).resolves.toMatchObject({
+      ok: true,
+      value: [{
+        recordType: "invalid_record",
+        reason: "schema_mismatch",
+      }],
+    });
+  });
+
+  it("handles parent-reservation load, collision, capacity, and persistence failures", async () => {
+    const unreadable = makeReservationStore({ load: async () => err(new Error("disk unavailable")) });
+    await expect(unreadable.store.reserve(makeDecision())).resolves.toMatchObject({ ok: false });
+    await expect(unreadable.store.lookup("operation-a")).resolves.toMatchObject({ ok: false });
+
+    const collision = makeReservationStore();
+    collision.setReservations([makeReservation({
+      idempotencyKey: "owner-a",
+      completionKeys: ["operation-a"],
+    })]);
+    await expect(collision.store.reserve(makeDecision())).resolves.toEqual(ok({ created: false }));
+
+    const capacity = makeReservationStore({ canPersistReservationCount: () => false });
+    await expect(capacity.store.reserve(makeDecision())).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter quarantine capacity exhausted" },
+    });
+
+    const persistence = makeReservationStore({ persist: async () => err(new Error("disk unavailable")) });
+    await expect(persistence.store.reserve(makeDecision())).resolves.toMatchObject({ ok: false });
+    expect(persistence.deps.logger.error).toHaveBeenCalledOnce();
+  });
+
+  it("handles absent, invalid, and unpersisted parent-reservation resolutions", async () => {
+    const missing = makeReservationStore();
+    await expect(missing.store.resolve("missing", "no_reply")).resolves.toEqual(ok(false));
+    await expect(missing.store.resolve("missing", "invalid" as never)).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Parent decision resolution outcome is invalid" },
+    });
+
+    const persistence = makeReservationStore({ persist: async () => err(new Error("disk unavailable")) });
+    persistence.setReservations([makeReservation()]);
+    await expect(persistence.store.resolve("operation-a", "receipt_committed"))
+      .resolves.toMatchObject({ ok: false });
+    expect(persistence.deps.logger.error).toHaveBeenCalledOnce();
+  });
+
+  it("validates parent-reservation replacement ownership and persistence", async () => {
+    const unreadable = makeReservationStore({ load: async () => err(new Error("disk unavailable")) });
+    await expect(unreadable.store.replace([], [makeDecision()])).resolves.toMatchObject({ ok: false });
+
+    const invalid = makeReservationStore();
+    await expect(invalid.store.replace([], [])).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Announcement operation reservation transition is invalid" },
+    });
+
+    const transitionedFailure = makeReservationStore({ persist: async () => err(new Error("disk unavailable")) });
+    transitionedFailure.setReservations([makeReservation()]);
+    await expect(transitionedFailure.store.replace(
+      ["operation-a"],
+      [makeDecision()],
+      [],
+      ["run-a"],
+    )).resolves.toMatchObject({ ok: false });
+
+    const capacity = makeReservationStore({ canPersistReservationCount: () => false });
+    await expect(capacity.store.replace([], [makeDecision()])).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter quarantine capacity exhausted" },
+    });
+
+    const persistence = makeReservationStore({ persist: async () => err(new Error("disk unavailable")) });
+    await expect(persistence.store.replace([], [makeDecision()])).resolves.toMatchObject({ ok: false });
+  });
+
+  it.each(["write", "sync", "close", "rename"])(
+    "keeps the visible snapshot unchanged when temporary %s fails",
+    async (failure) => {
+      const operations = createRecordingOperations([]);
+      const openOriginal = operations.open;
+      operations.open = async (...args) => {
+        const handle = await openOriginal(...args);
+        return {
+          ...handle,
+          writeFile: async (...writeArgs) => {
+            if (failure === "write") throw new Error("write unavailable");
+            return handle.writeFile(...writeArgs);
+          },
+          sync: async () => {
+            if (failure === "sync") throw new Error("sync unavailable");
+            return handle.sync();
+          },
+          close: async () => {
+            if (failure === "close") throw new Error("close unavailable");
+            return handle.close();
+          },
+        };
+      };
+      if (failure === "rename") {
+        operations.rename = async () => {
+          throw new Error("rename unavailable");
+        };
+      }
+
+      await expect(writeDeadLetterEntries("/data/dead-letters.jsonl", [makeEntry()], operations))
+        .resolves.toMatchObject({ ok: false, error: { state: "snapshot_unchanged" } });
+    },
+  );
+
+  it("accepts an absent queue file and a valid final row without a newline", async () => {
+    directory = await mkdtemp(join(tmpdir(), "comis-dlq-file-"));
+    const filePath = join(directory, "dead-letters.jsonl");
+    await expect(writeDeadLetterEntries(filePath, [])).resolves.toEqual(ok(undefined));
+    await writeFile(filePath, JSON.stringify(makeEntry()), { encoding: "utf8", mode: 0o600 });
+    await expect(readDeadLetterEntries(filePath)).resolves.toMatchObject({
+      ok: true,
+      value: [{ id: "entry-1" }],
+    });
+  });
+
+  it("rejects invalid snapshot read limits", async () => {
+    await expect(readDeadLetterSnapshot("/data/dead-letters.jsonl", undefined, {
+      maxRows: 0,
+      maxBytes: 1,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Dead-letter snapshot read limits are invalid" },
+    });
   });
 });

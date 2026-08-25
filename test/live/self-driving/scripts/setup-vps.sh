@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # VPS — ONCE per box, run as ROOT, AFTER install-vps.sh put the production installation in place.
 # Preps the box for the rig: emulator runtime (tsx) + data-dir ownership + a layout sanity print.
-# Prereq: deploy-scripts.sh pushed the kit (incl. /root/comis-rig.env) to the box, e.g.
-#   bash deploy-scripts.sh   &&   ssh $VPS 'bash /root/setup-vps.sh'
+# Prereq: deploy-scripts.sh pushed the kit and rendered the selected rig env on the box. For an
+# isolated non-default tuple, pass that exact RIG_ENV when invoking this helper.
 set -euo pipefail
-[ -f /root/comis-rig.env ] && . /root/comis-rig.env
-COMIS_USER="${COMIS_USER:-comis}"
-COMIS_HOME="${COMIS_HOME:-/home/$COMIS_USER}"
-DATA="${DATA:-$COMIS_HOME/.comis}"
-PKG="${PKG:-$COMIS_HOME/.npm-global/lib/node_modules/comisai}"
-SERVICE="${SERVICE:-comis}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./_rig.sh
+source "$HERE/_rig.sh"
+rig_load_env "$HERE/.live-env" "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
+rig_banner
 
 echo "1) Emulator runtime — tsx (vps-emu.ts is TypeScript; restart-emu.sh execs \`tsx\`)…"
 command -v tsx >/dev/null 2>&1 || npm install -g tsx >/dev/null
@@ -26,7 +25,7 @@ echo -n "   rpc client   : "; ls "$PKG/node_modules/@comis/cli/dist/client/rpc-c
 echo -n "   jail deps    : "; for b in bwrap tmux ffmpeg; do printf '%s:%s ' "$b" "$(command -v $b >/dev/null && echo ok || echo MISSING)"; done; echo
 
 echo "Done."
-echo "  daemon restart : bash /root/restart-daemon.sh        (systemd; boot-verified)"
-echo "  clean slate    : bash /root/clean-restart.sh         (wipe test state + restart)"
-echo "  driver         : node /root/drive.mjs <chatId> \"<text>\""
-echo "  rpc            : node /root/revoke.mjs <method> [k] [v]   (env defaults via /root/comis-rig.env)"
+echo "  daemon restart : bash $KIT_DIR/restart-daemon.sh        (systemd; boot-verified)"
+echo "  clean slate    : bash $KIT_DIR/clean-restart.sh         (wipe test state + restart)"
+echo "  driver         : node $KIT_DIR/drive.mjs <chatId> \"<text>\""
+echo "  rpc            : node $KIT_DIR/revoke.mjs <method> [k] [v]   (env defaults via $RIG_ENV)"

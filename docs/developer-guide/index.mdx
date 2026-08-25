@@ -12,7 +12,10 @@ This guide covers everything you need to extend Comis: building custom channel a
 
 ### Custom Channel Adapters
 
-Connect Comis to any chat platform by implementing the `ChannelPort` interface. Comis ships with 10 adapters (Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Echo, Email) and you can add more without modifying core code.
+Connect Comis to any chat platform by implementing the `ChannelPort` interface.
+Comis ships with adapters for the platforms listed in the
+[package inventory](/developer-guide/packages), and you can add more without
+modifying core code.
 
 Each adapter handles platform-specific messaging, media, reactions, and threading while presenting a unified interface to the rest of the system. The `EchoChannelAdapter` serves as the simplest reference implementation -- an in-memory adapter with zero external dependencies.
 
@@ -47,7 +50,7 @@ Domain and service operations return `Result<T, E>` so callers handle failures
 explicitly. Narrow boundary wrappers and caught CLI or web entry flows may
 throw with a local rationale. Core utilities such as `ok()`, `err()`,
 `tryCatch()`, and `fromPromise()` from `@comis/shared` keep the normal path
-typed and composable across all 16 packages.
+typed and composable across package boundaries.
 
 ```typescript
 import { err, fromPromise, type Result } from "@comis/shared";
@@ -58,8 +61,9 @@ async function fetchData(id: string): Promise<Result<Data, Error>> {
 }
 ```
 
-The codebase spans 16 focused packages, with port contracts, typed events, and
-lifecycle hooks providing the main extension boundaries.
+The codebase spans focused packages, with port contracts, typed events, and
+lifecycle hooks providing the main extension boundaries. See the
+[package inventory](/developer-guide/packages) for the current list.
 
 ## Key Patterns
 
@@ -89,7 +93,8 @@ pnpm test             # Run all unit tests
 pnpm lint:security    # ESLint with security rules
 ```
 
-The primary validation command before any commit is `pnpm validate` (expands to `pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage`).
+The primary validation command before any commit is `pnpm validate`; the root
+`package.json` owns its exact gate chain.
 
 ## Getting Started
 
@@ -98,10 +103,10 @@ The primary validation command before any commit is `pnpm validate` (expands to 
     Hexagonal pattern, ports, adapters, and the composition root
   </Card>
   <Card title="Packages" icon="cubes" href="/developer-guide/packages">
-    All 16 packages with roles and dependency graph
+    Package roles and dependency graph
   </Card>
   <Card title="Event Bus" icon="tower-broadcast" href="/developer-guide/event-bus">
-    Typed events across 5 domain subsystems (Messaging, Agent, Channel, Infra, Terminal)
+    Typed events across runtime subsystems
   </Card>
   <Card title="Custom Adapters" icon="plug" href="/developer-guide/custom-adapters">
     Step-by-step channel adapter tutorial

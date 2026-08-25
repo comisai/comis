@@ -1,7 +1,7 @@
 {
   "name": "@comis/daemon",
   "private": true,
-  "version": "1.0.63",
+  "version": "1.0.64",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Background daemon and orchestrator for the Comis agent runtime",
@@ -46,11 +46,13 @@
   },
   "scripts": {
     "build": "tsc",
+    "capability-service-fixture-host": "node --import tsx src/__tests__/capability-service-protocol-fixture-host-entry.ts",
     "test": "vitest run"
   },
   "dependencies": {
     "@comis/agent": "workspace:*",
     "@comis/channels": "workspace:*",
+    "@comis/capability-service-sdk": "workspace:*",
     "@comis/core": "workspace:*",
     "@comis/gateway": "workspace:*",
     "@comis/infra": "workspace:*",

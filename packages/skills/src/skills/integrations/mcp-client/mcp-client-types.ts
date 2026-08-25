@@ -53,10 +53,6 @@ export function parseQualifiedName(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
 /** Configuration for a single MCP server connection. */
 // @optional-field-count: User-facing MCP server config. Each optional captures a real operator override across sub-systems — base transport (command, args, url, env, cwd, headers, maxConcurrency), safety/OSV/rlimits (safetyAllowedEnvKeys, osvCheckEnabled, osvCacheTtlMs, rlimits), reliability (keepaliveIntervalMs, circuitBreakerThreshold, circuitBreakerCooldownMs), tool-filtering/idle/utility (toolAllowlist, toolBlocklist, idleTtlMs, enableResources, enablePrompts), and concurrency (supportsParallelToolCalls). Splitting into per-subsystem sub-objects would force every connect path + persistence/audit hook to walk nested groups while gaining no type safety (all use the same `??`/`=== true` global-default fallback). The interface fits the single-sub-object pattern used by all other MCP transports; only the optional count grew over time.
 export interface McpServerConfig {
@@ -291,8 +287,11 @@ export interface McpToolCallResult {
   readonly content: McpToolCallContent[];
   /** Whether the tool call resulted in an error. */
   readonly isError: boolean;
+  /** Server result metadata retained for trusted host-side consumers only. */
+  readonly privateMeta?: McpPrivateMeta;
 }
 
+export type McpPrivateMeta = Readonly<Record<string, unknown>>;
 /** A content item from an MCP tool call result. */
 export interface McpToolCallContent {
   readonly type: string;
@@ -393,6 +392,7 @@ export interface McpClientManager {
     qualifiedName: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    privateMeta?: McpPrivateMeta,
   ): Promise<Result<McpToolCallResult, Error>>;
   reconnect(name: string, credentials?: McpReconnectCredentials): Promise<Result<McpConnection, Error>>;
 }

@@ -224,9 +224,8 @@ let forkDataDir: string | undefined;
 function getForkDataDir(): string {
   if (forkDataDir === undefined) {
     forkDataDir = mkdtempSync(join(tmpdir(), "comis-test-data-"));
-    // Reuse the developer's cached local models (hard link, zero extra disk)
-    // so the daemon skips the ~139 MB embedding download per fork. No-op on
-    // CI / fresh machines. See test/support/model-cache.ts for the rationale.
+    // Reuse the developer's cached local models so the daemon skips the large
+    // embedding download per fork. See model-cache.ts for link/copy behavior.
     seedModelCache(forkDataDir);
   }
   return forkDataDir;
@@ -681,6 +680,7 @@ function buildTracingLoggerOverride(opts: {
         {
           name: loggerOpts.name,
           level: loggerOpts.level ?? "debug",
+          customLevels: { audit: 35 },
           timestamp: pino.stdTimeFunctions.isoTime,
           formatters: {
             level(label: string, number: number) {

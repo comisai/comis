@@ -100,6 +100,38 @@ export function summarizeToolStats(
   };
 }
 
+/** Fold bounded no-progress detector evidence from an execution abort. */
+export function accumulateLoopEvidence(
+  acc: Pick<Acc, "loopEvidence">,
+  data: Record<string, unknown>,
+): void {
+  const loop = (data as { loopEvidence?: Record<string, unknown> }).loopEvidence;
+  if (loop === undefined) return;
+  const kind = asString(loop.lastNoProgressKind);
+  const repeatedToolName = asString(loop.repeatedToolName);
+  const consecutiveNoProgress = asNumber(loop.consecutiveNoProgress);
+  const threshold = asNumber(loop.threshold);
+  const duplicateCallCount = asNumber(loop.duplicateCallCount);
+  const stagnantResultCount = asNumber(loop.stagnantResultCount);
+  const validKind = kind === undefined
+    || kind === "cached_read"
+    || kind === "failed_call"
+    || kind === "identical_success";
+  const validCounts = consecutiveNoProgress !== undefined && consecutiveNoProgress >= 0
+    && threshold !== undefined && threshold > 0
+    && duplicateCallCount !== undefined && duplicateCallCount >= 0
+    && stagnantResultCount !== undefined && stagnantResultCount >= 0;
+  if (!validKind || !validCounts) return;
+  acc.loopEvidence = {
+    ...(kind !== undefined ? { lastNoProgressKind: kind } : {}),
+    ...(repeatedToolName !== undefined ? { repeatedToolName } : {}),
+    consecutiveNoProgress,
+    threshold,
+    duplicateCallCount,
+    stagnantResultCount,
+  };
+}
+
 // @optional-field-count: internal mutable fold accumulator — each optional field
 // is a DISTINCT terminal-record signal (breaker tool, contextBudget, rehydration, promptTimeout,
 // toolSchemaUnsupported, providerErrorCode, oauthRefreshFailure, inboundEdit, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
@@ -281,6 +313,8 @@ export interface Acc {
    *  trajectory-derived turn total the assembler prefers over the
    *  last-write-wins rollup turnCount. Absent ⇒ no summary records. */
   summaryTurnCount?: number;
+  /** Sticky terminal outcome across the per-execution summaries. */
+  summaryOutcome?: IncidentSignals["summaryOutcome"];
   summaryTopErrorKinds?: IncidentSignals["summaryTopErrorKinds"];
   /** Σ of the session's `model.completed` token fields — the trajectory-derived
    *  token ledger (source of cost.totalTokens + cacheReadRatio). Absent ⇒ no

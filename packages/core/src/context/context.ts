@@ -10,6 +10,8 @@ import { formatSessionKey, parseSessionKey } from "../domain/session-key.js";
 import type { SessionKey } from "../domain/session-key.js";
 import { ResolvedTurnScopeSchema, createConversationRef } from "../domain/conversation-scope.js";
 import type { ResolvedTurnScope } from "../domain/conversation-scope.js";
+import { ResponseLocalePolicySchema } from "../domain/response-locale-policy.js";
+import type { ResponseLocalePolicy } from "../domain/response-locale-policy.js";
 
 /**
  * User trust level for authorization decisions.
@@ -80,6 +82,8 @@ export const RequestContextSchema = z.strictObject({
     resolvedModel: z.string().optional(),
     /** Resolved reply language tag set by parent executor for sub-agent inheritance via ALS. */
     resolvedLanguage: z.string().optional(),
+    /** Exact per-turn locale decision captured for durable descendants. */
+    responseLocalePolicy: ResponseLocalePolicySchema.optional(),
     subagentWaitProgressBudgetMs: z.number().int().min(1).max(300_000).optional(),
     /** Immutable operator-policy snapshot hash used by this turn and durable descendants. */
     workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -135,6 +139,7 @@ export interface ResolvedRequestContextSeed {
   deliveryOrigin?: DeliveryOrigin;
   resolvedModel?: string;
   resolvedLanguage?: string;
+  responseLocalePolicy?: ResponseLocalePolicy;
   subagentWaitProgressBudgetMs?: number;
   workspacePolicyHash?: string;
   turnScope?: ResolvedTurnScope;
@@ -171,6 +176,7 @@ const lockedContextFields = [
 const mutableContextFields = [
   "resolvedModel",
   "resolvedLanguage",
+  "responseLocalePolicy",
   "subagentWaitProgressBudgetMs",
   "workspacePolicyHash",
 ] as const satisfies readonly (keyof RequestContext)[];
@@ -279,6 +285,7 @@ function lockResolvedContext(
     const mutableValues: ReadonlyArray<readonly [keyof RequestContext, unknown]> = [
       ["resolvedModel", parsed.resolvedModel],
       ["resolvedLanguage", parsed.resolvedLanguage],
+      ["responseLocalePolicy", parsed.responseLocalePolicy],
       ["subagentWaitProgressBudgetMs", parsed.subagentWaitProgressBudgetMs],
       ["workspacePolicyHash", parsed.workspacePolicyHash],
     ];
@@ -333,6 +340,7 @@ export function createResolvedRequestContext(
     deliveryOrigin: seed.deliveryOrigin,
     resolvedModel: seed.resolvedModel,
     resolvedLanguage: seed.resolvedLanguage,
+    responseLocalePolicy: seed.responseLocalePolicy,
     subagentWaitProgressBudgetMs: seed.subagentWaitProgressBudgetMs,
     workspacePolicyHash: seed.workspacePolicyHash,
     turnScope: seed.turnScope,

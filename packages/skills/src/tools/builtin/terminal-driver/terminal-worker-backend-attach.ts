@@ -26,6 +26,7 @@
  * @module
  */
 
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import type {
   PipeChildLike,
   PtyModuleLike,
@@ -34,6 +35,48 @@ import type {
   WorkerBackend,
   WorkerLogger,
 } from "./terminal-worker-types.js";
+
+const TERMINATION_TIMEOUT_MS = 5_000;
+
+export interface WorkerTeardownDeps {
+  readonly setTimer: (callback: () => void, delayMs: number) => unknown;
+  readonly clearTimer: (handle: unknown) => void;
+}
+
+/** Signal the confined backend and resolve only after its exit callback fires. */
+export async function terminateWorkerSession(
+  state: SessionState,
+  deps: WorkerTeardownDeps,
+): Promise<Result<void, Error>> {
+  if (!state.alive) return ok(undefined);
+  const backend = state.pty ?? state.pipe;
+  if (backend === undefined) return err(new Error("terminal backend identity is unavailable"));
+
+  let settled = false;
+  let resolveExit: (confirmed: boolean) => void = () => undefined;
+  const exited = new Promise<boolean>((resolve) => {
+    resolveExit = resolve;
+  });
+  const finish = (confirmed: boolean): void => {
+    if (settled) return;
+    settled = true;
+    state.exitListeners.delete(onExit);
+    deps.clearTimer(timer);
+    resolveExit(confirmed);
+  };
+  const onExit = (): void => finish(true);
+  state.exitListeners.add(onExit);
+  const timer = deps.setTimer(() => finish(false), TERMINATION_TIMEOUT_MS);
+
+  const signalled = tryCatch(() => backend.kill("SIGTERM"));
+  if (!signalled.ok) {
+    finish(false);
+    return err(signalled.error);
+  }
+  return await exited
+    ? ok(undefined)
+    : err(new Error("terminal backend did not confirm process exit"));
+}
 
 /** The composed spawn plan a backend attaches to — the `{bin,argv,env}` ride VERBATIM after the bwrap composer's `--` (M-1). */
 interface BackendSpawnPlan {
@@ -67,6 +110,44 @@ export function appendRing(state: SessionState, chunk: string): void {
   for (const cb of state.ringListeners) cb();
 }
 
+const TMUX_TEARDOWN_MARKER = "\u001b[1;0r";
+
+/** Preserve the final worker screen while retaining tmux's attached-client teardown bytes in the raw ring. */
+function createTmuxRingAppender(state: SessionState): { append(chunk: string): void; flush(): void } {
+  let pendingMarkerPrefix = "";
+  const writeWorkerOutput = (output: string): void => {
+    if (output === "") return;
+    state.writeFlush = (state.writeFlush ?? Promise.resolve()).then(() => state.emu?.write(output));
+  };
+  return {
+    append(chunk: string): void {
+      state.ring += chunk;
+      if (state.tmuxTeardownSeen !== true) {
+        const candidate = pendingMarkerPrefix + chunk;
+        const teardownAt = candidate.lastIndexOf(TMUX_TEARDOWN_MARKER);
+        if (teardownAt >= 0) {
+          pendingMarkerPrefix = "";
+          state.tmuxTeardownSeen = true;
+          writeWorkerOutput(candidate.slice(0, teardownAt));
+        } else {
+          let retainedLength = Math.min(candidate.length, TMUX_TEARDOWN_MARKER.length - 1);
+          while (retainedLength > 0 && !TMUX_TEARDOWN_MARKER.startsWith(candidate.slice(-retainedLength))) {
+            retainedLength -= 1;
+          }
+          const outputLength = candidate.length - retainedLength;
+          writeWorkerOutput(candidate.slice(0, outputLength));
+          pendingMarkerPrefix = candidate.slice(outputLength);
+        }
+      }
+      for (const cb of state.ringListeners) cb();
+    },
+    flush(): void {
+      if (state.tmuxTeardownSeen !== true) writeWorkerOutput(pendingMarkerPrefix);
+      pendingMarkerPrefix = "";
+    },
+  };
+}
+
 /**
  * Flip a session to not-alive + notify the settle's exit subscribers (onExit half) so a pending
  * `wait`/settle resolves `exit`. ALSO disposes the `listed-hosts` egress materialization ONCE
@@ -88,6 +169,16 @@ export function markExited(state: SessionState, logger: WorkerLogger, exitCode?:
       logger.warn(
         { err, hint: "egress dispose failed on session teardown", errorKind: "internal" as const },
         "terminal egress dispose failed",
+      );
+    });
+  }
+  if (state.attachmentRelay !== undefined) {
+    const { attachmentRelay } = state;
+    state.attachmentRelay = undefined;
+    void attachmentRelay.dispose().catch((err: unknown) => {
+      logger.warn(
+        { err, hint: "attachment relay dispose failed on session teardown", errorKind: "internal" as const },
+        "terminal attachment relay dispose failed",
       );
     });
   }
@@ -180,8 +271,10 @@ export function attachBackend(args: AttachBackendArgs): boolean {
     if (loadTmux === undefined) return false; // cannot re-attach without the tmux backend.
     const handle = loadTmux.reattach({ sessionId, cols, rows, env: plan.env, tmuxSocket });
     if (handle === undefined) return false; // the tmux session is gone — honest death.
-    handle.onData((d) => appendRing(state, d));
+    const ring = createTmuxRingAppender(state);
+    handle.onData((d) => ring.append(d));
     handle.onExit((e) => {
+      ring.flush();
       markExited(state, logger, e?.exitCode);
     });
     state.pty = handle;
@@ -212,8 +305,10 @@ export function attachBackend(args: AttachBackendArgs): boolean {
       rows,
       env: plan.env,
     });
-    handle.onData((d) => appendRing(state, d));
+    const ring = createTmuxRingAppender(state);
+    handle.onData((d) => ring.append(d));
     handle.onExit((e) => {
+      ring.flush();
       markExited(state, logger, e?.exitCode);
     });
     state.pty = handle;

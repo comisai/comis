@@ -7,6 +7,7 @@
 
 export type {
   BackgroundTask,
+  BackgroundTaskOrigin,
   BackgroundTaskStatus,
   BackgroundSessionState,
   PersistedTaskState,
@@ -19,7 +20,6 @@ export type {
 // must import directly from `./background-task-types.js`. Public consumers
 // outside this package use the runtime value.
 export type { BackgroundTaskNotificationPolicy as BackgroundTaskNotificationPolicyType } from "./background-task-types.js";
-export type { BackgroundTaskOrigin } from "@comis/core";
 export {
   persistTaskSync,
   loadTask,

@@ -280,13 +280,13 @@ describe("resolveTraceToSession", () => {
 
 describe("resolveRootRunToSession", () => {
   it("resolves the generated synthetic in-process root shape without reading the session index", async () => {
-    // `root-session-<generation>-<agentId>-<formattedKey>` carries a unique
-    // execution generation before the canonical session key. A pure string op
+    // `root-session-<generation>-<base64url-formattedKey>` carries a unique
+    // execution generation before the opaque canonical session key. A pure string op
     // — pass a dataDir with NO index at all to prove no file access is required.
     const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-rootrun-synthetic-"));
     const resolved = await resolveRootRunToSession(
       emptyDataDir,
-      "root-session-11111111-1111-4111-8111-111111111111-default-default:agent:default:user:telegram:1717000000",
+      "root-session-11111111-1111-4111-8111-111111111111-ZGVmYXVsdDphZ2VudDpkZWZhdWx0OnVzZXI6dGVsZWdyYW06MTcxNzAwMDAwMA",
     );
     expect(resolved).toBe("default:agent:default:user:telegram:1717000000");
   });
@@ -295,7 +295,7 @@ describe("resolveRootRunToSession", () => {
     const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-rootrun-hyphenated-"));
     const resolved = await resolveRootRunToSession(
       emptyDataDir,
-      "root-session-11111111-1111-4111-8111-111111111111-release-agent-default:agent:release-agent:user:telegram:1717000000",
+      "root-session-11111111-1111-4111-8111-111111111111-ZGVmYXVsdDphZ2VudDpyZWxlYXNlLWFnZW50OnVzZXI6dGVsZWdyYW06MTcxNzAwMDAwMA",
     );
     expect(resolved).toBe("default:agent:release-agent:user:telegram:1717000000");
   });
@@ -370,14 +370,14 @@ describe("resolveRootRunToSession", () => {
       JSON.stringify({
         type: "capability.audited",
         data: {
-          rootRunId: "root-session-11111111-1111-4111-8111-111111111111-a1-default:agent:a1:u:c",
+          rootRunId: "root-session-11111111-1111-4111-8111-111111111111-ZGVmYXVsdDphZ2VudDphMTp1OmM",
           runId: "WRONG-FROM-INDEX",
         },
       }),
     ]);
     const resolved = await resolveRootRunToSession(
       dataDir,
-      "root-session-11111111-1111-4111-8111-111111111111-a1-default:agent:a1:u:c",
+      "root-session-11111111-1111-4111-8111-111111111111-ZGVmYXVsdDphZ2VudDphMTp1OmM",
     );
     expect(resolved).toBe("default:agent:a1:u:c");
   });

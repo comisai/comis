@@ -13,12 +13,17 @@
  * socket path, so the full argv composition is asserted on macOS. The live relay
  * bridge is the VPS suite (`terminal-scope-matrix.linux.test.ts`).
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { EgressControlPort } from "@comis/core";
+import { ok } from "@comis/shared";
 
-import { buildSpawnPlan, JailUnavailableError, type SpawnPlanInput } from "./terminal-spawn-plan.js";
+import { AttachmentSandboxUnavailableError, buildSpawnPlan, DEDICATED_UID, JailUnavailableError, planSpawnFromCreateFrame, resolveManagedWorkspaceGitMounts, type CreateFrameSpawnParams, type SpawnPlanInput } from "./terminal-spawn-plan.js";
 import { RELAY_INIT_SCRIPT_URL } from "./terminal-egress-relay.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 
@@ -27,6 +32,7 @@ function makeScope(overrides: Partial<TerminalScope> = {}): TerminalScope {
     filesystem: "workspace",
     network: "none",
     credentialPaths: [],
+    ephemeralWritablePaths: [],
     uid: "dedicated",
     ...overrides,
   };
@@ -34,6 +40,8 @@ function makeScope(overrides: Partial<TerminalScope> = {}): TerminalScope {
 
 function makeInput(overrides: Partial<SpawnPlanInput> = {}): SpawnPlanInput {
   return {
+    sessionId: "terminal_a",
+    durability: "transient",
     scope: makeScope(),
     bin: "/bin/cat",
     argv: [],
@@ -66,6 +74,29 @@ function hasBind(args: string[], flag: string, src: string, dest?: string): bool
 const RELAY_INIT_PATH = fileURLToPath(RELAY_INIT_SCRIPT_URL);
 
 describe("buildSpawnPlan — relay-init script bind (the VPS Cannot-find-module fix)", () => {
+  it("threads durable session identity to the egress materializer", async () => {
+    const calls: unknown[][] = [];
+    const egressControl = {
+      materialize: async (...args: unknown[]) => {
+        calls.push(args);
+        return { socketPath: "/tmp/egress.sock", dispose: () => Promise.resolve() };
+      },
+    } as unknown as EgressControlPort;
+
+    await buildSpawnPlan(
+      {
+        ...makeInput({ scope: makeScope({ network: "listed-hosts", hosts: ["example.com"] }) }),
+        sessionId: "terminal_a",
+        durability: "durable",
+      } as SpawnPlanInput,
+      { bwrapPath: "/usr/bin/bwrap", egressControl },
+    );
+
+    expect(calls).toEqual([
+      [["example.com"], { sessionId: "terminal_a", durability: "durable" }],
+    ]);
+  });
+
   it("listed-hosts ro-binds the relay-init script into the jail (so in-jail node can read it)", async () => {
     const plan = await buildSpawnPlan(
       makeInput({ scope: makeScope({ network: "listed-hosts", hosts: ["example.com"] }) }),
@@ -89,6 +120,306 @@ describe("buildSpawnPlan — relay-init script bind (the VPS Cannot-find-module 
       bwrapPath: "/usr/bin/bwrap",
     });
     expect(plan.argv).not.toContain(RELAY_INIT_PATH);
+  });
+});
+
+describe("buildSpawnPlan — verified executable visibility", () => {
+  it("threads the canonical driven executable into the read-only jail mounts", async () => {
+    const executablePath = "/opt/operator-tools/bin/worker";
+    const plan = await buildSpawnPlan(makeInput({ bin: executablePath }), {
+      bwrapPath: "/usr/bin/bwrap",
+    });
+
+    expect(hasBind(plan.argv, "--ro-bind", executablePath, executablePath)).toBe(true);
+  });
+});
+
+describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", () => {
+  it("pins private Git sources outside worker-writable mount targets", () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-source-pin-"));
+    try {
+      const commonDir = join(root, "repository", ".git");
+      const gitDir = join(commonDir, "worktrees", "task-a");
+      const workspace = join(root, "worktrees", "task-a");
+      const outside = join(root, "outside");
+      mkdirSync(gitDir, { recursive: true });
+      mkdirSync(join(commonDir, "objects"), { recursive: true });
+      mkdirSync(join(commonDir, "refs", "heads"), { recursive: true });
+      mkdirSync(workspace, { recursive: true });
+      mkdirSync(join(outside, "worktree"), { recursive: true });
+      mkdirSync(join(outside, "common"), { recursive: true });
+      writeFileSync(join(workspace, ".git"), `gitdir: ${gitDir}\n`, "utf8");
+      writeFileSync(join(gitDir, "commondir"), "../..\n", "utf8");
+      writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/task-a\n", "utf8");
+      writeFileSync(join(commonDir, "refs", "heads", "task-a"), `${"a".repeat(40)}\n`, "utf8");
+      writeFileSync(join(outside, "worktree", "HEAD"), "attacker-controlled\n", "utf8");
+
+      const resolved = resolveManagedWorkspaceGitMounts(workspace);
+      expect(resolved.ok).toBe(true);
+      if (!resolved.ok || resolved.value === undefined) return;
+      const expectedHead = readFileSync(join(resolved.value.worktree.sourcePath, "HEAD"), "utf8");
+      const privateTarget = join(workspace, ".comis-terminal-git");
+      rmSync(privateTarget, { recursive: true, force: true });
+      symlinkSync(outside, privateTarget);
+
+      expect(resolved.value.worktree.sourcePath.startsWith(`${realpathSync(gitDir)}/`)).toBe(true);
+      expect(resolved.value.privateCommon.sourcePath.startsWith(`${realpathSync(gitDir)}/`)).toBe(true);
+      expect(readFileSync(join(resolved.value.worktree.sourcePath, "HEAD"), "utf8")).toBe(expectedHead);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps shared Git administration read-only and only the leased worktree administration writable", async () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-"));
+    try {
+      const commonDir = join(root, "repository", ".git");
+      const gitDir = join(commonDir, "worktrees", "task-a");
+      const workspace = join(root, "worktrees", "task-a");
+      mkdirSync(gitDir, { recursive: true });
+      mkdirSync(join(commonDir, "objects"), { recursive: true });
+      mkdirSync(join(commonDir, "refs", "heads"), { recursive: true });
+      mkdirSync(workspace, { recursive: true });
+      writeFileSync(join(workspace, ".git"), `gitdir: ${gitDir}\n`, "utf8");
+      writeFileSync(join(gitDir, "commondir"), "../..\n", "utf8");
+      writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/task-a\n", "utf8");
+      writeFileSync(join(commonDir, "refs", "heads", "task-a"), `${"a".repeat(40)}\n`, "utf8");
+      const sourceCommonDir = realpathSync(commonDir);
+      const resolved = resolveManagedWorkspaceGitMounts(workspace);
+      if (!resolved.ok || resolved.value === undefined) throw new Error("managed Git mounts unavailable");
+      const privateWorktree = realpathSync(join(gitDir, ".comis-terminal-git", "worktree"));
+      const privateCommon = realpathSync(join(gitDir, ".comis-terminal-git", "common"));
+      expect(resolveManagedWorkspaceGitMounts(workspace)).toEqual({
+        ok: true,
+        value: {
+          common: { sourcePath: sourceCommonDir, targetPath: commonDir },
+          worktree: { sourcePath: privateWorktree, targetPath: gitDir },
+          privateCommon: {
+            sourcePath: privateCommon,
+            targetPath: join(workspace, ".comis-terminal-git", "common"),
+            systemConfigPath: join(workspace, ".comis-terminal-git", "common", "system-config"),
+          },
+        },
+      });
+
+      const params = {
+        sessionId: "terminal_a",
+        durability: "transient",
+        bin: "/bin/cat",
+        argv: [],
+        scope: makeScope(),
+        workspace,
+        cwd: workspace,
+        managedWorkspace: true,
+      } as CreateFrameSpawnParams & { managedWorkspace: true };
+      const plan = await planSpawnFromCreateFrame(params, {}, { bwrapPath: "/usr/bin/bwrap" });
+
+      expect(hasBind(plan.argv, "--ro-bind", sourceCommonDir, commonDir)).toBe(true);
+      expect(hasBind(plan.argv, "--bind", privateCommon, join(workspace, ".comis-terminal-git", "common"))).toBe(true);
+      expect(hasBind(plan.argv, "--bind", privateWorktree, gitDir)).toBe(true);
+      expect(hasBind(plan.argv, "--bind", sourceCommonDir, commonDir)).toBe(false);
+      expect(plan.env).toMatchObject({
+        GIT_COMMON_DIR: join(workspace, ".comis-terminal-git", "common"),
+        GIT_CONFIG_SYSTEM: join(workspace, ".comis-terminal-git", "common", "system-config"),
+      });
+      const ordinaryPlan = await planSpawnFromCreateFrame(
+        { ...params, managedWorkspace: false },
+        {},
+        { bwrapPath: "/usr/bin/bwrap" },
+      );
+      expect(hasBind(ordinaryPlan.argv, "--ro-bind", sourceCommonDir, commonDir)).toBe(false);
+      expect(hasBind(ordinaryPlan.argv, "--bind", privateCommon, join(workspace, ".comis-terminal-git", "common"))).toBe(false);
+      expect(hasBind(ordinaryPlan.argv, "--bind", privateWorktree, gitDir)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects symlinked private Git sources and targets before a later launch", () => {
+    for (const attackedPath of [
+      "source-root",
+      "source-worktree",
+      "source-common",
+      "target-root",
+      "target-worktree",
+      "target-common",
+    ] as const) {
+      const root = mkdtempSync(join(tmpdir(), `managed-linked-worktree-${attackedPath}-`));
+      try {
+        const commonDir = join(root, "repository", ".git");
+        const gitDir = join(commonDir, "worktrees", "task-a");
+        const workspace = join(root, "worktrees", "task-a");
+        const outside = join(root, "outside");
+        mkdirSync(gitDir, { recursive: true });
+        mkdirSync(join(commonDir, "objects"), { recursive: true });
+        mkdirSync(join(commonDir, "refs", "heads"), { recursive: true });
+        mkdirSync(workspace, { recursive: true });
+        mkdirSync(outside, { recursive: true });
+        writeFileSync(join(workspace, ".git"), `gitdir: ${gitDir}\n`, "utf8");
+        writeFileSync(join(gitDir, "commondir"), "../..\n", "utf8");
+        writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/task-a\n", "utf8");
+        writeFileSync(join(commonDir, "refs", "heads", "task-a"), `${"a".repeat(40)}\n`, "utf8");
+        expect(resolveManagedWorkspaceGitMounts(workspace).ok).toBe(true);
+
+        const sourceAttack = attackedPath.startsWith("source-");
+        const privateRoot = join(sourceAttack ? gitDir : workspace, ".comis-terminal-git");
+        const targetName = attackedPath.slice(attackedPath.indexOf("-") + 1);
+        if (targetName === "root") {
+          renameSync(privateRoot, `${privateRoot}-original`);
+          symlinkSync(outside, privateRoot);
+        } else {
+          const target = join(privateRoot, targetName);
+          rmSync(target, { recursive: true });
+          symlinkSync(outside, target);
+        }
+
+        expect(resolveManagedWorkspaceGitMounts(workspace)).toMatchObject({ ok: false });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("commits through lease-private Git administration without mutating shared refs or config", () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-commit-"));
+    try {
+      const repository = join(root, "repository");
+      const workspace = join(root, "worktrees", "task-a");
+      mkdirSync(repository, { recursive: true });
+      execFileSync("git", ["init", "--initial-branch=main", repository]);
+      execFileSync("git", ["-C", repository, "config", "user.name", "Test User"]);
+      execFileSync("git", ["-C", repository, "config", "user.email", "test@example.com"]);
+      writeFileSync(join(repository, "tracked.txt"), "base\n", "utf8");
+      execFileSync("git", ["-C", repository, "add", "tracked.txt"]);
+      execFileSync("git", ["-C", repository, "-c", "commit.gpgsign=false", "commit", "-m", "base"]);
+      execFileSync("git", ["-C", repository, "worktree", "add", "-b", "task-a", workspace]);
+
+      const commonDir = realpathSync(join(repository, ".git"));
+      const sharedRefPath = join(commonDir, "refs", "heads", "task-a");
+      const sharedRefBefore = readFileSync(sharedRefPath, "utf8");
+      const sharedConfigBefore = readFileSync(join(commonDir, "config"), "utf8");
+      const siblingSentinel = join(commonDir, "worktrees", "sibling-sentinel");
+      writeFileSync(siblingSentinel, "shared sibling state\n", "utf8");
+      const resolved = resolveManagedWorkspaceGitMounts(workspace);
+      expect(resolved.ok).toBe(true);
+      if (!resolved.ok || resolved.value === undefined) return;
+      const mounts = resolved.value as typeof resolved.value & {
+        readonly privateCommon?: { readonly sourcePath: string; readonly targetPath: string };
+      };
+
+      expect(mounts.privateCommon).toBeDefined();
+      expect(mounts.worktree.sourcePath).not.toBe(mounts.worktree.targetPath);
+      if (mounts.privateCommon === undefined) return;
+      writeFileSync(join(workspace, "tracked.txt"), "isolated commit\n", "utf8");
+      const isolatedEnv = {
+        ...process.env,
+        GIT_DIR: mounts.worktree.sourcePath,
+        GIT_WORK_TREE: workspace,
+        GIT_COMMON_DIR: mounts.privateCommon.sourcePath,
+      };
+      execFileSync("git", ["add", "tracked.txt"], { env: isolatedEnv });
+      execFileSync("git", ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-m", "isolated"], { env: isolatedEnv });
+
+      expect(execFileSync("git", ["status", "--porcelain"], { env: isolatedEnv, encoding: "utf8" })).toBe("");
+      expect(readFileSync(sharedRefPath, "utf8")).toBe(sharedRefBefore);
+      expect(readFileSync(join(commonDir, "config"), "utf8")).toBe(sharedConfigBefore);
+      expect(readFileSync(siblingSentinel, "utf8")).toBe("shared sibling state\n");
+      expect(existsSync(join(mounts.privateCommon.sourcePath, "hooks"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps host Git status clean only for verified private administration", () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-host-status-"));
+    try {
+      const repository = join(root, "repository");
+      const workspace = join(root, "worktrees", "task-a");
+      mkdirSync(repository, { recursive: true });
+      execFileSync("git", ["init", "--initial-branch=main", repository]);
+      execFileSync("git", ["-C", repository, "config", "user.name", "Test User"]);
+      execFileSync("git", ["-C", repository, "config", "user.email", "test@example.com"]);
+      writeFileSync(join(repository, "tracked.txt"), "base\n", "utf8");
+      execFileSync("git", ["-C", repository, "add", "tracked.txt"]);
+      execFileSync("git", ["-C", repository, "-c", "commit.gpgsign=false", "commit", "-m", "base"]);
+      execFileSync("git", ["-C", repository, "worktree", "add", "-b", "task-a", workspace]);
+
+      expect(resolveManagedWorkspaceGitMounts(workspace).ok).toBe(true);
+      expect(execFileSync("git", ["-C", workspace, "status", "--porcelain"], { encoding: "utf8" })).toBe("");
+
+      writeFileSync(join(workspace, "user-note.txt"), "preserve me\n", "utf8");
+      expect(execFileSync("git", ["-C", workspace, "status", "--porcelain"], { encoding: "utf8" }))
+        .toBe("?? user-note.txt\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("buildSpawnPlan — execution attachment confinement", () => {
+  const relayIdentity = "ab".repeat(32);
+  const attachment = {
+    executionAttachmentId: "execution-attachment_a",
+    sourcePath: "/srv/runtime/worker.sock",
+    targetName: `attachment-${"a".repeat(32)}.sock`,
+    relayIdentity,
+  };
+  const attachmentRelay = {
+    attachments: [{ ...attachment, sourcePath: "/tmp/relays/worker.sock" }],
+    dispose: vi.fn(async () => undefined),
+  };
+  const materializeExecutionAttachmentRelays = vi.fn(async () => ok(attachmentRelay));
+
+  it("fails closed when an attachment cannot be materialized by bubblewrap", async () => {
+    await expect(buildSpawnPlan(makeInput({ executionAttachments: [attachment] }), {}))
+      .rejects.toMatchObject({
+        name: AttachmentSandboxUnavailableError.name,
+        errorKind: "sandbox_unavailable",
+      });
+    await expect(buildSpawnPlan(
+      makeInput({ executionAttachments: [attachment] }),
+      { bwrapPath: "/usr/bin/bwrap", unsafeDisableSandbox: true },
+    )).rejects.toMatchObject({ errorKind: "sandbox_unavailable" });
+  });
+
+  it("threads only the approved attachment record into the bubblewrap composer", async () => {
+    const plan = await buildSpawnPlan(makeInput({ executionAttachments: [attachment] }), {
+      bwrapPath: "/usr/bin/bwrap",
+      materializeExecutionAttachmentRelays,
+    });
+    expect(hasBind(
+      plan.argv,
+      "--ro-bind",
+      "/tmp/relays/worker.sock",
+      `/run/comis/attachments/${attachment.targetName}`,
+    )).toBe(true);
+    expect(plan.attachmentRelay).toBe(attachmentRelay);
+    expect(materializeExecutionAttachmentRelays).toHaveBeenLastCalledWith(
+      [attachment],
+      DEDICATED_UID,
+      { sessionId: "terminal_a", durability: "transient" },
+    );
+  });
+
+  it("publishes the sole protected attachment identity to the jailed child", async () => {
+    const plan = await buildSpawnPlan(makeInput({ executionAttachments: [attachment] }), {
+      bwrapPath: "/usr/bin/bwrap",
+      materializeExecutionAttachmentRelays,
+    });
+
+    expect(plan.env).toMatchObject({
+      COMIS_EXECUTION_ATTACHMENT: `/run/comis/attachments/${attachment.targetName}`,
+      COMIS_EXECUTION_ATTACHMENT_TARGET_NAME: attachment.targetName,
+      COMIS_EXECUTION_ATTACHMENT_IDENTITY: relayIdentity,
+    });
+  });
+
+  it("removes caller-provided attachment identity without host attachment authority", async () => {
+    const plan = await buildSpawnPlan(makeInput({
+      env: { COMIS_EXECUTION_ATTACHMENT_IDENTITY: "cd".repeat(32) },
+    }), { bwrapPath: "/usr/bin/bwrap" });
+
+    expect(plan.env.COMIS_EXECUTION_ATTACHMENT_IDENTITY).toBeUndefined();
   });
 });
 
@@ -186,27 +517,74 @@ describe("buildSpawnPlan — daemon secrets MUST NOT enter the jailed CLI env (T
   });
 });
 
-describe("buildSpawnPlan — claude session-env carve-out (the actual EROFS fix)", () => {
-  // Real-VPS 2026-06-17: claude's Bash tool / SessionStart hook EROFSes on `mkdir ~/.claude/
-  // session-env/<id>` because claude's OWN bash sandbox remounts $HOME read-only IN-PLACE. The
-  // CLAUDE_CODE_BUBBLEWRAP var does NOT suppress that remount in the prod seccomp'd daemon (it only
-  // appeared to on a non-seccomp socket). A writable --tmpfs carve-out at <home>/.claude/session-env
-  // is a SEPARATE sub-mount that survives claude's in-place $HOME remount → the mkdir lands on a rw
-  // tmpfs → no EROFS. Live-proven on the seccomp'd daemon under --permission-mode bypassPermissions
-  // (`● Bash(echo …) ⎿ CARVE_BASH_OK`). claude's creds/config under ~/.claude stay intact (only the
-  // transient session-env subdir becomes an ephemeral tmpfs).
-  it("emits --tmpfs <home>/.claude/session-env (a writable sub-mount that survives claude's $HOME-ro remount)", async () => {
+describe("buildSpawnPlan — driven TUI terminal type", () => {
+  it.each([undefined, "", "dumb", "unknown"])(
+    "defaults unusable TERM %j to xterm-256color",
+    async (term) => {
+      const plan = await buildSpawnPlan(makeInput({ env: { TERM: term } }), { bwrapPath: "/usr/bin/bwrap" });
+      expect(plan.env.TERM).toBe("xterm-256color");
+    },
+  );
+
+  it("preserves an explicit usable terminal type", async () => {
+    const plan = await buildSpawnPlan(makeInput({ env: { TERM: "screen-256color" } }), { bwrapPath: "/usr/bin/bwrap" });
+    expect(plan.env.TERM).toBe("screen-256color");
+  });
+});
+
+describe("buildSpawnPlan — operator-declared ephemeral writable paths", () => {
+  it("does not inject a platform-specific writable path into an unrelated terminal jail", async () => {
     const plan = await buildSpawnPlan(makeInput(), { bwrapPath: "/usr/bin/bwrap" });
-    expect(plan.argv.join(" ")).toContain("--tmpfs /home/u/.claude/session-env");
+    expect(plan.argv.join(" ")).not.toContain("--tmpfs /home/u/.claude/session-env");
   });
 
-  it("places the session-env carve-out BEFORE the ~/.comis mask (the mask + workspace re-bind stay the last mounts)", async () => {
-    const plan = await buildSpawnPlan(makeInput(), { bwrapPath: "/usr/bin/bwrap" });
-    const s = plan.argv.join(" ");
-    const seIdx = s.indexOf("--tmpfs /home/u/.claude/session-env");
-    const comisIdx = s.indexOf("--tmpfs /home/u/.comis");
-    expect(seIdx).toBeGreaterThanOrEqual(0);
-    expect(comisIdx).toBeGreaterThan(seIdx); // the secret-masking ~/.comis tmpfs comes AFTER → stays last
+  it("rejects an unavailable ephemeral writable mount before spawning bubblewrap", async () => {
+    const scope = {
+      ...makeScope(),
+      ephemeralWritablePaths: ["/path/that/does/not/exist/comis-ephemeral-runtime"],
+    } as unknown as TerminalScope;
+
+    await expect(buildSpawnPlan(makeInput({ scope }), { bwrapPath: "/usr/bin/bwrap" })).rejects.toThrow(
+      "agents.*.skills.terminal.allow[].scope.ephemeralWritablePaths target is unavailable",
+    );
+  });
+
+  it("rejects a non-directory ephemeral writable mount before spawning bubblewrap", async () => {
+    const root = mkdtempSync(join(tmpdir(), "comis-ephemeral-file-"));
+    const target = join(root, "runtime");
+    writeFileSync(target, "not a directory", { mode: 0o600 });
+    const scope = {
+      ...makeScope(),
+      ephemeralWritablePaths: [target],
+    } as unknown as TerminalScope;
+
+    try {
+      await expect(buildSpawnPlan(makeInput({ scope }), { bwrapPath: "/usr/bin/bwrap" })).rejects.toThrow(
+        "agents.*.skills.terminal.allow[].scope.ephemeralWritablePaths target is unavailable",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes an explicit ephemeral path before the data-directory mask", async () => {
+    const root = mkdtempSync(join(tmpdir(), "comis-ephemeral-directory-"));
+    const target = join(root, "runtime");
+    mkdirSync(target, { mode: 0o700 });
+    const scope = {
+      ...makeScope(),
+      ephemeralWritablePaths: [target],
+    } as unknown as TerminalScope;
+    try {
+      const plan = await buildSpawnPlan(makeInput({ scope }), { bwrapPath: "/usr/bin/bwrap" });
+      const s = plan.argv.join(" ");
+      const ephemeralIdx = s.indexOf(`--tmpfs ${target}`);
+      const comisIdx = s.indexOf("--tmpfs /home/u/.comis");
+      expect(ephemeralIdx).toBeGreaterThanOrEqual(0);
+      expect(comisIdx).toBeGreaterThan(ephemeralIdx);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

@@ -295,12 +295,24 @@ export function assembleIncidentReport(
   // sub-agent boundary to generic "error". In both cases the terminal
   // `execution.aborted` reason is the more specific source. Preserve any
   // non-generic metadata outcome.
+  // A recorded kill outranks BOTH later sources: the kill races the run's own
+  // completion, so the summary/metadata rollup can land a clean end milliseconds
+  // after it. Ranking it first is what keeps that race from erasing the kill.
+  const summaryEndReason = signals.summaryOutcome?.endReason;
+  const summaryNeedsAbortCause =
+    summaryEndReason === undefined
+    || summaryEndReason === "unknown"
+    || summaryEndReason === "error";
   const executionEndReason = signals.subagentKilled !== undefined
     ? "killed"
-    : signals.abortReason !== undefined &&
-      (metadataEndReason === undefined || metadataEndReason === "error")
+    : signals.abortReason !== undefined && summaryNeedsAbortCause
       ? signals.abortReason
-      : metadataEndReason ?? "unknown";
+      : summaryEndReason ?? (
+          signals.abortReason !== undefined &&
+          (metadataEndReason === undefined || metadataEndReason === "error")
+            ? signals.abortReason
+            : metadataEndReason ?? "unknown"
+        );
   const backgroundTasks = signals.backgroundTasks;
   const backgroundCompletionAccepted =
     executionEndReason === "background_pending"
@@ -331,6 +343,7 @@ export function assembleIncidentReport(
       : lifecycleEndReason;
   const isHardFailure = deliveryFailed || HARD_FAILURE_END_REASONS.has(endReason);
   const persistedDegraded =
+    signals.summaryOutcome?.degraded ??
     (sessionEnd !== undefined ? asBoolean(sessionEnd.degraded) : undefined) ??
     (metadata !== null ? asBoolean(metadata.degraded) : undefined) ??
     asBoolean(rollupPayload.degraded);

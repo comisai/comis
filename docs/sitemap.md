@@ -203,7 +203,7 @@ Open-source security-first runtime for AI agents that learn and act across sessi
 
 - [Config YAML Reference](https://docs.comis.ai/reference/config-yaml) — Complete reference for all configuration options with types, defaults, and validation rules
 - [Environment Variables](https://docs.comis.ai/reference/environment-variables) — Complete reference for all Comis environment variables
-- [Hot Reload](https://docs.comis.ai/reference/hot-reload) — Config and skill hot reload mechanism reference covering SIGUSR1 restart and chokidar file watching
+- [Hot Reload](https://docs.comis.ai/reference/hot-reload)
 - [Secret Manager](https://docs.comis.ai/reference/secret-manager) — Secret management system technical reference covering SecretManager interface, encryption, scoping, and audit
 - [Delivery Queue](https://docs.comis.ai/reference/configuration/delivery-queue) — Crash-safe outbound message persistence and recovery
 

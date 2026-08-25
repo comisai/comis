@@ -17,12 +17,11 @@ import {
   BackgroundTasksConfigSchema,
   createConversationRef,
   safePath,
-  type BackgroundTaskOrigin,
   type ClockPort,
   type TimerPort,
   type TimerHandle,
 } from "@comis/core";
-import { TASK_DIR_NAME } from "@comis/agent";
+import { TASK_DIR_NAME, type BackgroundTaskOrigin } from "@comis/agent";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
@@ -91,6 +90,9 @@ const TEST_ORIGIN: BackgroundTaskOrigin = {
   trustLevel: "user",
   responseLocalePolicy: { source: "unset", enforceLocale: false },
   backgroundHopCount: 0,
+  workspacePolicyHash: "b".repeat(64),
+  capturedToolIds: ["second_tool", "slow_tool"],
+  capturedCapabilityViewHash: "c".repeat(64),
 };
 
 /**

@@ -292,7 +292,21 @@ jobs:
           wait_for_workflow npm-publish.yml "npm publish workflow"
           wait_for_workflow docker-release.yml "GHCR workflow"
 
+      # A companion service in another language cannot install the private,
+      # umbrella-bundled SDK, so the neutral protocol bundle ships here as an
+      # immutable asset it can pin by digest instead of by branch commit. The
+      # stager verifies every artifact hash and the daemon's handshake constant
+      # before writing, and uses node builtins only — this job checks out the
+      # repository without installing the workspace.
+      - name: Stage capability-service protocol bundle
+        run: |
+          node .github/scripts/stage-capability-protocol-release.mjs \
+            --tag "${GITHUB_REF_NAME}" --out dist-release
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           generate_release_notes: true
+          files: |
+            dist-release/comis-capability-service-protocol-*.tar.gz
+            dist-release/comis-capability-service-protocol-*.manifest.json

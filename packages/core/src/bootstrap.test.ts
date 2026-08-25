@@ -53,6 +53,36 @@ describe("bootstrap", () => {
     }
   });
 
+  it("budgets configured session concurrency without false listener leak warnings", async () => {
+    const dir = makeTmpDir();
+    const configPath = writeYaml(
+      dir,
+      "config.yaml",
+      "tenantId: listener-budget\nqueue:\n  maxConcurrentSessions: 20\n",
+    );
+    const warnings: Error[] = [];
+    const onWarning = (warning: Error): void => {
+      if (warning.name === "MaxListenersExceededWarning") warnings.push(warning);
+    };
+    process.on("warning", onWarning);
+
+    try {
+      const result = bootstrap({ configPaths: [configPath], env: {} });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      containers.push(result.value);
+
+      for (let listenerIndex = 0; listenerIndex < 30; listenerIndex++) {
+        result.value.eventBus.on("tool:executed", () => {});
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(warnings).toHaveLength(0);
+    } finally {
+      process.off("warning", onWarning);
+    }
+  });
+
   it("wires the workspace policy adapter factory into the application container", () => {
     const dir = makeTmpDir();
     const configPath = writeYaml(dir, "config.yaml", "tenantId: policy-test\n");
@@ -248,6 +278,37 @@ describe("bootstrap", () => {
       expect(INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME).toBe(
         "activity.interactiveCallbackSigningSecret",
       );
+    }
+  });
+
+  it("adds configured capability-service credentials to the platform-secret deny surface", () => {
+    const dir = makeTmpDir();
+    const configPath = writeYaml(dir, "config.yaml", [
+      "capabilityServices:",
+      "  instances:",
+      "    - serviceInstanceId: service-instance_a",
+      "      serviceDefinitionId: example.service-definition",
+      "      enabled: true",
+      "      mcpServerName: example-service",
+      "      control:",
+      "        transport: unix",
+      "        socketPath: /tmp/example-service.sock",
+      "        credentialRef: secret://capability-services/service-instance_a",
+      "      allowedAgents: [agent_a]",
+      "      allowedWorkspaceRoots: []",
+      "      allowedRuntimeRoots: []",
+      "",
+    ].join("\n"));
+
+    const result = bootstrap({ configPaths: [configPath], env: {} });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      containers.push(result.value);
+      expect(result.value.platformSecretNames.has("capability-services/service-instance_a"))
+        .toBe(true);
+      expect(result.value.config.capabilityServices.instances[0]?.control.credentialRef)
+        .toBe("secret://capability-services/service-instance_a");
     }
   });
 

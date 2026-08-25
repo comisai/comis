@@ -51,9 +51,9 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
   });
 
   it.each([
-    ["contributions", "instances.echo"],
-    ["contributions", "activation.enabled"],
-    ["contributions", "definitions.echo"],
+    ["capabilityServices", "instances.0.enabled"],
+    ["capabilityServices", "reportRetentionMs"],
+    ["capabilityServices", "privateContentDirectory"],
     ["plugins", "enabled"],
     ["plugins", "plugins.echo.enabled"],
   ])("rejects runtime mutation of contribution topology at %s.%s", (section, key) => {

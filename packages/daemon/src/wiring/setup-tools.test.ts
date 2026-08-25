@@ -55,6 +55,14 @@ const mockCreateMediaPersistenceService = vi.hoisted(() => vi.fn(() => ({
   persist: vi.fn(),
 })));
 const mockMcpToolsToAgentTools = vi.hoisted(() => vi.fn(() => [{ name: "mcp:server/tool" }]));
+const mockManagedMcpBridge = vi.hoisted(() => ({
+  createRequestMeta: vi.fn(),
+  acceptResultMeta: vi.fn(),
+  discardCall: vi.fn(),
+}));
+const mockCreateManagedMcpPrivateMetadataBridge = vi.hoisted(() => vi.fn(
+  () => mockManagedMcpBridge,
+));
 const mockSanitizeImageForApi = vi.hoisted(() => vi.fn());
 const mockCreateFileStateTracker = vi.hoisted(() => vi.fn(() => ({
   recordRead: vi.fn(),
@@ -101,6 +109,7 @@ const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
 vi.mock("@comis/skills", () => ({
   assembleToolPipeline: mockAssembleToolPipeline,
   mcpToolsToAgentTools: mockMcpToolsToAgentTools,
+  createManagedMcpPrivateMetadataBridge: mockCreateManagedMcpPrivateMetadataBridge,
   TOOL_PROFILES: {
     minimal: ["exec", "read", "write"],
     coding: ["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"],
@@ -121,6 +130,7 @@ vi.mock("@comis/skills", () => ({
 }));
 
 vi.mock("@comis/skills/tools", () => ({
+  prepareManagedWorkspaceGit: vi.fn(),
   createExecTool: mockCreateExecTool,
   createProcessTool: mockCreateProcessTool,
   createProcessRegistry: mockCreateProcessRegistry,
@@ -471,6 +481,17 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
       })),
     } as any,
     mcpClientManager: createDefaultMockMcpClientManager() as any,
+    capabilityServices: {
+      runtime: { getActiveView: vi.fn(() => ({ viewHash: "c".repeat(64), definitions: [], instances: [] })) },
+      store: { get: vi.fn() },
+      workspaceLeases: { get: vi.fn() },
+      attachments: { get: vi.fn() },
+      attachmentAuthority: { validateActive: vi.fn(() => ({ ok: true, value: undefined })) },
+      control: { terminalEvent: vi.fn() },
+      activationCoordinator: { activatePrepared: vi.fn() },
+      bindTerminalRevoker: vi.fn(),
+    } as any,
+    clock: { now: () => 1_800_000_000_000 } as any,
     sessionTrackerRegistry: createMockSessionTrackerRegistry() as any,
     getCapabilityPortForAgent: vi.fn(() => portStub) as any,
     ...overrides,
@@ -886,6 +907,59 @@ describe("setupTools", () => {
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).toContain("mcp:server/tool");
     expect(mockMcpToolsToAgentTools).toHaveBeenCalled();
+  });
+
+  it("wires the frozen capability view, tool ceiling, and approval gate into managed MCP calls", async () => {
+    const activeView = {
+      viewHash: "c".repeat(64),
+      definitions: [],
+      instances: [],
+    };
+    const capabilityServices = {
+      runtime: { getActiveView: vi.fn(() => activeView) },
+      store: { get: vi.fn() },
+      workspaceLeases: { get: vi.fn() },
+      attachments: { get: vi.fn() },
+      attachmentAuthority: { validateActive: vi.fn(() => ({ ok: true, value: undefined })) },
+      control: { terminalEvent: vi.fn() },
+      activationCoordinator: { activatePrepared: vi.fn() },
+      bindTerminalRevoker: vi.fn(),
+    };
+    const mcpClientManager = {
+      getTools: vi.fn(() => [{ name: "mcp-tool-1", inputSchema: {} }]),
+      callTool: vi.fn(),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      disconnectAll: vi.fn(),
+      getConnection: vi.fn(),
+      getAllConnections: vi.fn(),
+    };
+    const approvalGate = { requestApproval: vi.fn() };
+    mockAssembleToolPipeline.mockImplementationOnce(async (input) => input.platformTools());
+    const deps = createMinimalDeps({
+      mcpClientManager: mcpClientManager as any,
+      capabilityServices,
+      approvalGate: approvalGate as any,
+      clock: { now: () => 1_800_000_000_000 },
+    } as unknown as Partial<ToolsDeps>);
+    const setupTools = await getSetupTools();
+
+    const tools = await setupTools(deps).assembleToolsForAgent("agent-1");
+
+    expect(capabilityServices.runtime.getActiveView).toHaveBeenCalledOnce();
+    expect(mockCreateManagedMcpPrivateMetadataBridge).toHaveBeenCalledOnce();
+    const bridgeDeps = mockCreateManagedMcpPrivateMetadataBridge.mock.calls[0]![0];
+    expect(bridgeDeps).toMatchObject({
+      agentId: "agent-1",
+      activeView,
+      capturedAgentCapabilities: expect.arrayContaining(["orch:read"]),
+    });
+    expect(bridgeDeps.getCapturedToolIds()).toEqual(
+      tools.map((tool: { name: string }) => tool.name),
+    );
+    const mcpBridgeCall = mockMcpToolsToAgentTools.mock.calls.at(-1)!;
+    expect(mcpBridgeCall[7]).toBe(mockManagedMcpBridge);
+    expect(mcpBridgeCall[8]).toBe(approvalGate);
   });
 
   // -------------------------------------------------------------------------

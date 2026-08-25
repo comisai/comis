@@ -22,11 +22,12 @@
  * THE FIX
  * -------
  * If the developer already has the models cached in the real data dir
- * (`~/.comis/models`, populated by any prior real daemon run), hard-link those
+ * (`~/.comis/models`, populated by any prior real daemon run), seed those
  * `.gguf` files into the test daemon's `<dataDir>/models`. The daemon's model
- * resolver then finds the file already present and skips the download entirely
- * — boots drop from ~60 s to ~1-3 s and consume zero extra disk (a hard link
- * shares the inode; temp dir and `~/.comis` are on the same volume).
+ * resolver then finds the file already present and skips the download entirely.
+ * Same-filesystem targets use a zero-copy hard link; cross-filesystem targets
+ * (for example, a bind-mounted home cache feeding a container overlay) receive
+ * a regular file copy.
  *
  * WHY HARD LINKS, NOT A SYMLINK
  * -----------------------------
@@ -39,47 +40,59 @@
  *
  * CI / FRESH MACHINES
  * -------------------
- * Best-effort and gated on the cache existing: when `~/.comis/models` is
- * absent (CI runners, fresh contributor checkouts) this is a no-op and the
- * daemon downloads as before. A cross-device or permission error on any single
- * link is swallowed so the daemon falls back to downloading that model. This
- * only ever speeds tests up — it never changes which models a daemon resolves.
+ * Gated on the cache existing: when `~/.comis/models` is absent (CI runners,
+ * fresh contributor checkouts) this is a no-op and the daemon downloads as
+ * before. Seeding errors surface immediately; silently falling through would
+ * make every worker download another model and hide the infrastructure fault
+ * behind hook timeouts and disk exhaustion.
  *
  * @module
  */
-import { existsSync, mkdirSync, readdirSync, linkSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readdirSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+/** Suite-local model source prepared by global setup on the test filesystem. */
+export const TEST_MODEL_CACHE_SOURCE_ENV = "COMIS_TEST_MODEL_CACHE_SOURCE";
+
 /**
- * Hard-link any cached `*.gguf` models from `~/.comis/models` into
- * `<dataDir>/models` so a test daemon booted on `dataDir` reuses them instead
- * of re-downloading. No-op when the shared cache does not exist. Best-effort:
- * never throws.
+ * Seed cached `*.gguf` models from `~/.comis/models` into `<dataDir>/models`
+ * so a test daemon booted on `dataDir` reuses them instead of re-downloading.
+ * No-op when the shared cache does not exist. Uses hard links when possible and
+ * copies only when the source and target are on different filesystems.
  *
  * @param dataDir Absolute path to a test daemon's throwaway data dir.
  */
 export function seedModelCache(dataDir: string): void {
-  try {
-    const cacheDir = join(homedir(), ".comis", "models");
-    if (!existsSync(cacheDir)) return; // CI / fresh machine — download as normal.
+  const stagedCacheDir = process.env[TEST_MODEL_CACHE_SOURCE_ENV];
+  const cacheDir =
+    stagedCacheDir !== undefined && existsSync(stagedCacheDir)
+      ? stagedCacheDir
+      : join(homedir(), ".comis", "models");
+  if (!existsSync(cacheDir)) return; // CI / fresh machine — download as normal.
 
-    const destDir = join(dataDir, "models");
-    mkdirSync(destDir, { recursive: true });
+  const destDir = join(dataDir, "models");
+  mkdirSync(destDir, { recursive: true });
 
-    for (const name of readdirSync(cacheDir)) {
-      // Only seed completed models; skip `.ipull` partial-download artifacts.
-      if (!name.endsWith(".gguf")) continue;
-      const dest = join(destDir, name);
-      if (existsSync(dest)) continue;
-      try {
-        linkSync(join(cacheDir, name), dest);
-      } catch {
-        // Cross-device link / perms — let the daemon download this one model.
-      }
+  for (const name of readdirSync(cacheDir)) {
+    // Only seed completed models; skip `.ipull` partial-download artifacts.
+    if (!name.endsWith(".gguf")) continue;
+    const source = join(cacheDir, name);
+    const dest = join(destDir, name);
+    if (existsSync(dest)) continue;
+    try {
+      linkSync(source, dest);
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (code !== "EXDEV") throw error;
+      copyFileSync(source, dest);
     }
-  } catch {
-    // Cache unreadable / temp dir vanished — best-effort, daemon downloads.
   }
 }
 
@@ -98,7 +111,7 @@ const MODEL_CACHE_DOWNLOAD_TIMEOUT_MS = 240_000;
 
 /**
  * Populate the shared model cache (`~/.comis/models`) ONCE so `seedModelCache`
- * has a source to hard-link from.
+ * has a source to seed from.
  *
  * `seedModelCache` is a no-op when `~/.comis/models` is empty — the case on CI
  * runners and fresh checkouts. There, every parallel test daemon downloads the
@@ -110,8 +123,8 @@ const MODEL_CACHE_DOWNLOAD_TIMEOUT_MS = 240_000;
  * This downloads the default embedding GGUF a SINGLE time — serially, in the
  * vitest main process via `globalSetup`, before any fork — using the same
  * `node-llama-cpp` `resolveModelFile` the daemon uses, so the file lands with
- * the exact name daemons resolve. Afterwards all daemons hard-link the one
- * cached copy (via `seedModelCache`) and boot in ~1-3 s.
+ * the exact name daemons resolve. Afterwards all daemons seed from the one
+ * cached source (via `seedModelCache`) instead of downloading it independently.
  *
  * Best-effort: a no-op when the model is already cached (warm dev machine), and
  * any failure (no native binary, network, fs) is swallowed so daemons fall back
@@ -122,7 +135,7 @@ export async function ensureSharedModelCache(): Promise<void> {
   try {
     const cacheDir = join(homedir(), ".comis", "models");
     mkdirSync(cacheDir, { recursive: true });
-    // Already cached → nothing to download; seedModelCache will link it.
+    // Already cached → nothing to download; seedModelCache will reuse it.
     if (readdirSync(cacheDir).some((n) => /bge-m3.*\.gguf$/i.test(n))) return;
     const llamaCpp = (await import("node-llama-cpp")) as {
       resolveModelFile: (uri: string, dir: string) => Promise<string>;

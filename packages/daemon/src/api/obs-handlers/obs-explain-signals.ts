@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Normalizes raw log and structured trajectory records into `IncidentSignals`.
- * Raw bodies never enter reports: previews are bounded and sanitized, full
- * results become digests, and offload paths are relative.
- * @module
- */
+/** Normalizes raw records into bounded, sanitized `IncidentSignals`. @module */
 import { fingerprint, type IncidentSignals } from "@comis/core";
 import { asString, asNumber, relativizeDiskPath, previewAndDigest, applyMediaRecord, accumulateSessionSummaryRecord, currentTurnBreakerOpenedTool, latestPromptSequence } from "./obs-explain-signals-fields.js";
 import {
@@ -17,7 +12,7 @@ import {
   accumulateContextRecord, accumulatePromptRequestRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
   readSkillAvailability,
 } from "./obs-explain-signal-folds.js";
-import { accumulateDiscoveryActivation, accumulateOauthRefreshFailure, ensureTool, handleLogRecord, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
+import { accumulateDiscoveryActivation, accumulateLoopEvidence, accumulateOauthRefreshFailure, ensureTool, handleLogRecord, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch, accumulateDeliveryReplyBound, accumulateOutwardDelivery } from "./obs-explain-delivery-fold.js";
@@ -32,13 +27,12 @@ function nonnegativeInteger(value: unknown): number {
   const parsed = asNumber(value);
   return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
-// Per-shape record handlers.
-// ---------------------------------------------------------------------------
 function handleEventRecord(
   acc: Acc,
   rec: Record<string, unknown>,
   latestPromptSeq: number | undefined,
   previousPromptSeq: number | undefined,
+  outcomeTraceId: string | undefined,
 ): void {
   const type = asString(rec.type) ?? "";
   const data = (rec.data ?? {}) as Record<string, unknown>;
@@ -482,7 +476,12 @@ function handleEventRecord(
     }
     case "session.summary": {
       // Sums cost/turn counts and keeps only this latest summary's locale skip.
-      accumulateSessionSummaryRecord(acc, data);
+      const recordTraceId = asString(rec.traceId);
+      accumulateSessionSummaryRecord(
+        acc,
+        data,
+        outcomeTraceId === undefined || recordTraceId === outcomeTraceId,
+      );
       return;
     }
     case "model.completed": {
@@ -548,33 +547,7 @@ function handleEventRecord(
           acc.stepLimit = { bindingKnob, stepsExecuted, cap };
         }
       }
-      const loop = (data as { loopEvidence?: Record<string, unknown> }).loopEvidence;
-      if (loop && typeof loop === "object") {
-        const kind = asString(loop.lastNoProgressKind);
-        const repeatedToolName = asString(loop.repeatedToolName);
-        const consecutiveNoProgress = asNumber(loop.consecutiveNoProgress);
-        const threshold = asNumber(loop.threshold);
-        const duplicateCallCount = asNumber(loop.duplicateCallCount);
-        const stagnantResultCount = asNumber(loop.stagnantResultCount);
-        const validKind = kind === undefined
-          || kind === "cached_read"
-          || kind === "failed_call"
-          || kind === "identical_success";
-        const validCounts = consecutiveNoProgress !== undefined && consecutiveNoProgress >= 0
-          && threshold !== undefined && threshold > 0
-          && duplicateCallCount !== undefined && duplicateCallCount >= 0
-          && stagnantResultCount !== undefined && stagnantResultCount >= 0;
-        if (validKind && validCounts) {
-          acc.loopEvidence = {
-            ...(kind !== undefined ? { lastNoProgressKind: kind } : {}),
-            ...(repeatedToolName !== undefined ? { repeatedToolName } : {}),
-            consecutiveNoProgress,
-            threshold,
-            duplicateCallCount,
-            stagnantResultCount,
-          };
-        }
-      }
+      accumulateLoopEvidence(acc, data);
       return;
     }
     // Fold learning-family records → the learning block —
@@ -645,6 +618,9 @@ function handleEventRecord(
 export function toIncidentSignals(records: Array<Record<string, unknown>>): IncidentSignals {
   const latestPromptSeq = latestPromptSequence(records);
   const previousPromptSeq = previousPromptSequence(records, latestPromptSeq);
+  const outcomeTraceId = asString([...records].reverse().find(
+    (record) => record.type === "prompt.submitted" && asString(record.traceId) !== undefined,
+  )?.traceId);
   const acc: Acc = {
     toolStats: new Map(),
     failures: [],
@@ -715,7 +691,13 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
         if (type === "prompt.submitted") acc.promptTraceIds.add(tid);
         else if (type.startsWith("tool.")) acc.toolTraceIds.add(tid);
       }
-      handleEventRecord(acc, rec, latestPromptSeq, previousPromptSeq);
+      handleEventRecord(
+        acc,
+        rec,
+        latestPromptSeq,
+        previousPromptSeq,
+        outcomeTraceId,
+      );
     } else if (rec.traceSchema === "comis-cache-trace") {
       // Cache-layer telemetry — NOT tool evidence. Its tool:before/tool:after
       // stage records carry toolName + success and previously fell into the
@@ -885,6 +867,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.stepLimit !== undefined ? { stepLimit: acc.stepLimit } : {}),
     ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
     ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
+    ...(acc.summaryOutcome !== undefined ? { summaryOutcome: acc.summaryOutcome } : {}),
     ...(acc.summaryTopErrorKinds !== undefined
       ? { summaryTopErrorKinds: acc.summaryTopErrorKinds }
       : {}),

@@ -234,11 +234,29 @@ jobs:
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check out the reviewed capability-service fixture
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: comisai/comis-dev-crew
+          ref: 5f68a2e03c8ef6f07478c6d913c3856f5b494e83
+          path: comis-dev-crew
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26.6"
+          cache-dependency-path: comis-dev-crew/go.sum
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: pnpm
+
+      - name: Generate the reviewed Go fixture from the current protocol
+        run: |
+          comis_commit="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+          node .github/scripts/prepare-capability-service-fixture.mjs \
+            --source-root "$GITHUB_WORKSPACE" \
+            --source-commit "$comis_commit" \
+            --fixture-root "$GITHUB_WORKSPACE/comis-dev-crew"
 
       - name: Install system dependencies (ffmpeg, bubblewrap)
         # ffmpeg/ffprobe drive the media-conversion skill; bubblewrap is the
@@ -297,6 +315,7 @@ jobs:
         # log — blob alone is silent on failure and is not uploaded on a red step.
         # `json` writes the report the orchestrate analysis below consumes.
         env:
+          COMIS_DEV_CREW_SOURCE: ${{ github.workspace }}/comis-dev-crew
           VITEST_SHARD_COLLECT_ONLY: "1"
         run: |
           pnpm exec vitest run \

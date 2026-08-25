@@ -278,6 +278,7 @@ describe("wireTerminalTools — threads egressControl + bwrapPath toward the wor
     const shared = buildTerminalSharedDeps(registries, "agent-a", deps);
     expect(shared.egressControl).toBe(deps.egressControl);
     expect(shared.bwrapPath).toBe("/usr/bin/bwrap");
+    expect(shared.prepareManagedWorkspaceGit).toEqual(expect.any(Function));
   });
 });
 
@@ -392,6 +393,33 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     };
     return { deps, emitted, skillsLogger };
   }
+
+  it("bridges managed attention while registry retirement owns exit transitions", () => {
+    const { deps } = makeEventDeps();
+    const publish = vi.fn(async () => undefined);
+    const hook = buildTerminalEventHook("agent-a", {
+      ...deps,
+      managedTerminalEvents: { publish },
+    } as never, (sessionId) => sessionId === "s-managed" ? {
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    } : undefined);
+
+    hook.onTerminalEvent({ sessionId: "s-managed", event: "terminal:input_needed", payload: {} });
+    hook.onTerminalEvent({ sessionId: "s-managed", event: "terminal:stuck", payload: {} });
+    hook.onTerminalEvent({ sessionId: "s-managed", event: "terminal:session_state", payload: { state: "exited" } });
+
+    expect(publish.mock.calls.map(([event]) => event)).toEqual([
+      expect.objectContaining({ terminalSessionId: "s-managed", transition: "input_needed" }),
+      expect.objectContaining({ terminalSessionId: "s-managed", transition: "stuck" }),
+    ]);
+    for (const [event] of publish.mock.calls) {
+      expect(Object.keys(event).sort()).toEqual([
+        "managedRunId", "serviceInstanceId", "terminalSessionId", "transition", "workspaceLeaseId",
+      ]);
+    }
+  });
 
   it("input_needed frame → emit('terminal:input_needed', {sessionId, agentId, state, reason, confidence, timestamp}) + an INFO carrying confidence", () => {
     const { deps, emitted, skillsLogger } = makeEventDeps();

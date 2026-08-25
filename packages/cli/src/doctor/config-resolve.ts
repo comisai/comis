@@ -87,7 +87,10 @@ function buildSecretChain(
   deps: ResolveDoctorConfigDeps,
   storageMode: "encrypted" | "file" | "env",
   configuredDataDir?: string,
-): (key: string) => string | undefined {
+): {
+  get: (key: string) => string | undefined;
+  presence: (key: string) => "present" | "absent" | "unavailable";
+} {
   const getEnv = deps.getEnv ?? systemGetEnv;
 
   let dotEnv: Record<string, string | undefined> | undefined;
@@ -110,29 +113,58 @@ function buildSecretChain(
     return dotEnv;
   };
 
-  const storeCache = new Map<string, string | undefined>();
-  const getStoreSecret =
-    deps.getStoreSecret ??
-    ((key: string): string | undefined => {
-      if (!storeCache.has(key)) {
-        const result = offlineSecretGetForMode({
-          name: key,
-          mode: storageMode,
-          dataDir,
-          envFilePath,
-        });
-        storeCache.set(key, result.ok ? result.value : undefined);
-      }
-      return storeCache.get(key);
+  type StoreRead =
+    | { readonly available: true; readonly value: string | undefined }
+    | { readonly available: false };
+  const storeCache = new Map<string, StoreRead>();
+  const readStore = (key: string): StoreRead => {
+    const cached = storeCache.get(key);
+    if (cached !== undefined) return cached;
+    if (deps.getStoreSecret !== undefined) {
+      const read = { available: true, value: deps.getStoreSecret(key) } as const;
+      storeCache.set(key, read);
+      return read;
+    }
+    const result = offlineSecretGetForMode({
+      name: key,
+      mode: storageMode,
+      dataDir,
+      envFilePath,
     });
+    const read: StoreRead = result.ok
+      ? { available: true, value: result.value }
+      : { available: false };
+    storeCache.set(key, read);
+    return read;
+  };
+
+  const readFallback = (key: string): string | undefined =>
+    getEnv(key) ?? loadDotEnv()[key];
 
   if (deps.getEnv !== undefined || deps.getStoreSecret !== undefined) {
     // Test seam: keep the lookup to exactly the injected sources so tests
     // are hermetic from the machine's real env/.env/store.
-    return (key) => deps.getStoreSecret?.(key) ?? deps.getEnv?.(key);
+    const get = (key: string): string | undefined =>
+      deps.getStoreSecret?.(key) ?? deps.getEnv?.(key);
+    return {
+      get,
+      presence: (key) => get(key) === undefined ? "absent" : "present",
+    };
   }
 
-  return (key) => getStoreSecret(key) ?? getEnv(key) ?? loadDotEnv()[key];
+  return {
+    get: (key) => {
+      const storeRead = readStore(key);
+      return (storeRead.available ? storeRead.value : undefined) ?? readFallback(key);
+    },
+    presence: (key) => {
+      const storeRead = readStore(key);
+      if (storeRead.available && storeRead.value !== undefined) return "present";
+      const fallback = readFallback(key);
+      if (fallback !== undefined) return "present";
+      return storeRead.available ? "absent" : "unavailable";
+    },
+  };
 }
 
 /** Presence-only lookup through the same selected secret backend as config resolution. */
@@ -140,11 +172,11 @@ export function resolveDoctorSecretPresence(
   configPaths: readonly string[],
   name: string,
   deps: ResolveDoctorConfigDeps = {},
-): boolean {
+): "present" | "absent" | "unavailable" {
   const readFile = deps.readFile ?? ((path: string) => readFileSync(path, "utf-8"));
   const storageMode = preReadStorageMode(configPaths, { readFile });
   const configuredDataDir = preReadConfiguredDataDir(configPaths, readFile);
-  return buildSecretChain(deps, storageMode, configuredDataDir)(name) !== undefined;
+  return buildSecretChain(deps, storageMode, configuredDataDir).presence(name);
 }
 
 /**
@@ -163,7 +195,7 @@ export function resolveDoctorConfig(
 
   const storageMode = preReadStorageMode(configPaths, { readFile });
   const configuredDataDir = preReadConfiguredDataDir(configPaths, readFile);
-  const getSecret = buildSecretChain(deps, storageMode, configuredDataDir);
+  const getSecret = buildSecretChain(deps, storageMode, configuredDataDir).get;
   const operationalGetEnv =
     deps.getEnv ?? (deps.getStoreSecret !== undefined ? () => undefined : systemGetEnv);
   let merged = buildGatewayEnvLayer({

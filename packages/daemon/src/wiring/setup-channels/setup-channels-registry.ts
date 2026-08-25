@@ -165,6 +165,8 @@ export interface ChannelsDeps {
    *  slash parsing (the signed payload must never reach the LLM). Optional: absent
    *  → button callbacks fall through to the normal pipeline (degrade, not crash). */
   interactiveCallbackRouter?: import("@comis/orchestrator").InteractiveCallbackRouter;
+  /** Exact durable attention reply binder supplied by capability-service composition. */
+  managedAttentionReplies: import("@comis/core").ManagedAttentionReplyPort;
   /** Link understanding runner for message text enrichment. */
   linkRunner: LinkRunner;
   /** SSRF-guarded fetcher for media downloads. */
@@ -453,6 +455,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       signCallbackData: deps.signCallbackData,
       mintApprovalLink: deps.mintApprovalLink,
       interactiveCallbackRouter: deps.interactiveCallbackRouter, // verifier → inbound pipeline
+      managedAttentionReplies: deps.managedAttentionReplies,
       preprocessMessageCallback,
       preflightFn,
       assembleToolsForAgent: deps.assembleToolsForAgent,

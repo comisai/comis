@@ -2,7 +2,7 @@
 // @allow-throw: exhaustiveness guards on the filesystem + network unions; unreachable at runtime, caught by TypeScript; equivalent to assertNever().
 /**
  * buildScopeArgs -- materialize a {@link TerminalScope} into the exact bwrap argv
- * (filesystem/network/uid + credentialPaths + the ~/.comis carve-out).
+ * (filesystem/network/uid + credential paths + explicit ephemeral mounts + the ~/.comis carve-out).
  *
  * This is THE central scope -> jail mapping. It is MODELED on
  * `BwrapProvider.buildArgs` (`sandbox/bwrap-provider.ts:140-224`) but is a
@@ -30,6 +30,19 @@ import { SYSTEM_RO_PATHS } from "../sandbox/bwrap-provider.js";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
 import { JAIL_UNSET_ENV_VARS } from "./terminal-env-scrub.js";
+import { MANAGED_TERMINAL_ATTACHMENT_DIRECTORY, managedTerminalAttachmentTargetPath, type ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
+
+export const MANAGED_WORKSPACE_GIT_ENVIRONMENT_KEYS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_INDEX_FILE",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_NOSYSTEM",
+] as const;
 
 // Re-export so consumers can `import { SYSTEM_RO_PATHS } from "./terminal-scope-args.js"`
 // alongside the composer — but the composer itself uses it as the RO base by default.
@@ -47,9 +60,21 @@ export interface ScopeArgsInput {
   bwrapPath: string;
   /** The session workspace — always `--bind` RW. */
   workspace: string;
+  /** Host-resolved Git administration mounts for an authority-backed linked worktree. */
+  workspaceGitMounts?: {
+    readonly common: { readonly sourcePath: string; readonly targetPath: string };
+    readonly worktree: { readonly sourcePath: string; readonly targetPath: string };
+    readonly privateCommon: {
+      readonly sourcePath: string;
+      readonly targetPath: string;
+      readonly systemConfigPath: string;
+    };
+  };
   /** The `--chdir` target. */
   cwd: string;
-  /** Injected `os.homedir()` — TESTABLE (the home bind + the ~/.claude/.comis roots). */
+  /** The verified absolute executable path driven inside the jail. */
+  executablePath: string;
+  /** Injected `os.homedir()` — TESTABLE (the home bind + operator-relative roots). */
   home: string;
   /** The carve-out target — `os.homedir()/.comis` (non-configurable). */
   dataDir: string;
@@ -81,6 +106,8 @@ export interface ScopeArgsInput {
    * duplicate-insensitive (deduped against the fixed list before emit).
    */
   extraUnsetEnvKeys?: readonly string[];
+  /** Exact host-resolved sockets to expose at fixed in-jail target names. */
+  executionAttachments?: readonly ManagedTerminalExecutionAttachment[];
 }
 
 /** Push a `--proc /proc`, `--dev /dev`, `--dev-bind /dev/pts`, `--tmpfs /tmp` block. */
@@ -103,7 +130,6 @@ function pushFilesystemBinds(args: string[], input: ScopeArgsInput): void {
   const { scope, workspace, home } = input;
   // The workspace is ALWAYS bound RW (the session's working dir).
   args.push("--bind", workspace, workspace);
-
   switch (scope.filesystem) {
     case "workspace":
       // workspace-only (+ the system RO base). Do NOT bind dotfiles — that is the
@@ -128,6 +154,37 @@ function pushFilesystemBinds(args: string[], input: ScopeArgsInput): void {
       const _exhaustive: never = scope.filesystem;
       throw new Error(`Unhandled filesystem scope: ${String(_exhaustive)}`);
     }
+  }
+  if (input.workspaceGitMounts !== undefined) {
+    args.push(
+      "--ro-bind",
+      input.workspaceGitMounts.common.sourcePath,
+      input.workspaceGitMounts.common.targetPath,
+    );
+    args.push(
+      "--bind",
+      input.workspaceGitMounts.privateCommon.sourcePath,
+      input.workspaceGitMounts.privateCommon.targetPath,
+    );
+    args.push(
+      "--bind",
+      input.workspaceGitMounts.worktree.sourcePath,
+      input.workspaceGitMounts.worktree.targetPath,
+    );
+  }
+}
+
+function pushExecutionAttachmentBinds(args: string[], input: ScopeArgsInput): void {
+  const attachments = input.executionAttachments ?? [];
+  if (attachments.length === 0) return;
+  args.push("--dir", "/run/comis");
+  args.push("--dir", MANAGED_TERMINAL_ATTACHMENT_DIRECTORY);
+  args.push("--chmod", "0711", MANAGED_TERMINAL_ATTACHMENT_DIRECTORY);
+  for (const attachment of attachments) {
+    if (!/^attachment-[a-f0-9]{32}\.sock$/u.test(attachment.targetName) || !attachment.sourcePath.startsWith("/")) {
+      throw new Error("invalid execution attachment mount");
+    }
+    args.push("--ro-bind", attachment.sourcePath, managedTerminalAttachmentTargetPath(attachment.targetName));
   }
 }
 
@@ -187,7 +244,8 @@ function isUnderDir(child: string, parent: string): boolean {
  *   [bwrapPath, ...systemRO(--ro-bind p p), --proc, --dev, --dev-bind /dev/pts,
  *    --tmpfs /tmp, <FS binds>, <credentialPaths ro-bind-try>, <uid>,
  *    --unshare-all, <network>, --die-with-parent, --new-session, --chdir <cwd>,
- *    <CARVE-OUT --tmpfs <dataDir>>, <workspace re-bind if under dataDir>, --]
+ *    <operator ephemeral tmpfs mounts>, <CARVE-OUT --tmpfs <dataDir>>,
+ *    <workspace re-bind if under dataDir>, <verified executable ro-bind>, --]
  *
  * `--unshare-all` already supplies `--unshare-pid` + `--unshare-user` + ipc/uts/
  * cgroup — no separate `--unshare-pid`. `--new-session` is emitted
@@ -209,6 +267,7 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
 
   // -- Filesystem binds (the scope.filesystem dimension; workspace always bound) --
   pushFilesystemBinds(args, input);
+  pushExecutionAttachmentBinds(args, input);
 
   // -- credentialPaths: RO-bind each operator-listed credential path so the driven CLI sees
   //    its own creds/config. TOOL-AGNOSTIC (no hardcoded ~/.claude): the operator lists what
@@ -271,40 +330,28 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   for (const key of unsetEnvKeys) {
     args.push("--unsetenv", key);
   }
+  if (input.workspaceGitMounts !== undefined) {
+    for (const key of MANAGED_WORKSPACE_GIT_ENVIRONMENT_KEYS) {
+      args.push("--unsetenv", key);
+    }
+    args.push("--setenv", "GIT_COMMON_DIR", input.workspaceGitMounts.privateCommon.targetPath);
+    args.push("--setenv", "GIT_CONFIG_SYSTEM", input.workspaceGitMounts.privateCommon.systemConfigPath);
+  }
   args.push("--setenv", "CLAUDE_CODE_BUBBLEWRAP", "1");
 
-  // -- claude session-env carve-out -- a writable tmpfs at <home>/.claude/session-env.
-  //    claude's OWN bash sandbox remounts $HOME read-only IN-PLACE before `mkdir ~/.claude/
-  //    session-env/<id>` (its per-bash-command state) → EROFS on the default durable backend in the
-  //    prod seccomp'd daemon (CLAUDE_CODE_BUBBLEWRAP does NOT suppress that remount there — it only
-  //    appeared to on a non-seccomp socket). A SEPARATE sub-mount survives the in-place parent
-  //    remount, so the mkdir lands on a rw tmpfs → claude's Bash tool runs (live-proven 2026-06-17,
-  //    seccomp'd daemon, `--permission-mode bypassPermissions`). Ephemeral + per-jail; claude's
-  //    creds/config under ~/.claude stay intact (only the transient session-env subdir is the
-  //    tmpfs). Placed BEFORE the ~/.comis mask so that mask + the workspace re-bind stay the LAST
-  //    mounts. Harmless for a non-claude CLI (an unused empty tmpfs at a path it never touches).
-  //
-  //    SKIP it when an operator credentialPath RO-binds the carve-out's PARENT
-  //    (<home>/.claude, or an ancestor like ~): bwrap then cannot mkdir the
-  //    session-env mountpoint inside the read-only subtree and the WHOLE jail
-  //    fails to launch ("Can't mkdir …/.claude/session-env: Read-only file
-  //    system" — live-reproduced on the VPS). A writable subdir cannot exist in a
-  //    RO bind anyway, so the RO-cred operator opt-in takes precedence over the
-  //    carve-out (claude's per-bash session-env then falls back to its own EROFS
-  //    handling, no worse than without the carve-out).
-  const sessionEnvParent = `${input.home}/.claude`;
-  const carveOutParentIsRoBound = input.scope.credentialPaths.some((credPath) => {
-    if (credPath.length === 0) return false;
+  // -- Operator-declared ephemeral writable paths --
+  //    Each mount is a fresh per-jail tmpfs layered after the read-only credential
+  //    binds. Nothing is inferred from a credential path or the selected binary:
+  //    writable state is an explicit operator policy decision. These mounts precede
+  //    the data-directory mask so the non-configurable secret carve-out stays last.
+  for (const writablePath of input.scope.ephemeralWritablePaths) {
     const expanded =
-      credPath === "~"
+      writablePath === "~"
         ? input.home
-        : credPath.startsWith("~/")
-          ? `${input.home}${credPath.slice(1)}`
-          : credPath;
-    return sessionEnvParent === expanded || isUnderDir(sessionEnvParent, expanded);
-  });
-  if (!carveOutParentIsRoBound) {
-    args.push("--tmpfs", `${input.home}/.claude/session-env`);
+        : writablePath.startsWith("~/")
+          ? `${input.home}${writablePath.slice(1)}`
+          : writablePath;
+    args.push("--tmpfs", expanded);
   }
 
   // -- The ~/.comis carve-out LAST -- later bwrap mount wins (the bind-order
@@ -327,6 +374,13 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   if (isUnderDir(input.workspace, input.dataDir)) {
     args.push("--bind", input.workspace, input.workspace);
   }
+
+  // -- Verified executable visibility -- the operator allow entry resolves and
+  //    verifies one canonical host executable before this composer runs. That
+  //    executable may live outside the workspace and system RO roots, so expose
+  //    exactly that file read-only. Keep this mount after every broad bind and
+  //    mask so the child path cannot disappear or become writable through order.
+  args.push("--ro-bind", input.executablePath, input.executablePath);
 
   // The caller appends `bin, ...argv` after the terminator.
   args.push("--");

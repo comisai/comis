@@ -27,9 +27,9 @@ describe("EgressControlPort — type-only no-secret host-allowlist filter", () =
     // returning a Promise), this fixture stops type-checking and the build fails.
     let disposed = false;
     const fixture: EgressControlPort = {
-      async materialize(hosts: string[]): Promise<EgressMaterialization> {
+      async materialize(hosts: string[], context): Promise<EgressMaterialization> {
         return {
-          socketPath: `/tmp/egress-${hosts.length}.sock`,
+          socketPath: `/tmp/egress-${context.sessionId}-${hosts.length}.sock`,
           async dispose(): Promise<void> {
             disposed = true;
           },
@@ -37,8 +37,11 @@ describe("EgressControlPort — type-only no-secret host-allowlist filter", () =
       },
     };
 
-    const mat = await fixture.materialize(["api.example.com"]);
-    expect(mat.socketPath).toContain(".sock");
+    const mat = await fixture.materialize(
+      ["api.example.com"],
+      { sessionId: "terminal_a", durability: "transient" },
+    );
+    expect(mat.socketPath).toBe("/tmp/egress-terminal_a-1.sock");
     expect(typeof mat.dispose).toBe("function");
     await mat.dispose();
     expect(disposed).toBe(true);

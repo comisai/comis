@@ -41,7 +41,15 @@ import { fileURLToPath } from "node:url";
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { createStdioPump } from "./terminal-worker-stdio-pump.js";
 import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
-import { createTmuxBackend, tmuxSocketPathForSession } from "./terminal-tmux-backend.js";
+import {
+  createDurableEgressMaterializer,
+  resolveDurableEgressProxyMainPath,
+} from "./terminal-durable-egress-proxy.js";
+import {
+  createDurableExecutionAttachmentRelayMaterializer,
+  resolveDurableAttachmentRelayMainPath,
+} from "./terminal-durable-attachment-relay.js";
+import { buildTmuxPanePidArgv, createTmuxBackend, tmuxSessionName, tmuxSocketPathForSession } from "./terminal-tmux-backend.js";
 import type { TmuxBackendLike, FakePtyLike, PtyModuleLike } from "./terminal-worker-types.js";
 
 /**
@@ -199,6 +207,18 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
     (argv: string[]): void => {
       execFileSync(argv[0]!, argv.slice(1), { env, stdio: "ignore" });
     };
+  const queryRootPidOn =
+    (socket: string, env: NodeJS.ProcessEnv) =>
+    (name: string): number | undefined => {
+      try {
+        const argv = buildTmuxPanePidArgv({ tmuxPath, socketPath: socket, name });
+        const raw = execFileSync(argv[0]!, argv.slice(1), { env, encoding: "utf8" }).trim();
+        const pid = Number(raw);
+        return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+      } catch {
+        return undefined;
+      }
+    };
   // The DRIVING attach pty: node-pty `tmux attach -t <name>` — streams the pane (onData),
   // forwards keystrokes (write), resizes via the pty, exits on session death. TERM is forced
   // so the tmux client renders (the worker's scrubbed env may omit it). Bound to the call's socket.
@@ -231,6 +251,7 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
         tmuxPath,
         socketPath: socket,
         hasSession: hasSessionOn(socket, a.env),
+        queryRootPid: queryRootPidOn(socket, a.env),
         runOneShot: runOneShot(a.env),
         spawnAttachPty: spawnAttachPtyOn(socket, a),
       })!;
@@ -255,6 +276,7 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
         tmuxPath,
         socketPath: socket,
         hasSession: hasSessionOn(socket, a.env),
+        queryRootPid: queryRootPidOn(socket, a.env),
         runOneShot: runOneShot(a.env),
         spawnAttachPty: spawnAttachPtyOn(socket, a),
         forceAttachOnly: true,
@@ -272,18 +294,33 @@ function main(): void {
   }
   const logger = createFileLogger(pathResolve(dir, "worker.log"));
 
-  // The no-secret host-allowlist egress proxy for `network: listed-hosts`. The
-  // worker runs OUTSIDE the jail (it has host network), so it owns its own proxy:
-  // materialize(hosts) stands up a /tmp unix socket the jailed child bind-mounts +
-  // relays through (the daemon needn't coordinate — the proxy injects no secret).
-  // Untouched for network none/full.
-  const egressControl = createTerminalEgressProxy({ logger });
-
   // Long-run tmux backend — present only if tmux is installed; absent ⇒
   // a backend:"tmux" request degrades to pty/pipe (never an error).
   const tmuxPath = resolveTmuxPath();
   // The attach client is an ordinary pty → reuse the SAME node-pty loader the pty backend uses.
   const loadTmux = tmuxPath ? buildLoadTmux(tmuxPath, defaultLoadPty) : undefined;
+  // A transient drive keeps its no-secret allowlist proxy in this worker. A durable
+  // tmux drive launches a detached helper that follows the tmux lifetime, so the
+  // bound socket remains usable when this worker is replaced during daemon restart.
+  const durableMaterialize = tmuxPath === undefined ? undefined : createDurableEgressMaterializer({
+    logger,
+    nodePath: process.execPath,
+    entryPath: resolveDurableEgressProxyMainPath(),
+    tmuxPath,
+    tmuxSocketForSession: (sessionId) => tmuxSocketPathForSession(dir, sessionId),
+    tmuxNameForSession: tmuxSessionName,
+    logPath: pathResolve(dir, "worker.log"),
+  });
+  const egressControl = createTerminalEgressProxy({ logger, durableMaterialize });
+  const materializeExecutionAttachmentRelays = tmuxPath === undefined ? undefined : createDurableExecutionAttachmentRelayMaterializer({
+    logger,
+    nodePath: process.execPath,
+    entryPath: resolveDurableAttachmentRelayMainPath(),
+    tmuxPath,
+    tmuxSocketForSession: (sessionId) => tmuxSocketPathForSession(dir, sessionId),
+    tmuxNameForSession: tmuxSessionName,
+    logPath: pathResolve(dir, "worker.log"),
+  });
   // WARN at boot if tmux is unavailable — a durable drive will degrade to
   // non-durable here, so a restart ends it `lost` (journal preserved; the `failed`
   // outcome is derived downstream).
@@ -296,6 +333,7 @@ function main(): void {
     logger,
     stuckMs: parseStuckMs(),
     egressControl,
+    materializeExecutionAttachmentRelays,
     ...(loadTmux ? { loadTmux } : {}),
     // The fd3 push channel — the worker is forked with fd3 reserved (4-fd stdio).
     writeFd3: (b) => {

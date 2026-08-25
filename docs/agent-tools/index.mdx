@@ -4,11 +4,11 @@ description: "Guide to the agent-facing tool families"
 icon: "toolbox"
 ---
 
-Comis ships with **73 built-in agent tools** spanning file operations, web access, messaging, scheduling, media processing, browser automation, context management, interactive terminal sessions, and administration. This page is the master reference -- every tool listed with its category, description, and link to detailed documentation.
+Comis ships with **72 built-in agent tools** spanning file operations, web access, messaging, scheduling, media processing, browser automation, context management, interactive terminal sessions, and administration. This page is the master reference -- every tool listed with its category, description, and link to detailed documentation.
 
 When an agent receives a message, it decides which tools to use based on what you asked it to do. Need a daily briefing? The agent uses the `cron` tool. Want to send a message to another channel? It uses `message`. Need to analyze an image someone sent? It reaches for `image_analyze`.
 
-The tools listed below are everything your agents have at their disposal. Each tool is linked to its detailed guide page where you will find parameters, examples, and tips for effective use.
+The tools listed below are the complete built-in surface. Each agent sees the subset enabled by its runtime dependencies, security boundary, and tool policy. Each tool is linked to its detailed guide page where you will find parameters, examples, and tips for effective use.
 
 ## Understanding Tool Categories
 
@@ -16,11 +16,11 @@ Tools fall into three tiers:
 
 | Tier | Count | Description |
 |------|-------|-------------|
-| **Built-in tools** | 73 | Core capabilities shipped with Comis -- file operations, shell commands, web search, browser automation, messaging, scheduling, sessions, media, infrastructure, context, interactive terminal sessions, supervisor admin, and platform actions. Available on every agent unless restricted by tool policy. |
+| **Built-in tools** | 72 | Core capabilities shipped with Comis -- file operations, shell commands, web search, browser automation, messaging, scheduling, sessions, media, infrastructure, context, interactive terminal sessions, supervisor admin, and platform actions. Registered when their dependencies and feature gates are enabled, then filtered by tool policy. |
 | **MCP tools** | Configurable | External Model Context Protocol servers -- Anthropic's reference servers, community-built MCP servers, and your own. Discovered at runtime and qualified with `mcp:{server}/{tool}` names. See [MCP Management](/web-dashboard/mcp-management). |
-| **Custom skills** | Unlimited | Markdown-defined "mini-programs" with optional tool restrictions and bin/env requirements. Comis ships 7 built-in skills; you can author your own. See [Skills](/skills/index). |
+| **Custom skills** | Unlimited | Markdown-defined "mini-programs" with optional tool restrictions and bin/env requirements. Comis ships bundled skills, and you can author your own. See [Skills](/skills/index). |
 
-Tool access is controlled by [tool policy](/skills/tool-policy). By default, agents have access to all tools, but you can restrict access per agent using profiles (like `coding` or `messaging`) or fine-grained allow/deny lists.
+Tool access is controlled by [tool policy](/skills/tool-policy). By default, policy does not further restrict the tools enabled by the runtime, but you can narrow access per agent using profiles (like `coding` or `messaging`) or fine-grained allow/deny lists.
 
 <Info>
 All tool names use `snake_case` -- for example, `web_search`, `sessions_spawn`, and `memory_store`. When referencing tools in configuration files (such as tool policy allow/deny lists), use these exact names.
@@ -45,12 +45,13 @@ File and code tools are always available unless explicitly denied by tool policy
 | `ls` | List directory contents | [Built-in Tools](/skills/built-in-tools) |
 | `apply_patch` | Apply unified diffs to files | [Built-in Tools](/skills/built-in-tools) |
 
-### Process & Execution (2 tools)
+### Process & Execution (3 tools)
 
 | Tool | Description | Guide |
 |------|-------------|-------|
 | `exec` | Shell execution with restricted-binary policy and OS sandboxing when a supported provider is available. Otherwise it warns and runs on the host | [Built-in Tools](/skills/built-in-tools) |
 | `process` | Background process lifecycle (spawn, kill, status, logs) | [Built-in Tools](/skills/built-in-tools) |
+| `sleep` | Pause once for a bounded duration while background work finishes | [Built-in Tools](/skills/built-in-tools) |
 
 ### Terminal (Interactive Shell)
 
@@ -59,14 +60,14 @@ Interactive terminal sessions for driving allowlisted binaries. Requires an oper
 | Tool | Description | Guide |
 |------|-------------|-------|
 | `terminal_session_create` | Start an interactive terminal session driving an allowlisted binary. | [Built-in Tools](/skills/built-in-tools) |
-| `terminal_session_read` | Read buffered output from an active session (accumulated since last read). | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_read` | Read the redacted rendered screen and settled exit detail. | [Terminal Driver](/agent-tools/terminal-driver) |
 | `terminal_session_list` | List all active terminal sessions for the current agent. | [Built-in Tools](/skills/built-in-tools) |
 | `terminal_session_kill` | Terminate an active terminal session and free its resources. | [Built-in Tools](/skills/built-in-tools) |
 | `terminal_session_send_text` | Write text to a terminal session's stdin (optionally submit with Enter after a settle). | [Built-in Tools](/skills/built-in-tools) |
 | `terminal_session_send_key` | Send named key chords (e.g., Enter, Ctrl-C, S-Tab) to a terminal session. | [Built-in Tools](/skills/built-in-tools) |
 | `terminal_session_resize` | Resize a terminal session's pseudo-TTY (cols x rows). | [Built-in Tools](/skills/built-in-tools) |
 | `terminal_session_wait` | Wait for a terminal session to produce matching output or a timeout. | [Built-in Tools](/skills/built-in-tools) |
-| `terminal_session_status` | Registered with final schema; execute rejects with `[not_implemented]` (stub). | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_status` | Inspect classifier state, confidence, reason, and cursor. | [Terminal Driver](/agent-tools/terminal-driver) |
 
 ### Web & Browser (3 tools)
 
@@ -111,15 +112,16 @@ Session tools let agents manage their conversations, communicate with other agen
 | `sessions_spawn` | Start a background sub-agent with artifact refs and an optional objective | [Sessions](/agent-tools/sessions) |
 | `subagents` | Manage sub-agents (`list`, `wait`, `kill`, `steer`) | [Sessions](/agent-tools/sessions) |
 
-### Pipelines (Execution Graphs)
+### Pipelines & Orchestration (2 tools)
 
 The `pipeline` tool defines and runs multi-agent execution graphs (DAGs). Nodes run in parallel when independent, or wait for upstream nodes via `depends_on`. Comis ships **7 built-in node type drivers** -- `agent`, `debate`, `vote`, `refine`, `collaborate`, `approval-gate`, and `map-reduce`.
 
 | Tool | Description | Guide |
 |------|-------------|-------|
 | `pipeline` | Define, execute, save, load, list, delete, monitor, cancel, and read outputs from execution graphs (9 actions) | [Pipelines](/agent-tools/pipelines) |
+| `orchestrate` | Run a capability-scoped tool script in a jailed child process | [Orchestrate](/agent-tools/orchestrate) |
 
-### Media
+### Media (8 tools)
 
 Media tools process images, audio, video, and documents. Agents can analyze images with vision AI, convert text to speech, transcribe voice messages, describe video content, and extract text from documents like PDFs. These tools require appropriate AI providers to be configured (for example, vision capabilities for image analysis, and STT providers for transcription).
 
@@ -131,6 +133,8 @@ Media tools process images, audio, video, and documents. Agents can analyze imag
 | `describe_video` | Video description using vision AI | [Media](/agent-tools/media) |
 | `extract_document` | Document text extraction (PDF, CSV, TXT, and more) | [Media](/agent-tools/media) |
 | `image_generate` | Generate images from text prompts, delivered to the current channel | [Media](/agent-tools/media) |
+| `video_generate` | Submit an asynchronous video-generation job | [Media](/agent-tools/media) |
+| `video_status` | Check the progress and result of a video-generation job | [Media](/agent-tools/media) |
 
 ### Memory
 

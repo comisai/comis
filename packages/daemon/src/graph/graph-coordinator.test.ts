@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { createGraphCoordinator, type GraphCoordinatorDeps } from "./graph-coordinator.js";
 import {
   type ExecutionGraph,
@@ -68,6 +71,11 @@ vi.mock("./graph-prewarm.js", () => ({
 
 const fsWriteCalls: Array<{ path: string; content: string }> = [];
 const fsMockFiles = new Map<string, string>();
+const graphTestDataDir = mkdtempSync(resolve(tmpdir(), "comis-graph-coordinator-"));
+
+afterAll(() => {
+  rmSync(graphTestDataDir, { recursive: true, force: true });
+});
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -371,7 +379,7 @@ function createTestDeps(
     tenantId: "test-tenant",
     defaultAgentId: "test-agent",
     maxConcurrency: 4,
-    dataDir: "/tmp/test-comis",
+    dataDir: graphTestDataDir,
     nodeTypeRegistry: createNodeTypeRegistry(),
     spawnStaggerMs: 0,  // Disable stagger in tests unless explicitly testing it
     ...overrides,
@@ -436,6 +444,139 @@ describe("createGraphCoordinator", () => {
       expect(status?.isTerminal).toBe(true);
 
       await coordinator.shutdown();
+    });
+
+    it("reserves graph announcement ownership before node execution", async () => {
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => ok(undefined)),
+        prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
+      };
+      const { deps, runner } = createTestDeps({
+        announcementDeadLetterQueue,
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const turnScope = makeCallerTurnScope("telegram", "chat-a", "parent-agent");
+
+      const result = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000004",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: "test-tenant:user_a:telegram:chat-a",
+        agentId: "parent-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+        turnScope,
+      }, () => coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerAgentId: "parent-agent",
+        callerSessionKey: "test-tenant:user_a:telegram:chat-a",
+        callerTurnScope: turnScope,
+        announceChannelType: "telegram",
+        announceChannelId: "chat-a",
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(announcementDeadLetterQueue.reserveProducer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: result.ok ? result.value : undefined,
+          retirementKeys: result.ok ? [result.value] : [],
+          destinationEndpoint: turnScope.endpoint,
+          producer: expect.objectContaining({
+            kind: "graph",
+            graphId: result.ok ? result.value : undefined,
+          }),
+        }),
+        expect.any(AbortSignal),
+      );
+      expect(announcementDeadLetterQueue.prepareTerminalDecisionRetirement)
+        .toHaveBeenCalledWith(
+          result.ok ? [result.value] : [],
+          expect.objectContaining({
+            kind: "graph",
+            graphId: result.ok ? result.value : undefined,
+          }),
+        );
+      expect(announcementDeadLetterQueue.reserveProducer.mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(runner.spawn).mock.invocationCallOrder[0]!);
+
+      await coordinator.shutdown();
+    });
+
+    it("surfaces graph producer cancellation failure before node execution", async () => {
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => err(new Error("graph producer cancellation unavailable"))),
+        prepareTerminalDecisionRetirement: vi.fn(async () =>
+          err(new Error("graph retirement preparation unavailable"))),
+      };
+      const { deps, runner } = createTestDeps({ announcementDeadLetterQueue });
+      const coordinator = createGraphCoordinator(deps);
+      const turnScope = makeCallerTurnScope("telegram", "chat-a", "parent-agent");
+
+      await expect(coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerAgentId: "parent-agent",
+        callerSessionKey: "test-tenant:user_a:telegram:chat-a",
+        callerTurnScope: turnScope,
+        announceChannelType: "telegram",
+        announceChannelId: "chat-a",
+      })).resolves.toEqual({
+        ok: false,
+        error: "graph producer cancellation unavailable",
+      });
+
+      expect(announcementDeadLetterQueue.cancelProducer).toHaveBeenCalledOnce();
+      expect(runner.spawn).not.toHaveBeenCalled();
+      await coordinator.shutdown();
+    });
+
+    it("cancels capacity-blocked graph admission during shutdown", async () => {
+      let admissionSignal: AbortSignal | undefined;
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async (_reservation: unknown, signal?: AbortSignal) => {
+          admissionSignal = signal;
+          return new Promise<Result<{ status: "claimed" }, Error>>((resolve) => {
+            signal?.addEventListener("abort", () => {
+              resolve(err(new Error("Dead-letter admission cancelled")));
+            }, { once: true });
+          });
+        }),
+        reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => ok(undefined)),
+        prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
+      };
+      const { deps, runner } = createTestDeps({ announcementDeadLetterQueue });
+      const coordinator = createGraphCoordinator(deps);
+      const turnScope = makeCallerTurnScope("telegram", "chat-a", "parent-agent");
+
+      const pendingRun = coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerAgentId: "parent-agent",
+        callerSessionKey: "test-tenant:user_a:telegram:chat-a",
+        callerTurnScope: turnScope,
+        announceChannelType: "telegram",
+        announceChannelId: "chat-a",
+      });
+      expect(announcementDeadLetterQueue.reserveProducer).toHaveBeenCalledOnce();
+
+      await coordinator.shutdown();
+
+      expect(admissionSignal?.aborted).toBe(true);
+      await expect(pendingRun).resolves.toEqual({
+        ok: false,
+        error: "Graph coordinator is shutting down",
+      });
+      expect(runner.spawn).not.toHaveBeenCalled();
+      await expect(coordinator.run({ graph: buildGraph([{ nodeId: "B" }]) })).resolves.toEqual({
+        ok: false,
+        error: "Graph coordinator is shutting down",
+      });
     });
 
     it("snapshots caller trust for every graph node spawn", async () => {
@@ -2891,7 +3032,7 @@ describe("createGraphCoordinator", () => {
         tenantId: "test-tenant",
         defaultAgentId: "test-agent",
         maxConcurrency: 4,
-        dataDir: "/tmp/test-comis",
+        dataDir: graphTestDataDir,
         nodeTypeRegistry: createNodeTypeRegistry(),
         spawnStaggerMs: 4000,
         // cacheWriteTimeoutMs intentionally NOT set -- tests default value (30000)
@@ -3284,7 +3425,7 @@ describe("createGraphCoordinator", () => {
 
       // Pre-populate mock file in the shared dir (coordinator generates sharedDir from dataDir + graph-runs + graphId)
       const graphId = result.value;
-      const sharedDir = `/tmp/test-comis/graph-runs/${graphId}`;
+      const sharedDir = resolve(graphTestDataDir, "graph-runs", graphId);
       fsMockFiles.set(
         `${sharedDir}/trading-decision-ITRN.md`,
         "Full trading decision content here with detailed analysis of the stock position and risk factors.",
@@ -3341,7 +3482,7 @@ describe("createGraphCoordinator", () => {
       if (!result.ok) return;
 
       const graphId = result.value;
-      const sharedDir = `/tmp/test-comis/graph-runs/${graphId}`;
+      const sharedDir = resolve(graphTestDataDir, "graph-runs", graphId);
       fsMockFiles.set(`${sharedDir}/report.md`, "Short file.");
 
       // Long output (>= 200 chars) that happens to mention a .md file
@@ -3662,7 +3803,7 @@ describe("createGraphCoordinator", () => {
         skippedNodesEmitted: new Set(),
         cumulativeTokens: 100,
         cumulativeCost: 0.01,
-        sharedDir: "/tmp/test-comis/graph-runs/test-graph-1",
+        sharedDir: resolve(graphTestDataDir, "graph-runs", "test-graph-1"),
         driverStates: new Map(),
         driverRunIdMap: new Map(),
         waitHandlers: new Map(),
@@ -4516,7 +4657,7 @@ function seedGraphCheckpoint(
   });
   const digest = createHash("sha256").update(content).digest("hex");
   const ref = `graph-runs/${refId}/durable-checkpoint-${digest}.json`;
-  fsMockFiles.set(`/tmp/test-comis/${ref}`, content);
+  fsMockFiles.set(resolve(graphTestDataDir, ref), content);
   return ref;
 }
 
@@ -5175,7 +5316,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       // protected artifact remains under the original graph-run directory.
       // Resumed nodes must keep sharing that original workspace.
       expect(spawnCalls[0]!.graphSharedDir).toBe(
-        "/tmp/test-comis/graph-runs/checkpoint-resume-1",
+        resolve(graphTestDataDir, "graph-runs", "checkpoint-resume-1"),
       );
 
       await coordinator.shutdown();
@@ -5183,6 +5324,14 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
 
     it("keeps the original graph identity and terminal delivery when the checkpoint authority changes", async () => {
       const durableRuns = createRecordingDurableRuns();
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => ok(undefined)),
+        recordProducerOutcome: vi.fn(async () => ok(undefined)),
+        prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
+      };
       const sendGovernedAnnouncement = vi.fn(async () => ok({
         delivered: true as const,
         identity: {
@@ -5194,6 +5343,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const { deps, runner, eventBus } = createTestDeps({
         durableRuns,
         sendGovernedAnnouncement,
+        announcementDeadLetterQueue,
       });
       const coordinator = createGraphCoordinator(deps);
       const exactGraph = buildGraph([{ nodeId: "A" }]);
@@ -5216,8 +5366,18 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       });
 
       expect(await coordinator.resumeGraph(record)).toEqual({ ok: true, value: undefined });
+      expect(announcementDeadLetterQueue.reclaimProducer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "original-graph-run",
+          rootRunId: "root-original-workspace",
+          retirementKeys: ["original-graph-run"],
+        }),
+        expect.any(AbortSignal),
+      );
+      expect(announcementDeadLetterQueue.reclaimProducer.mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(runner.spawn).mock.invocationCallOrder[0]!);
       expect(runner._getSpawnCalls()[0]?.graphSharedDir).toBe(
-        "/tmp/test-comis/graph-runs/original-graph-run",
+        resolve(graphTestDataDir, "graph-runs", "original-graph-run"),
       );
       expect(coordinator.getStatus("original-graph-run")).toBeDefined();
       expect(coordinator.getStatus("resume-replacement-authority")).toBeUndefined();
@@ -5227,6 +5387,14 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       simulateCompletion(eventBus, resumedRunId, true);
 
       await vi.waitFor(() => {
+        expect(announcementDeadLetterQueue.recordProducerOutcome).toHaveBeenCalledWith(
+          "original-graph-run",
+          expect.objectContaining({
+            kind: "graph",
+            terminalReason: "completed",
+            announcementText: expect.any(String),
+          }),
+        );
         expect(sendGovernedAnnouncement).toHaveBeenCalledTimes(1);
         expect(durableRuns.terminalize).toHaveBeenCalledWith(
           "resume-replacement-authority",
@@ -5234,6 +5402,82 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         );
       });
 
+      await coordinator.shutdown();
+    });
+
+    it("reclaims a resumed announcement route from its authenticated endpoint", async () => {
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        reclaimProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => ok(undefined)),
+        prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
+      };
+      const { deps, runner } = createTestDeps({ announcementDeadLetterQueue });
+      const coordinator = createGraphCoordinator(deps);
+      const exactGraph = buildGraph([{ nodeId: "A" }]);
+      const record = makeDurableGraphRecord({
+        checkpointId: "resume-endpoint-route",
+        rootRunId: "root-endpoint-route",
+        spawnTree: [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        checkpointRef: seedGraphCheckpoint(
+          "resume-endpoint-route",
+          exactGraph,
+          [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        ),
+        deliveryOrigin: null,
+      });
+
+      await expect(coordinator.resumeGraph(record)).resolves.toEqual(ok(undefined));
+
+      expect(announcementDeadLetterQueue.reclaimProducer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channelType: "telegram",
+          channelId: "chat_a",
+          destinationEndpoint: makeCallerTurnScope("telegram", "chat_a").endpoint,
+        }),
+        expect.any(AbortSignal),
+      );
+      expect(announcementDeadLetterQueue.reclaimProducer.mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(runner.spawn).mock.invocationCallOrder[0]!);
+
+      await coordinator.shutdown();
+    });
+
+    it("does not resume graph nodes after announcement recovery owns completion", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const announcementDeadLetterQueue = {
+        reserveProducer: vi.fn(async () => ok({ status: "claimed" as const })),
+        reclaimProducer: vi.fn(async () => ok({
+          status: "recovery_owned" as const,
+          lifecycleState: "delivery_owned" as const,
+        })),
+        releaseProducer: vi.fn(async () => ok(undefined)),
+        cancelProducer: vi.fn(async () => ok(undefined)),
+        prepareTerminalDecisionRetirement: vi.fn(async () => ok(undefined)),
+      };
+      const { deps, runner } = createTestDeps({ durableRuns, announcementDeadLetterQueue });
+      const coordinator = createGraphCoordinator(deps);
+      const exactGraph = buildGraph([{ nodeId: "A" }]);
+      const record = makeDurableGraphRecord({
+        checkpointId: "recovery-owned-graph",
+        rootRunId: "recovery-owned-root",
+        spawnTree: [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        checkpointRef: seedGraphCheckpoint(
+          "recovery-owned-graph",
+          exactGraph,
+          [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        ),
+      });
+
+      await expect(coordinator.resumeGraph(record)).resolves.toEqual(ok(undefined));
+      expect(announcementDeadLetterQueue.reclaimProducer).toHaveBeenCalledOnce();
+      expect(announcementDeadLetterQueue.prepareTerminalDecisionRetirement).not.toHaveBeenCalled();
+      expect(runner.spawn).not.toHaveBeenCalled();
+      expect(durableRuns.terminalize).toHaveBeenCalledWith(
+        "recovery-owned-graph",
+        "completed",
+      );
       await coordinator.shutdown();
     });
 

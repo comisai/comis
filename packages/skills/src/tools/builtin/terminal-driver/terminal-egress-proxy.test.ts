@@ -54,6 +54,7 @@ function connectAndSendConnect(
 
 describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT proxy", () => {
   const live: EgressMaterialization[] = [];
+  const transient = { sessionId: "terminal_a", durability: "transient" as const };
 
   afterEach(async () => {
     while (live.length > 0) {
@@ -70,7 +71,7 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
     // Exercises the production defaults (randomUUID id + tmpdir) — the other
     // cases inject genId/socketDir for determinism, leaving the defaults uncovered.
     const proxy = createTerminalEgressProxy({ logger: silentLogger() });
-    const m = await proxy.materialize(["api.anthropic.com"]);
+    const m = await proxy.materialize(["api.anthropic.com"], transient);
     live.push(m);
     expect(m.socketPath).toMatch(/comis-egress-[0-9a-f-]+\.sock$/);
     expect(m.socketPath.startsWith(tmpdir())).toBe(true);
@@ -84,7 +85,7 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
       socketDir: tmpdir(),
       genId: () => "abc123",
     });
-    const mat = await proxy.materialize(["api.example.com"]);
+    const mat = await proxy.materialize(["api.example.com"], transient);
     live.push(mat);
     expect(mat.socketPath).toContain(tmpdir());
     expect(mat.socketPath).toContain("abc123");
@@ -107,7 +108,7 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
       socketDir: tmpdir(),
       genId: () => "allow1",
     });
-    const mat = await proxy.materialize(["api.example.com"]);
+    const mat = await proxy.materialize(["api.example.com"], transient);
     live.push(mat);
 
     const reply = await connectAndSendConnect(mat.socketPath, "api.example.com:443");
@@ -120,13 +121,14 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
 
   it("DENY: a CONNECT to a NON-listed host is 403'd and never dials upstream", async () => {
     const dial = vi.fn();
+    const logger = silentLogger();
     const proxy = createTerminalEgressProxy({
-      logger: silentLogger(),
+      logger,
       dialUpstream: dial as never,
       socketDir: tmpdir(),
       genId: () => "deny1",
     });
-    const mat = await proxy.materialize(["api.example.com"]);
+    const mat = await proxy.materialize(["api.example.com"], transient);
     live.push(mat);
 
     const reply = await connectAndSendConnect(mat.socketPath, "evil.example.com:443");
@@ -134,6 +136,17 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
     expect(reply).toMatch(/Forbidden/i);
     // The deny branch MUST NOT dial upstream (no SSRF, no leak).
     expect(dial).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      {
+        toolName: "terminal_egress_proxy",
+        targetHost: "evil.example.com",
+        targetPort: 443,
+        allowedHosts: ["api.example.com"],
+        hint: "Add evil.example.com to the terminal allow entry scope.hosts only if this egress is intended",
+        errorKind: "auth",
+      },
+      "egress CONNECT blocked",
+    );
   });
 
   it("NO-SECRET: the proxy injects nothing — the 200 preamble carries no credential header", async () => {
@@ -148,7 +161,7 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
       socketDir: tmpdir(),
       genId: () => "nosecret1",
     });
-    const mat = await proxy.materialize(["api.example.com"]);
+    const mat = await proxy.materialize(["api.example.com"], transient);
     live.push(mat);
 
     const reply = await connectAndSendConnect(mat.socketPath, "api.example.com:443");
@@ -166,7 +179,7 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
       socketDir: tmpdir(),
       genId: () => "dispose1",
     });
-    const mat = await proxy.materialize(["api.example.com"]);
+    const mat = await proxy.materialize(["api.example.com"], transient);
     expect(existsSync(mat.socketPath)).toBe(true);
     await mat.dispose();
     expect(existsSync(mat.socketPath)).toBe(false);
@@ -182,9 +195,32 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
       socketDir: tmpdir(),
       genId: () => `sess-${n++}`,
     });
-    const a = await proxy.materialize(["a.example.com"]);
-    const b = await proxy.materialize(["b.example.com"]);
+    const a = await proxy.materialize(["a.example.com"], transient);
+    const b = await proxy.materialize(["b.example.com"], transient);
     live.push(a, b);
     expect(a.socketPath).not.toBe(b.socketPath);
+  });
+
+  it("delegates durable sessions to the detached lifecycle materializer", async () => {
+    const durable = {
+      socketPath: "/tmp/durable.sock",
+      dispose: vi.fn(async () => undefined),
+    };
+    const durableMaterialize = vi.fn(async () => durable);
+    const proxy = createTerminalEgressProxy({
+      logger: silentLogger(),
+      durableMaterialize,
+    });
+
+    const result = await proxy.materialize(
+      ["api.example.com"],
+      { sessionId: "terminal_a", durability: "durable" },
+    );
+
+    expect(result).toBe(durable);
+    expect(durableMaterialize).toHaveBeenCalledWith(
+      ["api.example.com"],
+      { sessionId: "terminal_a", durability: "durable" },
+    );
   });
 });

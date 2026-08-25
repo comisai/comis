@@ -36,6 +36,7 @@ import { ToolingConfigSchema } from "./schema-tooling.js";
 import { WebhooksConfigSchema } from "./schema-webhooks.js";
 import { ExecutorConfigSchema } from "./schema-executor.js";
 import { IdentityConfigSchema } from "./schema-identity.js";
+import { CapabilityServicesConfigSchema } from "./schema-capability-services.js";
 
 /**
  * Root application configuration schema.
@@ -145,6 +146,10 @@ export const AppConfigSchema = z.strictObject({
     tooling: ToolingConfigSchema.default(() => ToolingConfigSchema.parse({})),
     /** Credential-broker executor configuration. */
     executor: ExecutorConfigSchema.optional(),
+    /** Restart-only linked capability-service topology and managed-run bounds. */
+    capabilityServices: CapabilityServicesConfigSchema.default(
+      () => CapabilityServicesConfigSchema.parse({}),
+    ),
   }).superRefine((config, ctx) => {
     // Startup invariant: reject the reserved "default" provider name.
     // "default" collides with PerAgentConfigSchema.provider's schema default

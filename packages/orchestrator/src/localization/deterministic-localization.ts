@@ -29,6 +29,12 @@ const ENGLISH_TEMPLATES: Readonly<Record<DeterministicLocalizationMessageId, str
   "approval.resolved_many.approved": "Approved {count} pending approval(s).",
   "approval.resolved_many.denied": "Denied {count} pending approval(s).",
   "approval.not_found": "No pending approval found for ID: {id} (may have already been resolved or timed out).",
+  "attention.response_bound": "Response recorded for attention request {id}.",
+  "attention.multiple": "Multiple attention requests are open. Reply with /attention <ID> <response>:\n{choices}",
+  "attention.not_found": "No open attention request was found for ID: {id}.",
+  "attention.already_answered": "Attention request {id} has already been answered or closed.",
+  "attention.usage": "Reply with /attention <ID> <response>.",
+  "attention.unavailable": "The attention response could not be recorded. Please retry.",
   "help.commands": "Commands: /approve [ID|all], /deny [ID|all], /new, /reset, /status, /stop, /compact, /export.",
   "error.report_unavailable": "This report is no longer available.",
   "error.callback_invalid": "This callback is no longer valid (it may have already been resolved or expired).",
@@ -119,6 +125,8 @@ function renderTemplate(
   switch (request.key) {
     case "approval.none_pending":
     case "approval.none_pending_resolve":
+    case "attention.usage":
+    case "attention.unavailable":
     case "help.commands":
     case "error.report_unavailable":
     case "error.callback_invalid":
@@ -154,6 +162,12 @@ function renderTemplate(
     }
     case "approval.not_found":
       return renderMessage(options, request, "approval.not_found", ["id"]);
+    case "attention.response_bound":
+    case "attention.not_found":
+    case "attention.already_answered":
+      return renderMessage(options, request, request.key, ["id"]);
+    case "attention.multiple":
+      return renderMessage(options, request, "attention.multiple", ["choices"]);
     default: {
       const exhaustive: never = request.key;
       return exhaustive;

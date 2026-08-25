@@ -1,15 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The eight terminal-driver AgentTool factories: `terminal_session_create` / `_read` /
- * `_list` / `_kill` + `_send_text` / `_send_key` / `_resize` / `_wait` (`terminal_session_status`
- * is the lone stub → `terminal-tools-stubs.ts`). `create` gates the substrate: (1) ALLOWLIST
- * (`matchAllowEntry` rejects a non-matching binary `permission_denied`; realpath + optional hash
- * pin); (2) FAIL-CLOSED (`undefined` `detectProvider()` rejects rather than spawn unsandboxed);
- * (3) CANONICALIZE (`buildDirectSpawn` is the SOLE realpath + `argsPrefix` site); (4) OBSERVABILITY
- * (success → INFO `terminal:session_state`; failure → WARN `terminal:spawn_failed`). The other seven
- * thinly delegate to the injected, ALREADY-GATED registry: `read` digests the screen
- * before redact+wrap; `wait`'s `isComplete:false` emits ONE content-free `terminal:drive_promoted`
- * on a qualifying wait. Daemon-side in `@comis/skills`: INJECTED logger + bus + `nowMs`.
+ * Terminal-driver tools with allowlist, sandbox, canonicalization, and observability gates.
  *
  * @module
  */
@@ -23,6 +14,7 @@ import {
   type ApprovalGate,
   type ChannelEndpoint,
 } from "@comis/core";
+import type { Result } from "@comis/shared";
 
 import { jsonResult, throwToolError } from "../../../platform-tools/tool-helpers.js";
 import { resolveApprovalRequestContext } from "../../../platform-tools/approval-request-context.js";
@@ -44,6 +36,7 @@ export type {
 } from "./terminal-events-attention.js";
 import { shouldPromoteDrive, emitDrivePromoted, resolveDriveMode, type DriveMode } from "./terminal-drive-promote.js";
 import { boundedReadDigest, READ_DIGEST_BYTE_CAP, type DriveReadMode } from "./terminal-read-digest.js";
+import { createOutputCleaner } from "../output-cleaner.js";
 import { matchAllowEntry, buildDirectSpawn, allowedCommandNames, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SessionCaps } from "./terminal-caps.js";
 import { enforceSendCapsThenAudit, readDimension } from "./terminal-send-guards.js";
@@ -58,6 +51,13 @@ import {
   type SessionOwner,
 } from "./terminal-session-registry.js";
 import { withCompleteNote } from "./terminal-wait-reply.js";
+import { managedHandleSelectionError, narrowManagedTerminalScope, prepareManagedTerminalWorkspaceGit, selectManagedHandles } from "./terminal-managed-create.js";
+import {
+  establishManagedTerminalLaunch,
+  reserveManagedTerminalLaunch,
+  retireFailedManagedTerminalLaunch,
+} from "./terminal-managed-launch.js";
+import { managedTerminalAttachmentTargetPath, type ManagedTerminalBindingResolver, type ManagedTerminalEventSink, type ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 
 // Injected dependency contracts
 
@@ -76,6 +76,8 @@ export interface TerminalStateEvent {
   state: "created" | "running" | "exited" | "lost";
   durationMs: number;
   timestamp: number;
+  managedRunId?: string;
+  workspaceLeaseId?: string;
 }
 
 /** The spawn-failure payload (mirrors core `TerminalEvents["terminal:spawn_failed"]`). */
@@ -185,8 +187,14 @@ export interface TerminalToolDeps {
    * read/list/kill tools need not supply it).
    */
   readonly approvalGate?: ApprovalGate;
+  /** Daemon-owned authority resolver for the optional paired managed terminal path. */
+  readonly managedBinding?: ManagedTerminalBindingResolver;
+  /** Daemon-side materialization of lease-private Git state before worker reservation. */
+  readonly prepareManagedWorkspaceGit?: (workspace: string) => Result<void, Error>;
+  readonly managedTerminalEvents?: ManagedTerminalEventSink;
+  /** True only when the production worker can enforce attachment mounts with bubblewrap. */
+  readonly managedAttachmentSandboxAvailable?: boolean;
 }
-
 // Defaults
 
 const DEFAULT_COLS = 120;
@@ -209,6 +217,8 @@ const CreateParams = Type.Object({
   rows: Type.Optional(Type.Integer({ description: "Terminal rows (default 40)" })),
   name: Type.Optional(Type.String({ description: "Human-readable display label for the session (shown in listings) — this is NOT the project folder. To name a coding project's folder, use `project`." })),
   hintPatterns: Type.Optional(Type.Array(Type.String(), { description: "Safe-interaction hint patterns" })),
+  managedRunId: Type.Optional(Type.String({ description: "Managed-run handle to bind; requires workspaceLeaseId" })),
+  workspaceLeaseId: Type.Optional(Type.String({ description: "Workspace-lease handle to bind; requires managedRunId" })),
 });
 
 const ReadParams = Type.Object({
@@ -365,6 +375,13 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       // <agent-workspace>/projects/<slug> folder (auto-created). Both resolve in resolveCreateWorkspace.
       const cwd = readString(params, "cwd");
       const project = readString(params, "project");
+      const managed = selectManagedHandles(params);
+      if (managed.kind === "invalid") {
+        throwToolError("invalid_value", managedHandleSelectionError(managed.reason));
+      }
+      if (managed.kind === "managed" && (cwd !== undefined || project !== undefined)) {
+        throwToolError("permission_denied", "managed terminals use the server-resolved leased root; cwd and project are not accepted");
+      }
 
       // abort ends the call, NOT the session — never registry.kill here. The
       // turn already aborted, so do NOT spawn a new session (create is the one
@@ -388,6 +405,13 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       // unsandboxed child. The bare-metal (bwrap removed) confirmation is VPS-gated.
       const provider = deps.detectProvider();
       if (!provider) {
+        if (managed.kind === "managed") {
+          throwToolError(
+            "sandbox_unavailable",
+            "managed terminal confinement cannot be materialized without a sandbox provider",
+            { hint: "enable bubblewrap confinement; the managed terminal was not launched with broader access" },
+          );
+        }
         throwToolError(
           "permission_denied",
           "no sandbox provider available; refusing unsandboxed terminal (fail-closed)",
@@ -397,6 +421,31 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
 
       const { bin, argv } = buildDirectSpawn(matched.entry, matched.requestedReal, args);
       const originEndpoint = resolveOriginEndpoint();
+      const owner = resolveOwner(deps);
+      let managedResolved;
+      let managedAttachments: readonly ManagedTerminalExecutionAttachment[] = [];
+      if (managed.kind === "managed") {
+        if (deps.managedBinding === undefined) {
+          throwToolError("permission_denied", "managed terminal binding is unavailable");
+        }
+        const resolution = await deps.managedBinding.resolve({
+          managedRunId: managed.managedRunId,
+          workspaceLeaseId: managed.workspaceLeaseId,
+          owner,
+        });
+        if (resolution.kind !== "resolved") {
+          throwToolError("permission_denied", `managed terminal binding rejected: ${resolution.reason}`);
+        }
+        managedResolved = resolution.binding;
+        managedAttachments = resolution.executionAttachments;
+        if (managedAttachments.length > 0 && deps.managedAttachmentSandboxAvailable !== true) {
+          throwToolError(
+            "sandbox_unavailable",
+            "execution attachments require an enforceable bubblewrap terminal jail",
+            { hint: "enable bubblewrap confinement; the terminal was not launched with broader access" },
+          );
+        }
+      }
       const createRequest = {
         allowId,
         bin,
@@ -404,10 +453,22 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         cols,
         rows,
         scrollback: DEFAULT_SCROLLBACK,
-        scope: matched.entry.scope,
-        ...(cwd !== undefined ? { cwd } : {}),
-        ...(project !== undefined ? { project } : {}),
-        ...(deps.durable ? { durable: true } : {}),
+        scope: managedResolved === undefined ? matched.entry.scope : narrowManagedTerminalScope(matched.entry.scope),
+        ...(managedResolved === undefined && cwd !== undefined ? { cwd } : {}),
+        ...(managedResolved === undefined && project !== undefined ? { project } : {}),
+        ...(managedResolved === undefined
+          ? (deps.durable ? { durable: true } : {})
+          : {
+              durable: true,
+              workspace: managedResolved.canonicalRoot,
+              cwd: managedResolved.canonicalRoot,
+              managedBinding: {
+                managedRunId: managedResolved.managedRunId,
+                workspaceLeaseId: managedResolved.workspaceLeaseId,
+                serviceInstanceId: managedResolved.serviceInstanceId,
+              },
+              ...(managedAttachments.length === 0 ? {} : { executionAttachments: managedAttachments }),
+            }),
         // The origin conversation, from the RESOLVED CONTEXT — never a create param (the
         // same sourcing rule as `scope`). It follows the session onto the handle + the
         // durable descriptor so this drive's notifications come back to this thread.
@@ -448,6 +509,12 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         }
       }
 
+      const start = deps.nowMs();
+      if (managedResolved !== undefined) {
+        const preparation = prepareManagedTerminalWorkspaceGit(deps, managedResolved.canonicalRoot, allowId, start);
+        if (!preparation.ok) throwToolError("conflict", preparation.error.message, { hint: preparation.error.hint });
+      }
+
       // (3) CANONICALIZE (end-to-end). buildDirectSpawn consumes the
       // matcher's already-resolved realpath (no second resolution) and
       // prepends the operator's argsPrefix ahead of the agent args. We forward
@@ -455,8 +522,14 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       // canonical inode verbatim.
       // (4) REGISTER + OBSERVE. A spawn failure logs hint+errorKind and
       // emits terminal:spawn_failed before rethrowing.
-      const start = deps.nowMs();
       let result;
+      const reservation = managedResolved === undefined || deps.managedBinding === undefined
+        ? undefined
+        : await reserveManagedTerminalLaunch(deps.managedBinding, managedResolved, owner);
+      if (reservation?.kind === "rejected") {
+        throwToolError("conflict", `managed terminal launch reservation failed: ${reservation.reason}`);
+      }
+      const reservedTerminalSessionId = reservation?.terminalSessionId;
       try {
         // Scrollback is NOT an agent-facing param — the create surface
         // exposes only {allowId,command,args,cwd,cols,rows,...} to the model. The
@@ -468,9 +541,11 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         // no `scope` create param (CreateParams is closed), so it cannot set or
         // widen the jail; scope rides the create frame to the worker.
         result = await deps.registry.create(
-          createRequest,
+          reservedTerminalSessionId === undefined
+            ? createRequest
+            : { ...createRequest, sessionId: reservedTerminalSessionId },
           // Stamp the origin so this session is visible ONLY to its owner.
-          resolveOwner(deps),
+          owner,
         );
       } catch (err) {
         const failedAt = deps.nowMs();
@@ -493,10 +568,49 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
           errorKind: "dependency",
           timestamp: failedAt,
         });
+        if (
+          managedResolved !== undefined
+          && reservedTerminalSessionId !== undefined
+          && deps.managedBinding !== undefined
+        ) {
+          const released = await retireFailedManagedTerminalLaunch({
+            registry: deps.registry,
+            binding: deps.managedBinding,
+            authority: managedResolved,
+            reservedTerminalSessionId,
+            owner,
+          });
+          if (released.kind !== "released") {
+            throwToolError("conflict", `managed terminal launch reservation release failed: ${released.reason}`);
+          }
+        }
         // @allow-throw: re-propagate the original spawn error to the AgentTool
         // execution boundary after recording observability; the SDK catches
         // it and marks the tool result isError:true (same boundary as tool-helpers.ts).
         throw err;
+      }
+
+      if (managedResolved !== undefined) {
+        if (
+          deps.managedBinding === undefined
+          || reservedTerminalSessionId === undefined
+        ) {
+          throwToolError("conflict", "managed terminal binding failed: launch reservation is unavailable");
+        }
+        const established = await establishManagedTerminalLaunch({
+          registry: deps.registry,
+          binding: deps.managedBinding,
+          events: deps.managedTerminalEvents,
+          authority: managedResolved,
+          reservedTerminalSessionId,
+          result,
+          owner,
+        });
+        if (!established.ok) {
+          throwToolError("conflict", established.error.message, established.error.kind === "admission" ? {
+            hint: "inspect the capability service task state, dependency graph, and scheduling capacity before retrying",
+          } : undefined);
+        }
       }
 
       const doneAt = deps.nowMs();
@@ -516,13 +630,29 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         state: "created",
         durationMs: doneAt - start,
         timestamp: doneAt,
+        ...(managedResolved === undefined ? {} : {
+          managedRunId: managedResolved.managedRunId,
+          workspaceLeaseId: managedResolved.workspaceLeaseId,
+        }),
       });
       // Anchor the session's wall-clock start + request/interaction counters so
       // the per-send caps (consumeRequest/consumeInteraction/checkWallClock) measure
       // from create. Idempotent — a re-call never re-anchors the wall clock.
       deps.caps.startSession(result.sessionId);
 
-      return jsonResult(result);
+      return jsonResult({
+        ...result,
+        ...(managedResolved === undefined ? {} : {
+          managedRunId: managedResolved.managedRunId,
+          workspaceLeaseId: managedResolved.workspaceLeaseId,
+          ...(managedAttachments.length === 0 ? {} : {
+            executionAttachments: managedAttachments.map((attachment) => ({
+              executionAttachmentId: attachment.executionAttachmentId,
+              targetPath: managedTerminalAttachmentTargetPath(attachment.targetName),
+            })),
+          }),
+        }),
+      });
     },
   };
 }
@@ -565,12 +695,26 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
       // leaked token never reaches the agent/the wrap), THEN wrap as untrusted external content.
       const { text: redacted, redactions } = scrubSecretsFromText(digest.screen);
       const wrappedScreen = wrapExternalContent(redacted, { source: "unknown" });
+      let wrappedExitTail: string | undefined;
+      let exitTailRedactions = 0;
+      if (view.exitTail !== undefined) {
+        const cleaner = createOutputCleaner();
+        const cleaned = cleaner.process(Buffer.from(view.exitTail, "utf8")) + cleaner.flush();
+        const scrubbed = scrubSecretsFromText(cleaned);
+        exitTailRedactions = scrubbed.redactions;
+        wrappedExitTail = wrapExternalContent(scrubbed.text, { source: "unknown" });
+      }
       deps.logger.debug(
-        { toolName: "terminal_session_read", sessionId, format, scrollback, redactions, truncated: digest.truncated, step: "read" },
+        { toolName: "terminal_session_read", sessionId, format, scrollback, redactions: redactions + exitTailRedactions, truncated: digest.truncated, step: "read" },
         "terminal session read",
       );
       const breadcrumb = digest.truncations !== undefined ? { truncated: digest.truncated, truncations: digest.truncations } : { truncated: digest.truncated };
-      return jsonResult({ ...view, screen: wrappedScreen, ...breadcrumb });
+      return jsonResult({
+        ...view,
+        screen: wrappedScreen,
+        ...(wrappedExitTail === undefined ? {} : { exitTail: wrappedExitTail }),
+        ...breadcrumb,
+      });
     },
   };
 }

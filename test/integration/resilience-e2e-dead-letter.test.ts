@@ -4,7 +4,7 @@
  *
  * Exercises the full DLQ lifecycle:
  * - Failed delivery -> enqueue -> retry drain -> successful delivery
- * - Expired entries dropped after maxRetries exceeded
+ * - Exhausted entries parked after maxRetries is reached
  * - DLQ integration with sub-agent-runner delivery pipeline
  *
  * Uses real createAnnouncementDeadLetterQueue and createSubAgentRunner
@@ -104,6 +104,16 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     const logger = createMockLogger();
 
     const filePath = join(tmpDir, "dlq-test-1.jsonl");
+    const receiptAwareSendToChannel = vi.fn()
+      .mockResolvedValueOnce(ok({
+        delivered: false as const,
+        status: "rejected" as const,
+      }))
+      .mockResolvedValueOnce(ok({
+        delivered: true as const,
+        status: "accepted" as const,
+        platformMessageId: "message-retried",
+      }));
 
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
@@ -112,6 +122,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       maxAgeMs: 3_600_000,
       eventBus,
       logger,
+      receiptAwareSendToChannel,
     });
 
     // Track dead_letter_delivered events
@@ -136,6 +147,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       channelType: "echo",
       channelId: "ch1",
       runId: "run-1",
+      sessionKey: "test-dlq-integration:user:ch1",
       failedAt: Date.now(),
       attemptCount: 0,
       lastError: "sendToChannel failed",
@@ -146,14 +158,12 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     expect(enqueuedEvents.length).toBe(1);
     expect(enqueuedEvents[0]!.runId).toBe("run-1");
 
-    // First drain: sendToChannel fails -> attemptCount increments, entry stays
-    const failingSendToChannel = vi.fn().mockResolvedValue(false);
-    await dlq.drain(failingSendToChannel);
+    // First drain: an explicit rejection is safe to retry, so the entry stays.
+    const fallbackSendToChannel = vi.fn().mockResolvedValue(true);
+    await dlq.drain(fallbackSendToChannel);
 
-    // sendToChannel now receives an optional 4th argument (metadata/options).
-    // Use arrayContaining-style match via positional args with a trailing
-    // `undefined` so the test is resilient to either signature.
-    expect(failingSendToChannel).toHaveBeenCalledWith(
+    expect(receiptAwareSendToChannel).toHaveBeenNthCalledWith(
+      1,
       "echo",
       "ch1",
       "Task complete: quantum research findings",
@@ -161,16 +171,17 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     );
     expect(dlq.size()).toBe(1); // Still queued (retry not exhausted)
 
-    // Second drain: sendToChannel succeeds -> entry removed, event emitted
-    const succeedingSendToChannel = vi.fn().mockResolvedValue(true);
-    await dlq.drain(succeedingSendToChannel);
+    // Second drain: an accepted receipt removes the entry and emits delivery.
+    await dlq.drain(fallbackSendToChannel);
 
-    expect(succeedingSendToChannel).toHaveBeenCalledWith(
+    expect(receiptAwareSendToChannel).toHaveBeenNthCalledWith(
+      2,
       "echo",
       "ch1",
       "Task complete: quantum research findings",
       undefined,
     );
+    expect(fallbackSendToChannel).not.toHaveBeenCalled();
     expect(dlq.size()).toBe(0); // Entry removed
 
     // Verify announcement:dead_letter_delivered event was emitted
@@ -181,22 +192,27 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Expired entries are dropped on drain
+  // Exhausted entries are parked on drain
   // -------------------------------------------------------------------------
 
-  it("expired entries are dropped after maxRetries exceeded", async () => {
+  it("exhausted entries remain quarantined after maxRetries is reached", async () => {
     const eventBus = new TypedEventBus();
     const logger = createMockLogger();
 
     const filePath = join(tmpDir, "dlq-test-2.jsonl");
+    const receiptAwareSendToChannel = vi.fn().mockResolvedValue(ok({
+      delivered: false as const,
+      status: "rejected" as const,
+    }));
 
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
       retryIntervalMs: 0,
-      maxRetries: 1, // Drop after 1 retry
+      maxRetries: 1,
       maxAgeMs: 3_600_000,
       eventBus,
       logger,
+      receiptAwareSendToChannel,
     });
 
     // Enqueue an entry
@@ -205,6 +221,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       channelType: "echo",
       channelId: "ch2",
       runId: "run-2",
+      sessionKey: "test-dlq-integration:user:ch2",
       failedAt: Date.now(),
       attemptCount: 0,
       lastError: "initial failure",
@@ -212,27 +229,30 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
 
     expect(dlq.size()).toBe(1);
 
-    // First drain: sendToChannel fails -> attemptCount goes to 1 (= maxRetries)
-    const failingSend = vi.fn().mockResolvedValue(false);
-    await dlq.drain(failingSend);
+    // First drain: a proven rejection increments attemptCount to maxRetries.
+    const fallbackSendToChannel = vi.fn().mockResolvedValue(true);
+    await dlq.drain(fallbackSendToChannel);
 
     // Entry is still in queue after first drain (count incremented to 1)
-    // but on next drain the filter will drop it because attemptCount >= maxRetries
+    // and the next drain parks it because attemptCount >= maxRetries.
     expect(dlq.size()).toBe(1);
 
-    // Second drain: entry should be filtered out (expired) before sendToChannel is called
-    const secondSend = vi.fn().mockResolvedValue(true);
-    await dlq.drain(secondSend);
+    // Second drain: entry is parked before either transport is called again.
+    await dlq.drain(fallbackSendToChannel);
 
-    // Entry dropped: size is 0 and sendToChannel was NOT called (entry was filtered)
-    expect(dlq.size()).toBe(0);
-    expect(secondSend).not.toHaveBeenCalled();
+    // Evidence remains durable and the receipt-aware transport is not called again.
+    expect(dlq.size()).toBe(1);
+    expect(receiptAwareSendToChannel).toHaveBeenCalledOnce();
+    expect(fallbackSendToChannel).not.toHaveBeenCalled();
 
-    // Verify debug log about the attempt limit.
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "run-2" }),
       expect.stringContaining("attempt limit"),
     );
+    const listed = await dlq.listQuarantined();
+    expect(listed.ok && listed.value[0]?.kind === "entry"
+      ? listed.value[0].lastError
+      : undefined).toBe("attempt_limit_reached");
   });
 
   // -------------------------------------------------------------------------
@@ -372,6 +392,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       channelType: "echo",
       channelId: "ch4",
       runId: "run-4",
+      sessionKey: "test-dlq-integration:user:ch4",
       failedAt: Date.now(),
       attemptCount: 0,
     });

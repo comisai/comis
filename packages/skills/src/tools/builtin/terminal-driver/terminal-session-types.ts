@@ -28,6 +28,7 @@ import type { ChannelEndpoint } from "@comis/core";
 
 import type { SessionOwner } from "./terminal-session-owner.js";
 import type { SnapshotDiff } from "./terminal-render.js";
+import type { TerminalRootProcessIdentity } from "./terminal-managed-binding.js";
 
 /**
  * A structural logger — the minimal `{ info, debug, warn, error }` surface. NOT
@@ -86,6 +87,11 @@ export interface SessionHandle {
   workspace?: string;
   /** The origin that owns this session — `(agentId, sessionKey)`. Stamped at `create`; `list`/`read`/`get`/`kill`/`send*` filter on it (two subagents are mutually invisible). */
   owner: SessionOwner;
+  /** Durable managed-run identity; present as one complete cluster only. */
+  managedRunId?: string;
+  workspaceLeaseId?: string;
+  serviceInstanceId?: string;
+  rootProcessIdentity?: TerminalRootProcessIdentity;
   /**
    * The CONVERSATION this session was created from (the resolved turn scope's endpoint),
    * stamped at `create` beside {@link owner} and re-stamped verbatim on a durable
@@ -154,6 +160,7 @@ export interface CreateResult {
   allowId: string;
   cols: number;
   rows: number;
+  rootProcessIdentity?: TerminalRootProcessIdentity;
 }
 
 /** The terminal view returned by `read` — the round-trip shape. */
@@ -164,6 +171,10 @@ export interface TerminalView {
   rows: number;
   alt: boolean;
   alive: boolean;
+  /** The driven process exit code, present when the backend reported one. */
+  exitCode?: number;
+  /** Bounded terminal output tail retained after exit; the tool layer cleans, redacts, and wraps it. */
+  exitTail?: string;
   /** The per-read screen-diff vs the prior read. ADDITIVE: present when an emulator snapshot exists; the not-found/degraded early returns omit it. */
   diff?: SnapshotDiff;
 }

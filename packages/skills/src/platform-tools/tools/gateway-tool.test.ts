@@ -207,8 +207,8 @@ describe("gateway tool", () => {
 
   describe("patch action", () => {
     it.each([
-      ["contributions", "instances.echo"],
-      ["contributions", "activation.enabled"],
+      ["capabilityServices", "instances.0.enabled"],
+      ["capabilityServices", "requestDeadlineMs"],
       ["plugins", "plugins.echo.enabled"],
     ])("rejects contribution topology path %s.%s before the patch confirmation gate", async (section, key) => {
       const rpcCall = createMockRpcCall();
@@ -499,7 +499,7 @@ describe("gateway tool", () => {
       expect(rpcCall).not.toHaveBeenCalled();
     });
 
-    it.each(["contributions", "plugins"])(
+    it.each(["capabilityServices", "plugins"])(
       "rejects contribution topology section %s before the apply confirmation gate",
       async (section) => {
         const rpcCall = createMockRpcCall();

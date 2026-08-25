@@ -51,6 +51,7 @@
  * @module
  */
 
+import type { Result } from "@comis/shared";
 import { reattachDecision, type SessionDescriptor } from "./terminal-reattach-match.js";
 import type { SessionOwner } from "./terminal-session-owner.js";
 import type { SessionHandle } from "./terminal-session-types.js";
@@ -62,21 +63,21 @@ import type { SessionHandle } from "./terminal-session-types.js";
  * dir) and INJECTS it onto the registry deps. Unit tests pass a fake (in-memory) port
  * so the scan + decision are provable without any disk.
  *
- * `persist` is callable at create-time BEFORE the tmux session could exist (a SIGKILL
- * mid-create must not orphan tmux without a descriptor); `remove` is
- * ENOENT-tolerant (a double-remove on a gone session is a no-op, never a throw).
+ * `persist` is callable at create-time before the tmux session could exist so a process
+ * interruption cannot orphan tmux without a descriptor. `remove` is ENOENT-tolerant and
+ * reports genuine deletion or directory-flush faults.
  */
 export interface SessionDescriptorStorePort {
-  /** Persist (or overwrite) the descriptor for a durable session. Best-effort; never throws. */
-  persist(descriptor: SessionDescriptor): void;
+  /** Persist (or overwrite) the descriptor for a durable session. */
+  persist(descriptor: SessionDescriptor): Result<void, Error>;
   /**
    * Scan the durable dir and return every well-formed persisted descriptor (a
    * corrupt-after-crash file is a corrupt-SKIP via `deserializeDescriptor`).
    * The daemon impl swallows fs faults; this module ALSO defends a throwing impl.
    */
   recover(): SessionDescriptor[];
-  /** Remove a descriptor by sessionId. ENOENT-tolerant; never throws. */
-  remove(sessionId: string): void;
+  /** Remove a descriptor by sessionId and report whether deletion is durably committed. */
+  remove(sessionId: string): Result<void, Error>;
 }
 
 /**
@@ -92,7 +93,7 @@ export interface SessionDescriptorStorePort {
  */
 export type RecoveredAction =
   | { action: "reattach"; descriptor: SessionDescriptor }
-  | { action: "failed"; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone" };
+  | { action: "failed"; descriptor?: SessionDescriptor; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone" | "managed_root_identity_unavailable" | "managed_root_identity_mismatch"; managedBinding?: { managedRunId: string; workspaceLeaseId: string; serviceInstanceId: string } };
 
 /** Dependencies for {@link recoverSessionDescriptors} — the injected store + liveness probe. */
 export interface RecoverSessionDescriptorsDeps {
@@ -100,6 +101,8 @@ export interface RecoverSessionDescriptorsDeps {
   store: SessionDescriptorStorePort;
   /** The `has-session` liveness probe (the worker's `has-session`), injected. */
   isTmuxAlive: (name: string, socket?: string) => boolean;
+  /** Resolve the live pane's non-reusable process identity for managed recovery. */
+  resolveTmuxRootProcessIdentity?: (name: string, socket?: string) => SessionDescriptor["rootProcessIdentity"];
 }
 
 /**
@@ -137,13 +140,24 @@ export function recoverSessionDescriptors(deps: RecoverSessionDescriptorsDeps): 
   for (const descriptor of descriptors) {
     // reattachDecision is TOTAL — a throwing probe / degenerate descriptor resolves to
     // `failed` (the SAFE direction, never a wrong `reattach`), so this loop never throws.
-    const decision = reattachDecision(descriptor, deps.isTmuxAlive);
+    const decision = reattachDecision(
+      descriptor,
+      deps.isTmuxAlive,
+      deps.resolveTmuxRootProcessIdentity,
+    );
     if (decision.action === "reattach") {
       out.push({ action: "reattach", descriptor: decision.descriptor });
     } else if (decision.action === "failed") {
       // Carry the descriptor's owner (the persisted identity) so the registry's
       // content-free unrecoverable hook gets the agentId without a second lookup.
-      out.push({ action: "failed", sessionId: decision.sessionId, owner: descriptor.owner, reason: decision.reason });
+      const managedBinding = managedDescriptorIdentity(descriptor);
+      out.push({
+        action: "failed",
+        sessionId: decision.sessionId,
+        owner: descriptor.owner,
+        reason: decision.reason,
+        ...(managedBinding === undefined ? {} : { descriptor, managedBinding }),
+      });
     }
     // fallback_nondurable → skip (the registry's existing lost floor handles it).
   }
@@ -197,6 +211,10 @@ export function rehydrateHandleFromDescriptor(d: SessionDescriptor, nowMs: numbe
     // Rehydrate the per-boot socket so the daemon probe / reaper target the session's
     // OWN (prior-boot) server, and the worker re-attaches there (not this boot's fresh server).
     tmuxSocket: d.tmuxSocket,
+    ...(d.managedRunId === undefined ? {} : { managedRunId: d.managedRunId }),
+    ...(d.workspaceLeaseId === undefined ? {} : { workspaceLeaseId: d.workspaceLeaseId }),
+    ...(d.serviceInstanceId === undefined ? {} : { serviceInstanceId: d.serviceInstanceId }),
+    ...(d.rootProcessIdentity === undefined ? {} : { rootProcessIdentity: d.rootProcessIdentity }),
   };
 }
 
@@ -249,6 +267,12 @@ export interface DurableCreateInputs {
   /** The conversation the drive was created from — persisted so a re-attached durable drive
    *  still reports its outcome to that thread. Absent for a non-channel (API/cron) drive. */
   originEndpoint?: SessionDescriptor["originEndpoint"];
+  managedBinding?: {
+    readonly managedRunId: string;
+    readonly workspaceLeaseId: string;
+    readonly serviceInstanceId: string;
+  };
+  rootProcessIdentity?: SessionDescriptor["rootProcessIdentity"];
 }
 
 /**
@@ -271,6 +295,12 @@ export function buildSessionDescriptor(i: DurableCreateInputs): SessionDescripto
   if (i.scope !== undefined) descriptor.scope = i.scope;
   if (i.tmuxSocket !== undefined) descriptor.tmuxSocket = i.tmuxSocket;
   if (i.originEndpoint !== undefined) descriptor.originEndpoint = i.originEndpoint;
+  if (i.managedBinding !== undefined) {
+    descriptor.managedRunId = i.managedBinding.managedRunId;
+    descriptor.workspaceLeaseId = i.managedBinding.workspaceLeaseId;
+    descriptor.serviceInstanceId = i.managedBinding.serviceInstanceId;
+  }
+  if (i.rootProcessIdentity !== undefined) descriptor.rootProcessIdentity = i.rootProcessIdentity;
   return descriptor;
 }
 
@@ -297,9 +327,25 @@ export interface TerminalDurabilityDeps {
    * after `kill` fired, while a manual kill-session by name reaped it.
    * Absent ⇒ no-op (the worker-IPC kill is the only teardown, today's behavior).
    */
-  killTmuxSession?: (name: string, socket?: string) => void;
-  onReattached?: (info: { sessionId: string; agentId: string }) => void;
-  onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string }) => void;
+  killTmuxSession?: (name: string, socket?: string) => Result<void, Error>;
+  /** Resolve and verify the current detached pane identity before managed re-attach. */
+  resolveTmuxRootProcessIdentity?: (name: string, socket?: string) => SessionDescriptor["rootProcessIdentity"];
+  /** Confirm durable managed-run retirement before registry authority is discarded. */
+  retireManagedSession?: (input: {
+    readonly managedRunId: string;
+    readonly workspaceLeaseId: string;
+    readonly serviceInstanceId: string;
+    readonly terminalSessionId: string;
+    readonly transition: "exited" | "released";
+  }) => Promise<Result<void, Error>>;
+  onReattached?: (info: { sessionId: string; agentId: string; managedRunId?: string; workspaceLeaseId?: string; serviceInstanceId?: string }) => void;
+  onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string; managedRunId?: string; workspaceLeaseId?: string; serviceInstanceId?: string }) => void;
+}
+
+function managedDescriptorIdentity(descriptor: SessionDescriptor): { managedRunId: string; workspaceLeaseId: string; serviceInstanceId: string } | undefined {
+  return descriptor.managedRunId === undefined || descriptor.workspaceLeaseId === undefined || descriptor.serviceInstanceId === undefined
+    ? undefined
+    : { managedRunId: descriptor.managedRunId, workspaceLeaseId: descriptor.workspaceLeaseId, serviceInstanceId: descriptor.serviceInstanceId };
 }
 
 /**
@@ -333,7 +379,7 @@ async function driveWorkerReattach(
     .then((r) => r.ok)
     .catch(() => false);
   if (ok) {
-    deps.onReattached?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId });
+    deps.onReattached?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId, ...(managedDescriptorIdentity(descriptor) ?? {}) });
     return;
   }
   // The worker could not re-attach — honest death. Flip lost + fire the unrecoverable
@@ -342,8 +388,8 @@ async function driveWorkerReattach(
   // holder (the descriptor store is distinct from the journal store).
   const handle = sessions.get(descriptor.sessionId);
   if (handle !== undefined && handle.status === "running") handle.status = "lost";
-  deps.onUnrecoverable?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId, reason: "tmux_session_gone", errorKind: "dependency" });
-  deps.descriptorStore?.remove(descriptor.sessionId);
+  deps.onUnrecoverable?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId, reason: "tmux_session_gone", errorKind: "dependency", ...(managedDescriptorIdentity(descriptor) ?? {}) });
+  if (descriptor.managedRunId === undefined) deps.descriptorStore?.remove(descriptor.sessionId);
 }
 
 /**
@@ -374,7 +420,11 @@ export function applyRecoveredSessions(
 ): void {
   if (deps.descriptorStore === undefined) return; // today's wiring — no recover.
   const isTmuxAlive = deps.isTmuxAlive ?? ((): boolean => false);
-  for (const r of recoverSessionDescriptors({ store: deps.descriptorStore, isTmuxAlive })) {
+  for (const r of recoverSessionDescriptors({
+    store: deps.descriptorStore,
+    isTmuxAlive,
+    resolveTmuxRootProcessIdentity: deps.resolveTmuxRootProcessIdentity,
+  })) {
     if (r.action === "reattach") {
       sessions.set(r.descriptor.sessionId, rehydrateHandleFromDescriptor(r.descriptor, nowMs()));
       if (reattachWorker !== undefined) {
@@ -383,15 +433,21 @@ export function applyRecoveredSessions(
         void driveWorkerReattach(deps, sessions, r.descriptor, reattachWorker);
       } else {
         // Legacy (no worker round-trip injected): fire the re-attach signal synchronously.
-        deps.onReattached?.({ sessionId: r.descriptor.sessionId, agentId: r.descriptor.owner.agentId });
+        deps.onReattached?.({ sessionId: r.descriptor.sessionId, agentId: r.descriptor.owner.agentId, ...(managedDescriptorIdentity(r.descriptor) ?? {}) });
       }
     } else {
       // Genuinely gone at the boot probe: fire the unrecoverable hook + drop the dead
       // DESCRIPTOR (a stale descriptor with a dead tmuxName re-scans/re-probes/
       // re-emits lost every boot). The JOURNAL is preserved by the daemon holder
       // (the descriptor store is distinct from the journal store).
-      deps.onUnrecoverable?.({ sessionId: r.sessionId, agentId: r.owner.agentId, reason: r.reason, errorKind: "dependency" });
-      deps.descriptorStore.remove(r.sessionId);
+      deps.onUnrecoverable?.({ sessionId: r.sessionId, agentId: r.owner.agentId, reason: r.reason, errorKind: "dependency", ...(r.managedBinding ?? {}) });
+      if (r.managedBinding !== undefined && r.descriptor !== undefined) {
+        const handle = rehydrateHandleFromDescriptor(r.descriptor, nowMs());
+        handle.status = "lost";
+        sessions.set(r.sessionId, handle);
+      } else if (r.managedBinding === undefined) {
+        deps.descriptorStore.remove(r.sessionId);
+      }
     }
   }
 }

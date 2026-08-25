@@ -39,6 +39,7 @@ export function buildObsMcpClientClosures(deps: {
   startupTimestamp: SystemAssemblerDeps["startupTimestamp"];
   workspaceDirs: ReadonlyMap<string, string>;
   contextBrowse: Parameters<typeof makeRealReader>[3];
+  managedRunReads?: Pick<import("@comis/core").ManagedRunStorePort, "countByStatus" | "listByTraceIds">;
 }): {
   obsExplainForMcpClient: (params: Record<string, unknown>) => Promise<unknown>;
   obsSystemHealthForMcpClient: (params: Record<string, unknown>) => Promise<unknown>;
@@ -48,6 +49,7 @@ export function buildObsMcpClientClosures(deps: {
     deps.obsStore,
     deps.workspaceDirs,
     deps.contextBrowse,
+    deps.managedRunReads,
   );
   const obsExplainForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
     const parsed = ObsExplainContract.request.parse(params);
@@ -61,6 +63,7 @@ export function buildObsMcpClientClosures(deps: {
         dataDir: deps.dataDir,
         clock: deps.clock,
         durableRuns: deps.durableRuns,
+        managedRunHealth: deps.managedRunReads,
         billingEstimator: deps.billingEstimator,
         startupTimestamp: deps.startupTimestamp,
       },

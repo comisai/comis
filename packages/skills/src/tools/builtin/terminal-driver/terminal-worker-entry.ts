@@ -44,9 +44,10 @@ import { buildScopeArgs as defaultBuildScopeArgs } from "./terminal-scope-args.j
 import { scrubChildEnv as defaultScrubChildEnv } from "./terminal-env-scrub.js";
 import { buildEgressRelayLaunch as defaultBuildEgressRelayLaunch } from "./terminal-egress-relay.js";
 import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js";
+import type { ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 import { encodeKeyChord } from "./terminal-key-grammar.js";
 import { sanitizeTraceId, WORKER_TRUST_LEVEL } from "./terminal-worker-context.js";
-import { attachBackend } from "./terminal-worker-backend-attach.js";
+import { attachBackend, terminateWorkerSession } from "./terminal-worker-backend-attach.js";
 import {
   SCROLLBACK_DEFAULT,
   STUCK_DEFAULT_MS,
@@ -109,10 +110,10 @@ import {
 // worker tests' structural-type imports) is unchanged.
 
 /** Worker dependencies — all injectable for unit tests; production defaults provided. */
-// @optional-field-count: 15 optional fields — TerminalWorkerDeps is the worker's
+// @optional-field-count: 17 optional fields — TerminalWorkerDeps is the worker's
 // dependency-injection contract: EVERY optional is a genuinely-conditional injectable port
 // (spawnPipe/loadTmux/nowMs/envSnapshot/fs/setTimer/clearTimer/createEmulator/buildScopeArgs/
-// scrubChildEnv/buildEgressRelayLaunch/egressControl/writeFd3/stuckMs/bwrapPath) with a
+// scrubChildEnv/buildEgressRelayLaunch/egressControl/materializeExecutionAttachmentRelays/writeFd3/stuckMs/bwrapPath/unsafeDisableSandbox) with a
 // factory default (or daemon-injected), overridden ONLY by a test or the composition root.
 // Tightening any to required would force every call site to fabricate a port it never
 // exercises. The "(a) genuinely conditional" classification, not a cluster-split — one
@@ -170,6 +171,7 @@ export interface TerminalWorkerDeps {
   buildEgressRelayLaunch?: typeof defaultBuildEgressRelayLaunch;
   /** Daemon-injected no-secret egress port (TYPE from @comis/core, NEVER infra). ONLY `network: listed-hosts` materializes it; untouched for none/full. */
   egressControl?: EgressControlPort;
+  materializeExecutionAttachmentRelays?: SpawnPlanComposers["materializeExecutionAttachmentRelays"];
   /** Resolved bwrap path (daemon-detected once). NO default — `undefined` ⇒ fail-closed: no spawn, create reply `ok:false`, session `lost`; never an unjailed fallback. */
   bwrapPath?: string;
   /** Operator opt-out of the jail (`skills.terminal.unsafeDisableSandbox`, daemon-resolved). `true` ⇒ the child spawns DIRECTLY (no bwrap), env-scrub preserved, forced non-durable PTY. NO default — the frame `unsafeDisableSandbox` overrides. A security downgrade for bwrap-less hosts; see {@link SpawnPlanComposers.unsafeDisableSandbox}. */
@@ -259,6 +261,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     scrubChildEnv: deps.scrubChildEnv ?? defaultScrubChildEnv,
     buildEgressRelayLaunch: deps.buildEgressRelayLaunch ?? defaultBuildEgressRelayLaunch,
     egressControl: deps.egressControl,
+    materializeExecutionAttachmentRelays: deps.materializeExecutionAttachmentRelays,
     bwrapPath: deps.bwrapPath,
     unsafeDisableSandbox: deps.unsafeDisableSandbox,
   };
@@ -352,6 +355,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const scope = (p["scope"] as TerminalScope | undefined) ?? LEAST_PRIVILEGE_SCOPE;
     const workspace = typeof p["workspace"] === "string" ? p["workspace"] : undefined;
     const cwd = typeof p["cwd"] === "string" ? p["cwd"] : undefined;
+    const executionAttachments = Array.isArray(p["executionAttachments"])
+      ? p["executionAttachments"] as ManagedTerminalExecutionAttachment[]
+      : undefined;
+    const managedWorkspace = p["managedWorkspace"] === true;
     // The operator-declared allowId (registry-threaded from the create request). It selects the
     // read-side platform profile — by allowId ONLY, never content-sniffed,
     // so the driven program cannot choose its own profile. `undefined` ⇒ the agnostic default.
@@ -422,10 +429,21 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // The operator jail opt-out, frame-threaded from the daemon (registry-stamped) like bwrapPath.
     const frameUnsafeDisableSandbox =
       typeof p["unsafeDisableSandbox"] === "boolean" ? p["unsafeDisableSandbox"] : spawnComposers.unsafeDisableSandbox;
+    const requestedBackend: WorkerBackend | undefined = p["backend"] === "tmux" ? "tmux" : undefined;
     let plan;
     try {
       plan = await planSpawnFromCreateFrame(
-        { bin, argv, scope, workspace, cwd },
+        {
+          sessionId,
+          durability: requestedBackend === "tmux" && deps.loadTmux !== undefined ? "durable" : "transient",
+          bin,
+          argv,
+          scope,
+          workspace,
+          cwd,
+          managedWorkspace,
+          executionAttachments,
+        },
         envSnapshot(),
         { ...spawnComposers, bwrapPath: frameBwrapPath, unsafeDisableSandbox: frameUnsafeDisableSandbox },
       );
@@ -434,6 +452,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       throw err;
     }
     state.egress = plan.egress; // disposed on teardown (markExited)
+    state.attachmentRelay = plan.attachmentRelay;
 
     // Attach the backend (PTY or the degraded pipe fallback) — the EXACT try-loadPty /
     // wire-onData/onExit / pipe-close-error block, lifted into a sibling so this file
@@ -442,7 +461,6 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // Only an explicit create-frame `backend:"tmux"` (allow-entry, daemon-threaded) + a
     // wired `loadTmux` diverges to the tmux survival backend; everything else takes the
     // node-pty → pipe path (attachBackend decides).
-    const requestedBackend: WorkerBackend | undefined = p["backend"] === "tmux" ? "tmux" : undefined;
     attachBackend({
       plan: { bin: plan.bin, argv: plan.argv, env: plan.env, cwd: plan.cwd, unsandboxed: plan.unsandboxed },
       cols,
@@ -461,7 +479,16 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       { sessionId, backend: state.backend, durationMs: nowMs() - startedAt },
       "terminal session created",
     );
-    return { sessionId, backend: state.backend, cols, rows };
+    const rootPid = state.backend === "tmux"
+      ? state.pty?.rootPid
+      : state.pty?.pid ?? state.pipe?.pid;
+    return {
+      sessionId,
+      backend: state.backend,
+      cols,
+      rows,
+      ...(rootPid === undefined ? {} : { rootPid }),
+    };
   }
 
   /**
@@ -485,6 +512,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       cols: state.cols,
       rows: state.rows,
       alive: state.alive,
+      exitCode: state.exitCode,
     });
     // Screen-diff: compare to the prior snapshot, attach the diff, store the
     // new one as lastSnapshot. Only when an emulator snapshot exists (the diff is
@@ -498,7 +526,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
   /** The not-alive minimal `{screen,cursor}` for an absent/gone session. */
   function goneSnapshot(): SendResult {
-    return { screen: "", cursor: { x: 0, y: 0 } };
+    return { screen: "", cursor: { x: 0, y: 0 }, delivered: false };
   }
 
   /**
@@ -531,7 +559,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const startedAt = nowMs();
     const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
     const state = sessions.get(sessionId);
-    if (state === undefined) return goneSnapshot();
+    if (state === undefined || !state.alive) return goneSnapshot();
 
     const keys = Array.isArray(frame.params["keys"]) ? (frame.params["keys"] as string[]) : [];
     // encodeKeyChord throws invalid_value on an unknown key → dispatch's catch (write
@@ -541,7 +569,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
     logInteraction(sessionId, "send_key", startedAt, { keyCount: keys.length });
     await state.writeFlush; // perceive the SETTLED grid (like read), not a mid-parse snapshot
-    return perceptionScreen(state.emu?.snapshot(), state.ring);
+    return { ...perceptionScreen(state.emu?.snapshot(), state.ring), delivered: true };
   }
 
   /**
@@ -554,7 +582,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const startedAt = nowMs();
     const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
     const state = sessions.get(sessionId);
-    if (state === undefined) return goneSnapshot();
+    if (state === undefined || !state.alive) return goneSnapshot();
 
     const text = typeof frame.params["text"] === "string" ? frame.params["text"] : "";
     const submit = frame.params["submit"] === true;
@@ -578,7 +606,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       bytes: payload.length,
     });
     await state.writeFlush; // perceive the SETTLED grid, not a mid-parse snapshot
-    return perceptionScreen(state.emu?.snapshot(), state.ring);
+    return { ...perceptionScreen(state.emu?.snapshot(), state.ring), delivered: true };
   }
 
   /**
@@ -692,6 +720,15 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
         case "status":
           result = await handleStatus(frame); // awaits the pending emulator write-parse; classifies the current grid
           break;
+        case "kill": {
+          const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
+          const state = sessions.get(sessionId);
+          const terminated = state === undefined ? undefined : await terminateWorkerSession(state, { setTimer, clearTimer });
+          if (terminated !== undefined && !terminated.ok) throw terminated.error;
+          sessions.delete(sessionId);
+          result = { terminated: true };
+          break;
+        }
         default:
           return {
             sessionId: frame.sessionId,

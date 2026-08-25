@@ -45,6 +45,7 @@ import { SecurityConfigSchema } from "./schema-security.js";
 import { SendPolicyConfigSchema } from "./schema-send-policy.js";
 import { StreamingConfigSchema } from "./schema-streaming.js";
 import { ToolingConfigSchema } from "./schema-tooling.js";
+import { CapabilityServicesConfigSchema } from "./schema-capability-services.js";
 
 // ---------------------------------------------------------------------------
 // ManagedSectionRedirect lives here to break the source-level cycle that the
@@ -131,31 +132,16 @@ export interface SectionRegistryEntry {
 }
 
 /**
- * The 25 unique config sections. Bool flags select per-view membership.
- *
- * - 18 sections have schemaSerializable=true
- * - 20 sections have fieldMetadataVisible=true
- * - 13 sections appear in both views (intersection)
- * - 3 sections (providers, channels, agents) have managedRedirect (top-level managed)
+ * Single source of truth for config-section membership and ordering.
  *
  * Insertion order is significant: schema-serializer.ts and field-metadata.ts
  * derive their SECTION_SCHEMAS maps via Object.fromEntries(Object.entries(...)),
- * which preserves this order, which in turn drives getConfigSections() output
- * order. The 18 schemaSerializable=true entries appear in this order:
- *   agents, channels, memory, security, routing, daemon, scheduler, gateway,
- *   integrations, monitoring, diagnostics, browser, models, providers,
- *   messages, approvals, tooling, orchestration.
- * The 20 fieldMetadataVisible=true entries appear in this order:
- *   agents, channels, memory, security, routing, daemon, scheduler, gateway,
- *   integrations, monitoring, diagnostics, plugins, queue, streaming,
- *   autoReplyEngine, sendPolicy, embedding, envelope, tooling, orchestration.
- * The 7 fieldMetadata-only entries (plugins → envelope) are inserted between
- * `diagnostics` and `tooling` so both filtered subsequences are stable.
- * `orchestration` (both views, gated-off by default) is appended last after
- * `tooling`, so it extends both subsequences consistently with insertion order.
+ * which preserves this order and therefore drives getConfigSections() output.
+ * The per-view inventories and counts are derived and pinned by
+ * section-registry-parity.test.ts; do not duplicate them in prose here.
  */
 export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = Object.freeze({
-  // The 11 common (both views) at the head — both filtered subsequences share indexes 0-9, then diagnostics at index 10.
+  // Sections shared by both views begin here and retain their relative order.
   agents: {
     schema: PerAgentConfigSchema,
     schemaSerializable: true,
@@ -238,16 +224,8 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
     fieldMetadataVisible: true,
   },
 
-  // The 5 schema-serializer-only sections come BEFORE the 7
-  // field-metadata-only sections so that:
-  //   (a) the schemaSerializable-filtered subsequence (skipping the 7
-  //       field-metadata-only entries) is
-  //       [..., monitoring, diagnostics, browser, models, providers, messages,
-  //       approvals, tooling], and
-  //   (b) the fieldMetadataVisible-filtered subsequence (skipping the 5
-  //       schema-serializer-only entries) is
-  //       [..., monitoring, diagnostics, plugins, queue, streaming,
-  //       autoReplyEngine, sendPolicy, embedding, envelope, tooling].
+  // Serializer-only entries precede metadata-only entries. Filtering by either
+  // view flag therefore preserves its view-specific order before the shared tail.
   browser: { schema: BrowserConfigSchema, schemaSerializable: true, fieldMetadataVisible: false },
   models: { schema: ModelsConfigSchema, schemaSerializable: true, fieldMetadataVisible: false },
   providers: {
@@ -294,7 +272,7 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
     fieldMetadataVisible: false,
   },
 
-  // The 7 field-metadata-only sections.
+  // Field-metadata-only sections.
   plugins: { schema: PluginsConfigSchema, schemaSerializable: false, fieldMetadataVisible: true },
   queue: { schema: QueueConfigSchema, schemaSerializable: false, fieldMetadataVisible: true },
   streaming: {
@@ -319,16 +297,20 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
   },
   envelope: { schema: EnvelopeConfigSchema, schemaSerializable: false, fieldMetadataVisible: true },
 
-  // Tooling sits at the tail of BOTH filtered subsequences — placed before
-  // orchestration so each keeps it adjacent to the tail.
+  // Tooling precedes the two final sections shared by both filtered views.
   tooling: { schema: ToolingConfigSchema, schemaSerializable: true, fieldMetadataVisible: true },
 
   // Orchestration authoring gate. Both views (like
   // tooling/approvals); plain boolean flags, so NO managedRedirect (it carries
-  // no managed write surface). Appended last so it extends BOTH the
-  // schemaSerializable and fieldMetadataVisible subsequences consistently.
+  // no managed write surface). Kept immediately before capabilityServices so
+  // both filtered views retain the same tail ordering.
   orchestration: {
     schema: OrchestrationConfigSchema,
+    schemaSerializable: true,
+    fieldMetadataVisible: true,
+  },
+  capabilityServices: {
+    schema: CapabilityServicesConfigSchema,
     schemaSerializable: true,
     fieldMetadataVisible: true,
   },

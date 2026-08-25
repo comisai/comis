@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * @comis/skills terminal-driver barrel — the public surface the daemon wiring
- * (composition root, `setup-tools.ts`) consumes: the nine AgentTool factories
- * (eight implemented + one stub [`status`]), the `TerminalSessionRegistry`
- * constructor + its production worker-spawn helper, and the allowlist + IPC types
- * the wiring needs to map config → `AllowEntryLike` and to type the injected ports.
+ * consumes: nine AgentTool factories, the `TerminalSessionRegistry` constructor,
+ * its production worker-spawn helper, and the allowlist and IPC types needed to
+ * map configuration to `AllowEntryLike` and type the injected ports.
  *
  * Re-exported through `../../index.js` (the `./tools` subpath). The public-export
  * consumer is the daemon wiring (it constructs the registry + pushes the tools).
@@ -12,7 +11,7 @@
  * @module
  */
 
-// The eight implemented tools + their shared deps contract.
+// Eight tools and their shared dependency contract.
 export {
   createTerminalSessionCreateTool,
   createTerminalSessionReadTool,
@@ -30,9 +29,7 @@ export {
   type TerminalEvictedEvent,
 } from "./terminal-tools.js";
 
-// terminal_session_status is a REAL, classifier-backed, owner-scoped tool. Its body lives in
-// terminal-status-tool.ts; terminal-tools-stubs.ts re-exports it so this import path is unchanged.
-// Still never-export (the tool-metadata-registry entry is unchanged — default-deny preserved).
+// terminal_session_status is classifier-backed, owner-scoped, and never exported over MCP.
 export { createTerminalSessionStatusTool } from "./terminal-tools-stubs.js";
 export type { TerminalStatusView } from "./terminal-session-registry.js";
 
@@ -51,6 +48,24 @@ export {
   type SessionStatus,
   type SessionOwner,
 } from "./terminal-session-registry.js";
+export type {
+  ManagedTerminalBinding,
+  ManagedTerminalExecutionAttachment,
+  ManagedTerminalBindingResolver,
+  ManagedTerminalResolveOutcome,
+  ManagedTerminalBindOutcome,
+  ManagedTerminalReleaseOutcome,
+  TerminalRootProcessIdentity,
+  ManagedTerminalTransition,
+  ManagedTerminalEventSink,
+} from "./terminal-managed-binding.js";
+export {
+  MANAGED_TERMINAL_ATTACHMENT_DIRECTORY,
+  MANAGED_TERMINAL_ATTACHMENT_IDENTITY_ENVIRONMENT,
+  MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT,
+  MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT,
+  managedTerminalAttachmentTargetPath,
+} from "./terminal-managed-binding.js";
 
 // Deterministic unattended honest-fail backstop: reap a turn's LIVE never-tasked drives at an
 // unattended (webhook/cron) turn-end so the origin records an honest failure instead of a silent
@@ -84,6 +99,12 @@ export {
   type TerminalEgressProxyDeps,
   type EgressProxyLogger,
 } from "./terminal-egress-proxy.js";
+export {
+  createDurableEgressMaterializer,
+  durableProxyLivenessDecision,
+  resolveDurableEgressProxyMainPath,
+  type DurableEgressMaterializer,
+} from "./terminal-durable-egress-proxy.js";
 
 // The PERSISTENT, agent-scoped projects-root allocator (`<agentWorkspaceDir>/projects`).
 // The daemon injects it as the registry's `allocateWorkspace` with a no-op
@@ -91,6 +112,10 @@ export {
 // workspace instead of a throwaway /tmp dir. See its doc + buildScopeArgs' carve-out
 // re-bind for the security posture (only this subtree is re-exposed in the jail).
 export { prepareAgentTerminalWorkspace } from "./terminal-workspace.js";
+
+// The daemon prepares lease-private Git administration before reserving a
+// managed terminal; the sandboxed worker then re-validates it before mounting.
+export { prepareManagedWorkspaceGit } from "./terminal-spawn-plan.js";
 
 // The per-session usage-cap primitive (closure-local counters + injected
 // clock). The tool layer consumes createSessionCaps to REJECT on
@@ -161,6 +186,7 @@ export {
   buildTmuxHasSessionArgv,
   buildTmuxKillArgv,
   buildTmuxAttachArgv,
+  buildTmuxPanePidArgv,
   buildTmuxSetOptionArgv,
   type TmuxBackendDeps,
 } from "./terminal-tmux-backend.js";

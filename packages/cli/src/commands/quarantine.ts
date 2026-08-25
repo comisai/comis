@@ -7,10 +7,7 @@
  * A quarantined announcement is a completed task's outcome that the runtime
  * could not prove was delivered. Nothing drains it automatically, because
  * re-sending risks telling a user the same thing twice — so it waits for a
- * human. Before this command the wait was unbounded: clearing one meant
- * stopping the daemon and editing `dead-letters.jsonl` by hand, since the
- * running queue holds its state in memory and rewrites that file on the next
- * persist, silently undoing an edit made under a live daemon.
+ * human. Invalid storage rows wait because they cannot be safely replayed.
  *
  * DAEMON-ONLY on purpose. There is deliberately no `--offline` mode: while the
  * daemon is up it is the only authority, and an offline write would be
@@ -40,6 +37,16 @@ import { withSpinner } from "../output/spinner.js";
 
 /** Render one parked announcement as an operator-readable block. */
 function renderRow(row: QuarantinedAnnouncementWire, nowMs: number): string {
+  if (row.kind === "invalid_record") {
+    const ageMin = Math.max(0, Math.round((nowMs - row.detectedAt) / 60_000));
+    return [
+      `  ${row.id}`,
+      "    kind        : invalid_record",
+      `    detected    : ${ageMin} min ago (source line: ${row.sourceLine})`,
+      `    reason      : ${row.reason}`,
+      `    raw evidence: ${row.rawBytes} bytes (withheld, sha256: ${row.rawDigest})`,
+    ].join("\n");
+  }
   const ageMin = Math.max(0, Math.round((nowMs - row.failedAt) / 60_000));
   const lines = [
     `  ${row.id}`,

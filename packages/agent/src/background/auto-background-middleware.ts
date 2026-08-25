@@ -10,12 +10,15 @@
  * @module
  */
 import { suppressError } from "@comis/shared";
-import { BackgroundTaskOriginSchema, tryGetContext } from "@comis/core";
+import { tryGetContext } from "@comis/core";
 import type { BackgroundTasksConfig, SystemTimeoutHandle, TypedEventBus } from "@comis/core";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { BackgroundTaskManager } from "./background-task-manager.js";
-import type { BackgroundTaskOrigin } from "./background-task-types.js";
+import {
+  BackgroundContinuationOriginSchema,
+  type BackgroundTaskOrigin,
+} from "./background-task-types.js";
 import { backgroundToolLabel } from "./background-tool-label.js";
 import { pauseDuringCorrelatedApprovals } from "../approval-timeout-pause.js";
 
@@ -252,7 +255,7 @@ export function wrapToolForAutoBackground(
 
       // Timeout: resolve origin synchronously before yielding to the background.
       // Explicit threading, NOT AsyncLocalStorage.
-      const origin = BackgroundTaskOriginSchema.safeParse(originResolver());
+      const origin = BackgroundContinuationOriginSchema.safeParse(originResolver());
       if (!origin.success) {
         // No bindable originating session context. This includes nested work
         // whose internal child turn and external delivery route intentionally

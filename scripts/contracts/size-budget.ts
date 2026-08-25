@@ -3,7 +3,7 @@
  * Bundle-size measurement for `packages/web/src/api/contracts.generated.ts`.
  *
  * Budget:
- *   - 200,850 bytes minified (`BUDGET_MINIFIED_BYTES`)
+ *   - 218,800 bytes minified (`BUDGET_MINIFIED_BYTES`)
  *   - 38 KB  gzipped   (`BUDGET_GZIPPED_BYTES`)
  *
  * Measurement architecture:
@@ -24,7 +24,7 @@ import { transformSync } from "esbuild";
 import { gzipSync } from "node:zlib";
 
 /**
- * Budget: 200,850 bytes minified.
+ * Budget: 218,800 bytes minified.
  *
  * This cap permits bounded additive RPC-schema growth while keeping accidental
  * validator expansion visible in CI. Raise it only for reviewed contract
@@ -32,13 +32,19 @@ import { gzipSync } from "node:zlib";
  * budget still has ample headroom.
  *
  * The reviewed schema includes content-free per-root completion delivery and
- * durable restart recovery evidence in incident reports. The generated bundle
- * occupies 200,754B; its gzipped size remains far below the independent wire-size
- * budget.
+ * durable restart recovery evidence in incident reports, the operator
+ * surface over installed capability services and their managed runs (eight
+ * admin-only methods whose response shapes carry the run authority record), the
+ * cross-session capability-service / managed-run health slice on the
+ * system-health report (counts + closed status-reason codes + one run id), and
+ * the per-session obs.explain `managedRuns` linkage block (the managed runs a
+ * session prepared, ids + closed enums + counts only).
+ * The generated bundle occupies 218,577B; gzipped it is 22,931B against the
+ * independent 38,912B wire budget, so that gate keeps ample headroom.
  * The cap stays close to the measured total so the ratchet continues to reject
  * unreviewed growth.
  */
-export const BUDGET_MINIFIED_BYTES = 200_850;
+export const BUDGET_MINIFIED_BYTES = 218_800;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;
