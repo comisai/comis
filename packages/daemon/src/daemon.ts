@@ -179,7 +179,8 @@ import {
 } from "./wiring/daemon-entrypoint.js";
 import { wireHealthLogging } from "./health-metrics.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { createConfiguredApprovalGate, restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint, wirePostAgentsCleanup, createBootDeadLetterRecoveryObserver } from "./wiring/main-helpers.js";
+import { resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint, wirePostAgentsCleanup, createBootDeadLetterRecoveryObserver } from "./wiring/main-helpers.js";
+import { createConfiguredApprovalGate, restoreApprovalState } from "./wiring/setup-approvals.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";

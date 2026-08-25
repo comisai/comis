@@ -6,10 +6,7 @@
  *
  * @module
  */
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import {
-  safePath,
-  createApprovalGate,
   generateStrongToken,
   resolveMultilingual,
   EMBED_MULTILINGUAL,
@@ -19,7 +16,7 @@ import {
   formatSessionKey,
   conversationScopeToSessionKey,
 } from "@comis/core";
-import type { ImageGenerationPort, OAuthTokenManager, ClockPort, AppConfig, VideoGenerationPort, RootRunIdResolver, ComisLogger, TypedEventBus } from "@comis/core";
+import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, RootRunIdResolver, ComisLogger, TypedEventBus } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createFileStateTracker, createImageGenRateLimiter } from "@comis/skills";
 import { createLeaseManager, type LeaseManager } from "@comis/infra";
@@ -194,82 +191,6 @@ export function createBoundedAutonomyWiring(deps: {
  * restores into the in-memory ApprovalGate, then deletes the files.
  * Best-effort on JSON parse failure: log warn + unlink.
  */
-/**
- * Build the approval gate from operator config.
- *
- * Every getter reads through `container.config` on each call so a config
- * reload is observed; `approvals` is fully defaulted by its schema, so no
- * call-site fallback is needed or wanted — a literal here could only drift
- * from the schema it is meant to mirror.
- */
-export function createConfiguredApprovalGate(deps: {
-  eventBus: TypedEventBus;
-  getApprovals: () => AppConfig["approvals"];
-  clock: ClockPort;
-  timers: TimerPort;
-  fingerprintSecret: string;
-  daemonLogger: LoggingResult["daemonLogger"];
-}): ReturnType<typeof createApprovalGate> {
-  return createApprovalGate({
-    eventBus: deps.eventBus,
-    getTimeoutMs: () => deps.getApprovals().defaultTimeoutMs,
-    getDenialCacheTtlMs: () => deps.getApprovals().denialCacheTtlMs,
-    getBatchApprovalTtlMs: () => deps.getApprovals().batchApprovalTtlMs,
-    getPolicy: deps.getApprovals,
-    clock: deps.clock,
-    timers: deps.timers,
-    fingerprintSecret: deps.fingerprintSecret,
-    logger: deps.daemonLogger,
-  });
-}
-
-export function restoreApprovalState(deps: {
-  approvalGate: ReturnType<typeof createApprovalGate>;
-  dataDir: string;
-  containerDataDir: string | undefined;
-  daemonLogger: LoggingResult["daemonLogger"];
-}): void {
-  const { approvalGate, dataDir, containerDataDir, daemonLogger } = deps;
-  // 6.6.8.6.1. Restore pending approvals from previous restart
-  const approvalRestorePath = safePath(containerDataDir || dataDir, "restart-approvals.json");
-  if (existsSync(approvalRestorePath)) {
-    try {
-      const raw = readFileSync(approvalRestorePath, "utf-8");
-      const records = JSON.parse(raw);
-      unlinkSync(approvalRestorePath);
-      const restored = approvalGate.restorePending(records);
-      if (restored > 0) {
-        daemonLogger.info({ count: restored, total: records.length }, "Pending approvals restored from previous session");
-      }
-    } catch (restoreErr) {
-      daemonLogger.warn(
-        { err: restoreErr, hint: "Could not restore pending approvals; operators may need to re-approve", errorKind: "internal" as const },
-        "Failed to restore pending approvals",
-      );
-      try { unlinkSync(approvalRestorePath); } catch { /* ignore */ }
-    }
-  }
-
-  // 6.6.8.6.2. Restore approval cache from previous session
-  const approvalCacheRestorePath = safePath(containerDataDir || dataDir, "restart-approval-cache.json");
-  if (existsSync(approvalCacheRestorePath)) {
-    try {
-      const raw = readFileSync(approvalCacheRestorePath, "utf-8");
-      unlinkSync(approvalCacheRestorePath); // Consume immediately
-      const entries = JSON.parse(raw);
-      const restored = approvalGate.restoreApprovalCache(entries);
-      if (restored > 0) {
-        daemonLogger.info({ count: restored, total: entries.length }, "Approval cache restored from previous session");
-      }
-    } catch (restoreErr) {
-      daemonLogger.warn(
-        { err: restoreErr, hint: "Could not restore approval cache; users may need to re-approve", errorKind: "internal" as const },
-        "Failed to restore approval cache",
-      );
-      try { unlinkSync(approvalCacheRestorePath); } catch { /* ignore */ }
-    }
-  }
-}
 
 /**
  * Set up the channel health monitor. Returns `{ monitor, stop }`; both let
