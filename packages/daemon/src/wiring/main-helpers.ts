@@ -184,15 +184,6 @@ export function createBoundedAutonomyWiring(deps: {
 }
 
 /**
- * Restore approval pending requests and cache from disk at startup.
- *
- * Reads `<dataDir>/restart-approvals.json` and
- * `<dataDir>/restart-approval-cache.json` (written by graceful shutdown),
- * restores into the in-memory ApprovalGate, then deletes the files.
- * Best-effort on JSON parse failure: log warn + unlink.
- */
-
-/**
  * Set up the channel health monitor. Returns `{ monitor, stop }`; both let
  * slots disappear from bootChannels into this single helper return value.
  *
