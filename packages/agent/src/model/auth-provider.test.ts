@@ -268,14 +268,19 @@ describe("createAuthProvider", () => {
     });
 
     // Record failure, check cooldown reflects custom initial (30s, not default 60s)
+    const before = Date.now();
     provider.profileManager!.recordFailure("KEY_A");
     const cooldownUntil = provider.profileManager!.getCooldownUntil("KEY_A");
-    // Cooldown should be approximately now + 30s
+    const after = Date.now();
+
     expect(cooldownUntil).toBeGreaterThan(0);
-    // Verify it's 30s, not 60s (would be ~30s from now)
-    const now = Date.now();
-    expect(cooldownUntil - now).toBeLessThanOrEqual(30_001);
-    expect(cooldownUntil - now).toBeGreaterThanOrEqual(29_999);
+    // recordFailure stamped its own Date.now() somewhere in [before, after], so
+    // a 30s cooldown lands in that window shifted by 30s. Bounding it by the
+    // window the call actually spanned — rather than by a fixed tolerance —
+    // still separates the custom 30s from the 60s default, because the default
+    // would have to run 30s late to fit.
+    expect(cooldownUntil).toBeGreaterThanOrEqual(before + 30_000);
+    expect(cooldownUntil).toBeLessThanOrEqual(after + 30_000);
   });
 
   it("passes ordering strategy to profileManager", () => {
