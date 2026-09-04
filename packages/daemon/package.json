@@ -62,25 +62,25 @@
     "@comis/scheduler": "workspace:*",
     "@comis/shared": "workspace:*",
     "@comis/skills": "workspace:*",
-    "@earendil-works/pi-agent-core": "0.84.0",
-    "@earendil-works/pi-ai": "0.84.0",
+    "@earendil-works/pi-agent-core": "0.84.4",
+    "@earendil-works/pi-ai": "0.84.4",
     "@google/genai": "1.52.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "better-sqlite3": "12.10.0",
-    "hono": "4.13.0",
+    "hono": "4.13.5",
     "openai": "6.39.1",
     "pino": "10.3.1",
     "pino-roll": "4.0.0",
     "reflect-metadata": "0.2.2",
-    "undici": "8.10.0",
+    "undici": "8.10.1",
     "yaml": "2.9.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@comis/observability-otel": "workspace:*",
-    "@earendil-works/pi-coding-agent": "0.84.0",
+    "@earendil-works/pi-coding-agent": "0.84.4",
     "@types/better-sqlite3": "7.6.13",
     "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }

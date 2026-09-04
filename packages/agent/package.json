@@ -47,13 +47,13 @@
     "@comis/scheduler": "workspace:*",
     "@comis/shared": "workspace:*",
     "@google/genai": "1.52.0",
-    "@earendil-works/pi-agent-core": "0.84.0",
-    "@earendil-works/pi-ai": "0.84.0",
-    "@earendil-works/pi-coding-agent": "0.84.0",
+    "@earendil-works/pi-agent-core": "0.84.4",
+    "@earendil-works/pi-ai": "0.84.4",
+    "@earendil-works/pi-coding-agent": "0.84.4",
     "chokidar": "5.0.0",
     "diff": "8.0.4",
     "open": "10.2.0",
-    "sharp": "0.35.3",
+    "sharp": "0.35.4",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -63,8 +63,8 @@
     "@types/proper-lockfile": "4.1.4",
     "better-sqlite3": "12.10.0",
     "proper-lockfile": "4.1.2",
-    "typebox": "1.3.7",
+    "typebox": "1.3.25",
     "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }
